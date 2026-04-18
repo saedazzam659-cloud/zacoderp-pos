@@ -1,22 +1,28 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: ZATCA Saudi e-invoicing API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: companies
+    description: Company management
+  - name: invoices
+    description: Invoice management
+  - name: customers
+    description: Customer management
+  - name: dashboard
+    description: Dashboard & analytics
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +30,393 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /companies:
+    get:
+      operationId: listCompanies
+      tags: [companies]
+      summary: List all companies
+      responses:
+        "200":
+          description: List of companies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Company"
+    post:
+      operationId: createCompany
+      tags: [companies]
+      summary: Create a company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCompanyBody"
+      responses:
+        "201":
+          description: Created company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+
+  /companies/{id}:
+    get:
+      operationId: getCompany
+      tags: [companies]
+      summary: Get company by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+    put:
+      operationId: updateCompany
+      tags: [companies]
+      summary: Update a company
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCompanyBody"
+      responses:
+        "200":
+          description: Updated company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+    delete:
+      operationId: deleteCompany
+      tags: [companies]
+      summary: Delete a company
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: List all customers
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Customer"
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      summary: Create a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerBody"
+      responses:
+        "201":
+          description: Created customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: Get customer by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+    put:
+      operationId: updateCustomer
+      tags: [customers]
+      summary: Update a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerBody"
+      responses:
+        "200":
+          description: Updated customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+    delete:
+      operationId: deleteCustomer
+      tags: [customers]
+      summary: Delete a customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /invoices:
+    get:
+      operationId: listInvoices
+      tags: [invoices]
+      summary: List all invoices
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, issued, cancelled]
+        - name: invoiceType
+          in: query
+          schema:
+            type: string
+            enum: [standard, simplified]
+      responses:
+        "200":
+          description: List of invoices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invoice"
+    post:
+      operationId: createInvoice
+      tags: [invoices]
+      summary: Create an invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvoiceBody"
+      responses:
+        "201":
+          description: Created invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /invoices/{id}:
+    get:
+      operationId: getInvoice
+      tags: [invoices]
+      summary: Get invoice by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+    put:
+      operationId: updateInvoice
+      tags: [invoices]
+      summary: Update an invoice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvoiceBody"
+      responses:
+        "200":
+          description: Updated invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+    delete:
+      operationId: deleteInvoice
+      tags: [invoices]
+      summary: Delete an invoice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /invoices/{id}/issue:
+    post:
+      operationId: issueInvoice
+      tags: [invoices]
+      summary: Issue (finalize) an invoice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Issued invoice with QR code and hash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /invoices/{id}/cancel:
+    post:
+      operationId: cancelInvoice
+      tags: [invoices]
+      summary: Cancel an invoice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cancelled invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get dashboard summary stats
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /dashboard/recent-invoices:
+    get:
+      operationId: getRecentInvoices
+      tags: [dashboard]
+      summary: Get recent invoices
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Recent invoices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invoice"
+
+  /dashboard/monthly-stats:
+    get:
+      operationId: getMonthlyStats
+      tags: [dashboard]
+      summary: Get monthly invoice stats for charts
+      parameters:
+        - name: companyId
+          in: query
+          schema:
+            type: integer
+        - name: year
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Monthly stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MonthlyStat"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +427,419 @@ components:
       required:
         - status
 
+    Company:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameAr:
+          type: string
+          description: Company name in Arabic
+        nameEn:
+          type: string
+          description: Company name in English
+        vatNumber:
+          type: string
+          description: VAT registration number (15 digits)
+        crNumber:
+          type: string
+          description: Commercial registration number
+        city:
+          type: string
+        district:
+          type: string
+        street:
+          type: string
+        buildingNumber:
+          type: string
+        postalCode:
+          type: string
+        additionalNumber:
+          type: string
+        country:
+          type: string
+          default: "SA"
+        industryName:
+          type: string
+        invoiceType:
+          type: string
+          enum: [standard, simplified, both]
+          default: both
+        isSandbox:
+          type: boolean
+          default: false
+        serialNumber:
+          type: string
+          description: Device serial number
+        deviceSerial1:
+          type: string
+        deviceSerial2:
+          type: string
+        deviceSerial3:
+          type: string
+        zatcaCsid:
+          type: string
+          description: ZATCA Cryptographic Stamp Identifier
+        zatcaPcsid:
+          type: string
+          description: ZATCA Production CSID
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - nameAr
+        - vatNumber
+        - crNumber
+        - city
+        - street
+        - buildingNumber
+        - postalCode
+        - country
+        - invoiceType
+        - isSandbox
+
+    CreateCompanyBody:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        vatNumber:
+          type: string
+        crNumber:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+        street:
+          type: string
+        buildingNumber:
+          type: string
+        postalCode:
+          type: string
+        additionalNumber:
+          type: string
+        country:
+          type: string
+        industryName:
+          type: string
+        invoiceType:
+          type: string
+          enum: [standard, simplified, both]
+        isSandbox:
+          type: boolean
+        serialNumber:
+          type: string
+        deviceSerial1:
+          type: string
+        deviceSerial2:
+          type: string
+        deviceSerial3:
+          type: string
+        zatcaCsid:
+          type: string
+        zatcaPcsid:
+          type: string
+      required:
+        - nameAr
+        - vatNumber
+        - crNumber
+        - city
+        - street
+        - buildingNumber
+        - postalCode
+
+    Customer:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        vatNumber:
+          type: string
+        crNumber:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+        street:
+          type: string
+        buildingNumber:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+          default: "SA"
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - companyId
+        - nameAr
+
+    CreateCustomerBody:
+      type: object
+      properties:
+        companyId:
+          type: integer
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        vatNumber:
+          type: string
+        crNumber:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        city:
+          type: string
+        district:
+          type: string
+        street:
+          type: string
+        buildingNumber:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+      required:
+        - companyId
+        - nameAr
+
+    InvoiceLineItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        invoiceId:
+          type: integer
+        description:
+          type: string
+        quantity:
+          type: number
+        unitPrice:
+          type: number
+        discountAmount:
+          type: number
+        vatRate:
+          type: number
+          description: VAT rate percentage (e.g. 15 for 15%)
+        vatAmount:
+          type: number
+        subtotal:
+          type: number
+        total:
+          type: number
+      required:
+        - id
+        - description
+        - quantity
+        - unitPrice
+        - vatRate
+
+    CreateInvoiceLineItem:
+      type: object
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+        unitPrice:
+          type: number
+        discountAmount:
+          type: number
+          default: 0
+        vatRate:
+          type: number
+          default: 15
+      required:
+        - description
+        - quantity
+        - unitPrice
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: integer
+        companyId:
+          type: integer
+        customerId:
+          type: integer
+        invoiceNumber:
+          type: string
+        invoiceType:
+          type: string
+          enum: [standard, simplified]
+        status:
+          type: string
+          enum: [draft, issued, cancelled]
+        issueDate:
+          type: string
+          format: date
+        supplyDate:
+          type: string
+          format: date
+        dueDate:
+          type: string
+          format: date
+        currency:
+          type: string
+          default: "SAR"
+        subtotal:
+          type: number
+        discountTotal:
+          type: number
+        vatTotal:
+          type: number
+        grandTotal:
+          type: number
+        notes:
+          type: string
+        qrCode:
+          type: string
+          description: Base64 encoded QR code
+        invoiceHash:
+          type: string
+          description: Cryptographic hash for ZATCA
+        zatcaStatus:
+          type: string
+          enum: [pending, reported, cleared, rejected]
+        zatcaResponseCode:
+          type: string
+        lineItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceLineItem"
+        company:
+          $ref: "#/components/schemas/Company"
+        customer:
+          $ref: "#/components/schemas/Customer"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - companyId
+        - invoiceNumber
+        - invoiceType
+        - status
+        - issueDate
+        - currency
+        - subtotal
+        - vatTotal
+        - grandTotal
+
+    CreateInvoiceBody:
+      type: object
+      properties:
+        companyId:
+          type: integer
+        customerId:
+          type: integer
+        invoiceType:
+          type: string
+          enum: [standard, simplified]
+        issueDate:
+          type: string
+          format: date
+        supplyDate:
+          type: string
+          format: date
+        dueDate:
+          type: string
+          format: date
+        currency:
+          type: string
+          default: "SAR"
+        notes:
+          type: string
+        lineItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreateInvoiceLineItem"
+      required:
+        - companyId
+        - invoiceType
+        - issueDate
+        - lineItems
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalInvoices:
+          type: integer
+        draftCount:
+          type: integer
+        issuedCount:
+          type: integer
+        cancelledCount:
+          type: integer
+        totalVat:
+          type: number
+        totalRevenue:
+          type: number
+        standardCount:
+          type: integer
+        simplifiedCount:
+          type: integer
+        thisMonthRevenue:
+          type: number
+        thisMonthVat:
+          type: number
+      required:
+        - totalInvoices
+        - draftCount
+        - issuedCount
+        - cancelledCount
+        - totalVat
+        - totalRevenue
+        - standardCount
+        - simplifiedCount
+        - thisMonthRevenue
+        - thisMonthVat
+
+    MonthlyStat:
+      type: object
+      properties:
+        month:
+          type: string
+        year:
+          type: integer
+        invoiceCount:
+          type: integer
+        revenue:
+          type: number
+        vatAmount:
+          type: number
+      required:
+        - month
+        - year
+        - invoiceCount
+        - revenue
+        - vatAmount
