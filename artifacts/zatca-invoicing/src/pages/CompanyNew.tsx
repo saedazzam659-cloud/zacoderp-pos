@@ -5,7 +5,7 @@ import * as z from "zod";
 import { useCreateCompany } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Form,
   FormControl,
@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2 } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu } from "lucide-react";
 import { Link } from "wouter";
 
 const companySchema = z.object({
@@ -42,6 +42,37 @@ const companySchema = z.object({
   deviceSerial2: z.string().optional(),
   deviceSerial3: z.string().optional(),
 });
+
+function InfoBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+      <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function ExampleBadge({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-xs bg-muted text-muted-foreground border font-mono">
+      <span className="text-muted-foreground/60 font-sans">مثال:</span> {text}
+    </span>
+  );
+}
+
+function SectionHeader({ icon: Icon, title, description }: { icon: React.ElementType; title: string; description?: string }) {
+  return (
+    <CardHeader className="border-b bg-muted/20 pb-4">
+      <div className="flex items-center gap-2">
+        <Icon className="h-5 w-5 text-primary" />
+        <div>
+          <CardTitle className="text-lg">{title}</CardTitle>
+          {description && <CardDescription className="mt-0.5">{description}</CardDescription>}
+        </div>
+      </div>
+    </CardHeader>
+  );
+}
 
 export default function CompanyNew() {
   const [, setLocation] = useLocation();
@@ -74,9 +105,8 @@ export default function CompanyNew() {
   });
 
   const onSubmit = (values: z.infer<typeof companySchema>) => {
-    // Combine serial numbers into the required ZATCA format if provided
-    const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3) 
-      ? `${values.deviceSerial1}|${values.deviceSerial2}|${values.deviceSerial3}`
+    const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3)
+      ? `1-${values.deviceSerial1}|2-${values.deviceSerial2}|3-${values.deviceSerial3}`
       : values.serialNumber;
 
     createCompany.mutate({
@@ -93,7 +123,7 @@ export default function CompanyNew() {
         queryClient.invalidateQueries({ queryKey: ["companies"] });
         setLocation(`/companies/${company.id}`);
       },
-      onError: (error) => {
+      onError: () => {
         toast({
           title: "حدث خطأ",
           description: "لم نتمكن من إضافة الشركة. يرجى المحاولة مرة أخرى.",
@@ -104,7 +134,7 @@ export default function CompanyNew() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 pb-12">
       <div className="flex items-center gap-4">
         <Button asChild variant="ghost" size="icon">
           <Link href="/companies">
@@ -113,30 +143,52 @@ export default function CompanyNew() {
         </Button>
         <div>
           <h1 className="text-2xl font-bold text-foreground">إضافة شركة جديدة</h1>
-          <p className="text-muted-foreground mt-1">أدخل بيانات الشركة للتسجيل في نظام الفوترة الإلكترونية</p>
+          <p className="text-muted-foreground mt-1">سجّل بيانات منشأتك للبدء بإصدار الفواتير الإلكترونية المتوافقة مع هيئة الزكاة والدخل والجمارك</p>
         </div>
+      </div>
+
+      {/* Steps overview */}
+      <div className="grid grid-cols-3 gap-3 text-sm">
+        {[
+          { n: "1", label: "البيانات الأساسية", desc: "اسم الشركة والأرقام الرسمية" },
+          { n: "2", label: "العنوان الوطني", desc: "عنوان المنشأة الرسمي" },
+          { n: "3", label: "إعدادات ZATCA", desc: "ربط الجهاز وبيئة العمل" },
+        ].map((s) => (
+          <div key={s.n} className="flex items-start gap-3 p-3 rounded-lg border bg-card">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">{s.n}</span>
+            <div>
+              <p className="font-medium">{s.label}</p>
+              <p className="text-muted-foreground text-xs mt-0.5">{s.desc}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+
+          {/* ─── Section 1: Basic Info ─── */}
           <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
-                <CardTitle className="text-lg">البيانات الأساسية</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-6">
+            <SectionHeader icon={Building2} title="البيانات الأساسية" description="المعلومات الرسمية للمنشأة كما هي مسجلة في السجل التجاري" />
+            <CardContent className="pt-6 space-y-5">
+              <InfoBox>
+                هذه البيانات ستظهر على رأس كل فاتورة وستُرسل إلى هيئة الزكاة. تأكد من مطابقتها تماماً لما هو مسجل رسمياً.
+              </InfoBox>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
                   name="nameAr"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>اسم الشركة (عربي) *</FormLabel>
+                      <FormLabel>اسم الشركة / المنشأة (عربي) <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input placeholder="أدخل اسم الشركة الرسمي..." {...field} />
+                        <Input placeholder="شركة النجاح للتجارة" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        الاسم الرسمي كما يظهر في السجل التجاري
+                        <br /><ExampleBadge text="شركة التقنية المتقدمة للتجارة" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -146,50 +198,84 @@ export default function CompanyNew() {
                   name="nameEn"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>اسم الشركة (إنجليزي)</FormLabel>
+                      <FormLabel>اسم الشركة (إنجليزي) <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
                       <FormControl>
-                        <Input placeholder="Company Name in English..." dir="ltr" className="text-left" {...field} />
+                        <Input placeholder="Advanced Tech Trading Co." dir="ltr" className="text-left" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        يُستخدم في الفواتير الموجهة للعملاء الأجانب
+                        <br /><ExampleBadge text="AlNajah Trading Company" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="vatNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الرقم الضريبي *</FormLabel>
+                      <FormLabel>الرقم الضريبي (VAT) <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input placeholder="15 رقم" dir="ltr" className="text-left" maxLength={15} {...field} />
+                        <Input
+                          placeholder="310000000000003"
+                          dir="ltr"
+                          className="text-left font-mono tracking-widest text-base"
+                          maxLength={15}
+                          {...field}
+                        />
                       </FormControl>
-                      <FormDescription>يبدأ بـ 3 وينتهي بـ 3</FormDescription>
+                      <FormDescription>
+                        15 رقماً — يبدأ بـ <strong>3</strong> وينتهي بـ <strong>3</strong>. تجده في شهادة تسجيل ضريبة القيمة المضافة.
+                        <br /><ExampleBadge text="310025263300003" />
+                      </FormDescription>
                       <FormMessage />
+                      {field.value && field.value.length === 15 && (
+                        <p className="flex items-center gap-1 text-xs text-green-600 mt-1">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> الرقم الضريبي صحيح (15 رقم)
+                        </p>
+                      )}
+                      {field.value && field.value.length > 0 && field.value.length < 15 && (
+                        <p className="flex items-center gap-1 text-xs text-amber-600 mt-1">
+                          <AlertCircle className="h-3.5 w-3.5" /> {15 - field.value.length} رقم ناقص
+                        </p>
+                      )}
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="crNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>رقم السجل التجاري *</FormLabel>
+                      <FormLabel>رقم السجل التجاري (CR) <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input dir="ltr" className="text-left" {...field} />
+                        <Input placeholder="1010000001" dir="ltr" className="text-left font-mono" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        رقم السجل التجاري الصادر من وزارة التجارة — 10 أرقام.
+                        <br /><ExampleBadge text="1010000001" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="industryName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>مجال الصناعة (اختياري)</FormLabel>
+                      <FormLabel>مجال الصناعة / النشاط <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
                       <FormControl>
-                        <Input placeholder="مثال: تقنية المعلومات" {...field} />
+                        <Input placeholder="تقنية المعلومات" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        النشاط التجاري الرئيسي للمنشأة
+                        <br /><ExampleBadge text="التجزئة / الخدمات المهنية / المقاولات" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -198,21 +284,28 @@ export default function CompanyNew() {
             </CardContent>
           </Card>
 
+          {/* ─── Section 2: Address ─── */}
           <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="text-lg">العنوان الوطني</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <SectionHeader icon={MapPin} title="العنوان الوطني" description="عنوان المنشأة وفق نظام العنوان الوطني السعودي (WASL)" />
+            <CardContent className="pt-6 space-y-5">
+              <InfoBox>
+                العنوان الوطني مطلوب قانونياً في الفواتير الإلكترونية. تجد بياناته على خريطة <strong>أبشر</strong> أو موقع <strong>البريد السعودي</strong>.
+              </InfoBox>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <FormField
                   control={form.control}
                   name="buildingNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>رقم المبنى *</FormLabel>
+                      <FormLabel>رقم المبنى <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input dir="ltr" className="text-left" maxLength={4} {...field} />
+                        <Input dir="ltr" className="text-left font-mono" maxLength={4} placeholder="1234" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        4 أرقام من العنوان الوطني
+                        <br /><ExampleBadge text="1234" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -222,10 +315,13 @@ export default function CompanyNew() {
                   name="street"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>اسم الشارع *</FormLabel>
+                      <FormLabel>اسم الشارع <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <Input placeholder="طريق الملك فهد" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        <ExampleBadge text="طريق الملك فهد" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -235,10 +331,13 @@ export default function CompanyNew() {
                   name="district"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الحي</FormLabel>
+                      <FormLabel>الحي <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <Input placeholder="العليا" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        <ExampleBadge text="العليا / الروضة / السليمانية" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -248,10 +347,13 @@ export default function CompanyNew() {
                   name="city"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>المدينة *</FormLabel>
+                      <FormLabel>المدينة <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <Input placeholder="الرياض" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        <ExampleBadge text="الرياض / جدة / الدمام" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -261,10 +363,14 @@ export default function CompanyNew() {
                   name="postalCode"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الرمز البريدي *</FormLabel>
+                      <FormLabel>الرمز البريدي <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
-                        <Input dir="ltr" className="text-left" maxLength={5} {...field} />
+                        <Input dir="ltr" className="text-left font-mono" maxLength={5} placeholder="12211" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        5 أرقام من العنوان الوطني
+                        <br /><ExampleBadge text="12211" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -274,10 +380,14 @@ export default function CompanyNew() {
                   name="additionalNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الرقم الإضافي</FormLabel>
+                      <FormLabel>الرقم الإضافي <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
                       <FormControl>
-                        <Input dir="ltr" className="text-left" maxLength={4} {...field} />
+                        <Input dir="ltr" className="text-left font-mono" maxLength={4} placeholder="6789" {...field} />
                       </FormControl>
+                      <FormDescription>
+                        4 أرقام — تجده بعد الشرطة في العنوان الوطني الكامل
+                        <br /><ExampleBadge text="12211-6789 ← الـ 6789 هو الرقم الإضافي" />
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -286,71 +396,132 @@ export default function CompanyNew() {
             </CardContent>
           </Card>
 
+          {/* ─── Section 3: ZATCA Settings ─── */}
           <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="text-lg">إعدادات ZATCA والفواتير</CardTitle>
-            </CardHeader>
+            <SectionHeader icon={Settings} title="إعدادات ZATCA والفواتير" description="إعدادات الربط مع هيئة الزكاة والدخل والجمارك" />
             <CardContent className="pt-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="invoiceType"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>نوع الفواتير *</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="اختر نوع الفواتير المسموحة" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="standard">فواتير ضريبية (B2B)</SelectItem>
-                          <SelectItem value="simplified">فواتير ضريبية مبسطة (B2C)</SelectItem>
-                          <SelectItem value="both">كلاهما</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <div className="pt-8">
+
+              {/* Invoice Type */}
+              <div>
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Hash className="h-4 w-4 text-primary" />
+                  نوع الفواتير المسموح بإصدارها
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <FormField
                     control={form.control}
-                    name="isSandbox"
+                    name="invoiceType"
                     render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-x-reverse space-y-0 rounded-md border p-4">
-                        <FormControl>
-                          <Checkbox
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>بيئة المحاكاة (Sandbox)</FormLabel>
-                          <FormDescription>
-                            تفعيل وضع المحاكاة للتجارب والربط قبل الإنتاج الفعلي.
-                          </FormDescription>
-                        </div>
+                      <FormItem>
+                        <FormLabel>نوع الفواتير <span className="text-destructive">*</span></FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="اختر نوع الفواتير" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="standard">
+                              <div className="text-right">
+                                <p className="font-medium">فاتورة ضريبية (B2B)</p>
+                                <p className="text-xs text-muted-foreground">للشركات والجهات التجارية — تُرسل إلى هيئة الزكاة للتخليص</p>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="simplified">
+                              <div className="text-right">
+                                <p className="font-medium">فاتورة ضريبية مبسطة (B2C)</p>
+                                <p className="text-xs text-muted-foreground">للأفراد والمستهلكين — تُبلَّغ عنها في غضون 24 ساعة</p>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="both">
+                              <div className="text-right">
+                                <p className="font-medium">كلا النوعين</p>
+                                <p className="text-xs text-muted-foreground">إصدار فواتير B2B و B2C من نفس المنشأة</p>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
                       </FormItem>
                     )}
                   />
+
+                  <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
+                    <p className="font-medium text-foreground">الفرق بين النوعين:</p>
+                    <div className="flex gap-2">
+                      <span className="shrink-0 rounded bg-blue-100 text-blue-700 px-1.5 py-0.5 text-xs font-bold">B2B</span>
+                      <p className="text-muted-foreground">فواتير بين منشآت — مثل: فاتورة من مورد لشركة. تحتاج موافقة (تخليص) من ZATCA فوراً.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="shrink-0 rounded bg-green-100 text-green-700 px-1.5 py-0.5 text-xs font-bold">B2C</span>
+                      <p className="text-muted-foreground">فواتير للأفراد — مثل: فاتورة مطعم أو متجر. يُطبع QR Code ويُبلَّغ لاحقاً.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="border-t pt-6">
-                <h4 className="text-sm font-medium mb-4">أرقام السيريال للأجهزة</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Sandbox */}
+              <div className="border-t pt-5">
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-primary" />
+                  بيئة العمل
+                </h4>
+                <FormField
+                  control={form.control}
+                  name="isSandbox"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start space-x-3 space-x-reverse space-y-0 rounded-lg border p-4 bg-amber-50 border-amber-200">
+                      <FormControl>
+                        <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <div className="space-y-2 leading-none">
+                        <FormLabel className="text-base cursor-pointer">
+                          بيئة المحاكاة (Sandbox)
+                        </FormLabel>
+                        <FormDescription className="text-amber-700">
+                          <strong>مُوصى به للبداية.</strong> في هذه البيئة تُصدر فواتير تجريبية بدون أي أثر قانوني — مثالية للتجربة والتأكد من صحة الإعدادات قبل الانتقال للإنتاج الفعلي.
+                          <br />
+                          <br />
+                          بعد التحقق من صحة الإعدادات، انتقل إلى بيئة الإنتاج عبر صفحة <strong>المفتاح والإعدادات</strong>.
+                        </FormDescription>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Device Serial */}
+              <div className="border-t pt-5">
+                <div className="flex items-start gap-3 mb-4">
+                  <Cpu className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-semibold">أرقام سيريال الجهاز (اختياري)</h4>
+                    <p className="text-muted-foreground text-sm mt-1">
+                      الجهاز الذي يُصدر منه الفواتير (حاسوب، نقطة بيع، خادم). هذه المعلومات تُسجَّل في ZATCA للتحقق من مصدر الفاتورة.
+                    </p>
+                  </div>
+                </div>
+
+                <InfoBox>
+                  <strong>كيف تجد رقم السيريال؟</strong> على Windows: اذهب لـ <code className="bg-blue-100 px-1 rounded">CMD</code> واكتب <code className="bg-blue-100 px-1 rounded">wmic bios get serialnumber</code> — على Mac: اذهب لـ <code className="bg-blue-100 px-1 rounded">About This Mac</code>.
+                  <br />
+                  الصيغة المطلوبة في ZATCA: <code className="bg-blue-100 px-1 rounded font-mono">1-{"{"}اسم الشركة المصنعة{"}"} | 2-{"{"}الموديل{"}"} | 3-{"{"}الرقم الفريد{"}"}</code>
+                </InfoBox>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                   <FormField
                     control={form.control}
                     name="deviceSerial1"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>الشركة المصنعة</FormLabel>
+                        <FormLabel>1 — الشركة المصنعة للجهاز</FormLabel>
                         <FormControl>
-                          <Input placeholder="1- Device" dir="ltr" className="text-left" {...field} />
+                          <Input placeholder="Device" dir="ltr" className="text-left font-mono" {...field} />
                         </FormControl>
+                        <FormDescription>
+                          اسم الشركة المصنعة أو نوع الجهاز
+                          <br /><ExampleBadge text="Dell / HP / Apple / Device" />
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -360,10 +531,14 @@ export default function CompanyNew() {
                     name="deviceSerial2"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>الموديل / الإصدار</FormLabel>
+                        <FormLabel>2 — الموديل / الإصدار</FormLabel>
                         <FormControl>
-                          <Input placeholder="2- 2354" dir="ltr" className="text-left" {...field} />
+                          <Input placeholder="2354" dir="ltr" className="text-left font-mono" {...field} />
                         </FormControl>
+                        <FormDescription>
+                          رقم الموديل أو إصدار الجهاز
+                          <br /><ExampleBadge text="2354 / Latitude7420 / M1" />
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -373,24 +548,39 @@ export default function CompanyNew() {
                     name="deviceSerial3"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>السيريال الفريد</FormLabel>
+                        <FormLabel>3 — الرقم التسلسلي الفريد (UUID)</FormLabel>
                         <FormControl>
-                          <Input placeholder="3- UqazDistserial" dir="ltr" className="text-left" {...field} />
+                          <Input placeholder="UqazDistserial..." dir="ltr" className="text-left font-mono text-xs" {...field} />
                         </FormControl>
+                        <FormDescription>
+                          الرقم التسلسلي الفريد للجهاز
+                          <br /><ExampleBadge text="UqazDistserialnumber" />
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
+
+                {/* Preview combined serial */}
+                {(form.watch("deviceSerial1") || form.watch("deviceSerial2") || form.watch("deviceSerial3")) && (
+                  <div className="mt-3 p-3 rounded-lg bg-muted border text-sm font-mono text-right" dir="ltr">
+                    <span className="text-muted-foreground text-xs block mb-1 font-sans" dir="rtl">الصيغة النهائية التي ستُرسل لـ ZATCA:</span>
+                    <span className="text-foreground">
+                      1-{form.watch("deviceSerial1") || "..."} | 2-{form.watch("deviceSerial2") || "..."} | 3-{form.watch("deviceSerial3") || "..."}
+                    </span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
 
-          <div className="flex justify-end gap-4 pb-12">
+          {/* Actions */}
+          <div className="flex justify-end gap-4">
             <Button type="button" variant="outline" asChild>
               <Link href="/companies">إلغاء</Link>
             </Button>
-            <Button type="submit" className="gap-2" disabled={createCompany.isPending}>
+            <Button type="submit" className="gap-2 min-w-36" disabled={createCompany.isPending}>
               <Save className="h-4 w-4" />
               <span>{createCompany.isPending ? "جاري الحفظ..." : "حفظ بيانات الشركة"}</span>
             </Button>

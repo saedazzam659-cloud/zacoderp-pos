@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -18,7 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Plus, Trash2, Calculator } from "lucide-react";
+import { ArrowRight, Save, Plus, Trash2, Calculator, Info } from "lucide-react";
 import { Link } from "wouter";
 
 const lineItemSchema = z.object({
@@ -127,6 +128,22 @@ export default function InvoiceNew() {
         </div>
       </div>
 
+      {/* Invoice type guide */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div className="flex gap-3 p-3 rounded-lg border bg-blue-50 border-blue-200 text-blue-800">
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+          <div>
+            <strong>فاتورة ضريبية (B2B):</strong> للشركات والمنشآت — تحتاج بيانات العميل (رقم ضريبي، سجل تجاري) وتُرسل فوراً لهيئة الزكاة للتخليص.
+          </div>
+        </div>
+        <div className="flex gap-3 p-3 rounded-lg border bg-green-50 border-green-200 text-green-800">
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-green-500" />
+          <div>
+            <strong>فاتورة مبسطة (B2C):</strong> للأفراد — لا تحتاج بيانات العميل، يُطبع QR Code عليها، وتُبلَّغ خلال 24 ساعة.
+          </div>
+        </div>
+      </div>
+
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <Card>
@@ -140,7 +157,7 @@ export default function InvoiceNew() {
                   name="companyId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>الشركة المصدرة *</FormLabel>
+                      <FormLabel>الشركة المصدرة <span className="text-destructive">*</span></FormLabel>
                       <Select 
                         onValueChange={(val) => field.onChange(parseInt(val, 10))} 
                         value={field.value?.toString() || ""}
@@ -152,10 +169,16 @@ export default function InvoiceNew() {
                         </FormControl>
                         <SelectContent>
                           {companies?.map(c => (
-                            <SelectItem key={c.id} value={c.id.toString()}>{c.nameAr}</SelectItem>
+                            <SelectItem key={c.id} value={c.id.toString()}>
+                              <div className="flex items-center gap-2">
+                                <span>{c.nameAr}</span>
+                                {c.isSandbox && <span className="text-xs bg-amber-100 text-amber-700 px-1 rounded">تجريبي</span>}
+                              </div>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormDescription>المنشأة التي ستصدر الفاتورة</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -166,7 +189,7 @@ export default function InvoiceNew() {
                   name="customerId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>العميل (مطلوب للضريبية)</FormLabel>
+                      <FormLabel>العميل</FormLabel>
                       <Select 
                         onValueChange={(val) => field.onChange(parseInt(val, 10))} 
                         value={field.value?.toString() || ""}
@@ -174,7 +197,7 @@ export default function InvoiceNew() {
                       >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="اختر عميلاً" />
+                            <SelectValue placeholder={selectedCompanyId ? "اختر عميلاً" : "اختر الشركة أولاً"} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -183,6 +206,7 @@ export default function InvoiceNew() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormDescription>مطلوب للفواتير الضريبية (B2B)</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -193,7 +217,7 @@ export default function InvoiceNew() {
                   name="invoiceType"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>نوع الفاتورة *</FormLabel>
+                      <FormLabel>نوع الفاتورة <span className="text-destructive">*</span></FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
@@ -201,8 +225,18 @@ export default function InvoiceNew() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="standard">ضريبية (B2B)</SelectItem>
-                          <SelectItem value="simplified">مبسطة (B2C)</SelectItem>
+                          <SelectItem value="standard">
+                            <div>
+                              <p className="font-medium">ضريبية (B2B)</p>
+                              <p className="text-xs text-muted-foreground">شركة لشركة — تُخلَّص فوراً</p>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="simplified">
+                            <div>
+                              <p className="font-medium">مبسطة (B2C)</p>
+                              <p className="text-xs text-muted-foreground">شركة لفرد — QR Code</p>
+                            </div>
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -215,10 +249,11 @@ export default function InvoiceNew() {
                   name="issueDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>تاريخ الإصدار *</FormLabel>
+                      <FormLabel>تاريخ الإصدار <span className="text-destructive">*</span></FormLabel>
                       <FormControl>
                         <Input type="date" {...field} />
                       </FormControl>
+                      <FormDescription>يجب ألا يكون في المستقبل</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -228,20 +263,23 @@ export default function InvoiceNew() {
           </Card>
 
           <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4 flex flex-row items-center justify-between">
-              <CardTitle className="text-lg">تفاصيل الأصناف</CardTitle>
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="text-lg">الأصناف والخدمات</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                أضف كل صنف أو خدمة في سطر منفصل. الضريبة 15% تُحسب تلقائياً على كل صنف.
+              </p>
             </CardHeader>
             <CardContent className="pt-6 p-0 sm:p-6">
               <div className="overflow-x-auto w-full">
                 <table className="w-full min-w-[800px] caption-bottom text-sm">
                   <thead className="[&_tr]:border-b">
                     <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground w-1/3">الوصف</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground w-1/3">الوصف / اسم الخدمة أو المنتج</th>
                       <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الكمية</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">سعر الوحدة</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الخصم</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الضريبة %</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الإجمالي</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">سعر الوحدة (ريال)</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الخصم (ريال)</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الضريبة</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الإجمالي شامل الضريبة</th>
                       <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground"></th>
                     </tr>
                   </thead>
@@ -264,7 +302,7 @@ export default function InvoiceNew() {
                               render={({ field }) => (
                                 <FormItem>
                                   <FormControl>
-                                    <Input placeholder="وصف الصنف أو الخدمة..." {...field} />
+                                    <Input placeholder="مثال: خدمة تصميم موقع / جهاز حاسب / استشارة قانونية" {...field} />
                                   </FormControl>
                                 </FormItem>
                               )}
@@ -375,11 +413,11 @@ export default function InvoiceNew() {
                     name="notes"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>ملاحظات على الفاتورة (تظهر للعميل)</FormLabel>
+                        <FormLabel>ملاحظات على الفاتورة</FormLabel>
                         <FormControl>
                           <textarea 
                             className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
-                            placeholder="أدخل أي ملاحظات إضافية..."
+                            placeholder="مثال: شكراً لتعاملكم معنا. الدفع خلال 30 يوماً من تاريخ الفاتورة."
                             {...field}
                           />
                         </FormControl>
