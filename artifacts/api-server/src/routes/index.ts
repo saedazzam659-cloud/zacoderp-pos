@@ -4,6 +4,7 @@ import companiesRouter from "./companies";
 import customersRouter from "./customers";
 import invoicesRouter from "./invoices";
 import dashboardRouter from "./dashboard";
+import deviceInfoRouter from "./device-info";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);
 router.use("/invoices", invoicesRouter);
 router.use("/dashboard", dashboardRouter);
+router.use(deviceInfoRouter);
 
 export default router;

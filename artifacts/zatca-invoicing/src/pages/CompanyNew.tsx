@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -19,8 +20,22 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server } from "lucide-react";
 import { Link } from "wouter";
+
+interface DeviceInfo {
+  manufacturer: string;
+  model: string;
+  serial: string;
+  hostname: string;
+  platform: string;
+  arch: string;
+  osName: string;
+  cpuModel: string;
+  totalRamGb: number;
+  nodeVersion: string;
+  stableId: string;
+}
 
 const companySchema = z.object({
   nameAr: z.string().min(2, { message: "اسم الشركة مطلوب" }),
@@ -79,6 +94,8 @@ export default function CompanyNew() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const createCompany = useCreateCompany();
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const form = useForm<z.infer<typeof companySchema>>({
     resolver: zodResolver(companySchema),
@@ -103,6 +120,31 @@ export default function CompanyNew() {
       deviceSerial3: "",
     },
   });
+
+  const scanDevice = async () => {
+    setScanning(true);
+    try {
+      const res = await fetch("/api/device-info");
+      if (!res.ok) throw new Error("فشل الاتصال");
+      const info: DeviceInfo = await res.json();
+      setDeviceInfo(info);
+      form.setValue("deviceSerial1", info.manufacturer);
+      form.setValue("deviceSerial2", info.model);
+      form.setValue("deviceSerial3", info.serial);
+      toast({
+        title: "تم المسح بنجاح",
+        description: `تم قراءة معلومات الجهاز: ${info.manufacturer} – ${info.model}`,
+      });
+    } catch {
+      toast({
+        title: "تعذّر قراءة الجهاز",
+        description: "تأكد من تشغيل الخادم وأن الاتصال يعمل.",
+        variant: "destructive",
+      });
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const onSubmit = (values: z.infer<typeof companySchema>) => {
     const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3)
@@ -492,21 +534,80 @@ export default function CompanyNew() {
 
               {/* Device Serial */}
               <div className="border-t pt-5">
-                <div className="flex items-start gap-3 mb-4">
-                  <Cpu className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <h4 className="text-sm font-semibold">أرقام سيريال الجهاز (اختياري)</h4>
-                    <p className="text-muted-foreground text-sm mt-1">
-                      الجهاز الذي يُصدر منه الفواتير (حاسوب، نقطة بيع، خادم). هذه المعلومات تُسجَّل في ZATCA للتحقق من مصدر الفاتورة.
-                    </p>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-start gap-3">
+                    <Cpu className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                    <div>
+                      <h4 className="text-sm font-semibold">أرقام سيريال الجهاز <span className="text-muted-foreground font-normal">(اختياري)</span></h4>
+                      <p className="text-muted-foreground text-sm mt-0.5">
+                        معرّف الجهاز (خادم، حاسوب، نقطة بيع) المسجَّل في ZATCA كمصدر للفواتير.
+                      </p>
+                    </div>
                   </div>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    className="gap-2 shrink-0"
+                    onClick={scanDevice}
+                    disabled={scanning}
+                  >
+                    {scanning
+                      ? <><Loader2 className="h-4 w-4 animate-spin" />جاري المسح...</>
+                      : <><ScanSearch className="h-4 w-4" />مسح الجهاز تلقائياً</>
+                    }
+                  </Button>
                 </div>
 
-                <InfoBox>
-                  <strong>كيف تجد رقم السيريال؟</strong> على Windows: اذهب لـ <code className="bg-blue-100 px-1 rounded">CMD</code> واكتب <code className="bg-blue-100 px-1 rounded">wmic bios get serialnumber</code> — على Mac: اذهب لـ <code className="bg-blue-100 px-1 rounded">About This Mac</code>.
-                  <br />
-                  الصيغة المطلوبة في ZATCA: <code className="bg-blue-100 px-1 rounded font-mono">1-{"{"}اسم الشركة المصنعة{"}"} | 2-{"{"}الموديل{"}"} | 3-{"{"}الرقم الفريد{"}"}</code>
-                </InfoBox>
+                {/* Auto-detected device info card */}
+                {deviceInfo && (
+                  <div className="mb-4 rounded-lg border bg-green-50 border-green-200 p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <span className="text-sm font-semibold text-green-800">تم قراءة معلومات الجهاز تلقائياً</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div className="flex items-start gap-2">
+                        <Server className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-green-700 font-medium">نظام التشغيل</p>
+                          <p className="text-green-800 font-mono">{deviceInfo.osName || deviceInfo.platform}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Monitor className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-green-700 font-medium">اسم المضيف</p>
+                          <p className="text-green-800 font-mono">{deviceInfo.hostname}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <HardDrive className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-green-700 font-medium">الذاكرة</p>
+                          <p className="text-green-800 font-mono">{deviceInfo.totalRamGb} GB RAM</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Cpu className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-green-700 font-medium">المعالج</p>
+                          <p className="text-green-800 font-mono truncate max-w-[120px]">{deviceInfo.arch}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!deviceInfo && (
+                  <InfoBox>
+                    اضغط <strong>مسح الجهاز تلقائياً</strong> لقراءة معلومات الجهاز مباشرة. أو يمكنك إدخالها يدوياً:
+                    الصيغة المطلوبة في ZATCA:{" "}
+                    <code className="bg-blue-100 px-1 rounded font-mono">
+                      1-{"{"}الشركة المصنعة{"}"} | 2-{"{"}الموديل{"}"} | 3-{"{"}الرقم الفريد{"}"}
+                    </code>
+                  </InfoBox>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                   <FormField
@@ -514,13 +615,12 @@ export default function CompanyNew() {
                     name="deviceSerial1"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>1 — الشركة المصنعة للجهاز</FormLabel>
+                        <FormLabel>1 — الشركة المصنعة</FormLabel>
                         <FormControl>
                           <Input placeholder="Device" dir="ltr" className="text-left font-mono" {...field} />
                         </FormControl>
                         <FormDescription>
-                          اسم الشركة المصنعة أو نوع الجهاز
-                          <br /><ExampleBadge text="Dell / HP / Apple / Device" />
+                          <ExampleBadge text="Dell / HP / Apple / Server" />
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -536,8 +636,7 @@ export default function CompanyNew() {
                           <Input placeholder="2354" dir="ltr" className="text-left font-mono" {...field} />
                         </FormControl>
                         <FormDescription>
-                          رقم الموديل أو إصدار الجهاز
-                          <br /><ExampleBadge text="2354 / Latitude7420 / M1" />
+                          <ExampleBadge text="Latitude7420 / M1 / 2354" />
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -548,13 +647,12 @@ export default function CompanyNew() {
                     name="deviceSerial3"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>3 — الرقم التسلسلي الفريد (UUID)</FormLabel>
+                        <FormLabel>3 — الرقم التسلسلي الفريد</FormLabel>
                         <FormControl>
-                          <Input placeholder="UqazDistserial..." dir="ltr" className="text-left font-mono text-xs" {...field} />
+                          <Input placeholder="ABCD1234..." dir="ltr" className="text-left font-mono text-xs" {...field} />
                         </FormControl>
                         <FormDescription>
-                          الرقم التسلسلي الفريد للجهاز
-                          <br /><ExampleBadge text="UqazDistserialnumber" />
+                          <ExampleBadge text="UqazDistserialnumber" />
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -564,9 +662,9 @@ export default function CompanyNew() {
 
                 {/* Preview combined serial */}
                 {(form.watch("deviceSerial1") || form.watch("deviceSerial2") || form.watch("deviceSerial3")) && (
-                  <div className="mt-3 p-3 rounded-lg bg-muted border text-sm font-mono text-right" dir="ltr">
+                  <div className="mt-3 p-3 rounded-lg bg-muted border text-sm font-mono" dir="ltr">
                     <span className="text-muted-foreground text-xs block mb-1 font-sans" dir="rtl">الصيغة النهائية التي ستُرسل لـ ZATCA:</span>
-                    <span className="text-foreground">
+                    <span className="text-foreground break-all">
                       1-{form.watch("deviceSerial1") || "..."} | 2-{form.watch("deviceSerial2") || "..."} | 3-{form.watch("deviceSerial3") || "..."}
                     </span>
                   </div>
