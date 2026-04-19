@@ -22,6 +22,7 @@ import Register from "@/pages/Register";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
+import PlanSettings from "@/pages/PlanSettings";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -78,6 +79,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
             {isSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
+            {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}

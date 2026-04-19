@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock
+  Package, Clock, Settings2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -18,10 +18,11 @@ interface LayoutProps { children: React.ReactNode; }
 
 // Superadmin navigation
 const superAdminNav = [
-  { name: "لوحة التحكم",     href: "/",                    icon: LayoutDashboard, exact: true },
-  { name: "طلبات التسجيل",   href: "/admin/requests",       icon: Clock },
-  { name: "إدارة الاشتراكات", href: "/admin/subscriptions",  icon: Package },
-  { name: "الشركات",          href: "/companies",            icon: Building2 },
+  { name: "لوحة التحكم",       href: "/",                    icon: LayoutDashboard, exact: true },
+  { name: "طلبات التسجيل",     href: "/admin/requests",       icon: Clock },
+  { name: "إدارة الاشتراكات",  href: "/admin/subscriptions",  icon: Package },
+  { name: "إعدادات الباقات",   href: "/admin/plans",          icon: Settings2 },
+  { name: "الشركات",            href: "/companies",            icon: Building2 },
 ];
 
 // Company user navigation

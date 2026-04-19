@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable } from "@workspace/db";
+import { eq, and, asc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 
@@ -177,6 +177,45 @@ router.get("/stats", requireSuperAdmin, async (_req, res) => {
   const active = companies.filter(c => c.status === "active").length;
   const rejected = companies.filter(c => c.status === "rejected").length;
   res.json({ total: companies.length, pending, active, rejected, users: users.length });
+});
+
+// GET /api/admin/plans — public (used by Register page too)
+router.get("/plans", async (_req, res) => {
+  const plans = await db.select().from(planConfigsTable).orderBy(asc(planConfigsTable.sortOrder));
+  res.json(plans.map(p => ({
+    ...p,
+    features: JSON.parse(p.features || "[]"),
+  })));
+});
+
+// PUT /api/admin/plans/:key — update plan config (superadmin only)
+router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
+  const { key } = req.params;
+  const {
+    nameAr, nameEn, monthlyPrice, annualPrice,
+    maxUsers, maxInvoices, features,
+    isRecommended, isActive, sortOrder,
+  } = req.body;
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (nameAr        != null) updates.nameAr        = nameAr;
+  if (nameEn        != null) updates.nameEn        = nameEn;
+  if (monthlyPrice  != null) updates.monthlyPrice  = String(monthlyPrice);
+  if (annualPrice   != null) updates.annualPrice   = String(annualPrice);
+  if (maxUsers      != null) updates.maxUsers      = Number(maxUsers);
+  if (maxInvoices   != null) updates.maxInvoices   = Number(maxInvoices);
+  if (features      != null) updates.features      = JSON.stringify(features);
+  if (isRecommended != null) updates.isRecommended = isRecommended;
+  if (isActive      != null) updates.isActive      = isActive;
+  if (sortOrder     != null) updates.sortOrder      = Number(sortOrder);
+
+  const [updated] = await db.update(planConfigsTable)
+    .set(updates)
+    .where(eq(planConfigsTable.key, key))
+    .returning();
+
+  if (!updated) { res.status(404).json({ error: "الباقة غير موجودة" }); return; }
+  res.json({ ok: true, plan: { ...updated, features: JSON.parse(updated.features || "[]") } });
 });
 
 export default router;
