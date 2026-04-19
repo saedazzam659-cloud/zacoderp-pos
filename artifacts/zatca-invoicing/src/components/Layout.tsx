@@ -15,9 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
-interface LayoutProps { children: React.ReactNode; }
-
-// ─── Superadmin navigation ─────────────────────────────────────────────────────
+// ─── Nav definitions ───────────────────────────────────────────────────────────
 const superAdminNav = [
   { name: "لوحة التحكم",       href: "/",                         icon: LayoutDashboard, exact: true },
   { name: "طلبات التسجيل",     href: "/admin/requests",            icon: Clock },
@@ -26,51 +24,52 @@ const superAdminNav = [
   { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
   { name: "الشركات",            href: "/companies",                 icon: Building2 },
 ];
-
-// ─── Company user navigation ──────────────────────────────────────────────────
 const companyNav = [
   { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true },
 ];
-
 const companyBusinessNav = [
-  { name: "الفواتير",       href: "/invoices",         icon: FileText,  permKey: "invoices" },
-  { name: "العملاء",        href: "/customers",        icon: Users,     permKey: "customers" },
-  { name: "الموردون",       href: "/suppliers",        icon: Truck,     permKey: "suppliers" },
-  { name: "الإقرار الضريبي", href: "/vat-declaration", icon: BarChart3, permKey: "reports" },
+  { name: "الفواتير",        href: "/invoices",         icon: FileText,  permKey: "invoices" },
+  { name: "العملاء",         href: "/customers",        icon: Users,     permKey: "customers" },
+  { name: "الموردون",        href: "/suppliers",        icon: Truck,     permKey: "suppliers" },
+  { name: "الإقرار الضريبي", href: "/vat-declaration",  icon: BarChart3, permKey: "reports" },
 ];
-
 const companySystemNav = [
-  { name: "ربط ZATCA",      href: "/zatca",             icon: Link2,    permKey: "zatca" },
-  { name: "الإعدادات العامة", href: "/general-settings",  icon: Sliders,  permKey: "always" },
+  { name: "ربط ZATCA",        href: "/zatca",            icon: Link2,   permKey: "zatca" },
+  { name: "الإعدادات العامة", href: "/general-settings", icon: Sliders, permKey: "always" },
 ];
-
-// Inventory module: header item (dashboard) + sub-items
-const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true, permKey: "inventory" };
+const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav = [
-  { name: "الأصناف",              href: "/inventory/items",        icon: Package,           permKey: "inventory" },
-  { name: "وحدات القياس",         href: "/inventory/units",        icon: Ruler,             permKey: "inventory" },
-  { name: "المخازن",              href: "/inventory/warehouses",   icon: Warehouse,         permKey: "inventory" },
-  { name: "التحويل بين المخازن",   href: "/inventory/transfers",    icon: ArrowRightLeft,    permKey: "inventory" },
-  { name: "التسوية المخزنية",     href: "/inventory/adjustments",  icon: SlidersHorizontal, permKey: "inventory" },
-  { name: "الجرد المخزني",        href: "/inventory/counts",       icon: ClipboardList,     permKey: "inventory" },
-  { name: "دفتر الحركة",          href: "/inventory/ledger",       icon: BookOpen,          permKey: "inventory" },
-  { name: "رصيد المخزون",         href: "/inventory/balance",      icon: BarChart2,         permKey: "inventory" },
+  { name: "الأصناف",             href: "/inventory/items",       icon: Package           },
+  { name: "وحدات القياس",        href: "/inventory/units",       icon: Ruler             },
+  { name: "المخازن",             href: "/inventory/warehouses",  icon: Warehouse         },
+  { name: "التحويل بين المخازن",  href: "/inventory/transfers",   icon: ArrowRightLeft    },
+  { name: "التسوية المخزنية",    href: "/inventory/adjustments", icon: SlidersHorizontal },
+  { name: "الجرد المخزني",       href: "/inventory/counts",      icon: ClipboardList     },
+  { name: "دفتر الحركة",         href: "/inventory/ledger",      icon: BookOpen          },
+  { name: "رصيد المخزون",        href: "/inventory/balance",     icon: BarChart2         },
 ];
 
-// ─── Parse menu permissions ────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 const DEFAULT_PERMS: Record<string, boolean> = {
-  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true, reports: true, inventory: true,
+  dashboard: true, invoices: true, customers: true, suppliers: true,
+  zatca: true, reports: true, inventory: true,
 };
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
   try { return { ...DEFAULT_PERMS, ...JSON.parse(raw ?? "{}") }; }
   catch { return { ...DEFAULT_PERMS }; }
 }
+const PLAN_LABELS: Record<string, string> = {
+  starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
+};
 
-// ─── Nav item ─────────────────────────────────────────────────────────────────
+// ─── NavItem (stable, top-level component) ─────────────────────────────────────
 function NavItem({
   item, location, onClick, indent = false,
 }: {
-  item: any; location: string; onClick?: () => void; indent?: boolean;
+  item: { name: string; href: string; icon: React.ElementType; exact?: boolean };
+  location: string;
+  onClick?: () => void;
+  indent?: boolean;
 }) {
   const isActive = item.exact
     ? location === item.href
@@ -78,7 +77,7 @@ function NavItem({
   return (
     <Link href={item.href} className="block" onClick={onClick}>
       <span className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         indent && "pr-8",
         isActive
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
@@ -91,27 +90,24 @@ function NavItem({
   );
 }
 
-// ─── Collapsible inventory group ──────────────────────────────────────────────
+// ─── InventoryNavGroup (stable, top-level component) ──────────────────────────
 function InventoryNavGroup({
-  location, onNavigate, menuPerms,
+  location, onNavigate, open, onToggle,
 }: {
-  location: string; onNavigate: () => void; menuPerms: Record<string, boolean>;
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const isOnInventory = location.startsWith("/inventory");
-  const [open, setOpen] = useState(isOnInventory);
-
-  if (menuPerms.inventory === false) return null;
-
-  const subItems = inventorySubNav.filter(i => menuPerms[i.permKey] !== false);
-
   return (
     <div>
-      {/* Collapsible toggle header */}
+      {/* Toggle button */}
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={onToggle}
         className={cn(
-          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
-          isOnInventory
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnInventory && !open
             ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         )}
@@ -119,22 +115,17 @@ function InventoryNavGroup({
         <Warehouse className="h-4 w-4 shrink-0" />
         <span className="flex-1 text-right">موديل المخازن</span>
         {open
-          ? <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
         }
       </button>
 
-      {/* Expanded items */}
+      {/* Sub-items */}
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          {/* Vertical guide line */}
-          <div className="absolute top-0 bottom-0 right-7 w-px bg-sidebar-border" />
-
-          {/* Dashboard (لوحة المخازن) */}
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryHeader} location={location} onClick={onNavigate} indent />
-
-          {/* Sub items */}
-          {subItems.map(item => (
+          {inventorySubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -143,29 +134,37 @@ function InventoryNavGroup({
   );
 }
 
-// ─── Main layout ──────────────────────────────────────────────────────────────
-export default function Layout({ children }: LayoutProps) {
-  const [location] = useLocation();
-  const { user, logout } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const isSuperAdmin = user?.role === "superadmin";
+// ─── SidebarInner (stable, top-level component) ───────────────────────────────
+// All state that needs to persist lives in Layout and is passed as props here.
+function SidebarInner({
+  location,
+  isSuperAdmin,
+  user,
+  menuPerms,
+  inventoryOpen,
+  onInventoryToggle,
+  onNavigate,
+  onLogout,
+}: {
+  location: string;
+  isSuperAdmin: boolean;
+  user: any;
+  menuPerms: Record<string, boolean>;
+  inventoryOpen: boolean;
+  onInventoryToggle: () => void;
+  onNavigate: () => void;
+  onLogout: () => void;
+}) {
+  const filteredBusiness = companyBusinessNav.filter(i => menuPerms[i.permKey] !== false);
+  const filteredSystem   = companySystemNav.filter(i => menuPerms[i.permKey] !== false);
 
-  const menuPerms = parseMenuPerms(user?.company?.menuPermissions);
-  const filteredBusinessNav = companyBusinessNav.filter(item => menuPerms[item.permKey] !== false);
-  const filteredSystemNav   = companySystemNav.filter(item => menuPerms[item.permKey] !== false);
-
-  const PLAN_LABELS: Record<string, string> = {
-    starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
-  };
   const planColor =
     user?.subscription?.plan === "starter"      ? "text-blue-700 bg-blue-50 border-blue-200" :
     user?.subscription?.plan === "professional" ? "text-primary bg-primary/10 border-primary/20" :
     user?.subscription?.plan === "enterprise"   ? "text-amber-700 bg-amber-50 border-amber-200" :
     "text-muted-foreground bg-muted border-border";
 
-  const closeMobile = () => setMobileOpen(false);
-
-  const SidebarContent = () => (
+  return (
     <>
       {/* Logo */}
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-sidebar-border px-4">
@@ -212,53 +211,50 @@ export default function Layout({ children }: LayoutProps) {
         {isSuperAdmin ? (
           <div className="space-y-0.5">
             {superAdminNav.map(item => (
-              <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
+              <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
             ))}
           </div>
         ) : (
           <>
-            {/* Dashboard */}
             {menuPerms.dashboard !== false && (
               <div className="space-y-0.5">
                 {companyNav.map(item => (
-                  <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
+                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
                 ))}
               </div>
             )}
 
-            {/* Business */}
-            {filteredBusinessNav.length > 0 && (
+            {filteredBusiness.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
                 <div className="space-y-0.5">
-                  {filteredBusinessNav.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
+                  {filteredBusiness.map(item => (
+                    <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Inventory — collapsible accordion */}
             {menuPerms.inventory !== false && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المخزون</p>
                 <div className="space-y-0.5">
                   <InventoryNavGroup
                     location={location}
-                    onNavigate={closeMobile}
-                    menuPerms={menuPerms}
+                    onNavigate={onNavigate}
+                    open={inventoryOpen}
+                    onToggle={onInventoryToggle}
                   />
                 </div>
               </div>
             )}
 
-            {/* System */}
-            {filteredSystemNav.length > 0 && (
+            {filteredSystem.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
                 <div className="space-y-0.5">
-                  {filteredSystemNav.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
+                  {filteredSystem.map(item => (
+                    <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
                   ))}
                 </div>
               </div>
@@ -279,7 +275,10 @@ export default function Layout({ children }: LayoutProps) {
           <DropdownMenuTrigger asChild>
             <button className="flex w-full items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors text-right">
               <Avatar className="h-8 w-8 shrink-0">
-                <AvatarFallback className={cn("text-xs font-bold", isSuperAdmin ? "bg-purple-100 text-purple-700" : "bg-primary text-primary-foreground")}>
+                <AvatarFallback className={cn(
+                  "text-xs font-bold",
+                  isSuperAdmin ? "bg-purple-100 text-purple-700" : "bg-primary text-primary-foreground"
+                )}>
                   {user?.username?.[0]?.toUpperCase() ?? "م"}
                 </AvatarFallback>
               </Avatar>
@@ -308,7 +307,7 @@ export default function Layout({ children }: LayoutProps) {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive gap-2">
+            <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
               <LogOut className="h-4 w-4" />تسجيل الخروج
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -316,21 +315,49 @@ export default function Layout({ children }: LayoutProps) {
       </div>
     </>
   );
+}
+
+// ─── Main Layout ───────────────────────────────────────────────────────────────
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const { user, logout } = useAuth();
+  const [mobileOpen, setMobileOpen]       = useState(false);
+  // Inventory accordion state lives here — stable across re-renders
+  const [inventoryOpen, setInventoryOpen] = useState(() => location.startsWith("/inventory"));
+
+  const isSuperAdmin = user?.role === "superadmin";
+  const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
+
+  const handleInventoryToggle = () => setInventoryOpen(v => !v);
+  const closeMobile = () => setMobileOpen(false);
+
+  const sharedProps = {
+    location,
+    isSuperAdmin,
+    user,
+    menuPerms,
+    inventoryOpen,
+    onInventoryToggle: handleInventoryToggle,
+    onNavigate: closeMobile,
+    onLogout: logout,
+  };
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-right" dir="rtl">
       {/* Desktop Sidebar */}
       <aside className="fixed inset-y-0 right-0 z-20 hidden w-64 flex-col border-l border-border bg-sidebar md:flex">
-        <SidebarContent />
+        <SidebarInner {...sharedProps} />
       </aside>
 
       {/* Mobile overlay */}
-      {mobileOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={closeMobile} />}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={closeMobile} />
+      )}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 flex w-72 flex-col border-l border-border bg-sidebar transition-transform duration-200 md:hidden",
         mobileOpen ? "translate-x-0" : "translate-x-full"
       )}>
-        <SidebarContent />
+        <SidebarInner {...sharedProps} />
       </aside>
 
       {/* Main content */}
@@ -342,7 +369,12 @@ export default function Layout({ children }: LayoutProps) {
           <div className="flex flex-1 items-center justify-end gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8"><Bell className="h-4 w-4" /></Button>
             <div className="h-5 w-px bg-border mx-1" />
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={logout} title="تسجيل الخروج">
+            <Button
+              variant="ghost" size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              onClick={logout}
+              title="تسجيل الخروج"
+            >
               <LogOut className="h-4 w-4" />
             </Button>
           </div>
