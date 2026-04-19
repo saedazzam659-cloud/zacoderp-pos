@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -11,7 +11,7 @@ import ExportButtons from "@/components/ExportButtons";
 import {
   Plus, Pencil, Trash2, Package, Search, X,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
-  CheckCircle, AlertTriangle,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -402,8 +402,8 @@ export default function Items() {
               : filtered.length === 0
               ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد أصناف{search ? " مطابقة للبحث" : ""}</td></tr>
               : filtered.map((it: any) => (
-                  <>
-                    <tr key={it.id} className="hover:bg-muted/30">
+                  <Fragment key={it.id}>
+                    <tr className="hover:bg-muted/30">
                       <td className="px-4 py-3">
                         <button onClick={() => toggleExpand(it.id)} className="text-muted-foreground hover:text-foreground">
                           {expandedId === it.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -442,7 +442,7 @@ export default function Items() {
                     </tr>
                     {/* Expanded row: tabs for balances + unit prices */}
                     {expandedId === it.id && (
-                      <tr key={`exp-${it.id}`} className="bg-muted/20">
+                      <tr className="bg-muted/20">
                         <td colSpan={10} className="px-6 py-4">
                           {/* Tabs */}
                           <div className="flex gap-1 bg-muted/50 p-1 rounded-lg w-fit mb-4 border">
@@ -495,7 +495,7 @@ export default function Items() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
           </tbody>
         </table>
