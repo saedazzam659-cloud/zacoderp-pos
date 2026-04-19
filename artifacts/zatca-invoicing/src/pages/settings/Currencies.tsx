@@ -614,13 +614,17 @@ export default function Currencies() {
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium">معامل التحويل <span className="text-destructive">*</span></Label>
                         <Input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={rateForm.rate}
-                          onChange={e => setRateForm((p: any) => ({ ...p, rate: e.target.value }))}
+                          onChange={e => {
+                            const v = e.target.value.replace(/[^0-9.]/g, "");
+                            const parts = v.split(".");
+                            const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v;
+                            setRateForm((p: any) => ({ ...p, rate: clean }));
+                          }}
                           placeholder="3.7500"
-                          className="h-9 text-sm font-mono"
-                          step="0.000001"
-                          min="0"
+                          className="h-9 text-sm font-mono text-left"
                         />
                       </div>
 
