@@ -47,6 +47,7 @@ const companySystemNav = [
 const companyInventoryNav = [
   { name: "لوحة المخازن",       href: "/inventory",                  icon: LayoutDashboard, exact: true, permKey: "inventory" },
   { name: "الأصناف",             href: "/inventory/items",            icon: Package,         permKey: "inventory" },
+  { name: "وحدات القياس",        href: "/inventory/units",            icon: Ruler,           permKey: "inventory" },
   { name: "المخازن",             href: "/inventory/warehouses",       icon: Warehouse,       permKey: "inventory" },
   { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft,  permKey: "inventory" },
   { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "inventory" },
