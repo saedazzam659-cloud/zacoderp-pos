@@ -35,9 +35,10 @@ const companyBusinessNav = [
   { name: "الإقرار الضريبي", href: "/vat-declaration",  icon: BarChart3, permKey: "reports" },
 ];
 const companySystemNav = [
-  { name: "ربط ZATCA",        href: "/zatca",            icon: Link2,      permKey: "zatca" },
-  { name: "الإعدادات العامة", href: "/general-settings", icon: Sliders,    permKey: "always" },
-  { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked, permKey: "always" },
+  { name: "ربط ZATCA",        href: "/zatca",                   icon: Link2,      permKey: "zatca" },
+  { name: "الإعدادات العامة", href: "/general-settings",        icon: Sliders,    permKey: "always" },
+  { name: "شجرة الحسابات",    href: "/accounting/accounts",     icon: BookMarked, permKey: "always" },
+  { name: "القيود المحاسبية", href: "/accounting/journals",     icon: BookOpen,   permKey: "always" },
 ];
 const orgNav = [
   { name: "المناطق الجغرافية", href: "/org/regions",  icon: MapPin      },

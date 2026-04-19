@@ -45,6 +45,8 @@ import StockBalance from "@/pages/inventory/StockBalance";
 import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
 import Regions  from "@/pages/org/Regions";
 import Branches from "@/pages/org/Branches";
+import JournalEntries from "@/pages/accounting/JournalEntries";
+import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 
 const queryClient = new QueryClient();
 
@@ -134,6 +136,9 @@ function AppRoutes() {
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
+            {!isSuperAdmin && <Route path="/accounting/journals"     component={JournalEntries} />}
+            {!isSuperAdmin && <Route path="/accounting/journals/new" component={JournalEntryForm} />}
+            {!isSuperAdmin && <Route path="/accounting/journals/:id" component={JournalEntryForm} />}
 
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}

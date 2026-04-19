@@ -1,0 +1,150 @@
+import { Router } from "express";
+import { db } from "@workspace/db";
+import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { eq, and, desc, sql } from "drizzle-orm";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+const router = Router();
+router.use(extractAuth);
+
+function guard(req: any, res: any): number | null {
+  const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
+  return cid;
+}
+function getCompanyId(req: any): number | undefined {
+  return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+// ─── LIST ─────────────────────────────────────────────────────────────────────
+router.get("/", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    const rows = cid
+      ? await db.select().from(journalEntriesTable)
+          .where(eq(journalEntriesTable.companyId, cid))
+          .orderBy(desc(journalEntriesTable.createdAt))
+      : await db.select().from(journalEntriesTable)
+          .orderBy(desc(journalEntriesTable.createdAt));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── GET ONE (with lines) ─────────────────────────────────────────────────────
+router.get("/:id", async (req, res) => {
+  try {
+    const cid = getCompanyId(req);
+    const id  = Number(req.params.id);
+    const [entry] = cid
+      ? await db.select().from(journalEntriesTable)
+          .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)))
+      : await db.select().from(journalEntriesTable).where(eq(journalEntriesTable.id, id));
+    if (!entry) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    const lines = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, id))
+      .orderBy(journalEntryLinesTable.sortOrder);
+
+    res.json({ ...entry, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── CREATE ───────────────────────────────────────────────────────────────────
+router.post("/", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+
+    if (!entryDate) { res.status(400).json({ error: "التاريخ مطلوب" }); return; }
+
+    const [entry] = await db.insert(journalEntriesTable).values({
+      companyId:    cid,
+      docNumber:    docNumber || null,
+      entryDate,
+      currency:     currency || "SAR",
+      exchangeRate: exchangeRate ?? "1",
+      description:  description || null,
+      entryType:    entryType || "general",
+      branchId:     branchId ? Number(branchId) : null,
+      status:       "posted",
+    }).returning();
+
+    if (Array.isArray(lines) && lines.length > 0) {
+      await db.insert(journalEntryLinesTable).values(
+        lines.map((l: any, i: number) => ({
+          entryId:     entry.id,
+          accountId:   l.accountId ? Number(l.accountId) : null,
+          costCenter:  l.costCenter || null,
+          debit:       l.debit  ?? "0",
+          credit:      l.credit ?? "0",
+          description: l.description || null,
+          sortOrder:   i,
+        }))
+      );
+    }
+
+    const linesOut = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, entry.id))
+      .orderBy(journalEntryLinesTable.sortOrder);
+
+    res.status(201).json({ ...entry, lines: linesOut });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── UPDATE ───────────────────────────────────────────────────────────────────
+router.put("/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+    const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+
+    const [entry] = await db.update(journalEntriesTable).set({
+      docNumber:    docNumber || null,
+      entryDate:    entryDate || undefined,
+      currency:     currency || "SAR",
+      exchangeRate: exchangeRate ?? "1",
+      description:  description || null,
+      entryType:    entryType || "general",
+      branchId:     branchId ? Number(branchId) : null,
+      updatedAt:    new Date(),
+    }).where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid))).returning();
+
+    if (!entry) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+
+    if (Array.isArray(lines)) {
+      await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+      if (lines.length > 0) {
+        await db.insert(journalEntryLinesTable).values(
+          lines.map((l: any, i: number) => ({
+            entryId:     id,
+            accountId:   l.accountId ? Number(l.accountId) : null,
+            costCenter:  l.costCenter || null,
+            debit:       l.debit  ?? "0",
+            credit:      l.credit ?? "0",
+            description: l.description || null,
+            sortOrder:   i,
+          }))
+        );
+      }
+    }
+
+    const linesOut = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, id))
+      .orderBy(journalEntryLinesTable.sortOrder);
+
+    res.json({ ...entry, lines: linesOut });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DELETE ───────────────────────────────────────────────────────────────────
+router.delete("/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+    await db.delete(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+export default router;

@@ -13,6 +13,7 @@ import reportsRouter from "./reports";
 import inventoryRouter from "./inventory";
 import accountsRouter from "./accounts";
 import branchesRouter from "./branches";
+import journalEntriesRouter from "./journalEntries";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,7 @@ router.use("/reports", reportsRouter);
 router.use("/inventory", inventoryRouter);
 router.use("/accounts", accountsRouter);
 router.use("/org", branchesRouter);
+router.use("/journal-entries", journalEntriesRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 
