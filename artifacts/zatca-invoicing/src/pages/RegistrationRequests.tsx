@@ -361,10 +361,13 @@ export default function RegistrationRequests() {
                           <CheckCircle2 className="h-3.5 w-3.5" />إعادة تفعيل
                         </Button>
                       )}
-                      <Button size="sm" variant="ghost" className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
-                        onClick={() => setDeleteDialog({ id: co.id, name: co.nameAr })}>
-                        <Trash2 className="h-3.5 w-3.5" />حذف نهائياً
-                      </Button>
+                      {/* Delete only for rejected requests */}
+                      {co.status === "rejected" && (
+                        <Button size="sm" variant="ghost" className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
+                          onClick={() => setDeleteDialog({ id: co.id, name: co.nameAr })}>
+                          <Trash2 className="h-3.5 w-3.5" />حذف نهائياً
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}

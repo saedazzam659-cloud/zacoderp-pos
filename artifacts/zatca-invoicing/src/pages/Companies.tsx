@@ -1,14 +1,21 @@
 import { useState } from "react";
-import { useListCompanies } from "@workspace/api-client-react";
+import { useListCompanies, useDeleteCompany } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
-  BadgeCheck, FileText, RefreshCw, Layers
+  BadgeCheck, FileText, RefreshCw, Layers, Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const INVOICE_TYPE: Record<string, string> = {
   standard:   "ضريبية",
@@ -42,9 +49,30 @@ export default function Companies() {
     query: { queryKey: ["companies"] }
   }) as any;
 
-  const [search, setSearch]       = useState("");
+  const { toast }       = useToast();
+  const queryClient     = useQueryClient();
+  const deleteCompany   = useDeleteCompany();
+
+  const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [expandedRow, setExpandedRow]   = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteCompany.mutate({ id: deleteTarget.id }, {
+      onSuccess: () => {
+        toast({ title: "تم الحذف", description: `تم حذف شركة "${deleteTarget.name}" بنجاح.` });
+        queryClient.invalidateQueries({ queryKey: ["companies"] });
+        setDeleteTarget(null);
+        setExpandedRow(null);
+      },
+      onError: () => {
+        toast({ title: "حدث خطأ", description: "تعذّر حذف الشركة، حاول مرة أخرى.", variant: "destructive" });
+        setDeleteTarget(null);
+      },
+    });
+  };
 
   // Stats
   const total    = companies.length;
@@ -109,6 +137,7 @@ export default function Companies() {
             { key: "all",      label: "الكل",    count: total },
             { key: "active",   label: "نشطة",    count: active },
             { key: "pending",  label: "معلقة",   count: pending },
+            { key: "rejected", label: "مرفوضة",  count: companies.filter((c: any) => c.status === "rejected").length },
           ].map((tab, i) => (
             <button key={tab.key}
               onClick={() => setFilterStatus(tab.key)}
@@ -287,8 +316,8 @@ export default function Companies() {
                     )}
 
                     {/* Action buttons */}
-                    <div className="flex items-center gap-2 pt-1">
-                      {!company.zatcaPcsid && (
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      {(company.status ?? "active") === "active" && !company.zatcaPcsid && (
                         <Button asChild size="sm" className="gap-1.5 h-8">
                           <Link href={`/companies/${company.id}?tab=zatca`}>
                             <ShieldCheck className="h-3.5 w-3.5" />ربط ZATCA
@@ -300,6 +329,16 @@ export default function Companies() {
                           <ExternalLink className="h-3.5 w-3.5" />عرض التفاصيل
                         </Link>
                       </Button>
+                      {/* Delete only for rejected or inactive companies */}
+                      {(company.status === "rejected" || company.status === "pending") && (
+                        <Button
+                          size="sm" variant="ghost"
+                          className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
+                          onClick={() => setDeleteTarget({ id: company.id, name: company.nameAr })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />حذف نهائياً
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -316,6 +355,35 @@ export default function Companies() {
           </div>
         )}
       </div>
+
+      {/* ── Delete confirmation dialog ── */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />حذف الشركة نهائياً
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-right space-y-1">
+              <span>هل أنت متأكد من حذف شركة </span>
+              <strong className="text-foreground">"{deleteTarget?.name}"</strong>
+              <span> بشكل نهائي؟</span>
+              <br />
+              <span className="text-destructive font-medium">سيتم حذف جميع البيانات المرتبطة بها ولا يمكن التراجع.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={deleteCompany.isPending}
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleteCompany.isPending ? "جاري الحذف..." : "نعم، احذف نهائياً"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
