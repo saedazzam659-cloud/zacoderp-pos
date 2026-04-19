@@ -85,7 +85,7 @@ export function generateZatcaXml(data: InvoiceData): string {
     return `
     <cac:InvoiceLine>
       <cbc:ID>${idx + 1}</cbc:ID>
-      <cbc:InvoicedQuantity unitCode="PCE">${Number(item.quantity).toFixed(4)}</cbc:InvoicedQuantity>
+      <cbc:InvoicedQuantity unitCode="${(item as { unitCode?: string }).unitCode ?? "PCE"}">${Number(item.quantity).toFixed(4)}</cbc:InvoicedQuantity>
       <cbc:LineExtensionAmount currencyID="${data.currency}">${taxableAmount}</cbc:LineExtensionAmount>
       <cac:TaxTotal>
         <cbc:TaxAmount currencyID="${data.currency}">${Number(item.vatAmount).toFixed(2)}</cbc:TaxAmount>

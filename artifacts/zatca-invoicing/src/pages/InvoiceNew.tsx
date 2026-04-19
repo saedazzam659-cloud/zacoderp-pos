@@ -17,14 +17,16 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Plus, Trash2, Calculator, Info } from "lucide-react";
+import { ArrowRight, Save, Plus, Trash2, Info } from "lucide-react";
 import { Link } from "wouter";
+import { ZATCA_UNIT_CODES, ZATCA_UNIT_GROUPS } from "@/lib/zatca-units";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "وصف الصنف مطلوب"),
   quantity: z.coerce.number().min(0.01, "الكمية يجب أن تكون أكبر من 0"),
+  unitCode: z.string().default("PCE"),
   unitPrice: z.coerce.number().min(0, "السعر يجب أن يكون 0 أو أكبر"),
   discountAmount: z.coerce.number().min(0).default(0),
   vatRate: z.coerce.number().default(15),
@@ -55,7 +57,7 @@ export default function InvoiceNew() {
       customerId: undefined,
       invoiceType: "standard",
       issueDate: new Date().toISOString().split('T')[0],
-      lineItems: [{ description: "", quantity: 1, unitPrice: 0, discountAmount: 0, vatRate: 15 }]
+      lineItems: [{ description: "", quantity: 1, unitCode: "PCE", unitPrice: 0, discountAmount: 0, vatRate: 15 }]
     },
   });
 
@@ -274,12 +276,16 @@ export default function InvoiceNew() {
                 <table className="w-full min-w-[800px] caption-bottom text-sm">
                   <thead className="[&_tr]:border-b">
                     <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground w-1/3">الوصف / اسم الخدمة أو المنتج</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الكمية</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">سعر الوحدة (ريال)</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الخصم (ريال)</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الضريبة</th>
-                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الإجمالي شامل الضريبة</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"200px"}}>الوصف / اسم الخدمة أو المنتج</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"80px"}}>الكمية</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"140px"}}>
+                        وحدة القياس
+                        <span className="block text-[10px] font-normal text-muted-foreground/60">UN/CEFACT — ZATCA</span>
+                      </th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"110px"}}>سعر الوحدة (ريال)</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"90px"}}>الخصم (ريال)</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"80px"}}>الضريبة</th>
+                      <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground" style={{minWidth:"120px"}}>الإجمالي شامل الضريبة</th>
                       <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground"></th>
                     </tr>
                   </thead>
@@ -316,6 +322,36 @@ export default function InvoiceNew() {
                                 <FormItem>
                                   <FormControl>
                                     <Input type="number" min="0" step="0.01" dir="ltr" className="text-left" {...field} />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <FormField
+                              control={form.control}
+                              name={`lineItems.${index}.unitCode`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Select onValueChange={field.onChange} value={field.value ?? "PCE"}>
+                                      <SelectTrigger className="min-w-[130px]">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {ZATCA_UNIT_GROUPS.map(group => (
+                                          <SelectGroup key={group}>
+                                            <SelectLabel className="text-xs text-muted-foreground px-2 py-1">{group}</SelectLabel>
+                                            {ZATCA_UNIT_CODES.filter(u => u.group === group).map(u => (
+                                              <SelectItem key={u.code} value={u.code}>
+                                                <span className="font-mono text-primary text-xs ml-1">{u.code}</span>
+                                                <span className="text-xs"> — {u.nameAr}</span>
+                                              </SelectItem>
+                                            ))}
+                                          </SelectGroup>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </FormControl>
                                 </FormItem>
                               )}
@@ -398,7 +434,7 @@ export default function InvoiceNew() {
                   variant="outline" 
                   size="sm" 
                   className="gap-2"
-                  onClick={() => append({ description: "", quantity: 1, unitPrice: 0, discountAmount: 0, vatRate: 15 })}
+                  onClick={() => append({ description: "", quantity: 1, unitCode: "PCE", unitPrice: 0, discountAmount: 0, vatRate: 15 })}
                 >
                   <Plus className="h-4 w-4" />
                   إضافة صنف جديد

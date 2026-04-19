@@ -57,6 +57,8 @@ export default function CompanyDetails() {
   const [otpInput, setOtpInput] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [csrContent, setCsrContent] = useState<string | null>(null);
+  const [testInvoiceId, setTestInvoiceId] = useState("");
+  const [complianceCheckResult, setComplianceCheckResult] = useState<{ success: boolean; message?: string; error?: string; validationResults?: unknown } | null>(null);
 
   if (isLoading) {
     return <div className="space-y-6"><Skeleton className="h-12 w-1/3" /><Skeleton className="h-[400px] w-full" /></div>;
@@ -108,6 +110,28 @@ export default function CompanyDetails() {
         setOtpInput("");
       } else {
         toast({ title: "فشل الحصول على CSID", description: data.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "خطأ في الاتصال", variant: "destructive" });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleComplianceCheck() {
+    const invId = parseInt(testInvoiceId);
+    if (!invId) {
+      toast({ title: "أدخل رقم معرّف الفاتورة", variant: "destructive" });
+      return;
+    }
+    setLoading("compliance-check");
+    try {
+      const data = await apiCall(`/api/companies/${id}/compliance-check`, { invoiceId: invId });
+      setComplianceCheckResult(data);
+      if (data.success) {
+        toast({ title: "نجح الفحص التجريبي", description: data.message });
+      } else {
+        toast({ title: "فشل الفحص", description: data.error, variant: "destructive" });
       }
     } catch {
       toast({ title: "خطأ في الاتصال", variant: "destructive" });
@@ -238,21 +262,46 @@ export default function CompanyDetails() {
 
         {/* ─── ZATCA Integration Tab ────────────────────────────────── */}
         <TabsContent value="zatca" className="space-y-6">
-          {/* Steps overview */}
-          <div className="grid grid-cols-3 gap-3 text-sm">
+          {/* Steps overview — 4 steps as per ZATCA onboarding */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             {[
-              { n: 1, label: "توليد CSR", desc: "مفتاح ECDSA + طلب الشهادة", done: hasCsr },
-              { n: 2, label: "الحصول على CSID", desc: "إرسال CSR + OTP إلى ZATCA", done: hasCsid },
-              { n: 3, label: "الحصول على PCSID", desc: "شهادة الإنتاج النهائية", done: hasPcsid },
+              { n: 1, label: "المفتاح والإعدادات", desc: "مفتاح ECDSA + CSR", done: hasCsr, icon: "🔑" },
+              { n: 2, label: "الشهادة الأولية", desc: "CSID عبر OTP", done: hasCsid, icon: "📜" },
+              { n: 3, label: "الفواتير التجريبية", desc: "التحقق قبل الإنتاج", done: hasCsid, icon: "🧪" },
+              { n: 4, label: "الشهادة النهائية", desc: "PCSID للإنتاج", done: hasPcsid, icon: "✅" },
             ].map(step => (
-              <div key={step.n} className={`flex items-start gap-3 p-3 rounded-lg border ${step.done ? "bg-green-50 border-green-200" : "bg-card"}`}>
-                <StepBadge n={step.n} active={!step.done} done={step.done} />
+              <div key={step.n} className={`flex flex-col items-start gap-2 p-3 rounded-lg border ${step.done ? "bg-green-50 border-green-200" : "bg-card"}`}>
+                <div className="flex items-center gap-2 w-full">
+                  <StepBadge n={step.n} active={!step.done} done={step.done} />
+                  <span className="text-lg">{step.icon}</span>
+                </div>
                 <div>
-                  <p className="font-medium">{step.label}</p>
+                  <p className="font-medium text-xs">{step.label}</p>
                   <p className="text-muted-foreground text-xs mt-0.5">{step.desc}</p>
                 </div>
               </div>
             ))}
+          </div>
+          
+          {/* ZATCA Portal Link */}
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
+            <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-primary">بوابة هيئة الزكاة والدخل والجمارك (ZATCA)</p>
+              <p className="text-muted-foreground text-xs mt-1">
+                جميع خطوات الربط تتم عبر بوابة فاتورة الرسمية. للحصول على OTP وإدارة الشهادات:
+              </p>
+              <div className="flex gap-3 mt-2 flex-wrap">
+                <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline font-medium">
+                  <ExternalLink className="h-3 w-3" /> fatoora.zatca.gov.sa (الإنتاج)
+                </a>
+                <a href="https://fatoora.zatca.gov.sa/developer" target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
+                  <ExternalLink className="h-3 w-3" /> بوابة المطورين (Sandbox)
+                </a>
+              </div>
+            </div>
           </div>
 
           {/* Step 1: Generate CSR */}
@@ -367,14 +416,77 @@ export default function CompanyDetails() {
             </CardContent>
           </Card>
 
-          {/* Step 3: PCSID */}
+          {/* Step 3: الفواتير التجريبية — Compliance Check */}
+          <Card className={!hasCsid ? "opacity-60" : complianceCheckResult?.success ? "border-green-200" : ""}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <StepBadge n={3} active={hasCsid && !hasPcsid} done={!!complianceCheckResult?.success} />
+                <div>
+                  <CardTitle className="text-base">الخطوة 3 — الفواتير التجريبية</CardTitle>
+                  <CardDescription>
+                    اختبر فاتورة مصدرة مقابل شهادة CSID للتأكد من التوافق قبل الانتقال للإنتاج
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {complianceCheckResult?.success ? (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
+                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-green-800 text-sm">اجتاز فحص الامتثال بنجاح</p>
+                    <p className="text-xs text-green-700 mt-1">{complianceCheckResult.message}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+                    <Info className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
+                    <div>
+                      <p>أنشئ فاتورة وأصدرها أولاً، ثم أدخل معرّفها (ID) هنا لاختبارها.</p>
+                      <p className="mt-1">يُتحقق ZATCA من صحة XML وتوقيع الشهادة قبل الإنتاج.</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="معرّف الفاتورة (ID) — مثال: 5"
+                      value={testInvoiceId}
+                      onChange={e => setTestInvoiceId(e.target.value)}
+                      dir="ltr"
+                      type="number"
+                      min="1"
+                      disabled={!hasCsid}
+                      className="font-mono"
+                    />
+                    <Button
+                      onClick={handleComplianceCheck}
+                      disabled={!hasCsid || loading === "compliance-check" || !testInvoiceId}
+                      variant="outline"
+                      className="shrink-0 gap-2"
+                    >
+                      {loading === "compliance-check"
+                        ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الفحص...</>
+                        : <><RefreshCw className="h-4 w-4" />فحص الفاتورة</>}
+                    </Button>
+                  </div>
+                  {complianceCheckResult && !complianceCheckResult.success && (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
+                      <p className="font-medium">فشل الفحص: {complianceCheckResult.error}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Step 4: PCSID */}
           <Card className={hasPcsid ? "border-green-200" : !hasCsid ? "opacity-60" : ""}>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <StepBadge n={3} active={hasCsid && !hasPcsid} done={hasPcsid} />
+                  <StepBadge n={4} active={hasCsid && !hasPcsid} done={hasPcsid} />
                   <div>
-                    <CardTitle className="text-base">الخطوة 3 — الشهادة النهائية PCSID</CardTitle>
+                    <CardTitle className="text-base">الخطوة 4 — الشهادة النهائية PCSID</CardTitle>
                     <CardDescription>الشهادة الإنتاجية — تُفعَّل الفواتير الحقيقية بعد الحصول عليها</CardDescription>
                   </div>
                 </div>

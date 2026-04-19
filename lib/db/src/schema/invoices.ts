@@ -39,6 +39,7 @@ export const invoiceLineItemsTable = pgTable("invoice_line_items", {
   invoiceId: integer("invoice_id").notNull().references(() => invoicesTable.id, { onDelete: "cascade" }),
   description: text("description").notNull(),
   quantity: numeric("quantity", { precision: 14, scale: 4 }).notNull(),
+  unitCode: text("unit_code").notNull().default("PCE"),
   unitPrice: numeric("unit_price", { precision: 14, scale: 2 }).notNull(),
   discountAmount: numeric("discount_amount", { precision: 14, scale: 2 }).notNull().default("0"),
   vatRate: numeric("vat_rate", { precision: 6, scale: 2 }).notNull().default("15"),

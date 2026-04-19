@@ -212,6 +212,100 @@ router.post("/companies/:id/production-csid", async (req, res) => {
   }
 });
 
+// ─── 3.5 Compliance Check — فاتورة تجريبية ──────────────────────────────────
+// يُستخدم للتحقق من صحة الفاتورة مقابل شهادة الامتثال CSID قبل الانتقال للإنتاج
+router.post("/companies/:id/compliance-check", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  if (!company) {
+    res.status(404).json({ error: "Company not found" });
+    return;
+  }
+
+  if (!company.zatcaCsidToken || !company.zatcaCsidSecret) {
+    res.status(400).json({
+      error: "CSID غير متوفر. يجب الحصول على CSID أولاً قبل إجراء الفحص التجريبي.",
+      hint: "أكمل الخطوة 2 (الشهادة الأولية) أولاً."
+    });
+    return;
+  }
+
+  const { invoiceId } = req.body as { invoiceId?: number };
+  if (!invoiceId) {
+    res.status(400).json({ error: "invoiceId مطلوب — أدخل رقم فاتورة لاختبارها." });
+    return;
+  }
+
+  const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, invoiceId));
+  if (!invoice || invoice.companyId !== id) {
+    res.status(404).json({ error: "الفاتورة غير موجودة أو لا تنتمي لهذه الشركة." });
+    return;
+  }
+
+  if (!invoice.xmlContent) {
+    res.status(400).json({ error: "يجب إصدار الفاتورة أولاً لتوليد XML. اذهب لصفحة الفاتورة واضغط 'إصدار واعتماد'." });
+    return;
+  }
+
+  try {
+    const baseUrl = getZatcaBaseUrl(company.isSandbox ?? true);
+    const xmlBase64 = Buffer.from(invoice.xmlContent).toString("base64");
+    const hashBase64 = hashXml(invoice.xmlContent);
+
+    const endpoint = invoice.invoiceType === "simplified"
+      ? `${baseUrl}/compliance/invoices/reporting/single`
+      : `${baseUrl}/compliance/invoices/clearance/single`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Accept-Version": "V2",
+        "Accept-Language": "en",
+        "Authorization": `Basic ${Buffer.from(`${company.zatcaCsidToken}:${company.zatcaCsidSecret}`).toString("base64")}`,
+        "Clearance-Status": invoice.invoiceType === "standard" ? "1" : "0",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        invoiceHash: hashBase64,
+        uuid: invoice.invoiceNumber,
+        invoice: xmlBase64,
+      }),
+    });
+
+    const data = await response.json() as {
+      validationResults?: {
+        infoMessages?: Array<{ code: string; message: string }>;
+        warningMessages?: Array<{ code: string; message: string }>;
+        errorMessages?: Array<{ code: string; message: string }>;
+        status?: string;
+      };
+      reportingStatus?: string;
+      clearanceStatus?: string;
+    };
+
+    if (!response.ok) {
+      res.status(response.status).json({
+        success: false,
+        complianceCheck: false,
+        zatcaResponse: data,
+        hint: "الفاتورة التجريبية فشلت في التحقق. راجع رسائل الخطأ وصحح البيانات قبل الانتقال للإنتاج.",
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      complianceCheck: true,
+      validationResults: data.validationResults,
+      status: data.clearanceStatus ?? data.reportingStatus,
+      message: "اجتازت الفاتورة التجريبية فحص الامتثال بنجاح. يمكنك الآن طلب شهادة الإنتاج (PCSID).",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: "فشل الاتصال بـ ZATCA", details: message });
+  }
+});
+
 // ─── 4. Submit Invoice to ZATCA ───────────────────────────────────────────────
 router.post("/invoices/:id/submit", async (req, res) => {
   const id = parseInt(req.params.id);
