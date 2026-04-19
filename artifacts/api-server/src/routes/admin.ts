@@ -100,6 +100,53 @@ router.delete("/requests/:id", requireSuperAdmin, async (req, res) => {
   res.status(204).send();
 });
 
+// GET /api/admin/subscriptions — all subscriptions with company info
+router.get("/subscriptions", requireSuperAdmin, async (_req, res) => {
+  const rows = await db.select({
+    subscription: subscriptionsTable,
+    company: {
+      id: companiesTable.id,
+      nameAr: companiesTable.nameAr,
+      vatNumber: companiesTable.vatNumber,
+      status: companiesTable.status,
+    },
+  })
+  .from(subscriptionsTable)
+  .leftJoin(companiesTable, eq(companiesTable.id, subscriptionsTable.companyId));
+  res.json(rows);
+});
+
+// PUT /api/admin/subscriptions/:id — update a subscription
+router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { plan, maxUsers, maxInvoices, billingCycle, startDate, endDate, isActive, price } = req.body;
+
+  const PLANS: Record<string, { maxUsers: number; maxInvoices: number; price: string }> = {
+    starter:      { maxUsers: 1,   maxInvoices: 50,     price: "99" },
+    professional: { maxUsers: 5,   maxInvoices: 500,    price: "299" },
+    enterprise:   { maxUsers: 999, maxInvoices: 999999, price: "899" },
+  };
+
+  const updates: Record<string, any> = {};
+  if (plan)          { updates.plan = plan; }
+  if (maxUsers       != null) updates.maxUsers     = maxUsers;
+  if (maxInvoices    != null) updates.maxInvoices  = maxInvoices;
+  if (billingCycle)  updates.billingCycle = billingCycle;
+  if (startDate)     updates.startDate = startDate;
+  if (endDate)       updates.endDate   = endDate;
+  if (isActive       != null) updates.isActive = isActive;
+  if (price          != null) updates.price = String(price);
+
+  // Auto-fill plan defaults if plan changed
+  if (plan && PLANS[plan] && maxUsers == null)    updates.maxUsers    = PLANS[plan].maxUsers;
+  if (plan && PLANS[plan] && maxInvoices == null) updates.maxInvoices = PLANS[plan].maxInvoices;
+  if (plan && PLANS[plan] && price == null)       updates.price       = PLANS[plan].price;
+
+  const [updated] = await db.update(subscriptionsTable).set(updates).where(eq(subscriptionsTable.id, id)).returning();
+  if (!updated) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
+  res.json({ ok: true, subscription: updated });
+});
+
 // POST /api/admin/seed — create superadmin (only if none exists)
 router.post("/seed", async (req, res) => {
   const existing = await db.select().from(usersTable).where(eq(usersTable.role, "superadmin"));

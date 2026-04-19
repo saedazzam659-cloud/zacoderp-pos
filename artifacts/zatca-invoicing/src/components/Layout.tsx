@@ -18,9 +18,10 @@ interface LayoutProps { children: React.ReactNode; }
 
 // Superadmin navigation
 const superAdminNav = [
-  { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true },
-  { name: "طلبات التسجيل", href: "/admin/requests", icon: Clock, badge: "pending" },
-  { name: "الشركات", href: "/companies", icon: Building2 },
+  { name: "لوحة التحكم",     href: "/",                    icon: LayoutDashboard, exact: true },
+  { name: "طلبات التسجيل",   href: "/admin/requests",       icon: Clock },
+  { name: "إدارة الاشتراكات", href: "/admin/subscriptions",  icon: Package },
+  { name: "الشركات",          href: "/companies",            icon: Building2 },
 ];
 
 // Company user navigation
