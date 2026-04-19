@@ -1,164 +1,261 @@
 import { useListInvoices } from "@workspace/api-client-react";
 import { Link } from "wouter";
-import { Plus, Search, FileText, Download } from "lucide-react";
+import { Plus, Search, FileText, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
+const STATUS_TABS = [
+  { key: "all",       label: "الكل" },
+  { key: "draft",     label: "مسودة" },
+  { key: "issued",    label: "مصدرة" },
+  { key: "cancelled", label: "ملغاة" },
+];
+
+const getStatusStyle = (status: string) => {
+  switch (status) {
+    case "issued":    return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30";
+    case "draft":     return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30";
+    case "cancelled": return "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30";
+    default:          return "bg-muted text-muted-foreground border-border";
+  }
+};
+
+const getStatusLabel = (status: string) => {
+  switch (status) {
+    case "issued":    return "مصدرة";
+    case "draft":     return "مسودة";
+    case "cancelled": return "ملغاة";
+    default:          return status;
+  }
+};
+
+const getZatcaStyle = (status?: string) => {
+  switch (status) {
+    case "cleared":
+    case "reported":  return { cls: "bg-blue-50 text-blue-700 border-blue-200", label: "✓ ZATCA" };
+    case "rejected":  return { cls: "bg-red-50 text-red-700 border-red-200", label: "✕ ZATCA" };
+    case "pending":   return { cls: "bg-yellow-50 text-yellow-700 border-yellow-200", label: "⟳ ZATCA" };
+    default:          return null;
+  }
+};
 
 export default function Invoices() {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  
+  const [activeTab, setActiveTab] = useState("all");
+
   const { data: invoices, isLoading } = useListInvoices(
-    statusFilter !== "all" ? { status: statusFilter as any } : undefined, 
-    { query: { queryKey: ["invoices", statusFilter] } }
+    activeTab !== "all" ? { status: activeTab as "draft" | "issued" | "cancelled" } : undefined,
+    { query: { queryKey: ["invoices", activeTab] } }
   );
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR' }).format(amount);
-  };
+  const formatCurrency = (amount: number | string) =>
+    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(Number(amount));
 
-  const filteredInvoices = invoices?.filter(inv => 
-    inv.invoiceNumber.includes(search) || 
-    (inv.customer?.nameAr.includes(search))
+  const filtered = invoices?.filter(inv =>
+    inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
+    inv.customer?.nameAr?.includes(search)
   );
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'issued':
-        return <Badge className="bg-green-100 text-green-800 hover:bg-green-100 border-transparent dark:bg-green-900/30 dark:text-green-400">مصدرة</Badge>;
-      case 'draft':
-        return <Badge variant="secondary">مسودة</Badge>;
-      case 'cancelled':
-        return <Badge variant="destructive" className="bg-red-100 text-red-800 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400">ملغاة</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
-  };
-
-  const getZatcaBadge = (status?: string) => {
-    if (!status) return null;
-    switch (status) {
-      case 'cleared':
-      case 'reported':
-        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 border-transparent dark:bg-blue-900/30 dark:text-blue-400">ZATCA ✓</Badge>;
-      case 'rejected':
-        return <Badge variant="destructive" className="bg-red-100 text-red-800 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400">ZATCA ✕</Badge>;
-      case 'pending':
-        return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-transparent dark:bg-yellow-900/30 dark:text-yellow-400">ZATCA ⟳</Badge>;
-      default:
-        return null;
-    }
+  const all = invoices ?? [];
+  const stats = {
+    total: all.length,
+    issued: all.filter(i => i.status === "issued").length,
+    pending: all.filter(i => i.zatcaStatus === "pending" && i.status === "issued").length,
+    amount: all.filter(i => i.status === "issued").reduce((s, i) => s + Number(i.grandTotal), 0),
   };
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">الفواتير</h1>
           <p className="text-muted-foreground mt-1">إدارة فواتير المبيعات الإلكترونية</p>
         </div>
-        <Button asChild>
-          <Link href="/invoices/new" className="flex items-center gap-2">
+        <Button asChild className="gap-2">
+          <Link href="/invoices/new">
             <Plus className="h-4 w-4" />
-            <span>إنشاء فاتورة جديدة</span>
+            <span>فاتورة جديدة</span>
           </Link>
         </Button>
       </div>
 
-      <Card>
-        <CardHeader className="pb-3 border-b flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="relative w-full md:w-80">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="رقم الفاتورة، اسم العميل..." 
-              className="pl-4 pr-10" 
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 rounded-xl" />
+          ))
+        ) : (
+          <>
+            <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <FileText className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.total}</p>
+                <p className="text-xs text-muted-foreground">إجمالي الفواتير</p>
+              </div>
+            </div>
+            <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.issued}</p>
+                <p className="text-xs text-muted-foreground">مصدرة</p>
+              </div>
+            </div>
+            <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                <Clock className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats.pending}</p>
+                <p className="text-xs text-muted-foreground">بانتظار ZATCA</p>
+              </div>
+            </div>
+            <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                <TrendingUp className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-lg font-bold leading-tight" dir="ltr">{formatCurrency(stats.amount)}</p>
+                <p className="text-xs text-muted-foreground">مجموع المُصدَرة</p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-0 border-b">
+          {/* Status tabs */}
+          <div className="flex overflow-x-auto">
+            {STATUS_TABS.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-5 py-3.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px ${
+                  activeTab === tab.key
+                    ? "border-primary text-primary bg-primary/5"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+              >
+                {tab.label}
+                {tab.key === "all" && invoices && (
+                  <span className="mr-1.5 text-xs bg-muted px-1.5 py-0.5 rounded-full">{invoices.length}</span>
+                )}
+              </button>
+            ))}
+          </div>
+          {/* Search */}
+          <div className="relative px-4 py-3">
+            <Search className="absolute right-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="بحث برقم الفاتورة أو اسم العميل..."
+              className="pl-4 pr-10 w-full sm:w-72 h-9"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <div className="flex gap-2 w-full md:w-auto">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full md:w-40">
-                <SelectValue placeholder="الحالة" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">الكل</SelectItem>
-                <SelectItem value="issued">مصدرة</SelectItem>
-                <SelectItem value="draft">مسودة</SelectItem>
-                <SelectItem value="cancelled">ملغاة</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="relative w-full overflow-auto">
-            <table className="w-full caption-bottom text-sm">
-              <thead className="[&_tr]:border-b bg-muted/30">
-                <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">رقم الفاتورة</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">تاريخ الإصدار</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">العميل</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">المبلغ الإجمالي</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">الحالة</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">هيئة الزكاة</th>
-                  <th className="h-12 px-6 text-right align-middle font-medium text-muted-foreground">إجراءات</th>
-                </tr>
-              </thead>
-              <tbody className="[&_tr:last-child]:border-0">
-                {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i} className="border-b transition-colors">
-                      <td className="p-6"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-6"><Skeleton className="h-4 w-32" /></td>
-                      <td className="p-6"><Skeleton className="h-4 w-40" /></td>
-                      <td className="p-6"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-6"><Skeleton className="h-6 w-16 rounded-full" /></td>
-                      <td className="p-6"><Skeleton className="h-6 w-16 rounded-full" /></td>
-                      <td className="p-6"><Skeleton className="h-8 w-20" /></td>
-                    </tr>
-                  ))
-                ) : filteredInvoices?.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-12 text-center text-muted-foreground">
-                      <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>لا توجد فواتير مطابقة للبحث</p>
-                    </td>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full caption-bottom text-sm">
+            <thead>
+              <tr className="border-b bg-muted/20">
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">رقم الفاتورة</th>
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">التاريخ</th>
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">العميل</th>
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">المبلغ الإجمالي</th>
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">الحالة</th>
+                <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">ZATCA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="border-b">
+                    {Array.from({ length: 6 }).map((_, j) => (
+                      <td key={j} className="px-5 py-4"><Skeleton className="h-4 w-full max-w-28" /></td>
+                    ))}
                   </tr>
-                ) : (
-                  filteredInvoices?.map((invoice) => (
-                    <tr key={invoice.id} className="border-b transition-colors hover:bg-muted/50">
-                      <td className="p-6 font-medium" dir="ltr">{invoice.invoiceNumber}</td>
-                      <td className="p-6">{format(new Date(invoice.issueDate), 'PP', { locale: arSA })}</td>
-                      <td className="p-6">{invoice.customer?.nameAr || 'عميل نقدي'}</td>
-                      <td className="p-6 font-bold">{formatCurrency(invoice.grandTotal)}</td>
-                      <td className="p-6">{getStatusBadge(invoice.status)}</td>
-                      <td className="p-6">{getZatcaBadge(invoice.zatcaStatus)}</td>
-                      <td className="p-6 flex items-center gap-2">
-                        <Button variant="outline" size="sm" asChild>
-                          <Link href={`/invoices/${invoice.id}`}>عرض</Link>
-                        </Button>
+                ))
+              ) : !filtered?.length ? (
+                <tr>
+                  <td colSpan={6} className="py-16 text-center text-muted-foreground">
+                    <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">{search ? "لا توجد نتائج مطابقة" : "لا توجد فواتير بعد"}</p>
+                    {!search && (
+                      <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
+                        <Link href="/invoices/new"><Plus className="h-3.5 w-3.5" />إنشاء فاتورة</Link>
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                filtered?.map(invoice => {
+                  const zatca = getZatcaStyle(invoice.zatcaStatus);
+                  return (
+                    <tr
+                      key={invoice.id}
+                      className="border-b transition-colors hover:bg-muted/30 cursor-pointer group"
+                      onClick={() => window.location.href = `/invoices/${invoice.id}`}
+                    >
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                            invoice.status === "issued" ? "bg-emerald-500" :
+                            invoice.status === "draft" ? "bg-amber-400" : "bg-red-400"
+                          }`} />
+                          <span className="font-mono font-medium text-xs group-hover:text-primary transition-colors" dir="ltr">
+                            {invoice.invoiceNumber}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 sm:hidden">
+                          {format(new Date(invoice.issueDate), "yyyy/MM/dd")}
+                        </p>
+                      </td>
+                      <td className="px-5 py-3.5 text-muted-foreground hidden sm:table-cell">
+                        {format(new Date(invoice.issueDate), "PP", { locale: arSA })}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="font-medium">{invoice.customer?.nameAr || "عميل نقدي"}</span>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {invoice.invoiceType === "standard" ? "ضريبية (B2B)" : "مبسطة (B2C)"}
+                        </p>
+                      </td>
+                      <td className="px-5 py-3.5 font-bold tabular-nums" dir="ltr">
+                        {formatCurrency(invoice.grandTotal)}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusStyle(invoice.status)}`}>
+                          {getStatusLabel(invoice.status)}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 hidden md:table-cell">
+                        {zatca && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${zatca.cls}`}>
+                            {zatca.label}
+                          </span>
+                        )}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
