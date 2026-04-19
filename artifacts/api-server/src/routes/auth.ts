@@ -156,6 +156,20 @@ router.post("/register", async (req, res) => {
   };
   const planConfig = PLANS[plan ?? "starter"] ?? PLANS.starter;
 
+  // Determine if this is an internal admin creation (called by superadmin) vs public registration
+  const auth = req.headers.authorization;
+  const isAdminCreate = !!auth?.startsWith("Bearer ");
+  let callerIsSuperAdmin = false;
+  if (isAdminCreate) {
+    const token = auth!.slice(7);
+    const [caller] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+    callerIsSuperAdmin = caller?.role === "superadmin";
+  }
+
+  // Companies created by superadmin are immediately active; self-registered are pending
+  const companyStatus = callerIsSuperAdmin ? "active" : "pending";
+  const userIsActive = callerIsSuperAdmin;
+
   // Create company
   const [company] = await db.insert(companiesTable).values({
     nameAr,
@@ -171,6 +185,7 @@ router.post("/register", async (req, res) => {
     industryName: industryName ?? null,
     invoiceType: invoiceType ?? "both",
     isSandbox: false,
+    status: companyStatus,
   }).returning();
 
   // Create subscription
@@ -189,38 +204,41 @@ router.post("/register", async (req, res) => {
     price: planConfig.price,
   });
 
-  // Hash password + create admin user
+  // Hash password + create admin user (inactive until superadmin approves)
   const passwordHash = await bcrypt.hash(password, 12);
-  const sessionToken = generateToken();
-  const sessionId = randomUUID();
-
   const [newUser] = await db.insert(usersTable).values({
     username,
     email: email ?? null,
     passwordHash,
     companyId: company.id,
     role: "admin",
-    sessionToken,
-    sessionId,
-    lastLoginAt: new Date(),
-    isActive: true,
+    sessionToken: null,
+    sessionId: null,
+    lastLoginAt: null,
+    isActive: userIsActive,
   }).returning();
 
-  const [subscription] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, company.id));
-
-  res.status(201).json({
-    token: sessionToken,
-    sessionId,
-    user: {
-      id: newUser.id,
-      username: newUser.username,
-      email: newUser.email,
-      role: newUser.role,
+  if (callerIsSuperAdmin) {
+    // Admin-created: return token immediately
+    const sessionToken = generateToken();
+    const sessionId = randomUUID();
+    await db.update(usersTable).set({ sessionToken, sessionId, lastLoginAt: new Date(), updatedAt: new Date() })
+      .where(eq(usersTable.id, newUser.id));
+    const [subscription] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, company.id));
+    res.status(201).json({
+      token: sessionToken,
+      sessionId,
+      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company, subscription },
+    });
+  } else {
+    // Self-registered: pending approval
+    res.status(201).json({
+      pending: true,
+      message: "تم استلام طلبك بنجاح. سيتم مراجعته من قِبل الإدارة وستُبلَّغ بالنتيجة قريباً.",
       companyId: company.id,
-      company,
-      subscription,
-    },
-  });
+      username: newUser.username,
+    });
+  }
 });
 
 export default router;

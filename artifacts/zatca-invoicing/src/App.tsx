@@ -5,6 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
+import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
+import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
 import CompanyNew from "@/pages/CompanyNew";
 import CompanyDetails from "@/pages/CompanyDetails";
@@ -17,6 +19,7 @@ import Suppliers from "@/pages/Suppliers";
 import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import PendingApproval from "@/pages/PendingApproval";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -33,43 +36,57 @@ function LoadingScreen() {
   );
 }
 
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval"];
+
 function AppRoutes() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [location] = useLocation();
 
   if (loading) return <LoadingScreen />;
+
+  const isPublic = PUBLIC_PATHS.some(p => location === p || location.startsWith(p));
 
   // Redirect logged-in users away from auth pages
   if (isAuthenticated && (location === "/login" || location === "/register")) {
     return <Redirect to="/" />;
   }
 
-  // Redirect unauthenticated users to login (except public routes)
-  if (!isAuthenticated && location !== "/login" && location !== "/register") {
+  // Redirect unauthenticated users to login
+  if (!isAuthenticated && !isPublic) {
     return <Redirect to="/login" />;
   }
+
+  const isSuperAdmin = user?.role === "superadmin";
 
   return (
     <Switch>
       {/* Public routes */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/pending-approval" component={PendingApproval} />
 
       {/* Protected routes */}
       <Route>
         <Layout>
           <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/companies" component={Companies} />
-            <Route path="/companies/new" component={CompanyNew} />
-            <Route path="/companies/:id" component={CompanyDetails} />
-            <Route path="/customers" component={Customers} />
-            <Route path="/customers/new" component={CustomerNew} />
-            <Route path="/suppliers" component={Suppliers} />
-            <Route path="/suppliers/new" component={SupplierNew} />
-            <Route path="/invoices" component={Invoices} />
-            <Route path="/invoices/new" component={InvoiceNew} />
-            <Route path="/invoices/:id" component={InvoiceDetails} />
+            {/* Superadmin routes */}
+            {isSuperAdmin && <Route path="/" component={SuperAdminDashboard} />}
+            {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
+            {isSuperAdmin && <Route path="/companies" component={Companies} />}
+            {isSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
+            {isSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
+
+            {/* Company user routes */}
+            {!isSuperAdmin && <Route path="/" component={Dashboard} />}
+            {!isSuperAdmin && <Route path="/invoices" component={Invoices} />}
+            {!isSuperAdmin && <Route path="/invoices/new" component={InvoiceNew} />}
+            {!isSuperAdmin && <Route path="/invoices/:id" component={InvoiceDetails} />}
+            {!isSuperAdmin && <Route path="/customers" component={Customers} />}
+            {!isSuperAdmin && <Route path="/customers/new" component={CustomerNew} />}
+            {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
+            {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
+
+            {/* Shared routes */}
             <Route component={NotFound} />
           </Switch>
         </Layout>

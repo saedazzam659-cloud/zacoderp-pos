@@ -90,9 +90,25 @@ export default function Register() {
     setError("");
     setLoading(true);
     try {
-      await register(form as RegisterData);
-      toast({ title: "تم إنشاء الحساب بنجاح!", description: "مرحباً بك في نظام الفاتورة الإلكترونية" });
-      setLocation("/");
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${BASE}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, billingCycle }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
+
+      if (data.pending) {
+        // Self-registration: redirect to pending approval page
+        setLocation("/pending-approval");
+      } else if (data.token) {
+        // Admin-created: auto-login
+        await register(form as RegisterData);
+        setLocation("/");
+      } else {
+        setLocation("/pending-approval");
+      }
     } catch (err: any) {
       setError(err.message ?? "حدث خطأ. حاول مرة أخرى.");
     } finally {
