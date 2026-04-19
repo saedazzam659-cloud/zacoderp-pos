@@ -7,6 +7,7 @@ import {
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
   BadgeCheck, FileText, RefreshCw, Layers, Trash2
 } from "lucide-react";
+import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -108,6 +109,33 @@ export default function Companies() {
           <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2">
             <RefreshCw className="h-3.5 w-3.5" />تحديث
           </Button>
+          <ExportButtons
+            rows={filtered.map((c: any) => ({
+              nameAr:        c.nameAr        ?? "",
+              nameEn:        c.nameEn        ?? "",
+              vatNumber:     c.vatNumber     ?? "",
+              crNumber:      c.crNumber      ?? "",
+              city:          c.city          ?? "",
+              status:        STATUS_CONFIG[c.status ?? "active"]?.label ?? c.status ?? "",
+              subscriptionPlan: c.subscriptionPlan ?? "",
+              invoiceType:   INVOICE_TYPE[c.invoiceType ?? ""] ?? c.invoiceType ?? "",
+              zatca:         c.zatcaPcsid ? "مسجّلة" : (c.zatcaCsid ? "جزئي" : "غير مسجّلة"),
+            }))}
+            columns={[
+              { key: "nameAr",          header: "اسم الشركة (عربي)",    width: 28 },
+              { key: "nameEn",          header: "اسم الشركة (إنجليزي)", width: 28 },
+              { key: "vatNumber",       header: "الرقم الضريبي",        width: 20 },
+              { key: "crNumber",        header: "السجل التجاري",        width: 18 },
+              { key: "city",            header: "المدينة",              width: 16 },
+              { key: "status",          header: "الحالة",               width: 14 },
+              { key: "subscriptionPlan", header: "الباقة",              width: 16 },
+              { key: "invoiceType",     header: "نوع الفاتورة",         width: 18 },
+              { key: "zatca",           header: "حالة ZATCA",           width: 16 },
+            ]}
+            filename={`شركات-${new Date().toISOString().slice(0, 10)}`}
+            title="الشركات المسجّلة"
+            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+          />
           <Button asChild size="sm" className="gap-2">
             <Link href="/companies/new">
               <Plus className="h-3.5 w-3.5" />إضافة شركة

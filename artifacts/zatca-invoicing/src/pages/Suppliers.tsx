@@ -6,6 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import ExportButtons from "@/components/ExportButtons";
+
+const SUPPLIER_EXPORT_COLS = [
+  { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
+  { key: "nameEn",     header: "الاسم (إنجليزي)",     width: 28 },
+  { key: "vatNumber",  header: "الرقم الضريبي",       width: 20 },
+  { key: "crNumber",   header: "السجل التجاري",       width: 18 },
+  { key: "phone",      header: "الهاتف",              width: 18 },
+  { key: "email",      header: "البريد الإلكتروني",  width: 28 },
+  { key: "city",       header: "المدينة",             width: 16 },
+  { key: "district",   header: "الحي",               width: 16 },
+  { key: "postalCode", header: "الرقم البريدي",      width: 14 },
+];
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -58,9 +71,28 @@ export default function Suppliers() {
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">إدارة بيانات الموردين والموزعين</p>
         </div>
-        <Button asChild className="gap-2">
-          <Link href="/suppliers/new"><Plus className="h-4 w-4" />إضافة مورد</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <ExportButtons
+            rows={filtered.map((s: any) => ({
+              nameAr:     s.nameAr     ?? "",
+              nameEn:     s.nameEn     ?? "",
+              vatNumber:  s.vatNumber  ?? "",
+              crNumber:   s.crNumber   ?? "",
+              phone:      s.phone      ?? "",
+              email:      s.email      ?? "",
+              city:       s.city       ?? "",
+              district:   s.district   ?? "",
+              postalCode: s.postalCode ?? "",
+            }))}
+            columns={SUPPLIER_EXPORT_COLS}
+            filename={`موردون-${new Date().toISOString().slice(0, 10)}`}
+            title="قائمة الموردين"
+            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+          />
+          <Button asChild className="gap-2">
+            <Link href="/suppliers/new"><Plus className="h-4 w-4" />إضافة مورد</Link>
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}

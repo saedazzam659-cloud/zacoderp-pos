@@ -1,0 +1,71 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu, DropdownMenuContent,
+  DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2 } from "lucide-react";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+interface ExportButtonsProps {
+  rows: Record<string, unknown>[];
+  columns: ExportColumn[];
+  filename: string;
+  title: string;
+  subtitle?: string;
+  disabled?: boolean;
+  size?: "sm" | "default";
+}
+
+export default function ExportButtons({
+  rows, columns, filename, title, subtitle, disabled, size = "sm",
+}: ExportButtonsProps) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleExport(type: "excel" | "pdf") {
+    setBusy(true);
+    try {
+      if (type === "excel") {
+        exportToExcel(rows, columns, filename);
+      } else {
+        exportToPDF(rows, columns, filename, title, subtitle);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size={size}
+          disabled={disabled || busy}
+          className="gap-2"
+        >
+          {busy
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <Download className="h-3.5 w-3.5" />}
+          تصدير
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          {rows.length === 0 ? "لا توجد بيانات" : `${rows.length} سجل`}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("excel")}>
+          <FileSpreadsheet className="h-4 w-4 text-green-600" />
+          <span>Excel (.xlsx)</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("pdf")}>
+          <FileText className="h-4 w-4 text-red-500" />
+          <span>PDF (.pdf)</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

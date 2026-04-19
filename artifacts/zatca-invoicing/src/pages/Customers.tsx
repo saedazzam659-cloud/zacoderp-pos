@@ -9,6 +9,19 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import ExportButtons from "@/components/ExportButtons";
+
+const CUSTOMER_EXPORT_COLS = [
+  { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
+  { key: "nameEn",     header: "الاسم (إنجليزي)",     width: 28 },
+  { key: "vatNumber",  header: "الرقم الضريبي",       width: 20 },
+  { key: "crNumber",   header: "السجل التجاري",       width: 18 },
+  { key: "phone",      header: "الهاتف",              width: 18 },
+  { key: "email",      header: "البريد الإلكتروني",  width: 28 },
+  { key: "city",       header: "المدينة",             width: 16 },
+  { key: "district",   header: "الحي",               width: 16 },
+  { key: "postalCode", header: "الرقم البريدي",      width: 14 },
+];
 
 const TABS = [
   { key: "all",        label: "جميع العملاء",    icon: Users },
@@ -65,11 +78,30 @@ export default function Customers() {
             إدارة بيانات العملاء لإصدار الفواتير الإلكترونية
           </p>
         </div>
-        <Button asChild className="gap-2 shrink-0">
-          <Link href="/customers/new">
-            <Plus className="h-4 w-4" />إضافة عميل
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <ExportButtons
+            rows={filtered.map((c: any) => ({
+              nameAr:     c.nameAr     ?? "",
+              nameEn:     c.nameEn     ?? "",
+              vatNumber:  c.vatNumber  ?? "",
+              crNumber:   c.crNumber   ?? "",
+              phone:      c.phone      ?? "",
+              email:      c.email      ?? "",
+              city:       c.city       ?? "",
+              district:   c.district   ?? "",
+              postalCode: c.postalCode ?? "",
+            }))}
+            columns={CUSTOMER_EXPORT_COLS}
+            filename={`عملاء-${new Date().toISOString().slice(0, 10)}`}
+            title="قائمة العملاء"
+            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+          />
+          <Button asChild className="gap-2 shrink-0">
+            <Link href="/customers/new">
+              <Plus className="h-4 w-4" />إضافة عميل
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* ── 3 TABS — أعلى اليسار ── */}

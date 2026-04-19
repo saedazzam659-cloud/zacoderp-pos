@@ -10,6 +10,8 @@ import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import ExportButtons from "@/components/ExportButtons";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +22,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+const INVOICE_EXPORT_COLS = [
+  { key: "invoiceNumber",  header: "رقم الفاتورة",         width: 22 },
+  { key: "invoiceType",    header: "النوع",                 width: 14 },
+  { key: "customerName",   header: "العميل",                width: 28 },
+  { key: "issueDate",      header: "تاريخ الإصدار",         width: 18 },
+  { key: "subtotal",       header: "المبلغ قبل الضريبة",    width: 22 },
+  { key: "vatTotal",       header: "ضريبة القيمة المضافة",  width: 24 },
+  { key: "grandTotal",     header: "الإجمالي",              width: 18 },
+  { key: "status",         header: "الحالة",                width: 14 },
+  { key: "zatcaStatus",    header: "حالة ZATCA",            width: 16 },
+];
 
 const STATUS_TABS = [
   { key: "all",       label: "الكل" },
@@ -110,11 +124,30 @@ export default function Invoices() {
           <h1 className="text-2xl font-bold text-foreground">الفواتير</h1>
           <p className="text-muted-foreground mt-1">إدارة فواتير المبيعات الإلكترونية</p>
         </div>
-        <Button asChild className="gap-2">
-          <Link href="/invoices/new">
-            <Plus className="h-4 w-4" /><span>فاتورة جديدة</span>
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          <ExportButtons
+            rows={(filtered ?? []).map(inv => ({
+              invoiceNumber: inv.invoiceNumber,
+              invoiceType:   inv.invoiceType === "standard" ? "ضريبية" : "مبسطة",
+              customerName:  inv.customer?.nameAr ?? "عميل نقدي",
+              issueDate:     inv.issueDate,
+              subtotal:      Number(inv.subtotal).toFixed(2),
+              vatTotal:      Number(inv.vatTotal).toFixed(2),
+              grandTotal:    Number(inv.grandTotal).toFixed(2),
+              status:        getStatusLabel(inv.status),
+              zatcaStatus:   inv.zatcaStatus ?? "—",
+            }))}
+            columns={INVOICE_EXPORT_COLS}
+            filename={`فواتير-${new Date().toISOString().slice(0, 10)}`}
+            title="قائمة الفواتير"
+            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+          />
+          <Button asChild className="gap-2">
+            <Link href="/invoices/new">
+              <Plus className="h-4 w-4" /><span>فاتورة جديدة</span>
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}

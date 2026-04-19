@@ -6,11 +6,17 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   FileText, Printer, CalendarRange, Building2,
   AlertCircle, Hash, BadgePercent, ReceiptText,
   ArrowDownToLine, ArrowUpFromLine, Scale,
+  Download, FileSpreadsheet, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { exportToExcel, exportToPDF } from "@/lib/export";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -201,6 +207,7 @@ export default function VATDeclaration() {
               ))}
             </SelectContent>
           </Select>
+          {data && <VATExportMenu data={data} period={period} />}
           <Button size="sm" variant="outline" className="gap-2 h-9" onClick={() => window.print()}>
             <Printer className="h-3.5 w-3.5" />
             طباعة
@@ -500,5 +507,99 @@ function Chip({ icon: Icon, label, value }: { icon: React.ElementType; label: st
       <span className="text-xs text-muted-foreground">{label}:</span>
       <span className="text-xs font-semibold tabular-nums">{value}</span>
     </div>
+  );
+}
+
+// ─── VAT Declaration Export Menu ──────────────────────────────────────────────
+
+function VATExportMenu({
+  data, period,
+}: {
+  data: VATData;
+  period: { label: string; from: string; to: string };
+}) {
+  const companyName = data.company?.nameAr ?? "";
+
+  const VAT_COLS = [
+    { key: "section", header: "القسم",                      width: 14 },
+    { key: "num",     header: "#",                           width: 6  },
+    { key: "label",   header: "البيان",                      width: 50 },
+    { key: "base",    header: "الأساس الخاضع للضريبة (ر.س)", width: 28 },
+    { key: "vat",     header: "مبلغ الضريبة (ر.س)",          width: 24 },
+  ];
+
+  function fmtN(n: number) {
+    return n.toFixed(2);
+  }
+
+  function buildRows() {
+    const rows: Record<string, unknown>[] = [
+      // Meta rows
+      { section: "معلومات الإقرار", num: "", label: "الشركة",            base: companyName,                                     vat: "" },
+      { section: "معلومات الإقرار", num: "", label: "الرقم الضريبي",     base: data.company?.vatNumber ?? "",                   vat: "" },
+      { section: "معلومات الإقرار", num: "", label: "الفترة الضريبية",   base: period.label,                                    vat: "" },
+      { section: "معلومات الإقرار", num: "", label: "من تاريخ",          base: period.from,                                     vat: "" },
+      { section: "معلومات الإقرار", num: "", label: "إلى تاريخ",         base: period.to,                                       vat: "" },
+      { section: "معلومات الإقرار", num: "", label: "عدد الفواتير",      base: data.invoiceBreakdown.totalCount,                vat: "" },
+      // Separator
+      { section: "", num: "", label: "", base: "", vat: "" },
+      // Section 1
+      { section: "ضريبة المخرجات", num: "1", label: "المبيعات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
+      { section: "ضريبة المخرجات", num: "2", label: "المبيعات الخاضعة لنسبة الصفر %",               base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
+      { section: "ضريبة المخرجات", num: "3", label: "المبيعات المعفاة من الضريبة",                  base: fmtN(data.outputTax.exempt.base),        vat: "—" },
+      { section: "ضريبة المخرجات", num: "4", label: "إجمالي المبيعات",                               base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
+      // Separator
+      { section: "", num: "", label: "", base: "", vat: "" },
+      // Section 2
+      { section: "ضريبة المدخلات", num: "5", label: "المشتريات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
+      { section: "ضريبة المدخلات", num: "6", label: "المشتريات الخاضعة لنسبة الصفر %",                base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
+      { section: "ضريبة المدخلات", num: "7", label: "المشتريات المعفاة من الضريبة",                   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
+      { section: "ضريبة المدخلات", num: "8", label: "إجمالي المشتريات",                                base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
+      // Separator
+      { section: "", num: "", label: "", base: "", vat: "" },
+      // Section 3
+      { section: "صافي الضريبة", num: "", label: "ضريبة المخرجات",              base: fmtN(data.outputTax.total.vat), vat: "" },
+      { section: "صافي الضريبة", num: "", label: "ضريبة المدخلات (مطروحة)",     base: fmtN(data.inputTax.total.vat),  vat: "" },
+      { section: "صافي الضريبة", num: "", label: "صافي الضريبة المستحقة (ر.س)", base: fmtN(data.netVat),              vat: "" },
+    ];
+    return rows;
+  }
+
+  function handleExcel() {
+    exportToExcel(buildRows(), VAT_COLS, `اقرار-ضريبي-${period.from}-${period.to}`, "الإقرار الضريبي");
+  }
+
+  function handlePDF() {
+    exportToPDF(
+      buildRows(),
+      VAT_COLS,
+      `اقرار-ضريبي-${period.from}-${period.to}`,
+      "الإقرار الضريبي على القيمة المضافة",
+      `${companyName} — ${period.label} (${period.from} إلى ${period.to})`,
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-2 h-9">
+          <Download className="h-3.5 w-3.5" />
+          تصدير
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">تصدير الإقرار</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={handleExcel}>
+          <FileSpreadsheet className="h-4 w-4 text-green-600" />
+          Excel (.xlsx)
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={handlePDF}>
+          <FileText className="h-4 w-4 text-red-500" />
+          PDF (.pdf)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
