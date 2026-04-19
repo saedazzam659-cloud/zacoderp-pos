@@ -1,14 +1,25 @@
-import { useListInvoices } from "@workspace/api-client-react";
+import { useState } from "react";
+import { useListInvoices, useDeleteInvoice } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Plus, Search, FileText, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
+import { Plus, Search, FileText, TrendingUp, Clock, CheckCircle2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import { useState } from "react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STATUS_TABS = [
   { key: "all",       label: "الكل" },
@@ -46,9 +57,14 @@ const getZatcaStyle = (status?: string) => {
 };
 
 export default function Invoices() {
-  const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
-  const { user } = useAuth();
+  const [search, setSearch]           = useState("");
+  const [activeTab, setActiveTab]     = useState("all");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; number: string } | null>(null);
+
+  const { user }        = useAuth();
+  const { toast }       = useToast();
+  const queryClient     = useQueryClient();
+  const deleteInvoice   = useDeleteInvoice();
 
   const { data: invoices, isLoading } = useListInvoices(
     activeTab !== "all" ? { status: activeTab as "draft" | "issued" | "cancelled" } : undefined,
@@ -65,10 +81,25 @@ export default function Invoices() {
 
   const all = invoices ?? [];
   const stats = {
-    total: all.length,
-    issued: all.filter(i => i.status === "issued").length,
+    total:   all.length,
+    issued:  all.filter(i => i.status === "issued").length,
     pending: all.filter(i => i.zatcaStatus === "pending" && i.status === "issued").length,
-    amount: all.filter(i => i.status === "issued").reduce((s, i) => s + Number(i.grandTotal), 0),
+    amount:  all.filter(i => i.status === "issued").reduce((s, i) => s + Number(i.grandTotal), 0),
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteInvoice.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        toast({ title: "تم الحذف", description: `تم حذف الفاتورة ${deleteTarget.number} بنجاح.` });
+        queryClient.invalidateQueries({ queryKey: ["invoices"] });
+        setDeleteTarget(null);
+      },
+      onError: () => {
+        toast({ title: "خطأ", description: "لم يتم الحذف — حاول مرة أخرى.", variant: "destructive" });
+        setDeleteTarget(null);
+      },
+    });
   };
 
   return (
@@ -81,8 +112,7 @@ export default function Invoices() {
         </div>
         <Button asChild className="gap-2">
           <Link href="/invoices/new">
-            <Plus className="h-4 w-4" />
-            <span>فاتورة جديدة</span>
+            <Plus className="h-4 w-4" /><span>فاتورة جديدة</span>
           </Link>
         </Button>
       </div>
@@ -90,9 +120,7 @@ export default function Invoices() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-xl" />
-          ))
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)
         ) : (
           <>
             <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
@@ -135,7 +163,7 @@ export default function Invoices() {
         )}
       </div>
 
-      {/* Filters */}
+      {/* Filters + Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-0 border-b">
           {/* Status tabs */}
@@ -180,20 +208,21 @@ export default function Invoices() {
                 <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">المبلغ الإجمالي</th>
                 <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide">الحالة</th>
                 <th className="h-10 px-5 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">ZATCA</th>
+                <th className="h-10 px-3 text-right align-middle font-medium text-muted-foreground text-xs tracking-wide w-12"></th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 6 }).map((_, j) => (
+                    {Array.from({ length: 7 }).map((_, j) => (
                       <td key={j} className="px-5 py-4"><Skeleton className="h-4 w-full max-w-28" /></td>
                     ))}
                   </tr>
                 ))
               ) : !filtered?.length ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={7} className="py-16 text-center text-muted-foreground">
                     <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
                     <p className="text-sm">{search ? "لا توجد نتائج مطابقة" : "لا توجد فواتير بعد"}</p>
                     {!search && (
@@ -206,6 +235,7 @@ export default function Invoices() {
               ) : (
                 filtered?.map(invoice => {
                   const zatca = getZatcaStyle(invoice.zatcaStatus);
+                  const isCancelled = invoice.status === "cancelled";
                   return (
                     <tr
                       key={invoice.id}
@@ -250,6 +280,22 @@ export default function Invoices() {
                           </span>
                         )}
                       </td>
+                      {/* Delete button — only for cancelled */}
+                      <td className="px-3 py-3.5 text-left">
+                        {isCancelled && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              setDeleteTarget({ id: invoice.id, number: invoice.invoiceNumber });
+                            }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-red-500 hover:bg-red-50 hover:text-red-700"
+                            title="حذف الفاتورة الملغاة"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -258,6 +304,35 @@ export default function Invoices() {
           </table>
         </div>
       </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="h-5 w-5" />
+              تأكيد حذف الفاتورة
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              هل أنت متأكد من حذف الفاتورة{" "}
+              <span className="font-mono font-semibold text-foreground" dir="ltr">{deleteTarget?.number}</span>؟
+              <br />
+              <span className="text-red-600 font-medium">هذا الإجراء لا يمكن التراجع عنه.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={deleteInvoice.isPending}
+              className="bg-red-600 hover:bg-red-700 text-white gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleteInvoice.isPending ? "جاري الحذف..." : "نعم، احذف"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
