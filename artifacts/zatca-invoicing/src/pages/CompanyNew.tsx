@@ -17,11 +17,17 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server } from "lucide-react";
 import { Link } from "wouter";
+
+const INVOICE_TYPE_OPTIONS: ComboboxItem[] = [
+  { value: "standard",   code: "B2B",     label: "فاتورة ضريبية (B2B)",         description: "للشركات والجهات التجارية — تُرسل إلى ZATCA للتخليص" },
+  { value: "simplified", code: "B2C",     label: "فاتورة ضريبية مبسطة (B2C)",  description: "للأفراد والمستهلكين — يُطبع QR Code ويُبلَّغ خلال 24 ساعة" },
+  { value: "both",       code: "B2B+B2C", label: "كلا النوعين",                  description: "إصدار فواتير B2B و B2C من نفس المنشأة" },
+];
 
 interface DeviceInfo {
   manufacturer: string;
@@ -460,33 +466,15 @@ export default function CompanyNew() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>نوع الفواتير <span className="text-destructive">*</span></FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="اختر نوع الفواتير" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="standard">
-                              <div className="text-right">
-                                <p className="font-medium">فاتورة ضريبية (B2B)</p>
-                                <p className="text-xs text-muted-foreground">للشركات والجهات التجارية — تُرسل إلى هيئة الزكاة للتخليص</p>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="simplified">
-                              <div className="text-right">
-                                <p className="font-medium">فاتورة ضريبية مبسطة (B2C)</p>
-                                <p className="text-xs text-muted-foreground">للأفراد والمستهلكين — تُبلَّغ عنها في غضون 24 ساعة</p>
-                              </div>
-                            </SelectItem>
-                            <SelectItem value="both">
-                              <div className="text-right">
-                                <p className="font-medium">كلا النوعين</p>
-                                <p className="text-xs text-muted-foreground">إصدار فواتير B2B و B2C من نفس المنشأة</p>
-                              </div>
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchCombobox
+                            items={INVOICE_TYPE_OPTIONS}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="اختر نوع الفواتير..."
+                            searchPlaceholder="ابحث بالكود أو الاسم..."
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -16,10 +16,15 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Save, Users, Info, Building2 } from "lucide-react";
 import { Link } from "wouter";
+
+const CUSTOMER_TYPE_OPTIONS: ComboboxItem[] = [
+  { value: "b2b", code: "B2B", label: "شركة / منشأة",  description: "يحتاج رقم ضريبي وعنوان وطني — للفواتير الضريبية" },
+  { value: "b2c", code: "B2C", label: "فرد / مستهلك",  description: "بيانات اختيارية — للفواتير المبسطة" },
+];
 
 const customerSchema = z.object({
   companyId: z.coerce.number().min(1, { message: "الشركة المسؤولة مطلوبة" }),
@@ -142,21 +147,19 @@ export default function CustomerNew() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>الشركة المصدرة للفواتير <span className="text-destructive">*</span></FormLabel>
-                      <Select 
-                        onValueChange={(val) => field.onChange(parseInt(val, 10))} 
-                        value={field.value?.toString() || ""}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="اختر شركتك التابع لها العميل" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {companies?.map(c => (
-                            <SelectItem key={c.id} value={c.id.toString()}>{c.nameAr}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <SearchCombobox
+                          items={(companies ?? []).map(c => ({
+                            value: c.id.toString(),
+                            label: c.nameAr,
+                            labelEn: c.nameEn ?? undefined,
+                          }))}
+                          value={field.value?.toString()}
+                          onValueChange={v => field.onChange(parseInt(v, 10))}
+                          placeholder="اختر شركتك التابع لها العميل..."
+                          searchPlaceholder="ابحث باسم الشركة..."
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -168,27 +171,15 @@ export default function CustomerNew() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>نوع العميل <span className="text-destructive">*</span></FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="b2b">
-                            <div>
-                              <p className="font-medium">شركة / منشأة (B2B)</p>
-                              <p className="text-xs text-muted-foreground">يحتاج رقم ضريبي وعنوان</p>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="b2c">
-                            <div>
-                              <p className="font-medium">فرد (B2C)</p>
-                              <p className="text-xs text-muted-foreground">بيانات اختيارية</p>
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <SearchCombobox
+                          items={CUSTOMER_TYPE_OPTIONS}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="اختر نوع العميل..."
+                          searchPlaceholder="ابحث بالكود أو الاسم..."
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
