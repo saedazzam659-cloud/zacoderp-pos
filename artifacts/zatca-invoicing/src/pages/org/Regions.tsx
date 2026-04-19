@@ -1,0 +1,311 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { branchesApi } from "@/lib/branchesApi";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Plus, Pencil, Trash2, MapPin, Search, X,
+  ChevronDown, ChevronRight, Building2, Phone,
+  Star, CircleDot, AlertCircle,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Link } from "wouter";
+
+const EMPTY_REGION = { code: "", nameAr: "", nameEn: "", notes: "" };
+
+const STATUS_CFG: Record<string, { label: string; cls: string }> = {
+  active:   { label: "نشط",   cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  inactive: { label: "موقوف", cls: "bg-red-50 text-red-600 border-red-200" },
+};
+
+export default function Regions() {
+  const { user } = useAuth();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState<any>(EMPTY_REGION);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  const { data: regions = [], isLoading } = useQuery({
+    queryKey: ["regions", cid],
+    queryFn:  () => branchesApi.getRegions(cid),
+  });
+
+  const { data: allBranches = [] } = useQuery({
+    queryKey: ["branches", cid],
+    queryFn:  () => branchesApi.getBranches(cid),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["regions"] });
+    qc.invalidateQueries({ queryKey: ["branches"] });
+  };
+
+  const createMut = useMutation({ mutationFn: branchesApi.createRegion, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة المنطقة" }); } });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateRegion(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل المنطقة" }); } });
+  const deleteMut = useMutation({ mutationFn: branchesApi.deleteRegion, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: (e: any) => toast({ title: e.message, variant: "destructive" }) });
+
+  function reset() { setForm(EMPTY_REGION); setEditId(null); setShowForm(false); }
+  function handleEdit(r: any) { setForm({ ...r }); setEditId(r.id); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (editId) updateMut.mutate({ id: editId, data: form });
+    else        createMut.mutate({ ...form, companyId: cid });
+  }
+
+  const filtered = (regions as any[]).filter((r: any) =>
+    r.nameAr.includes(search) || r.code.includes(search) || (r.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  function regionBranches(regionId: number) {
+    return (allBranches as any[]).filter((b: any) => b.regionId === regionId);
+  }
+
+  // Color palette for region accent lines
+  const COLORS = [
+    "border-r-blue-400", "border-r-emerald-400", "border-r-violet-400",
+    "border-r-amber-400", "border-r-rose-400", "border-r-cyan-400",
+  ];
+
+  return (
+    <div className="space-y-6" dir="rtl">
+      {/* ── Page Header ─────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <MapPin className="h-6 w-6 text-primary" />المناطق الجغرافية
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            إدارة المناطق وعرض الفروع المرتبطة بكل منطقة
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/org/branches">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Building2 className="h-4 w-4" />جميع الفروع
+            </Button>
+          </Link>
+          <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+            <Plus className="h-4 w-4" />إضافة منطقة
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Stats Strip ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: "إجمالي المناطق",  value: (regions as any[]).length,      icon: MapPin,     color: "text-blue-600 bg-blue-50" },
+          { label: "إجمالي الفروع",   value: (allBranches as any[]).length,   icon: Building2,  color: "text-emerald-600 bg-emerald-50" },
+          { label: "الفروع الرئيسية", value: (allBranches as any[]).filter((b: any) => b.isMain).length, icon: Star, color: "text-amber-600 bg-amber-50" },
+        ].map(s => (
+          <div key={s.label} className="rounded-xl border bg-card p-4 flex items-center gap-3">
+            <div className={cn("rounded-lg p-2", s.color)}>
+              <s.icon className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{s.value}</p>
+              <p className="text-xs text-muted-foreground">{s.label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Form Card ───────────────────────────────────────────── */}
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-primary" />
+              <h2 className="font-semibold">{editId ? "تعديل منطقة" : "منطقة جديدة"}</h2>
+            </div>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-1.5">
+                <Label>كود المنطقة *</Label>
+                <Input placeholder="RGN-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>الاسم بالعربي *</Label>
+                <Input placeholder="منطقة الرياض" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>الاسم بالإنجليزي</Label>
+                <Input placeholder="Riyadh Region" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>ملاحظات</Label>
+                <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
+              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
+              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
+                {editId ? "حفظ التعديل" : "إضافة المنطقة"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Search ──────────────────────────────────────────────── */}
+      <div className="relative">
+        <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      {/* ── Regions List ────────────────────────────────────────── */}
+      {isLoading ? (
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-xl border bg-card py-16 text-center text-muted-foreground">
+          <MapPin className="h-12 w-12 mx-auto mb-3 opacity-20" />
+          <p className="font-medium text-base">لا توجد مناطق بعد</p>
+          <p className="text-xs mt-1">أضف منطقة جديدة لبدء إدارة الفروع</p>
+          <Button size="sm" className="mt-4 gap-1" onClick={() => { reset(); setShowForm(true); }}>
+            <Plus className="h-4 w-4" />إضافة منطقة
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((region: any, idx: number) => {
+            const branches = regionBranches(region.id);
+            const isExpanded = expandedId === region.id;
+            const colorCls = COLORS[idx % COLORS.length];
+
+            return (
+              <div key={region.id} className={cn("rounded-xl border bg-card overflow-hidden transition-shadow", isExpanded && "shadow-md")}>
+                {/* ─ Region Row ─ */}
+                <div className={cn("flex items-center gap-4 p-4 border-r-4", colorCls)}>
+                  {/* Expand toggle */}
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : region.id)}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {isExpanded
+                      ? <ChevronDown  className="h-5 w-5" />
+                      : <ChevronRight className="h-5 w-5" />}
+                  </button>
+
+                  {/* Code */}
+                  <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded font-bold shrink-0">{region.code}</span>
+
+                  {/* Names */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{region.nameAr}</p>
+                    {region.nameEn && <p className="text-xs text-muted-foreground">{region.nameEn}</p>}
+                  </div>
+
+                  {/* Branch count badge */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className={cn(
+                      "text-xs font-semibold rounded-full px-2.5 py-0.5 border",
+                      branches.length > 0
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-muted/50 text-muted-foreground border-transparent"
+                    )}>
+                      {branches.length} فرع
+                    </span>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-1 shrink-0">
+                    <Link href={`/org/branches?region=${region.id}`}>
+                      <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                        <Plus className="h-3 w-3" />إضافة فرع
+                      </Button>
+                    </Link>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary/10 hover:text-primary" onClick={() => handleEdit(region)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost" size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => { if (confirm(`حذف منطقة "${region.nameAr}"؟`)) deleteMut.mutate(region.id); }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* ─ Branches sub-panel ─ */}
+                {isExpanded && (
+                  <div className="border-t bg-muted/20">
+                    {branches.length === 0 ? (
+                      <div className="py-8 text-center text-muted-foreground">
+                        <Building2 className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                        <p className="text-sm">لا يوجد فروع في هذه المنطقة</p>
+                        <Link href={`/org/branches?region=${region.id}`}>
+                          <Button size="sm" variant="outline" className="mt-3 gap-1 text-xs">
+                            <Plus className="h-3 w-3" />أضف أول فرع
+                          </Button>
+                        </Link>
+                      </div>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="border-b bg-muted/30">
+                          <tr>
+                            <th className="px-6 py-2 text-right text-xs font-semibold text-muted-foreground">الفرع</th>
+                            <th className="px-4 py-2 text-right text-xs font-semibold text-muted-foreground hidden sm:table-cell">المدينة</th>
+                            <th className="px-4 py-2 text-right text-xs font-semibold text-muted-foreground hidden md:table-cell">الهاتف</th>
+                            <th className="px-4 py-2 text-center text-xs font-semibold text-muted-foreground w-24">الحالة</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {branches.map((b: any) => (
+                            <tr key={b.id} className="hover:bg-muted/20 transition-colors">
+                              <td className="px-6 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  {b.isMain && <Star className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                                  <div>
+                                    <p className="font-medium text-sm">{b.nameAr}</p>
+                                    <p className="text-[10px] font-mono text-muted-foreground">{b.code}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground text-xs">{b.city ?? "—"}</td>
+                              <td className="px-4 py-2.5 hidden md:table-cell">
+                                {b.phone
+                                  ? <span className="flex items-center gap-1 text-xs text-muted-foreground"><Phone className="h-3 w-3" />{b.phone}</span>
+                                  : <span className="text-muted-foreground/40 text-xs">—</span>}
+                              </td>
+                              <td className="px-4 py-2.5 text-center">
+                                <span className={cn(
+                                  "text-[10px] font-medium rounded-full px-2.5 py-0.5 border",
+                                  STATUS_CFG[b.status]?.cls ?? STATUS_CFG.active.cls
+                                )}>
+                                  {STATUS_CFG[b.status]?.label ?? "نشط"}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Footer count */}
+      {!isLoading && filtered.length > 0 && (
+        <p className="text-xs text-muted-foreground text-center">{filtered.length} منطقة — {(allBranches as any[]).length} فرع</p>
+      )}
+    </div>
+  );
+}

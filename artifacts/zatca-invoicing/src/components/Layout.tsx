@@ -5,7 +5,7 @@ import {
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
-  Tag, Layers, BookMarked,
+  Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -38,6 +38,10 @@ const companySystemNav = [
   { name: "ربط ZATCA",        href: "/zatca",            icon: Link2,      permKey: "zatca" },
   { name: "الإعدادات العامة", href: "/general-settings", icon: Sliders,    permKey: "always" },
   { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked, permKey: "always" },
+];
+const orgNav = [
+  { name: "المناطق الجغرافية", href: "/org/regions",  icon: MapPin      },
+  { name: "الفروع",            href: "/org/branches", icon: BranchIcon  },
 ];
 const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav = [
@@ -252,6 +256,15 @@ function SidebarInner({
                 </div>
               </div>
             )}
+
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">التنظيم الجغرافي</p>
+              <div className="space-y-0.5">
+                {orgNav.map(item => (
+                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
+                ))}
+              </div>
+            </div>
 
             {filteredSystem.length > 0 && (
               <div>

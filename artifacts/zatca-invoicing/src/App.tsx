@@ -43,6 +43,8 @@ import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
 // Accounting
 import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
+import Regions  from "@/pages/org/Regions";
+import Branches from "@/pages/org/Branches";
 
 const queryClient = new QueryClient();
 
@@ -132,6 +134,10 @@ function AppRoutes() {
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
+
+            {/* Org routes */}
+            {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}
+            {!isSuperAdmin && <Route path="/org/branches" component={Branches} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />
