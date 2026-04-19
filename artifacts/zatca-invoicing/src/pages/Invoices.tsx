@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STATUS_TABS = [
   { key: "all",       label: "الكل" },
@@ -47,10 +48,11 @@ const getZatcaStyle = (status?: string) => {
 export default function Invoices() {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const { user } = useAuth();
 
   const { data: invoices, isLoading } = useListInvoices(
     activeTab !== "all" ? { status: activeTab as "draft" | "issued" | "cancelled" } : undefined,
-    { query: { queryKey: ["invoices", activeTab] } }
+    { query: { queryKey: ["invoices", user?.companyId, activeTab] } }
   );
 
   const formatCurrency = (amount: number | string) =>

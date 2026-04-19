@@ -6,8 +6,10 @@ import { createHash } from "crypto";
 import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@workspace/api-zod";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
+router.use(extractAuth);
 
 const GENESIS_HASH = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZmNTI5OWIxNmI2ZjRiMmUyNjY5MDkwMzBiMzdhZGZiMzU3NGI0OTJiNA==";
 
@@ -35,9 +37,13 @@ async function getInvoiceWithRelations(id: number) {
 
 router.get("/", async (req, res) => {
   const params = ListInvoicesQueryParams.safeParse(req.query);
+  const rawCompanyId = params.success ? params.data.companyId : undefined;
+  // Force company isolation: non-superadmin users only see their own company
+  const companyId = resolveCompanyId(req, rawCompanyId);
+
   const conditions = [];
+  if (companyId) conditions.push(eq(invoicesTable.companyId, companyId));
   if (params.success) {
-    if (params.data.companyId) conditions.push(eq(invoicesTable.companyId, params.data.companyId));
     if (params.data.status) conditions.push(eq(invoicesTable.status, params.data.status));
     if (params.data.invoiceType) conditions.push(eq(invoicesTable.invoiceType, params.data.invoiceType));
   }

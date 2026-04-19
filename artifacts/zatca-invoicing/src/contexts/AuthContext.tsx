@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { setAuthTokenGetter } from "@workspace/api-client-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// Register auth token getter for the generated API client so all hooks automatically include Bearer token
+setAuthTokenGetter(() => localStorage.getItem("zatca_token"));
 
 export interface AuthUser {
   id: number;

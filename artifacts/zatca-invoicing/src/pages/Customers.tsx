@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 const TYPE_TABS = [
   { key: "all",        label: "الكل" },
@@ -15,9 +16,10 @@ const TYPE_TABS = [
 export default function Customers() {
   const [search, setSearch]       = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const { user } = useAuth();
 
   const { data: customers = [], isLoading } = useListCustomers(undefined, {
-    query: { queryKey: ["customers"] },
+    query: { queryKey: ["customers", user?.companyId] },
   }) as any;
 
   const filtered = customers.filter((c: any) => {

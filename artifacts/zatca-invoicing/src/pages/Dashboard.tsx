@@ -13,21 +13,25 @@ import { useListCompanies } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const companyId = user?.companyId;
+
   const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary(undefined, {
-    query: { queryKey: ["dashboard-summary"] }
+    query: { queryKey: ["dashboard-summary", companyId] }
   });
 
   const { data: companies } = useListCompanies({ query: { queryKey: ["companies"] } });
   const unregisteredCompanies = companies?.filter(c => !c.zatcaPcsid) ?? [];
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
-    query: { queryKey: ["recent-invoices"] }
+    query: { queryKey: ["recent-invoices", companyId] }
   });
 
   const { data: monthlyStats, isLoading: loadingStats } = useGetMonthlyStats(undefined, {
-    query: { queryKey: ["monthly-stats"] }
+    query: { queryKey: ["monthly-stats", companyId] }
   });
 
   const formatCurrency = (amount: number) => {
