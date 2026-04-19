@@ -72,6 +72,25 @@ router.put("/:id", async (req, res) => {
   res.json(company);
 });
 
+// PATCH /:id/general-settings — update logo + decimal places (company users update own company)
+router.patch("/:id/general-settings", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { logo, decimalPlaces } = req.body as { logo?: string; decimalPlaces?: number };
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (logo !== undefined) updates.logo = logo;
+  if (decimalPlaces !== undefined) {
+    const dp = Number(decimalPlaces);
+    if (isNaN(dp) || dp < 0 || dp > 4) {
+      res.status(400).json({ error: "عدد الأرقام العشرية يجب أن يكون بين 0 و 4" }); return;
+    }
+    updates.decimalPlaces = dp;
+  }
+  const [company] = await db.update(companiesTable).set(updates)
+    .where(eq(companiesTable.id, id)).returning();
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  res.json(company);
+});
+
 // PATCH /:id/menu-permissions — update which menus are visible for company users
 router.patch("/:id/menu-permissions", async (req, res) => {
   const id = parseInt(req.params.id);

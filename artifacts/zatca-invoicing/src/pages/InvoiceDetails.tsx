@@ -13,6 +13,7 @@ import {
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { QRCodeSVG } from "qrcode.react";
+import InvoicePrintDialog from "@/components/InvoicePrintDialog";
 
 function ZatcaQrCode({ base64Tlv }: { base64Tlv: string }) {
   const binaryStr = atob(base64Tlv);
@@ -40,6 +41,7 @@ export default function InvoiceDetails() {
   const queryClient = useQueryClient();
   const [submittingZatca, setSubmittingZatca] = useState(false);
   const [activeTab, setActiveTab] = useState("invoice");
+  const [printOpen, setPrintOpen] = useState(false);
 
   const { data: invoice, isLoading } = useGetInvoice(id, {
     query: { enabled: !!id, queryKey: ["invoice", id] }
@@ -188,7 +190,7 @@ export default function InvoiceDetails() {
                     : <><Upload className="h-4 w-4" />إرسال لـ ZATCA</>}
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={() => window.print()} className="gap-1.5">
+              <Button size="sm" variant="outline" onClick={() => setPrintOpen(true)} className="gap-1.5">
                 <Printer className="h-4 w-4" />طباعة
               </Button>
             </>
@@ -556,6 +558,31 @@ export default function InvoiceDetails() {
           </div>
         )}
       </div>
+
+      {/* Print Dialog */}
+      {printOpen && (
+        <InvoicePrintDialog
+          open={printOpen}
+          onClose={() => setPrintOpen(false)}
+          invoice={{
+            invoiceNumber: invoice.invoiceNumber,
+            issueDate: invoice.issueDate,
+            supplyDate: invoice.supplyDate,
+            paymentMethod: inv.paymentMethod,
+            invoiceType: invoice.invoiceType,
+            status: invoice.status,
+            notes: invoice.notes,
+            subtotal: invoice.subtotal,
+            taxAmount: invoice.taxAmount,
+            total: invoice.total,
+            discountAmount: (invoice as any).discountAmount,
+            qrCode: invoice.qrCode,
+            lineItems: (invoice as any).lineItems ?? [],
+            customer: (invoice as any).customer,
+            company: (invoice as any).company,
+          }}
+        />
+      )}
     </div>
   );
 }

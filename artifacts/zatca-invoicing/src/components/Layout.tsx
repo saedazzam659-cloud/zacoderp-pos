@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, Settings2, Link2, SlidersHorizontal
+  Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -38,7 +38,8 @@ const companyBusinessNav = [
 ];
 
 const companySystemNav = [
-  { name: "ربط ZATCA", href: "/zatca", icon: Link2, permKey: "zatca" },
+  { name: "ربط ZATCA",      href: "/zatca",             icon: Link2,    permKey: "zatca" },
+  { name: "الإعدادات العامة", href: "/general-settings",  icon: Sliders,  permKey: "always" },
 ];
 
 // ─── Parse menu permissions ────────────────────────────────────────────────────

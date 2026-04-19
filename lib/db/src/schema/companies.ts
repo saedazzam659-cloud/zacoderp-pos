@@ -31,6 +31,9 @@ export const companiesTable = pgTable("companies", {
   zatcaPcsidToken: text("zatca_pcsid_token"),
   zatcaPcsidSecret: text("zatca_pcsid_secret"),
   invoiceCounter: integer("invoice_counter").notNull().default(0),
+  // General settings
+  logo: text("logo"),                          // base64 data URL
+  decimalPlaces: integer("decimal_places").notNull().default(2),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
   // Registration workflow

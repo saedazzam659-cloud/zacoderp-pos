@@ -61,6 +61,24 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `subscriptions` — Company subscription plan, dates, limits
 - `suppliers` — Supplier/vendor records linked to companies
 
+## General Settings (Company)
+- Route: `/general-settings` (company users only)
+- Nav: القائمة الجانبية → النظام → الإعدادات العامة (Sliders icon)
+- Features: logo upload (drag & drop, base64, max 2MB), decimal places (0-4)
+- API: PATCH `/api/companies/:id/general-settings` with `{ logo?, decimalPlaces? }`
+- DB columns: `companies.logo` (text, base64), `companies.decimalPlaces` (integer, default 2)
+- Logo and decimalPlaces are passed to print templates automatically
+
+## Invoice Print Templates (5 designs)
+- Triggered by "طباعة" button on issued invoices
+- Component: `src/components/InvoicePrintDialog.tsx`
+- Template selector dialog shows 5 thumbnail previews
+- On confirm: generates full HTML → opens new window → triggers window.print()
+- QR code generated from base64 TLV using `qrcode` package (toDataURL)
+- Templates: كلاسيكي (black borders), عصري (gray minimal), احترافي (teal header),
+  ملوّن (blue-indigo gradient), مدمج (side-by-side with large QR)
+- All templates: RTL Arabic, company logo, line items table, totals, decimal places respected
+
 ## Menu Permissions System
 - Superadmin can toggle per-company menu visibility from `/admin/menu-permissions`
 - Permissions stored as JSON in `companies.menuPermissions` column
