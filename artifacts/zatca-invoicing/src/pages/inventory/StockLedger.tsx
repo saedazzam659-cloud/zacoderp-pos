@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import { BookOpen, Search, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
   transfer_out: { label: "تحويل خارج",  color: "bg-orange-50 text-orange-700" },
@@ -96,17 +97,21 @@ export default function StockLedger() {
           </div>
           <div className="space-y-1.5">
             <Label>الصنف</Label>
-            <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filters.itemId} onChange={e => setFilters(p => ({ ...p, itemId: e.target.value }))}>
-              <option value="">كل الأصناف</option>
-              {items.map((it: any) => <option key={it.id} value={it.id}>[{it.code}] {it.nameAr}</option>)}
-            </select>
+            <SearchCombobox
+              items={[{ value: "", label: "كل الأصناف" }, ...(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))]}
+              value={filters.itemId}
+              onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
+              placeholder="كل الأصناف"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>المخزن</Label>
-            <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filters.warehouseId} onChange={e => setFilters(p => ({ ...p, warehouseId: e.target.value }))}>
-              <option value="">كل المخازن</option>
-              {warehouses.map((w: any) => <option key={w.id} value={w.id}>[{w.code}] {w.nameAr}</option>)}
-            </select>
+            <SearchCombobox
+              items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))]}
+              value={filters.warehouseId}
+              onValueChange={v => setFilters(p => ({ ...p, warehouseId: v }))}
+              placeholder="كل المخازن"
+            />
           </div>
         </div>
         <div className="flex justify-end mt-4">

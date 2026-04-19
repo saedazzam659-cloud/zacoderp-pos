@@ -12,6 +12,7 @@ import {
   ChevronDown, ChevronUp, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
@@ -243,27 +244,21 @@ export default function StockAdjustment() {
               </div>
               <div className="space-y-1.5">
                 <Label>المخزن *</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                <SearchCombobox
+                  items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
                   value={form.warehouseId}
-                  onChange={e => setForm((p: any) => ({ ...p, warehouseId: e.target.value }))}
-                  required
-                >
-                  <option value="">— اختر مخزن —</option>
-                  {(warehouses as any[]).map((w: any) => (
-                    <option key={w.id} value={w.id}>[{w.code}] {w.nameAr}</option>
-                  ))}
-                </select>
+                  onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
+                  placeholder="— اختر مخزن —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>سبب التسوية</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                <SearchCombobox
+                  items={REASONS.map(r => ({ value: r, label: r }))}
                   value={form.reason}
-                  onChange={e => setForm((p: any) => ({ ...p, reason: e.target.value }))}
-                >
-                  {REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
+                  onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
+                  placeholder="— اختر السبب —"
+                />
               </div>
               <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
                 <Label>ملاحظات</Label>
@@ -310,35 +305,25 @@ export default function StockAdjustment() {
                       return (
                         <tr key={i}>
                           {/* Item */}
-                          <td className="px-3 py-2">
-                            <select
-                              className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          <td className="px-3 py-2 min-w-[180px]">
+                            <SearchCombobox
+                              items={(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))}
                               value={line.itemId}
-                              onChange={e => handleItemSelect(i, e.target.value)}
-                              required
-                            >
-                              <option value="">— اختر صنف —</option>
-                              {(items as any[])
-                                .filter((it: any) => it.itemType === "stock")
-                                .map((it: any) => (
-                                  <option key={it.id} value={it.id}>[{it.code}] {it.nameAr}</option>
-                                ))}
-                            </select>
+                              onValueChange={v => handleItemSelect(i, v)}
+                              placeholder="— اختر صنف —"
+                              className="h-8 text-xs"
+                            />
                           </td>
 
                           {/* Unit */}
-                          <td className="px-3 py-2">
-                            <select
-                              className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          <td className="px-3 py-2 min-w-[120px]">
+                            <SearchCombobox
+                              items={[{ value: "", label: "وحدة أساسية" }, ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr }))]}
                               value={line.unitId}
-                              onChange={e => handleUnitSelect(i, e.target.value)}
-                              disabled={!line.itemId}
-                            >
-                              <option value="">وحدة أساسية</option>
-                              {lineUnits.map(u => (
-                                <option key={u.id} value={u.id}>{u.nameAr}</option>
-                              ))}
-                            </select>
+                              onValueChange={v => handleUnitSelect(i, v)}
+                              placeholder="وحدة أساسية"
+                              className="h-8 text-xs"
+                            />
                             {baseQtyHint && (
                               <p className="text-[10px] text-purple-600 mt-0.5 font-medium leading-tight">
                                 {baseQtyHint}

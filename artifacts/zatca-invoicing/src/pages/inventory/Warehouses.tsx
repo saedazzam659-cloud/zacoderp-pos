@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Warehouse, Search, X, CheckCircle2, XCircle } from "lucide-react";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { cn } from "@/lib/utils";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", city: "", region: "", allowNegative: false, negativeLimit: "" };
@@ -83,10 +84,12 @@ export default function Warehouses() {
             </div>
             <div className="space-y-1.5">
               <Label>مجموعة المخزن</Label>
-              <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.groupId} onChange={e => setForm((p: any) => ({ ...p, groupId: e.target.value }))}>
-                <option value="">— بدون مجموعة —</option>
-                {groups.map((g: any) => <option key={g.id} value={g.id}>[{g.code}] {g.nameAr}</option>)}
-              </select>
+              <SearchCombobox
+                items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]}
+                value={form.groupId}
+                onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))}
+                placeholder="— اختر مجموعة —"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>المدينة</Label>

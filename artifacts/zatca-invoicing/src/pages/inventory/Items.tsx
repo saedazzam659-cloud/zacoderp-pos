@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import ExportButtons from "@/components/ExportButtons";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   Plus, Pencil, Trash2, Package, Search, X,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
@@ -103,15 +104,13 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">وحدة القياس *</Label>
-                <select
-                  required
-                  className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm"
+                <SearchCombobox
+                  items={availableUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))}
                   value={form.unitId}
-                  onChange={e => setForm((p: any) => ({ ...p, unitId: e.target.value }))}
-                >
-                  <option value="">— اختر —</option>
-                  {availableUnits.map((u: any) => <option key={u.id} value={u.id}>[{u.code}] {u.nameAr}</option>)}
-                </select>
+                  onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))}
+                  placeholder="— اختر وحدة —"
+                  className="h-8 text-xs"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">معامل التحويل *</Label>
@@ -307,30 +306,38 @@ export default function Items() {
                 <div className="space-y-1.5"><Label>الاسم بالإنجليزي</Label><Input placeholder="Item Name" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>باركود</Label><Input placeholder="1234567890" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>نوع الصنف</Label>
-                  <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.itemType} onChange={e => setForm((p: any) => ({ ...p, itemType: e.target.value }))}>
-                    <option value="stock">مخزني</option>
-                    <option value="service">خدمي</option>
-                  </select>
+                  <SearchCombobox
+                    items={[{ value: "stock", label: "مخزني" }, { value: "service", label: "خدمي" }]}
+                    value={form.itemType}
+                    onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))}
+                    placeholder="نوع الصنف"
+                  />
                 </div>
                 <div className="space-y-1.5"><Label>المجموعة</Label>
-                  <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.groupId} onChange={e => setForm((p: any) => ({ ...p, groupId: e.target.value }))}>
-                    <option value="">— بدون مجموعة —</option>
-                    {groups.map((g: any) => <option key={g.id} value={g.id}>[{g.code}] {g.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]}
+                    value={form.groupId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))}
+                    placeholder="— اختر مجموعة —"
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>وحدة القياس الأساسية</Label>
-                  <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.unitId} onChange={e => setForm((p: any) => ({ ...p, unitId: e.target.value }))}>
-                    <option value="">— اختر وحدة —</option>
-                    {units.map((u: any) => <option key={u.id} value={u.id}>[{u.code}] {u.nameAr}</option>)}
-                  </select>
+                  <SearchCombobox
+                    items={[{ value: "", label: "— بدون وحدة —" }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]}
+                    value={form.unitId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))}
+                    placeholder="— اختر وحدة —"
+                  />
                   <p className="text-[10px] text-muted-foreground">وحدات التسعير المتعددة تُضاف بعد حفظ الصنف</p>
                 </div>
                 <div className="space-y-1.5"><Label>الحالة</Label>
-                  <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.status} onChange={e => setForm((p: any) => ({ ...p, status: e.target.value }))}>
-                    <option value="active">نشط</option>
-                    <option value="inactive">موقوف</option>
-                  </select>
+                  <SearchCombobox
+                    items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]}
+                    value={form.status}
+                    onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}
+                    placeholder="الحالة"
+                  />
                 </div>
               </div>
             </div>
@@ -341,10 +348,12 @@ export default function Items() {
                 <div className="space-y-1.5"><Label>سعر البيع</Label><Input type="number" step="any" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>نسبة الضريبة %</Label><Input type="number" step="any" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>طريقة احتساب التكلفة</Label>
-                  <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.costMethod} onChange={e => setForm((p: any) => ({ ...p, costMethod: e.target.value }))}>
-                    <option value="weighted_avg">متوسط مرجح</option>
-                    <option value="last_cost">آخر سعر</option>
-                  </select>
+                  <SearchCombobox
+                    items={[{ value: "weighted_avg", label: "متوسط مرجح" }, { value: "last_cost", label: "آخر سعر" }]}
+                    value={form.costMethod}
+                    onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))}
+                    placeholder="طريقة التكلفة"
+                  />
                 </div>
               </div>
             </div>

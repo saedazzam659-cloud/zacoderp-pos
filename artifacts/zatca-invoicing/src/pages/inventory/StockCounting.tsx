@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -104,10 +105,12 @@ export default function StockCounting() {
               </div>
               <div className="space-y-1.5">
                 <Label>المخزن *</Label>
-                <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.warehouseId} onChange={e => setForm((p: any) => ({ ...p, warehouseId: e.target.value }))} required>
-                  <option value="">— اختر مخزن —</option>
-                  {warehouses.map((w: any) => <option key={w.id} value={w.id}>[{w.code}] {w.nameAr}</option>)}
-                </select>
+                <SearchCombobox
+                  items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                  value={form.warehouseId}
+                  onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
+                  placeholder="— اختر مخزن —"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>ملاحظات</Label>

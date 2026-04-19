@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import ExportButtons from "@/components/ExportButtons";
 import { BarChart2, AlertTriangle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const EXPORT_COLS = [
   { key: "itemCode",     header: "كود الصنف",      width: 16 },
@@ -101,11 +102,13 @@ export default function StockBalance() {
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <div className="space-y-1.5 w-full sm:w-64">
-          <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
-            <option value="">كل المخازن</option>
-            {warehouses.map((w: any) => <option key={w.id} value={w.id}>[{w.code}] {w.nameAr}</option>)}
-          </select>
+        <div className="w-full sm:w-72">
+          <SearchCombobox
+            items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))]}
+            value={warehouseId}
+            onValueChange={setWarehouseId}
+            placeholder="كل المخازن"
+          />
         </div>
       </div>
 
