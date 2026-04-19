@@ -442,10 +442,10 @@ router.get("/stock-adjustments/:id", async (req, res) => {
 
 router.post("/stock-adjustments", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { adjustmentNumber, adjustmentDate, warehouseId, reason, notes, items } = req.body;
+  const { adjustmentNumber, adjustmentDate, warehouseId, accountId, reason, notes, items } = req.body;
   if (!adjustmentDate || !warehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
   const num = adjustmentNumber || `ADJ-${Date.now()}`;
-  const [adj] = await db.insert(stockAdjustmentsTable).values({ companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId, reason, notes, status: "draft" }).returning();
+  const [adj] = await db.insert(stockAdjustmentsTable).values({ companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId, accountId: accountId || null, reason, notes, status: "draft" }).returning();
   if (items?.length) {
     await db.insert(stockAdjustmentItemsTable).values(items.map((it: any) => ({ adjustmentId: adj.id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0), notes: it.notes })));
   }

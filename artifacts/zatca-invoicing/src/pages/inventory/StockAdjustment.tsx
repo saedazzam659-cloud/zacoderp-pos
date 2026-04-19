@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -25,6 +26,7 @@ const EMPTY_FORM = {
   adjustmentNumber: "",
   adjustmentDate: new Date().toISOString().slice(0, 10),
   warehouseId: "",
+  accountId: "",
   reason: REASONS[0],
   notes: "",
 };
@@ -164,6 +166,7 @@ export default function StockAdjustment() {
     createMut.mutate({
       ...form,
       warehouseId: Number(form.warehouseId),
+      accountId: form.accountId ? Number(form.accountId) : null,
       items: validLines.map(l => ({
         itemId: Number(l.itemId),
         unitId: l.unitId ? Number(l.unitId) : null,
@@ -260,6 +263,15 @@ export default function StockAdjustment() {
                   value={form.reason}
                   onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
                   placeholder="— اختر السبب —"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>الحساب المحاسبي</Label>
+                <AccountCombobox
+                  value={form.accountId}
+                  onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
+                  placeholder="— اختر الحساب —"
+                  grouped={false}
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">

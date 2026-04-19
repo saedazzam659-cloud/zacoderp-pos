@@ -2,6 +2,7 @@ import {
   pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
+import { accountsTable } from "./accounts";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service"]);
@@ -158,6 +159,7 @@ export const stockAdjustmentsTable = pgTable("stock_adjustments", {
   adjustmentNumber: text("adjustment_number").notNull(),
   adjustmentDate:   date("adjustment_date").notNull(),
   warehouseId:      integer("warehouse_id").notNull().references(() => warehousesTable.id),
+  accountId:        integer("account_id").references(() => accountsTable.id),
   reason:           text("reason"),
   status:           docStatusEnum("status").default("draft").notNull(),
   notes:            text("notes"),
