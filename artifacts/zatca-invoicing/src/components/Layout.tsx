@@ -6,6 +6,7 @@ import {
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
+  TrendingUp, Scale, PieChart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -44,6 +45,12 @@ const companySystemNav = [
 const orgNav = [
   { name: "المناطق الجغرافية", href: "/org/regions",  icon: MapPin      },
   { name: "الفروع",            href: "/org/branches", icon: BranchIcon  },
+];
+const reportsSubNav = [
+  { name: "كشف حساب",               href: "/accounting/reports/account-statement", icon: FileText    },
+  { name: "ميزان المراجعة بالمجاميع", href: "/accounting/reports/trial-balance",     icon: Scale       },
+  { name: "المركز المالي",           href: "/accounting/reports/balance-sheet",     icon: PieChart    },
+  { name: "قائمة الدخل",            href: "/accounting/reports/income-statement",  icon: TrendingUp  },
 ];
 const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav = [
@@ -144,6 +151,46 @@ function InventoryNavGroup({
   );
 }
 
+// ─── ReportsNavGroup ───────────────────────────────────────────────────────────
+function ReportsNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnReports = location.startsWith("/accounting/reports");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnReports && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <BarChart2 className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">التقارير المحاسبية</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        }
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {reportsSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -153,6 +200,8 @@ function SidebarInner({
   menuPerms,
   inventoryOpen,
   onInventoryToggle,
+  reportsOpen,
+  onReportsToggle,
   onNavigate,
   onLogout,
 }: {
@@ -162,6 +211,8 @@ function SidebarInner({
   menuPerms: Record<string, boolean>;
   inventoryOpen: boolean;
   onInventoryToggle: () => void;
+  reportsOpen: boolean;
+  onReportsToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -268,6 +319,18 @@ function SidebarInner({
               </div>
             </div>
 
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">التقارير</p>
+              <div className="space-y-0.5">
+                <ReportsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={reportsOpen}
+                  onToggle={onReportsToggle}
+                />
+              </div>
+            </div>
+
             {filteredSystem.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
@@ -341,13 +404,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen]       = useState(false);
-  // Inventory accordion state lives here — stable across re-renders
   const [inventoryOpen, setInventoryOpen] = useState(() => location.startsWith("/inventory"));
+  const [reportsOpen, setReportsOpen]     = useState(() => location.startsWith("/accounting/reports"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
 
   const handleInventoryToggle = () => setInventoryOpen(v => !v);
+  const handleReportsToggle   = () => setReportsOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -357,6 +421,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     menuPerms,
     inventoryOpen,
     onInventoryToggle: handleInventoryToggle,
+    reportsOpen,
+    onReportsToggle: handleReportsToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };

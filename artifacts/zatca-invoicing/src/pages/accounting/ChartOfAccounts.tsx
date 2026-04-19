@@ -34,9 +34,23 @@ const EXPORT_COLS = [
   { key: "isActive",    header: "الحالة",          width: 10 },
 ];
 
+const REPORT_DIRECTIONS = [
+  { value: "",               label: "— تلقائي حسب النوع —" },
+  { value: "balance_sheet",  label: "مركز مالي (الميزانية)" },
+  { value: "income_statement", label: "قائمة الدخل" },
+];
+
+const DEFAULT_DIRECTION: Record<string, string> = {
+  asset:     "balance_sheet",
+  liability: "balance_sheet",
+  equity:    "balance_sheet",
+  revenue:   "income_statement",
+  expense:   "income_statement",
+};
+
 const EMPTY: any = {
   code: "", nameAr: "", nameEn: "", accountType: "asset",
-  parentId: "", level: 1, isPosting: true, isActive: true, notes: "",
+  reportDirection: "", parentId: "", level: 1, isPosting: true, isActive: true, notes: "",
 };
 
 export default function ChartOfAccounts() {
@@ -97,7 +111,7 @@ export default function ChartOfAccounts() {
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
 
   function handleEdit(a: any) {
-    setForm({ ...a, parentId: a.parentId ? String(a.parentId) : "" });
+    setForm({ ...a, parentId: a.parentId ? String(a.parentId) : "", reportDirection: a.reportDirection ?? "" });
     setEditId(a.id);
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -183,8 +197,17 @@ export default function ChartOfAccounts() {
                 <SearchCombobox
                   items={ACCOUNT_TYPES.map(t => ({ value: t.value, label: t.label, badge: t.label, badgeClass: t.badgeClass }))}
                   value={form.accountType}
-                  onValueChange={v => setForm((p: any) => ({ ...p, accountType: v }))}
+                  onValueChange={v => setForm((p: any) => ({ ...p, accountType: v, reportDirection: p.reportDirection || "" }))}
                   placeholder="نوع الحساب"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>توجيه الحساب في التقارير</Label>
+                <SearchCombobox
+                  items={REPORT_DIRECTIONS.map(d => ({ value: d.value, label: d.label }))}
+                  value={form.reportDirection ?? ""}
+                  onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
+                  placeholder={`تلقائي: ${DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? "مركز مالي" : "قائمة دخل"}`}
                 />
               </div>
               <div className="space-y-1.5">

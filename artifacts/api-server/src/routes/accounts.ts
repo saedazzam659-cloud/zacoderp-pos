@@ -51,6 +51,7 @@ router.post("/", async (req, res) => {
     const [row] = await db.insert(accountsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null,
       accountType, parentId: parentId || null,
+      reportDirection: req.body.reportDirection || null,
       level: level ?? 1, isPosting: isPosting ?? true, isActive: isActive ?? true,
       notes: notes || null,
     }).returning();
@@ -67,6 +68,7 @@ router.put("/:id", async (req, res) => {
     const [row] = await db.update(accountsTable).set({
       code, nameAr, nameEn: nameEn || null, accountType,
       parentId: parentId || null, level: level ?? 1,
+      reportDirection: req.body.reportDirection || null,
       isPosting: isPosting ?? true, isActive: isActive ?? true,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid))).returning();

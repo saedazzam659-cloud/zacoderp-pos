@@ -48,6 +48,11 @@ import Branches from "@/pages/org/Branches";
 import JournalEntries from "@/pages/accounting/JournalEntries";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import Currencies from "@/pages/settings/Currencies";
+// Accounting Reports
+import AccountStatement from "@/pages/accounting/reports/AccountStatement";
+import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
+import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
+import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
 
 const queryClient = new QueryClient();
 
@@ -140,6 +145,11 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/accounting/journals"     component={JournalEntries} />}
             {!isSuperAdmin && <Route path="/accounting/journals/new" component={JournalEntryForm} />}
             {!isSuperAdmin && <Route path="/accounting/journals/:id" component={JournalEntryForm} />}
+            {/* Accounting Reports */}
+            {!isSuperAdmin && <Route path="/accounting/reports/account-statement" component={AccountStatement} />}
+            {!isSuperAdmin && <Route path="/accounting/reports/trial-balance"     component={TrialBalance} />}
+            {!isSuperAdmin && <Route path="/accounting/reports/balance-sheet"     component={BalanceSheet} />}
+            {!isSuperAdmin && <Route path="/accounting/reports/income-statement"  component={IncomeStatement} />}
 
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}

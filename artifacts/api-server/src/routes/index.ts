@@ -15,6 +15,7 @@ import accountsRouter from "./accounts";
 import branchesRouter from "./branches";
 import journalEntriesRouter from "./journalEntries";
 import currenciesRouter from "./currencies";
+import accountingReportsRouter from "./reports-accounting";
 
 const router: IRouter = Router();
 
@@ -32,6 +33,7 @@ router.use("/accounts", accountsRouter);
 router.use("/org", branchesRouter);
 router.use("/journal-entries", journalEntriesRouter);
 router.use("/currencies", currenciesRouter);
+router.use("/accounting-reports", accountingReportsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 
