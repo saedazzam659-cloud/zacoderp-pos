@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 
@@ -73,9 +73,25 @@ router.put("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
-  await db.delete(companiesTable).where(eq(companiesTable.id, id));
-  res.status(204).send();
+  try {
+    const id = parseInt(req.params.id);
+
+    // Cascade: delete all related records before deleting company
+    const companyInvoices = await db.select({ id: invoicesTable.id }).from(invoicesTable).where(eq(invoicesTable.companyId, id));
+    for (const inv of companyInvoices) {
+      await db.delete(invoiceLineItemsTable).where(eq(invoiceLineItemsTable.invoiceId, inv.id));
+    }
+    await db.delete(invoicesTable).where(eq(invoicesTable.companyId, id));
+    await db.delete(customersTable).where(eq(customersTable.companyId, id));
+    await db.delete(suppliersTable).where(eq(suppliersTable.companyId, id));
+    await db.delete(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
+    await db.delete(usersTable).where(eq(usersTable.companyId, id));
+    await db.delete(companiesTable).where(eq(companiesTable.id, id));
+
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل الحذف: " + (err.message ?? "خطأ غير متوقع") });
+  }
 });
 
 export default router;

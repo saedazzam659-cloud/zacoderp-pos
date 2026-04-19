@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, customersTable, suppliersTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
 import { eq, and, asc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -92,12 +92,39 @@ router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
   res.json({ ok: true, company });
 });
 
-// DELETE /api/admin/requests/:id — delete request
-router.delete("/requests/:id", requireSuperAdmin, async (req, res) => {
-  const id = parseInt(req.params.id);
-  // This cascades to users/subscriptions/suppliers
+// Helper: cascade-delete a company and all its related records
+async function deleteCompanyWithRelations(id: number) {
+  // 1. Get all invoice IDs for this company
+  const companyInvoices = await db.select({ id: invoicesTable.id }).from(invoicesTable).where(eq(invoicesTable.companyId, id));
+  const invoiceIds = companyInvoices.map(i => i.id);
+
+  // 2. Delete invoice line items
+  for (const invId of invoiceIds) {
+    await db.delete(invoiceLineItemsTable).where(eq(invoiceLineItemsTable.invoiceId, invId));
+  }
+
+  // 3. Delete invoices
+  await db.delete(invoicesTable).where(eq(invoicesTable.companyId, id));
+
+  // 4. Delete customers, suppliers, subscriptions, users
+  await db.delete(customersTable).where(eq(customersTable.companyId, id));
+  await db.delete(suppliersTable).where(eq(suppliersTable.companyId, id));
+  await db.delete(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
+  await db.delete(usersTable).where(eq(usersTable.companyId, id));
+
+  // 5. Delete company
   await db.delete(companiesTable).where(eq(companiesTable.id, id));
-  res.status(204).send();
+}
+
+// DELETE /api/admin/requests/:id — delete request + all relations
+router.delete("/requests/:id", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await deleteCompanyWithRelations(id);
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل الحذف: " + (err.message ?? "خطأ غير متوقع") });
+  }
 });
 
 // GET /api/admin/subscriptions — all subscriptions with company info
