@@ -84,6 +84,13 @@ router.post("/", async (req, res) => {
   
   const invoiceNumber = generateInvoiceNumber(data.companyId);
   
+  const d = data as typeof data & {
+    paymentMethod?: string;
+    buyerName?: string; buyerVatNumber?: string; buyerCrNumber?: string;
+    buyerStreet?: string; buyerBuildingNumber?: string; buyerDistrict?: string;
+    buyerCity?: string; buyerPostalCode?: string; buyerCountry?: string;
+  };
+
   const [invoice] = await db.insert(invoicesTable).values({
     companyId: data.companyId,
     customerId: data.customerId,
@@ -94,12 +101,21 @@ router.post("/", async (req, res) => {
     supplyDate: data.supplyDate,
     dueDate: data.dueDate,
     currency: data.currency ?? "SAR",
-    paymentMethod: (data as { paymentMethod?: string }).paymentMethod ?? "10",
+    paymentMethod: d.paymentMethod ?? "10",
     subtotal: subtotal.toFixed(2),
     discountTotal: discountTotal.toFixed(2),
     vatTotal: vatTotal.toFixed(2),
     grandTotal: grandTotal.toFixed(2),
     notes: data.notes,
+    buyerName: d.buyerName,
+    buyerVatNumber: d.buyerVatNumber,
+    buyerCrNumber: d.buyerCrNumber,
+    buyerStreet: d.buyerStreet,
+    buyerBuildingNumber: d.buyerBuildingNumber,
+    buyerDistrict: d.buyerDistrict,
+    buyerCity: d.buyerCity,
+    buyerPostalCode: d.buyerPostalCode,
+    buyerCountry: d.buyerCountry ?? "SA",
     zatcaStatus: "pending",
   }).returning();
   
@@ -158,6 +174,13 @@ router.put("/:id", async (req, res) => {
   });
   const grandTotal = subtotal - discountTotal + vatTotal;
   
+  const ud = data as typeof data & {
+    paymentMethod?: string;
+    buyerName?: string; buyerVatNumber?: string; buyerCrNumber?: string;
+    buyerStreet?: string; buyerBuildingNumber?: string; buyerDistrict?: string;
+    buyerCity?: string; buyerPostalCode?: string; buyerCountry?: string;
+  };
+
   const [invoice] = await db.update(invoicesTable).set({
     companyId: data.companyId,
     customerId: data.customerId,
@@ -166,12 +189,21 @@ router.put("/:id", async (req, res) => {
     supplyDate: data.supplyDate,
     dueDate: data.dueDate,
     currency: data.currency ?? "SAR",
-    paymentMethod: (data as { paymentMethod?: string }).paymentMethod ?? "10",
+    paymentMethod: ud.paymentMethod ?? "10",
     subtotal: subtotal.toFixed(2),
     discountTotal: discountTotal.toFixed(2),
     vatTotal: vatTotal.toFixed(2),
     grandTotal: grandTotal.toFixed(2),
     notes: data.notes,
+    buyerName: ud.buyerName,
+    buyerVatNumber: ud.buyerVatNumber,
+    buyerCrNumber: ud.buyerCrNumber,
+    buyerStreet: ud.buyerStreet,
+    buyerBuildingNumber: ud.buyerBuildingNumber,
+    buyerDistrict: ud.buyerDistrict,
+    buyerCity: ud.buyerCity,
+    buyerPostalCode: ud.buyerPostalCode,
+    buyerCountry: ud.buyerCountry ?? "SA",
     updatedAt: new Date(),
   }).where(eq(invoicesTable.id, id)).returning();
   
@@ -300,7 +332,17 @@ router.post("/:id/issue", async (req, res) => {
       postalCode: "",
       country: "SA",
     },
-    customer: customer ?? null,
+    customer: existing.buyerName ? {
+      nameAr: existing.buyerName,
+      vatNumber: existing.buyerVatNumber,
+      crNumber: existing.buyerCrNumber,
+      street: existing.buyerStreet,
+      buildingNumber: existing.buyerBuildingNumber,
+      district: existing.buyerDistrict,
+      city: existing.buyerCity,
+      postalCode: existing.buyerPostalCode,
+      country: existing.buyerCountry ?? "SA",
+    } : customer ?? null,
   });
 
   const invoiceHash = hashXml(xmlContent);

@@ -21,6 +21,17 @@ export const invoicesTable = pgTable("invoices", {
   vatTotal: numeric("vat_total", { precision: 14, scale: 2 }).notNull().default("0"),
   grandTotal: numeric("grand_total", { precision: 14, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
+  // ── Buyer snapshot (ZATCA requirement — data must be recorded at invoice time) ──
+  buyerName: text("buyer_name"),
+  buyerVatNumber: text("buyer_vat_number"),
+  buyerCrNumber: text("buyer_cr_number"),
+  buyerStreet: text("buyer_street"),
+  buyerBuildingNumber: text("buyer_building_number"),
+  buyerDistrict: text("buyer_district"),
+  buyerCity: text("buyer_city"),
+  buyerPostalCode: text("buyer_postal_code"),
+  buyerCountry: text("buyer_country").default("SA"),
+  // ── ZATCA signing ──
   qrCode: text("qr_code"),
   invoiceHash: text("invoice_hash"),
   xmlContent: text("xml_content"),

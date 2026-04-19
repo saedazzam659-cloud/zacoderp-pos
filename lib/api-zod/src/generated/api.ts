@@ -443,15 +443,27 @@ export const CreateInvoiceBody = zod.object({
   supplyDate: zod.coerce.date().optional(),
   dueDate: zod.coerce.date().optional(),
   currency: zod.string().default(createInvoiceBodyCurrencyDefault),
+  paymentMethod: zod.string().optional(),
   notes: zod.string().optional(),
+  buyerName: zod.string().optional(),
+  buyerVatNumber: zod.string().optional(),
+  buyerCrNumber: zod.string().optional(),
+  buyerStreet: zod.string().optional(),
+  buyerBuildingNumber: zod.string().optional(),
+  buyerDistrict: zod.string().optional(),
+  buyerCity: zod.string().optional(),
+  buyerPostalCode: zod.string().optional(),
+  buyerCountry: zod.string().optional(),
   lineItems: zod.array(
     zod.object({
       description: zod.string(),
       quantity: zod.number(),
+      unitCode: zod.string().optional(),
       unitPrice: zod.number(),
       discountAmount: zod
         .number()
         .default(createInvoiceBodyLineItemsItemDiscountAmountDefault),
+      taxCategory: zod.string().optional(),
       vatRate: zod
         .number()
         .default(createInvoiceBodyLineItemsItemVatRateDefault),
@@ -586,15 +598,27 @@ export const UpdateInvoiceBody = zod.object({
   supplyDate: zod.coerce.date().optional(),
   dueDate: zod.coerce.date().optional(),
   currency: zod.string().default(updateInvoiceBodyCurrencyDefault),
+  paymentMethod: zod.string().optional(),
   notes: zod.string().optional(),
+  buyerName: zod.string().optional(),
+  buyerVatNumber: zod.string().optional(),
+  buyerCrNumber: zod.string().optional(),
+  buyerStreet: zod.string().optional(),
+  buyerBuildingNumber: zod.string().optional(),
+  buyerDistrict: zod.string().optional(),
+  buyerCity: zod.string().optional(),
+  buyerPostalCode: zod.string().optional(),
+  buyerCountry: zod.string().optional(),
   lineItems: zod.array(
     zod.object({
       description: zod.string(),
       quantity: zod.number(),
+      unitCode: zod.string().optional(),
       unitPrice: zod.number(),
       discountAmount: zod
         .number()
         .default(updateInvoiceBodyLineItemsItemDiscountAmountDefault),
+      taxCategory: zod.string().optional(),
       vatRate: zod
         .number()
         .default(updateInvoiceBodyLineItemsItemVatRateDefault),
