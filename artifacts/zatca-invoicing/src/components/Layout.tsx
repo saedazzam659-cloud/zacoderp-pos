@@ -2,9 +2,9 @@ import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
-  Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
+  Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
-  Warehouse, Tag, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2, Layers,
+  Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -44,30 +44,34 @@ const companySystemNav = [
   { name: "الإعدادات العامة", href: "/general-settings",  icon: Sliders,  permKey: "always" },
 ];
 
-const companyInventoryNav = [
-  { name: "لوحة المخازن",       href: "/inventory",                  icon: LayoutDashboard, exact: true, permKey: "inventory" },
-  { name: "الأصناف",             href: "/inventory/items",            icon: Package,         permKey: "inventory" },
-  { name: "وحدات القياس",        href: "/inventory/units",            icon: Ruler,           permKey: "inventory" },
-  { name: "المخازن",             href: "/inventory/warehouses",       icon: Warehouse,       permKey: "inventory" },
-  { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft,  permKey: "inventory" },
-  { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "inventory" },
-  { name: "الجرد المخزني",       href: "/inventory/counts",           icon: ClipboardList,   permKey: "inventory" },
-  { name: "دفتر الحركة",         href: "/inventory/ledger",           icon: BookOpen,        permKey: "inventory" },
-  { name: "رصيد المخزون",        href: "/inventory/balance",          icon: BarChart2,       permKey: "inventory" },
+// Inventory module: header item (dashboard) + sub-items
+const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true, permKey: "inventory" };
+const inventorySubNav = [
+  { name: "الأصناف",              href: "/inventory/items",        icon: Package,           permKey: "inventory" },
+  { name: "وحدات القياس",         href: "/inventory/units",        icon: Ruler,             permKey: "inventory" },
+  { name: "المخازن",              href: "/inventory/warehouses",   icon: Warehouse,         permKey: "inventory" },
+  { name: "التحويل بين المخازن",   href: "/inventory/transfers",    icon: ArrowRightLeft,    permKey: "inventory" },
+  { name: "التسوية المخزنية",     href: "/inventory/adjustments",  icon: SlidersHorizontal, permKey: "inventory" },
+  { name: "الجرد المخزني",        href: "/inventory/counts",       icon: ClipboardList,     permKey: "inventory" },
+  { name: "دفتر الحركة",          href: "/inventory/ledger",       icon: BookOpen,          permKey: "inventory" },
+  { name: "رصيد المخزون",         href: "/inventory/balance",      icon: BarChart2,         permKey: "inventory" },
 ];
 
 // ─── Parse menu permissions ────────────────────────────────────────────────────
 const DEFAULT_PERMS: Record<string, boolean> = {
   dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true, reports: true, inventory: true,
 };
-
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
   try { return { ...DEFAULT_PERMS, ...JSON.parse(raw ?? "{}") }; }
   catch { return { ...DEFAULT_PERMS }; }
 }
 
 // ─── Nav item ─────────────────────────────────────────────────────────────────
-function NavItem({ item, location, onClick }: { item: any; location: string; onClick?: () => void }) {
+function NavItem({
+  item, location, onClick, indent = false,
+}: {
+  item: any; location: string; onClick?: () => void; indent?: boolean;
+}) {
   const isActive = item.exact
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
@@ -75,6 +79,7 @@ function NavItem({ item, location, onClick }: { item: any; location: string; onC
     <Link href={item.href} className="block" onClick={onClick}>
       <span className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+        indent && "pr-8",
         isActive
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -86,6 +91,58 @@ function NavItem({ item, location, onClick }: { item: any; location: string; onC
   );
 }
 
+// ─── Collapsible inventory group ──────────────────────────────────────────────
+function InventoryNavGroup({
+  location, onNavigate, menuPerms,
+}: {
+  location: string; onNavigate: () => void; menuPerms: Record<string, boolean>;
+}) {
+  const isOnInventory = location.startsWith("/inventory");
+  const [open, setOpen] = useState(isOnInventory);
+
+  if (menuPerms.inventory === false) return null;
+
+  const subItems = inventorySubNav.filter(i => menuPerms[i.permKey] !== false);
+
+  return (
+    <div>
+      {/* Collapsible toggle header */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+          isOnInventory
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <Warehouse className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">موديل المخازن</span>
+        {open
+          ? <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        }
+      </button>
+
+      {/* Expanded items */}
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          {/* Vertical guide line */}
+          <div className="absolute top-0 bottom-0 right-7 w-px bg-sidebar-border" />
+
+          {/* Dashboard (لوحة المخازن) */}
+          <NavItem item={inventoryHeader} location={location} onClick={onNavigate} indent />
+
+          {/* Sub items */}
+          {subItems.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main layout ──────────────────────────────────────────────────────────────
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
@@ -93,12 +150,9 @@ export default function Layout({ children }: LayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const isSuperAdmin = user?.role === "superadmin";
 
-  // Parse company's menu permissions
   const menuPerms = parseMenuPerms(user?.company?.menuPermissions);
-
-  const filteredBusinessNav  = companyBusinessNav.filter(item => menuPerms[item.permKey] !== false);
-  const filteredSystemNav    = companySystemNav.filter(item => menuPerms[item.permKey] !== false);
-  const filteredInventoryNav = companyInventoryNav.filter(item => menuPerms[item.permKey] !== false);
+  const filteredBusinessNav = companyBusinessNav.filter(item => menuPerms[item.permKey] !== false);
+  const filteredSystemNav   = companySystemNav.filter(item => menuPerms[item.permKey] !== false);
 
   const PLAN_LABELS: Record<string, string> = {
     starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
@@ -108,6 +162,8 @@ export default function Layout({ children }: LayoutProps) {
     user?.subscription?.plan === "professional" ? "text-primary bg-primary/10 border-primary/20" :
     user?.subscription?.plan === "enterprise"   ? "text-amber-700 bg-amber-50 border-amber-200" :
     "text-muted-foreground bg-muted border-border";
+
+  const closeMobile = () => setMobileOpen(false);
 
   const SidebarContent = () => (
     <>
@@ -156,51 +212,53 @@ export default function Layout({ children }: LayoutProps) {
         {isSuperAdmin ? (
           <div className="space-y-0.5">
             {superAdminNav.map(item => (
-              <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+              <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
             ))}
           </div>
         ) : (
           <>
-            {/* Dashboard — only if permitted */}
+            {/* Dashboard */}
             {menuPerms.dashboard !== false && (
               <div className="space-y-0.5">
                 {companyNav.map(item => (
-                  <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                  <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
                 ))}
               </div>
             )}
 
-            {/* Business menus — filtered */}
+            {/* Business */}
             {filteredBusinessNav.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
                 <div className="space-y-0.5">
                   {filteredBusinessNav.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                    <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Inventory menus */}
-            {filteredInventoryNav.length > 0 && (
+            {/* Inventory — collapsible accordion */}
+            {menuPerms.inventory !== false && (
               <div>
-                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المخازن والمخزون</p>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المخزون</p>
                 <div className="space-y-0.5">
-                  {filteredInventoryNav.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
-                  ))}
+                  <InventoryNavGroup
+                    location={location}
+                    onNavigate={closeMobile}
+                    menuPerms={menuPerms}
+                  />
                 </div>
               </div>
             )}
 
-            {/* System menus — filtered */}
+            {/* System */}
             {filteredSystemNav.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
                 <div className="space-y-0.5">
                   {filteredSystemNav.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                    <NavItem key={item.href} item={item} location={location} onClick={closeMobile} />
                   ))}
                 </div>
               </div>
@@ -267,7 +325,7 @@ export default function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Mobile overlay */}
-      {mobileOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={closeMobile} />}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 flex w-72 flex-col border-l border-border bg-sidebar transition-transform duration-200 md:hidden",
         mobileOpen ? "translate-x-0" : "translate-x-full"
