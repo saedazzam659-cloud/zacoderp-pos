@@ -1,14 +1,19 @@
 /**
  * ZATCA UBL 2.1 XML Generator
  * Generates ZATCA-compliant invoice XML as per the e-invoicing requirements
+ * Supports: Standard (B2B clearance) and Simplified (B2C reporting)
+ * Payment means: UN/ECE 4461 codes (10=Cash, 30=BankTransfer, 42=BankAccount, 48=Card)
+ * Tax categories: S=Standard(15%), Z=Zero-rated(0%), E=Exempt(0%)
  */
 
 interface LineItem {
   id: number;
   description: string;
   quantity: string;
+  unitCode?: string;
   unitPrice: string;
   discountAmount: string;
+  taxCategory?: string;
   vatRate: string;
   vatAmount: string;
   subtotal: string;
@@ -35,6 +40,7 @@ interface Customer {
   street?: string | null;
   buildingNumber?: string | null;
   city?: string | null;
+  district?: string | null;
   postalCode?: string | null;
   country?: string | null;
 }
@@ -46,6 +52,7 @@ interface InvoiceData {
   issueTime?: string;
   supplyDate?: string | null;
   currency: string;
+  paymentMethod?: string | null;
   subtotal: string;
   discountTotal: string;
   vatTotal: string;
@@ -76,16 +83,71 @@ function getInvoiceTypeCode(type: string): { typeCode: string; subTypeCode: stri
   return { typeCode: "388", subTypeCode: "0100000" };
 }
 
+/**
+ * Resolve ZATCA tax category details
+ * S  = Standard rate (15%)
+ * Z  = Zero rated goods/services (0%)
+ * E  = Exempt from VAT (0%)
+ * O  = Outside scope of VAT (0%) — used for special cases
+ */
+function getTaxCategory(category?: string, vatRate?: string): {
+  id: string;
+  percent: string;
+  exemptionReason?: string;
+} {
+  switch (category) {
+    case "Z":
+      return { id: "Z", percent: "0.00" };
+    case "E":
+      return { id: "E", percent: "0.00", exemptionReason: "Exempt from VAT" };
+    case "O":
+      return { id: "O", percent: "0.00", exemptionReason: "Not subject to VAT" };
+    default:
+      return { id: "S", percent: Number(vatRate ?? 15).toFixed(2) };
+  }
+}
+
 export function generateZatcaXml(data: InvoiceData): string {
   const { typeCode, subTypeCode } = getInvoiceTypeCode(data.invoiceType);
   const issueTime = data.issueTime ?? new Date().toISOString().split("T")[1]?.split(".")[0] ?? "00:00:00";
+  const paymentMeansCode = data.paymentMethod ?? "10";
+
+  // Aggregate tax by category for TaxTotal/TaxSubtotal
+  const taxByCategory = new Map<string, { taxable: number; tax: number; rate: number }>();
+  for (const item of data.lineItems) {
+    const cat = item.taxCategory ?? "S";
+    const existing = taxByCategory.get(cat) ?? { taxable: 0, tax: 0, rate: Number(item.vatRate ?? 15) };
+    taxByCategory.set(cat, {
+      taxable: existing.taxable + Number(item.subtotal),
+      tax: existing.tax + Number(item.vatAmount),
+      rate: Number(item.vatRate ?? 15),
+    });
+  }
+
+  const taxSubtotalsXml = Array.from(taxByCategory.entries()).map(([cat, vals]) => {
+    const tc = getTaxCategory(cat, String(vals.rate));
+    return `
+    <cac:TaxSubtotal>
+      <cbc:TaxableAmount currencyID="${data.currency}">${vals.taxable.toFixed(2)}</cbc:TaxableAmount>
+      <cbc:TaxAmount currencyID="${data.currency}">${vals.tax.toFixed(2)}</cbc:TaxAmount>
+      <cac:TaxCategory>
+        <cbc:ID>${tc.id}</cbc:ID>
+        <cbc:Percent>${tc.percent}</cbc:Percent>
+        ${tc.exemptionReason ? `<cbc:TaxExemptionReason>${tc.exemptionReason}</cbc:TaxExemptionReason>` : ""}
+        <cac:TaxScheme>
+          <cbc:ID>VAT</cbc:ID>
+        </cac:TaxScheme>
+      </cac:TaxCategory>
+    </cac:TaxSubtotal>`;
+  }).join("");
 
   const lineItemsXml = data.lineItems.map((item, idx) => {
-    const taxableAmount = (Number(item.subtotal)).toFixed(2);
+    const taxableAmount = Number(item.subtotal).toFixed(2);
+    const tc = getTaxCategory(item.taxCategory, item.vatRate);
     return `
     <cac:InvoiceLine>
       <cbc:ID>${idx + 1}</cbc:ID>
-      <cbc:InvoicedQuantity unitCode="${(item as { unitCode?: string }).unitCode ?? "PCE"}">${Number(item.quantity).toFixed(4)}</cbc:InvoicedQuantity>
+      <cbc:InvoicedQuantity unitCode="${item.unitCode ?? "PCE"}">${Number(item.quantity).toFixed(4)}</cbc:InvoicedQuantity>
       <cbc:LineExtensionAmount currencyID="${data.currency}">${taxableAmount}</cbc:LineExtensionAmount>
       <cac:TaxTotal>
         <cbc:TaxAmount currencyID="${data.currency}">${Number(item.vatAmount).toFixed(2)}</cbc:TaxAmount>
@@ -94,8 +156,8 @@ export function generateZatcaXml(data: InvoiceData): string {
       <cac:Item>
         <cbc:Name>${xmlEscape(item.description)}</cbc:Name>
         <cac:ClassifiedTaxCategory>
-          <cbc:ID>S</cbc:ID>
-          <cbc:Percent>${Number(item.vatRate).toFixed(2)}</cbc:Percent>
+          <cbc:ID>${tc.id}</cbc:ID>
+          <cbc:Percent>${tc.percent}</cbc:Percent>
           <cac:TaxScheme>
             <cbc:ID>VAT</cbc:ID>
           </cac:TaxScheme>
@@ -112,36 +174,46 @@ export function generateZatcaXml(data: InvoiceData): string {
     </cac:InvoiceLine>`;
   }).join("");
 
+  // Customer party XML — B2B requires full data, B2C minimal
+  const isB2B = data.invoiceType === "standard";
   const customerXml = data.customer ? `
   <cac:AccountingCustomerParty>
     <cac:Party>
+      ${data.customer.vatNumber ? `
+      <cac:PartyIdentification>
+        <cbc:ID schemeID="TIN">${xmlEscape(data.customer.vatNumber)}</cbc:ID>
+      </cac:PartyIdentification>` : ""}
+      ${data.customer.crNumber ? `
       <cac:PartyIdentification>
         <cbc:ID schemeID="CRN">${xmlEscape(data.customer.crNumber)}</cbc:ID>
-      </cac:PartyIdentification>
+      </cac:PartyIdentification>` : ""}
       <cac:PostalAddress>
-        <cbc:StreetName>${xmlEscape(data.customer.street)}</cbc:StreetName>
-        <cbc:BuildingNumber>${xmlEscape(data.customer.buildingNumber)}</cbc:BuildingNumber>
-        <cbc:CityName>${xmlEscape(data.customer.city)}</cbc:CityName>
-        <cbc:PostalZone>${xmlEscape(data.customer.postalCode)}</cbc:PostalZone>
+        <cbc:StreetName>${xmlEscape(data.customer.street ?? "")}</cbc:StreetName>
+        <cbc:BuildingNumber>${xmlEscape(data.customer.buildingNumber ?? "")}</cbc:BuildingNumber>
+        <cbc:CityName>${xmlEscape(data.customer.city ?? "")}</cbc:CityName>
+        <cbc:PostalZone>${xmlEscape(data.customer.postalCode ?? "")}</cbc:PostalZone>
+        ${data.customer.district ? `<cbc:CountrySubentity>${xmlEscape(data.customer.district)}</cbc:CountrySubentity>` : ""}
         <cac:Country>
           <cbc:IdentificationCode>${xmlEscape(data.customer.country ?? "SA")}</cbc:IdentificationCode>
         </cac:Country>
       </cac:PostalAddress>
+      ${data.customer.vatNumber ? `
       <cac:PartyTaxScheme>
         <cbc:CompanyID>${xmlEscape(data.customer.vatNumber)}</cbc:CompanyID>
         <cac:TaxScheme>
           <cbc:ID>VAT</cbc:ID>
         </cac:TaxScheme>
-      </cac:PartyTaxScheme>
+      </cac:PartyTaxScheme>` : ""}
       <cac:PartyLegalEntity>
         <cbc:RegistrationName>${xmlEscape(data.customer.nameAr)}</cbc:RegistrationName>
+        ${data.customer.crNumber ? `<cbc:CompanyID>${xmlEscape(data.customer.crNumber)}</cbc:CompanyID>` : ""}
       </cac:PartyLegalEntity>
     </cac:Party>
   </cac:AccountingCustomerParty>` : `
   <cac:AccountingCustomerParty>
     <cac:Party>
       <cac:PartyLegalEntity>
-        <cbc:RegistrationName>غير محدد</cbc:RegistrationName>
+        <cbc:RegistrationName>${isB2B ? "غير محدد" : "عميل أفراد"}</cbc:RegistrationName>
       </cac:PartyLegalEntity>
     </cac:Party>
   </cac:AccountingCustomerParty>`;
@@ -161,7 +233,6 @@ export function generateZatcaXml(data: InvoiceData): string {
     <ext:UBLExtension>
       <ext:ExtensionURI>urn:oasis:names:specification:ubl:dsig:enveloped:xades</ext:ExtensionURI>
       <ext:ExtensionContent>
-        <!-- Digital signature placeholder -->
         <sig:UBLDocumentSignatures>
           <sac:SignatureInformation>
             <cbc:ID>urn:oasis:names:specification:ubl:signature:Invoice</cbc:ID>
@@ -209,7 +280,7 @@ export function generateZatcaXml(data: InvoiceData): string {
         <cbc:BuildingNumber>${xmlEscape(data.company.buildingNumber)}</cbc:BuildingNumber>
         <cbc:CityName>${xmlEscape(data.company.city)}</cbc:CityName>
         <cbc:PostalZone>${xmlEscape(data.company.postalCode)}</cbc:PostalZone>
-        <cbc:District>${xmlEscape(data.company.district)}</cbc:District>
+        ${data.company.district ? `<cbc:CountrySubentity>${xmlEscape(data.company.district)}</cbc:CountrySubentity>` : ""}
         <cac:Country>
           <cbc:IdentificationCode>${xmlEscape(data.company.country)}</cbc:IdentificationCode>
         </cac:Country>
@@ -222,6 +293,7 @@ export function generateZatcaXml(data: InvoiceData): string {
       </cac:PartyTaxScheme>
       <cac:PartyLegalEntity>
         <cbc:RegistrationName>${xmlEscape(data.company.nameAr)}</cbc:RegistrationName>
+        <cbc:CompanyID>${xmlEscape(data.company.crNumber)}</cbc:CompanyID>
       </cac:PartyLegalEntity>
     </cac:Party>
   </cac:AccountingSupplierParty>
@@ -232,19 +304,13 @@ export function generateZatcaXml(data: InvoiceData): string {
     <cbc:ActualDeliveryDate>${data.supplyDate ?? data.issueDate}</cbc:ActualDeliveryDate>
   </cac:Delivery>
 
+  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>${paymentMeansCode}</cbc:PaymentMeansCode>
+  </cac:PaymentMeans>
+
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="${data.currency}">${Number(data.vatTotal).toFixed(2)}</cbc:TaxAmount>
-    <cac:TaxSubtotal>
-      <cbc:TaxableAmount currencyID="${data.currency}">${Number(data.subtotal).toFixed(2)}</cbc:TaxableAmount>
-      <cbc:TaxAmount currencyID="${data.currency}">${Number(data.vatTotal).toFixed(2)}</cbc:TaxAmount>
-      <cac:TaxCategory>
-        <cbc:ID>S</cbc:ID>
-        <cbc:Percent>15.00</cbc:Percent>
-        <cac:TaxScheme>
-          <cbc:ID>VAT</cbc:ID>
-        </cac:TaxScheme>
-      </cac:TaxCategory>
-    </cac:TaxSubtotal>
+    ${taxSubtotalsXml}
   </cac:TaxTotal>
 
   <cac:LegalMonetaryTotal>
