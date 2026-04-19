@@ -16,7 +16,7 @@ import {
   Download, FileSpreadsheet, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { exportToExcel, exportToPDF } from "@/lib/export";
+import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -569,11 +569,64 @@ function VATExportMenu({
     exportToExcel(buildRows(), VAT_COLS, `اقرار-ضريبي-${period.from}-${period.to}`, "الإقرار الضريبي");
   }
 
+  const INFO_COLS  = [{ key: "label", header: "البيان", width: 40 }, { key: "base", header: "القيمة", width: 40 }];
+  const TABLE_COLS = [
+    { key: "num",   header: "#",                              width: 6  },
+    { key: "label", header: "البيان",                         width: 54 },
+    { key: "base",  header: "الأساس الخاضع للضريبة (ر.س)",   width: 28 },
+    { key: "vat",   header: "مبلغ الضريبة (ر.س)",            width: 24 },
+  ];
+  const NET_COLS = [{ key: "label", header: "البيان", width: 54 }, { key: "base", header: "المبلغ (ر.س)", width: 28 }];
+
   function handlePDF() {
-    exportToPDF(
-      buildRows(),
-      VAT_COLS,
-      `اقرار-ضريبي-${period.from}-${period.to}`,
+    printSectionsAsPDF(
+      [
+        {
+          title: "معلومات الإقرار",
+          color: "#1e40af",
+          columns: INFO_COLS,
+          rows: [
+            { label: "اسم الشركة",        base: companyName },
+            { label: "الرقم الضريبي",      base: data.company?.vatNumber ?? "" },
+            { label: "الفترة الضريبية",    base: period.label },
+            { label: "من تاريخ",          base: period.from },
+            { label: "إلى تاريخ",         base: period.to },
+            { label: "عدد الفواتير",       base: String(data.invoiceBreakdown.totalCount) },
+          ],
+        },
+        {
+          title: "القسم الأول: ضريبة المخرجات (المبيعات)",
+          color: "#15803d",
+          columns: TABLE_COLS,
+          rows: [
+            { num: "1", label: "المبيعات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
+            { num: "2", label: "المبيعات الخاضعة لنسبة الصفر %",               base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
+            { num: "3", label: "المبيعات المعفاة من الضريبة",                  base: fmtN(data.outputTax.exempt.base),        vat: "—" },
+            { num: "4", label: "إجمالي المبيعات",                               base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
+          ],
+        },
+        {
+          title: "القسم الثاني: ضريبة المدخلات (المشتريات)",
+          color: "#1d4ed8",
+          columns: TABLE_COLS,
+          rows: [
+            { num: "5", label: "المشتريات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
+            { num: "6", label: "المشتريات الخاضعة لنسبة الصفر %",                base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
+            { num: "7", label: "المشتريات المعفاة من الضريبة",                   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
+            { num: "8", label: "إجمالي المشتريات",                                base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
+          ],
+        },
+        {
+          title: "القسم الثالث: صافي الضريبة المستحقة",
+          color: "#7c3aed",
+          columns: NET_COLS,
+          rows: [
+            { label: "ضريبة المخرجات",                base: fmtN(data.outputTax.total.vat) },
+            { label: "ضريبة المدخلات (القابلة للخصم)", base: fmtN(data.inputTax.total.vat) },
+            { label: "صافي الضريبة المستحقة (ر.س)",    base: fmtN(data.netVat) },
+          ],
+        },
+      ],
       "الإقرار الضريبي على القيمة المضافة",
       `${companyName} — ${period.label} (${period.from} إلى ${period.to})`,
     );
