@@ -1,6 +1,6 @@
 import { useListCompanies } from "@workspace/api-client-react";
 import { Link } from "wouter";
-import { Plus, Building2, ExternalLink } from "lucide-react";
+import { Plus, Building2, ExternalLink, ShieldCheck, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,11 +90,35 @@ export default function Companies() {
                   </div>
                 </div>
                 
-                <div className="pt-4 border-t flex items-center justify-end">
-                  <Button asChild variant="ghost" size="sm" className="gap-2">
+                {/* ZATCA status bar */}
+                {!company.zatcaPcsid && (
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium
+                    ${company.zatcaCsid ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
+                    {company.zatcaCsid
+                      ? <><ShieldCheck className="h-3.5 w-3.5 shrink-0" /> اكتملت CSID — أكمل الخطوة الأخيرة (PCSID)</>
+                      : <><AlertCircle className="h-3.5 w-3.5 shrink-0" /> لم يكتمل الربط مع هيئة الزكاة</>
+                    }
+                  </div>
+                )}
+                {company.zatcaPcsid && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> مسجّلة وجاهزة لإصدار الفواتير
+                  </div>
+                )}
+                
+                <div className="pt-3 border-t flex items-center gap-2">
+                  {!company.zatcaPcsid && (
+                    <Button asChild size="sm" className="flex-1 gap-1.5">
+                      <Link href={`/companies/${company.id}?tab=zatca`}>
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        ربط ZATCA
+                      </Link>
+                    </Button>
+                  )}
+                  <Button asChild variant="ghost" size="sm" className={`gap-1.5 ${!company.zatcaPcsid ? "" : "flex-1"}`}>
                     <Link href={`/companies/${company.id}`}>
-                      <span>التفاصيل والإعدادات</span>
-                      <ExternalLink className="h-4 w-4" />
+                      <span>التفاصيل</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
                     </Link>
                   </Button>
                 </div>

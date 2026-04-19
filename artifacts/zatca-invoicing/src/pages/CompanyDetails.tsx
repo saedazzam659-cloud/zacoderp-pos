@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useSearch } from "wouter";
 import { useGetCompany, useUpdateCompany } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,8 @@ function StepBadge({ n, active, done }: { n: number; active: boolean; done: bool
 export default function CompanyDetails() {
   const params = useParams();
   const id = parseInt(params.id || "0", 10);
+  const search = useSearch();
+  const defaultTab = new URLSearchParams(search).get("tab") ?? "general";
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -198,7 +200,7 @@ export default function CompanyDetails() {
         </div>
       </div>
 
-      <Tabs defaultValue="general" className="w-full" dir="rtl">
+      <Tabs defaultValue={defaultTab} className="w-full" dir="rtl">
         <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6 overflow-x-auto">
           {[
             { value: "general", label: "عام" },
