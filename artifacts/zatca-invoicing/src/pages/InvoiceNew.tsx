@@ -128,6 +128,9 @@ export default function InvoiceNew() {
   const userCompanyName = user?.company?.nameAr ?? user?.company?.nameEn ?? "";
   const userCompanyVat = user?.company?.vatNumber ?? "";
 
+  // Superadmin: text search for company (no dropdown)
+  const [companyText, setCompanyText] = useState("");
+
   // Companies list — only used by superadmin
   const { data: companies } = useListCompanies({
     query: { queryKey: ["companies"], enabled: isSuperAdmin }
@@ -331,20 +334,58 @@ export default function InvoiceNew() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-                    {/* ─── الشركة المصدرة: text box للكتابة (superadmin) أو عرض ثابت (شركة) ─── */}
+                    {/* ─── الشركة المصدرة ─── */}
                     {isSuperAdmin ? (
-                      <FormField control={form.control} name="companyId" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>الشركة المصدرة <span className="text-destructive">*</span></FormLabel>
-                          <FormControl>
-                            <SearchCombobox items={companyItems} value={field.value?.toString()}
-                              onValueChange={v => field.onChange(parseInt(v, 10))}
-                              placeholder="اختر الشركة..." searchPlaceholder="ابحث باسم الشركة..." />
-                          </FormControl>
-                          <FormDescription>المنشأة التي ستصدر الفاتورة</FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                      <FormField control={form.control} name="companyId" render={({ field }) => {
+                        const matched = (companies ?? []).find(
+                          c => c.nameAr === companyText || c.nameEn === companyText || c.id.toString() === companyText
+                        );
+                        return (
+                          <FormItem>
+                            <FormLabel>الشركة المصدرة <span className="text-destructive">*</span></FormLabel>
+                            {/* Native datalist — no custom dropdown, just browser suggestions */}
+                            <datalist id="companies-list">
+                              {(companies ?? []).map(c => (
+                                <option key={c.id} value={c.nameAr} />
+                              ))}
+                            </datalist>
+                            <FormControl>
+                              <div className="relative">
+                                <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-10" />
+                                <Input
+                                  list="companies-list"
+                                  placeholder="اكتب اسم الشركة..."
+                                  className="pr-9 pl-9"
+                                  value={companyText}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setCompanyText(val);
+                                    const found = (companies ?? []).find(
+                                      c => c.nameAr === val || c.nameEn === val
+                                    );
+                                    field.onChange(found ? found.id : undefined);
+                                  }}
+                                />
+                                {matched && (
+                                  <CheckCircle2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-green-500 pointer-events-none" />
+                                )}
+                              </div>
+                            </FormControl>
+                            {matched && (
+                              <p className="text-xs text-green-700 font-mono">
+                                الرقم الضريبي: {matched.vatNumber ?? "—"}
+                              </p>
+                            )}
+                            {companyText && !matched && (
+                              <p className="text-xs text-amber-600 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                لم يُعثر على الشركة — تأكد من الاسم
+                              </p>
+                            )}
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }} />
                     ) : (
                       <div className="space-y-1.5">
                         <label className="text-sm font-medium">الشركة المصدرة</label>
