@@ -16,6 +16,7 @@ import {
   Download, FileSpreadsheet, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFmt } from "@/hooks/use-fmt";
 import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -519,6 +520,7 @@ function VATExportMenu({
   period: { label: string; from: string; to: string };
 }) {
   const companyName = data.company?.nameAr ?? "";
+  const { dp } = useFmt();
 
   const VAT_COLS = [
     { key: "section", header: "القسم",                      width: 14 },
@@ -529,7 +531,7 @@ function VATExportMenu({
   ];
 
   function fmtN(n: number) {
-    return n.toFixed(2);
+    return n.toFixed(dp);
   }
 
   function buildRows() {

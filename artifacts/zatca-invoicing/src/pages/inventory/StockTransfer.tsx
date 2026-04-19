@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   draft:     { label: "مسودة",   color: "bg-amber-50 text-amber-700" },
@@ -29,6 +30,7 @@ const EMPTY_FORM = {
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", conversionFactor: "1" });
 
 export default function StockTransfer() {
+  const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
@@ -304,7 +306,7 @@ export default function StockTransfer() {
                     {lines.map((line, i) => {
                       const lineUnits = getLineUnits(line);
                       const cf = Number(line.conversionFactor || "1");
-                      const baseQtyHint = cf !== 1 ? `×${cf} = ${(Number(line.qty || 0) * cf).toFixed(2)} وحدة أساسية` : null;
+                      const baseQtyHint = cf !== 1 ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية` : null;
                       const autoFilled = isAutoFilled(line);
 
                       return (
@@ -372,7 +374,7 @@ export default function StockTransfer() {
 
                           {/* Total */}
                           <td className="px-3 py-2 tabular-nums text-xs text-muted-foreground">
-                            {(Number(line.qty) * Number(line.costPrice)).toFixed(2)}
+                            {fmt(Number(line.qty) * Number(line.costPrice))}
                           </td>
 
                           {/* Remove */}
@@ -397,7 +399,7 @@ export default function StockTransfer() {
                     <tr>
                       <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-left">إجمالي التحويل</td>
                       <td className="px-3 py-2 text-xs font-bold tabular-nums">
-                        {lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0).toFixed(2)} ر.س
+                        {fmt(lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0))} ر.س
                       </td>
                       <td />
                     </tr>
@@ -534,10 +536,10 @@ export default function StockTransfer() {
                                       <tr key={l.id}>
                                         <td className="py-1.5 pr-0">{l.item?.nameAr ?? l.itemId}</td>
                                         <td className="py-1.5">{l.unit?.nameAr ?? "وحدة أساسية"}</td>
-                                        <td className="py-1.5 tabular-nums">{Number(l.qty).toFixed(2)}</td>
-                                        <td className="py-1.5 tabular-nums">{Number(l.costPrice).toFixed(2)}</td>
+                                        <td className="py-1.5 tabular-nums">{fmtQty(l.qty)}</td>
+                                        <td className="py-1.5 tabular-nums">{fmt(l.costPrice)}</td>
                                         <td className="py-1.5 tabular-nums font-medium">
-                                          {(Number(l.qty) * Number(l.costPrice)).toFixed(2)}
+                                          {fmt(Number(l.qty) * Number(l.costPrice))}
                                         </td>
                                       </tr>
                                     ))}

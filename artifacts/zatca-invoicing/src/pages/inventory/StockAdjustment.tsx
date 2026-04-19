@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
@@ -30,6 +31,7 @@ const EMPTY_FORM = {
 const newLine = () => ({ itemId: "", unitId: "", qty: "0", costPrice: "0", notes: "", conversionFactor: "1" });
 
 export default function StockAdjustment() {
+  const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
@@ -298,7 +300,7 @@ export default function StockAdjustment() {
                     {lines.map((line, i) => {
                       const lineUnits = getLineUnits(line);
                       const cf = Number(line.conversionFactor || "1");
-                      const baseQtyHint = cf !== 1 ? `×${cf} = ${(Number(line.qty || 0) * cf).toFixed(2)} وحدة أساسية` : null;
+                      const baseQtyHint = cf !== 1 ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية` : null;
                       const autoFilled = isAutoFilled(line);
                       const qtyNum = Number(line.qty || 0);
 
@@ -527,9 +529,9 @@ export default function StockAdjustment() {
                                           "py-1.5 tabular-nums font-medium",
                                           Number(l.qty) >= 0 ? "text-green-600" : "text-red-600"
                                         )}>
-                                          {Number(l.qty) >= 0 ? "+" : ""}{Number(l.qty).toFixed(2)}
+                                          {Number(l.qty) >= 0 ? "+" : ""}{fmtQty(l.qty)}
                                         </td>
-                                        <td className="py-1.5 tabular-nums">{Number(l.costPrice).toFixed(2)}</td>
+                                        <td className="py-1.5 tabular-nums">{fmt(l.costPrice)}</td>
                                         <td className="py-1.5 text-muted-foreground">{l.notes ?? "—"}</td>
                                       </tr>
                                     ))}

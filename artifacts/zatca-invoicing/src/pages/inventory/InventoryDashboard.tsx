@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useFmt } from "@/hooks/use-fmt";
 
 const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
   transfer_out: { label: "تحويل خارج",  color: "text-orange-600 bg-orange-50" },
@@ -22,6 +23,7 @@ const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
 };
 
 export default function InventoryDashboard() {
+  const { fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
@@ -49,7 +51,7 @@ export default function InventoryDashboard() {
     },
     {
       label: "قيمة المخزون (ر.س)",
-      value: isLoading ? "—" : Number(data?.totalStockValue ?? 0).toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 }),
+      value: isLoading ? "—" : fmtVal(data?.totalStockValue ?? 0),
       icon: TrendingUp,
       color: "text-primary",
       bg: "bg-primary/5 border-primary/10",
@@ -157,7 +159,7 @@ export default function InventoryDashboard() {
                   </div>
                   <div className="text-left shrink-0">
                     <p className={cn("text-sm font-bold tabular-nums", Number(mov.qty) >= 0 ? "text-green-600" : "text-red-600")}>
-                      {Number(mov.qty) >= 0 ? "+" : ""}{Number(mov.qty).toFixed(2)}
+                      {Number(mov.qty) >= 0 ? "+" : ""}{fmtQty(mov.qty)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">{mov.txDate}</p>
                   </div>

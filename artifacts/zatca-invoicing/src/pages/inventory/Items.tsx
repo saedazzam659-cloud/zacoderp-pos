@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import ExportButtons from "@/components/ExportButtons";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 import {
   Plus, Pencil, Trash2, Package, Search, X,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
@@ -42,6 +43,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { fmt } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const { data: allUnits = [] } = useQuery({ queryKey: ["units", cid], queryFn: () => inventoryApi.getUnits(cid) });
@@ -174,11 +176,11 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
                 </div>
                 <div className="bg-orange-50 rounded px-1.5 py-1 text-center">
                   <p className="text-orange-600">تكلفة</p>
-                  <p className="font-bold tabular-nums text-orange-800">{Number(up.costPrice).toFixed(2)}</p>
+                  <p className="font-bold tabular-nums text-orange-800">{fmt(up.costPrice)}</p>
                 </div>
                 <div className="bg-blue-50 rounded px-1.5 py-1 text-center">
                   <p className="text-blue-600">بيع</p>
-                  <p className="font-bold tabular-nums text-blue-800">{Number(up.salePrice).toFixed(2)}</p>
+                  <p className="font-bold tabular-nums text-blue-800">{fmt(up.salePrice)}</p>
                 </div>
               </div>
               <div className="flex gap-1 justify-end mt-1">
@@ -196,6 +198,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
   const { user } = useAuth();
+  const { fmt, fmtQty } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -268,9 +271,9 @@ export default function Items() {
     itemType:     it.itemType === "stock" ? "مخزني" : "خدمي",
     groupName:    it.group?.nameAr ?? "",
     unitName:     it.unit?.nameAr ?? "",
-    costPrice:    Number(it.costPrice).toFixed(2),
-    salePrice:    Number(it.salePrice).toFixed(2),
-    reorderLevel: Number(it.reorderLevel).toFixed(2),
+    costPrice:    fmt(it.costPrice),
+    salePrice:    fmt(it.salePrice),
+    reorderLevel: fmtQty(it.reorderLevel),
     status:       it.status === "active" ? "نشط" : "موقوف",
   }));
 
@@ -430,8 +433,8 @@ export default function Items() {
                           <span className="text-xs font-mono font-bold text-primary bg-primary/5 rounded px-1.5 py-0.5">{it.unit.code}</span>
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </td>
-                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs">{Number(it.costPrice).toFixed(2)}</td>
-                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{Number(it.salePrice).toFixed(2)}</td>
+                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs">{fmt(it.costPrice)}</td>
+                      <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{fmt(it.salePrice)}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700")}>
                           {it.itemType === "stock" ? "مخزني" : "خدمي"}
@@ -481,10 +484,10 @@ export default function Items() {
                                       <div key={b.id} className="rounded-lg border bg-background p-3">
                                         <p className="text-xs font-medium truncate">{b.warehouse?.nameAr ?? "—"}</p>
                                         <div className="flex items-end gap-1 mt-1">
-                                          <span className="text-lg font-bold tabular-nums">{Number(b.qty).toFixed(2)}</span>
+                                          <span className="text-lg font-bold tabular-nums">{fmtQty(b.qty)}</span>
                                           <span className="text-xs text-muted-foreground mb-0.5">{it.unit?.code ?? ""}</span>
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground">متوسط التكلفة: {Number(b.avgCost).toFixed(2)} ر.س</p>
+                                        <p className="text-[10px] text-muted-foreground">متوسط التكلفة: {fmt(b.avgCost)} ر.س</p>
                                         {Number(b.qty) < Number(it.reorderLevel) && Number(b.qty) >= 0 && (
                                           <p className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />دون حد الطلب</p>
                                         )}

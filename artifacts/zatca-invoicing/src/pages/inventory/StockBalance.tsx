@@ -9,6 +9,7 @@ import ExportButtons from "@/components/ExportButtons";
 import { BarChart2, AlertTriangle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 
 const EXPORT_COLS = [
   { key: "itemCode",     header: "كود الصنف",      width: 16 },
@@ -24,6 +25,7 @@ const EXPORT_COLS = [
 ];
 
 export default function StockBalance() {
+  const { fmt, fmtQty, fmtCost, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [warehouseId, setWarehouseId] = useState("");
@@ -56,10 +58,10 @@ export default function StockBalance() {
     groupName:     r.group?.nameAr ?? "",
     unitName:      r.unit?.nameAr ?? "",
     warehouseName: r.warehouse?.nameAr ?? "",
-    qty:           Number(r.qty).toFixed(2),
-    avgCost:       Number(r.avgCost).toFixed(4),
-    totalValue:    (Number(r.qty) * Number(r.avgCost)).toFixed(2),
-    reorderLevel:  Number(r.item?.reorderLevel ?? 0).toFixed(2),
+    qty:           fmtQty(r.qty),
+    avgCost:       fmtCost(r.avgCost),
+    totalValue:    fmt(Number(r.qty) * Number(r.avgCost)),
+    reorderLevel:  fmtQty(r.item?.reorderLevel ?? 0),
     status:        Number(r.qty) === 0 ? "نفاد" : (Number(r.item?.reorderLevel) > 0 && Number(r.qty) < Number(r.item?.reorderLevel) ? "تحت حد الطلب" : "عادي"),
   }));
 
@@ -77,7 +79,7 @@ export default function StockBalance() {
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
           <p className="text-xs text-muted-foreground">إجمالي قيمة المخزون</p>
-          <p className="text-2xl font-bold tabular-nums mt-1">{totalValue.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold tabular-nums mt-1">{fmtVal(totalValue)}</p>
           <p className="text-xs text-muted-foreground">ريال سعودي</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
@@ -149,12 +151,12 @@ export default function StockBalance() {
                         <td className="px-4 py-3 hidden md:table-cell text-xs">{r.warehouse?.nameAr ?? "—"}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn("font-bold tabular-nums", isZero ? "text-red-600" : isLow ? "text-amber-600" : "")}>
-                            {qty.toFixed(2)}
+                            {fmtQty(qty)}
                           </span>
                         </td>
                         <td className="px-4 py-3 hidden lg:table-cell text-xs text-muted-foreground text-center">{r.unit?.nameAr ?? "—"}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-xs tabular-nums text-center">{Number(r.avgCost).toFixed(4)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{totalVal.toFixed(2)}</td>
+                        <td className="px-4 py-3 hidden md:table-cell text-xs tabular-nums text-center">{fmtCost(r.avgCost)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmt(totalVal)}</td>
                         <td className="px-4 py-3 text-center">
                           {isZero
                             ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">نفاد</span>
@@ -172,7 +174,7 @@ export default function StockBalance() {
                 <tr>
                   <td colSpan={6} className="px-4 py-3 text-xs font-semibold text-muted-foreground">إجمالي قيمة المخزون</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">
-                    {totalValue.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })} ر.س
+                    {fmtVal(totalValue)} ر.س
                   </td>
                   <td></td>
                 </tr>

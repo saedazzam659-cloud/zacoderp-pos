@@ -10,6 +10,7 @@ import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 
 import {
@@ -77,6 +78,7 @@ export default function Invoices() {
 
   const { user }        = useAuth();
   const { toast }       = useToast();
+  const { dp }          = useFmt();
   const queryClient     = useQueryClient();
   const deleteInvoice   = useDeleteInvoice();
 
@@ -86,7 +88,7 @@ export default function Invoices() {
   );
 
   const formatCurrency = (amount: number | string) =>
-    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(Number(amount));
+    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
 
   const filtered = invoices?.filter(inv =>
     inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
@@ -131,9 +133,9 @@ export default function Invoices() {
               invoiceType:   inv.invoiceType === "standard" ? "ضريبية" : "مبسطة",
               customerName:  inv.customer?.nameAr ?? "عميل نقدي",
               issueDate:     inv.issueDate,
-              subtotal:      Number(inv.subtotal).toFixed(2),
-              vatTotal:      Number(inv.vatTotal).toFixed(2),
-              grandTotal:    Number(inv.grandTotal).toFixed(2),
+              subtotal:      Number(inv.subtotal).toFixed(dp),
+              vatTotal:      Number(inv.vatTotal).toFixed(dp),
+              grandTotal:    Number(inv.grandTotal).toFixed(dp),
               status:        getStatusLabel(inv.status),
               zatcaStatus:   inv.zatcaStatus ?? "—",
             }))}

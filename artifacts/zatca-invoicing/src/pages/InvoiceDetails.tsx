@@ -14,6 +14,7 @@ import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { QRCodeSVG } from "qrcode.react";
 import InvoicePrintDialog from "@/components/InvoicePrintDialog";
+import { useFmt } from "@/hooks/use-fmt";
 
 function ZatcaQrCode({ base64Tlv }: { base64Tlv: string }) {
   const binaryStr = atob(base64Tlv);
@@ -49,9 +50,10 @@ export default function InvoiceDetails() {
 
   const issueInvoice = useIssueInvoice();
   const cancelInvoice = useCancelInvoice();
+  const { dp } = useFmt();
 
   const formatCurrency = (amount: number | string) =>
-    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(Number(amount));
+    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", minimumFractionDigits: dp, maximumFractionDigits: dp }).format(Number(amount));
 
   const handleIssue = () => {
     if (!confirm("هل أنت متأكد من إصدار هذه الفاتورة؟ سيتم توليد XML وQR Code ولا يمكن تعديلها بعد ذلك.")) return;

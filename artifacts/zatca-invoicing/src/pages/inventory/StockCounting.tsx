@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -18,6 +19,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
 };
 
 export default function StockCounting() {
+  const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
@@ -68,11 +70,11 @@ export default function StockCounting() {
   const countExportRows = (countDetail?.items ?? []).map((it: any) => ({
     itemCode:   it.item?.code ?? "",
     itemNameAr: it.item?.nameAr ?? "",
-    systemQty:  Number(it.systemQty).toFixed(2),
-    actualQty:  Number(it.actualQty).toFixed(2),
-    diff:       Number(it.diff).toFixed(2),
-    costPrice:  Number(it.costPrice).toFixed(2),
-    totalDiff:  (Number(it.diff) * Number(it.costPrice)).toFixed(2),
+    systemQty:  fmtQty(it.systemQty),
+    actualQty:  fmtQty(it.actualQty),
+    diff:       fmtQty(it.diff),
+    costPrice:  fmt(it.costPrice),
+    totalDiff:  fmt(Number(it.diff) * Number(it.costPrice)),
   }));
 
   return (
@@ -225,7 +227,7 @@ export default function StockCounting() {
                                             <p className="font-medium">{it.item?.nameAr ?? it.itemId}</p>
                                             <p className="text-[10px] text-muted-foreground font-mono">{it.item?.code}</p>
                                           </td>
-                                          <td className="px-3 py-2 text-center tabular-nums">{Number(it.systemQty).toFixed(2)}</td>
+                                          <td className="px-3 py-2 text-center tabular-nums">{fmtQty(it.systemQty)}</td>
                                           <td className="px-3 py-2">
                                             {cnt.status === "draft" ? (
                                               <Input
@@ -236,12 +238,12 @@ export default function StockCounting() {
                                                 onChange={e => setEditedLines(p => ({ ...p, [it.id]: e.target.value }))}
                                               />
                                             ) : (
-                                              <p className="text-center tabular-nums">{Number(it.actualQty).toFixed(2)}</p>
+                                              <p className="text-center tabular-nums">{fmtQty(it.actualQty)}</p>
                                             )}
                                           </td>
                                           <td className="px-3 py-2 text-center">
                                             <span className={cn("font-bold tabular-nums", diff > 0 ? "text-green-600" : diff < 0 ? "text-red-600" : "text-muted-foreground")}>
-                                              {diff >= 0 ? "+" : ""}{diff.toFixed(2)}
+                                              {diff >= 0 ? "+" : ""}{fmtQty(diff)}
                                             </span>
                                           </td>
                                         </tr>

@@ -10,6 +10,7 @@ import ExportButtons from "@/components/ExportButtons";
 import { BookOpen, Search, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useFmt } from "@/hooks/use-fmt";
 
 const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
   transfer_out: { label: "تحويل خارج",  color: "bg-orange-50 text-orange-700" },
@@ -34,6 +35,7 @@ const EXPORT_COLS = [
 ];
 
 export default function StockLedger() {
+  const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
@@ -64,10 +66,10 @@ export default function StockLedger() {
     itemCode:      r.item?.code ?? "",
     itemNameAr:    r.item?.nameAr ?? "",
     warehouseName: r.warehouse?.nameAr ?? "",
-    qty:           Number(r.qty).toFixed(2),
-    costPrice:     Number(r.costPrice).toFixed(2),
-    totalCost:     Number(r.totalCost).toFixed(2),
-    balanceQty:    Number(r.balanceQty).toFixed(2),
+    qty:           fmtQty(r.qty),
+    costPrice:     fmt(r.costPrice),
+    totalCost:     fmt(r.totalCost),
+    balanceQty:    fmtQty(r.balanceQty),
   }));
 
   return (
@@ -160,11 +162,11 @@ export default function StockLedger() {
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">{r.warehouse?.nameAr ?? "—"}</td>
                         <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", Number(r.qty) >= 0 ? "text-green-600" : "text-red-600")}>
-                          {Number(r.qty) >= 0 ? "+" : ""}{Number(r.qty).toFixed(2)}
+                          {Number(r.qty) >= 0 ? "+" : ""}{fmtQty(r.qty)}
                         </td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs">{Number(r.costPrice).toFixed(2)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs">{Number(r.totalCost).toFixed(2)}</td>
-                        <td className="px-4 py-3 text-center tabular-nums text-xs font-medium">{Number(r.balanceQty).toFixed(2)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.costPrice)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-xs">{fmt(r.totalCost)}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-xs font-medium">{fmtQty(r.balanceQty)}</td>
                       </tr>
                     );
                   })}
