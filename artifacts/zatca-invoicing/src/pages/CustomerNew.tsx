@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -5,123 +6,136 @@ import * as z from "zod";
 import { useCreateCustomer, useListCompanies } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
+  Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Users, Info, Building2 } from "lucide-react";
+import {
+  ArrowRight, Save, Users, Info, Building2, MapPin, Phone,
+  BadgeCheck, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle2,
+} from "lucide-react";
 import { Link } from "wouter";
-
-const CUSTOMER_TYPE_OPTIONS: ComboboxItem[] = [
-  { value: "b2b", code: "B2B", label: "شركة / منشأة",  description: "يحتاج رقم ضريبي وعنوان وطني — للفواتير الضريبية" },
-  { value: "b2c", code: "B2C", label: "فرد / مستهلك",  description: "بيانات اختيارية — للفواتير المبسطة" },
-];
+import { useAuth } from "@/contexts/AuthContext";
 
 const customerSchema = z.object({
-  companyId: z.coerce.number().min(1, { message: "الشركة المسؤولة مطلوبة" }),
-  customerType: z.enum(["b2b", "b2c"]).default("b2b"),
-  nameAr: z.string().min(2, { message: "اسم العميل مطلوب" }),
-  nameEn: z.string().optional(),
-  vatNumber: z.string().optional().refine(val => !val || val.length === 15, { message: "يجب أن يكون 15 رقماً" }),
-  crNumber: z.string().optional(),
-  email: z.string().email({ message: "بريد إلكتروني غير صالح" }).optional().or(z.literal("")),
-  phone: z.string().optional(),
-  city: z.string().optional(),
-  district: z.string().optional(),
-  street: z.string().optional(),
+  companyId:      z.coerce.number().min(1, "الشركة المسؤولة مطلوبة"),
+  customerType:   z.enum(["b2b", "b2c"]).default("b2b"),
+  nameAr:         z.string().min(2, "اسم العميل مطلوب (حرفان على الأقل)"),
+  nameEn:         z.string().optional(),
+  vatNumber:      z.string().optional().refine(v => !v || v.length === 15, "يجب أن يكون 15 رقماً"),
+  crNumber:       z.string().optional(),
+  email:          z.string().email("بريد إلكتروني غير صالح").optional().or(z.literal("")),
+  phone:          z.string().optional(),
+  city:           z.string().optional(),
+  district:       z.string().optional(),
+  street:         z.string().optional(),
   buildingNumber: z.string().optional(),
-  postalCode: z.string().optional(),
-  country: z.string().default("SA"),
+  postalCode:     z.string().optional(),
+  country:        z.string().default("SA"),
 });
+
+type FormValues = z.infer<typeof customerSchema>;
 
 export default function CustomerNew() {
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const createCustomer = useCreateCustomer();
-  
+  const { toast }       = useToast();
+  const queryClient     = useQueryClient();
+  const createCustomer  = useCreateCustomer();
+  const [activeTab, setActiveTab] = useState("basic");
+  const { user } = useAuth();
+
+  const isSuperAdmin   = user?.role === "superadmin";
+  const userCompanyId  = user?.companyId;
+  const userCompanyName = user?.company?.nameAr ?? user?.company?.nameEn ?? "";
+
+  // Superadmin: company text input state
+  const [companyText, setCompanyText] = useState("");
   const { data: companies } = useListCompanies({
-    query: { queryKey: ["companies"] }
+    query: { queryKey: ["companies"], enabled: isSuperAdmin }
   });
 
-  const form = useForm<z.infer<typeof customerSchema>>({
+  const form = useForm<FormValues>({
     resolver: zodResolver(customerSchema),
     defaultValues: {
-      companyId: undefined,
+      companyId:    userCompanyId ?? undefined,
       customerType: "b2b",
-      nameAr: "",
-      nameEn: "",
-      vatNumber: "",
-      crNumber: "",
-      email: "",
-      phone: "",
-      city: "",
-      district: "",
-      street: "",
-      buildingNumber: "",
-      postalCode: "",
+      nameAr: "", nameEn: "",
+      vatNumber: "", crNumber: "",
+      email: "", phone: "",
+      city: "", district: "", street: "",
+      buildingNumber: "", postalCode: "",
       country: "SA",
     },
   });
 
-  const customerType = form.watch("customerType");
-  const isB2B = customerType === "b2b";
+  // Auto-set companyId for company users
+  useEffect(() => {
+    if (!isSuperAdmin && userCompanyId) form.setValue("companyId", userCompanyId);
+  }, [userCompanyId, isSuperAdmin]);
 
-  const onSubmit = (values: z.infer<typeof customerSchema>) => {
+  const customerType = form.watch("customerType");
+  const isB2B        = customerType === "b2b";
+  const vatValue     = form.watch("vatNumber") ?? "";
+  const vatOk        = vatValue.length === 15 && vatValue.startsWith("3");
+
+  // Tab completeness indicators
+  const nameAr = form.watch("nameAr");
+  const city   = form.watch("city");
+  const basicComplete = !!nameAr;
+  const taxComplete   = isB2B ? vatOk : true;
+  const addressComplete = isB2B ? !!(city) : true;
+
+  const onSubmit = (values: FormValues) => {
+    if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
     const { customerType: _ct, ...rest } = values;
-    createCustomer.mutate({
-      data: rest
-    }, {
+    createCustomer.mutate({ data: rest }, {
       onSuccess: () => {
-        toast({
-          title: "تمت الإضافة بنجاح",
-          description: "تمت إضافة العميل إلى النظام بنجاح.",
-        });
+        toast({ title: "✓ تمت الإضافة بنجاح", description: "تمت إضافة العميل إلى النظام." });
         queryClient.invalidateQueries({ queryKey: ["customers"] });
         setLocation("/customers");
       },
-      onError: () => {
-        toast({
-          title: "حدث خطأ",
-          description: "لم نتمكن من إضافة العميل. يرجى المحاولة مرة أخرى.",
-          variant: "destructive",
-        });
-      }
+      onError: () => toast({
+        title: "حدث خطأ",
+        description: "لم نتمكن من إضافة العميل.",
+        variant: "destructive",
+      }),
     });
   };
 
+  // Tab badge helper
+  const tabBadge = (ok: boolean, required: boolean) => {
+    if (!required) return null;
+    return ok
+      ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500 inline mr-1" />
+      : <span className="mr-1 rounded-full bg-amber-100 text-amber-700 text-xs px-1.5 py-0.5 font-bold border border-amber-300">!</span>;
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-4" dir="rtl">
+
+      {/* Header */}
       <div className="flex items-center gap-4">
         <Button asChild variant="ghost" size="icon">
-          <Link href="/customers">
-            <ArrowRight className="h-5 w-5" />
-          </Link>
+          <Link href="/customers"><ArrowRight className="h-5 w-5" /></Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold text-foreground">إضافة عميل جديد</h1>
-          <p className="text-muted-foreground mt-1">أدخل بيانات العميل الذي ستصدر الفواتير لصالحه</p>
+          <h1 className="text-2xl font-bold">إضافة عميل جديد</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">أدخل بيانات العميل الذي ستصدر له الفواتير</p>
         </div>
       </div>
 
-      {/* B2B requirements notice */}
+      {/* Type notices */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-        <div className="flex gap-3 p-3 rounded-lg border bg-blue-50 border-blue-200 text-blue-800">
+        <div className="flex gap-2.5 p-3 rounded-lg border bg-blue-50 border-blue-200 text-blue-800">
           <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
           <div>
-            <strong>عميل شركة (B2B):</strong> يجب إدخال الرقم الضريبي (15 رقماً) والعنوان الوطني الكامل (الشارع، المبنى، الرمز البريدي، المدينة) — مطلوب لإصدار الفاتورة الضريبية.
+            <strong>عميل شركة (B2B):</strong> يجب إدخال الرقم الضريبي (15 رقماً) والعنوان الوطني الكامل لإصدار الفاتورة الضريبية.
           </div>
         </div>
-        <div className="flex gap-3 p-3 rounded-lg border bg-green-50 border-green-200 text-green-800">
+        <div className="flex gap-2.5 p-3 rounded-lg border bg-green-50 border-green-200 text-green-800">
           <Info className="h-4 w-4 mt-0.5 shrink-0 text-green-500" />
           <div>
             <strong>عميل فرد (B2C):</strong> الاسم اختياري — يكفي حفظ الفاتورة المبسطة بدون عميل محدد.
@@ -130,289 +144,374 @@ export default function CustomerNew() {
       </div>
 
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Basic Details */}
-          <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-primary" />
-                <CardTitle className="text-lg">البيانات الأساسية</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="companyId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>الشركة المصدرة للفواتير <span className="text-destructive">*</span></FormLabel>
-                      <FormControl>
-                        <SearchCombobox
-                          items={(companies ?? []).map(c => ({
-                            value: c.id.toString(),
-                            label: c.nameAr,
-                            labelEn: c.nameEn ?? undefined,
-                          }))}
-                          value={field.value?.toString()}
-                          onValueChange={v => field.onChange(parseInt(v, 10))}
-                          placeholder="اختر شركتك التابع لها العميل..."
-                          searchPlaceholder="ابحث باسم الشركة..."
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
-                <FormField
-                  control={form.control}
-                  name="customerType"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>نوع العميل <span className="text-destructive">*</span></FormLabel>
-                      <FormControl>
-                        <SearchCombobox
-                          items={CUSTOMER_TYPE_OPTIONS}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="اختر نوع العميل..."
-                          searchPlaceholder="ابحث بالكود أو الاسم..."
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                
-                <FormField
-                  control={form.control}
-                  name="nameAr"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        اسم العميل أو الجهة (عربي)
-                        <span className="text-destructive"> *</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="أدخل الاسم الرسمي..." {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="nameEn"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>الاسم (إنجليزي)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Customer Name..." dir="ltr" className="text-left" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </CardContent>
-          </Card>
+            {/* ── Tab bar ── */}
+            <TabsList className="w-full h-auto p-0 bg-transparent border-b rounded-none gap-0 justify-start">
+              {[
+                {
+                  value: "basic",
+                  icon:  <Users className="h-4 w-4" />,
+                  label: "البيانات الأساسية",
+                  badge: tabBadge(basicComplete, true),
+                },
+                {
+                  value: "tax",
+                  icon:  <Building2 className="h-4 w-4" />,
+                  label: "الضريبية والتجارية",
+                  badge: tabBadge(taxComplete, isB2B),
+                },
+                {
+                  value: "address",
+                  icon:  <MapPin className="h-4 w-4" />,
+                  label: "التواصل والعنوان",
+                  badge: tabBadge(addressComplete, isB2B),
+                },
+              ].map(tab => (
+                <TabsTrigger key={tab.value} value={tab.value}
+                  className="relative flex items-center gap-2 px-5 py-3 rounded-none text-sm font-medium border-b-2 border-transparent
+                    data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent
+                    data-[state=inactive]:text-muted-foreground shadow-none transition-colors">
+                  {tab.icon}{tab.label}{tab.badge}
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
-          {/* Tax & Commercial IDs */}
-          <Card className={isB2B ? "border-blue-200" : ""}>
-            <CardHeader className={`border-b pb-4 ${isB2B ? "bg-blue-50/50" : "bg-muted/20"}`}>
-              <div className="flex items-center gap-2">
-                <Building2 className={`h-5 w-5 ${isB2B ? "text-blue-600" : "text-muted-foreground"}`} />
-                <CardTitle className="text-lg">
-                  البيانات الضريبية والتجارية
-                  {isB2B && <span className="mr-2 text-xs font-normal bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">مطلوبة للفواتير الضريبية B2B</span>}
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="vatNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        الرقم الضريبي (VAT)
-                        {isB2B && <span className="text-destructive"> *</span>}
-                        {!isB2B && <span className="text-muted-foreground text-xs"> (اختياري)</span>}
-                      </FormLabel>
-                      <FormControl>
-                        <Input 
-                          placeholder="3xxxxxxxxxxxxxxxxx — 15 رقم يبدأ بـ 3" 
-                          dir="ltr" 
-                          className={`text-left font-mono ${isB2B && !field.value ? "border-blue-300 focus:border-blue-500" : ""}`}
-                          maxLength={15} 
-                          {...field} 
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {isB2B 
-                          ? "مطلوب لإصدار الفاتورة الضريبية — 15 رقماً يبدأ بـ 3 وينتهي بـ 3"
-                          : "اختياري — أدخله إن كان العميل مسجلاً ضريبياً"}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="crNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>رقم السجل التجاري (CR)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="10xxxxxxxx" dir="ltr" className="text-left font-mono" {...field} />
-                      </FormControl>
-                      <FormDescription>اختياري — يُضاف في XML للفواتير الضريبية</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </CardContent>
-          </Card>
+            {/* ══ TAB 1: البيانات الأساسية ══ */}
+            <TabsContent value="basic" className="mt-0">
+              <Card className="rounded-t-none border-t-0">
+                <CardContent className="pt-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-          {/* Contact & Address */}
-          <Card>
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="text-lg flex items-center gap-2">
-                معلومات الاتصال والعنوان الوطني
-                {isB2B && <span className="text-xs font-normal bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">مطلوب للفواتير B2B</span>}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>البريد الإلكتروني</FormLabel>
-                      <FormControl>
-                        <Input type="email" dir="ltr" className="text-left" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phone"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>رقم الهاتف</FormLabel>
-                      <FormControl>
-                        <Input dir="ltr" className="text-left" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                    {/* الشركة المصدرة */}
+                    {isSuperAdmin ? (
+                      <FormField control={form.control} name="companyId" render={({ field }) => {
+                        const matched = (companies ?? []).find(
+                          c => c.nameAr === companyText || c.nameEn === companyText
+                        );
+                        return (
+                          <FormItem>
+                            <FormLabel>الشركة المصدرة للفواتير <span className="text-destructive">*</span></FormLabel>
+                            <datalist id="cust-companies-list">
+                              {(companies ?? []).map(c => <option key={c.id} value={c.nameAr} />)}
+                            </datalist>
+                            <FormControl>
+                              <Input
+                                list="cust-companies-list"
+                                placeholder="اكتب اسم الشركة..."
+                                value={companyText}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setCompanyText(val);
+                                  const found = (companies ?? []).find(
+                                    c => c.nameAr === val || c.nameEn === val
+                                  );
+                                  field.onChange(found ? found.id : undefined);
+                                }}
+                              />
+                            </FormControl>
+                            {matched
+                              ? <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />تم التعرف على الشركة</p>
+                              : companyText
+                                ? <p className="text-xs text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />لم يُعثر على الشركة</p>
+                                : null
+                            }
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }} />
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">الشركة المصدرة للفواتير</label>
+                        <div className="flex items-center gap-2 h-9 rounded-md border border-input bg-muted/30 px-3 text-sm">
+                          <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="truncate font-medium">{userCompanyName}</span>
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500 mr-auto shrink-0" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">مرتبط بشركتك تلقائياً</p>
+                      </div>
+                    )}
 
-              {/* National Address — required for B2B */}
-              <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-4 rounded-lg ${isB2B ? "bg-blue-50/50 border border-blue-100" : "bg-muted/10 border"}`}>
-                <div className="col-span-full mb-1">
-                  <p className="text-sm font-medium text-muted-foreground">
-                    العنوان الوطني
-                    {isB2B && <span className="text-blue-700 mr-1">— مطلوب لفواتير B2B حسب اشتراطات ZATCA</span>}
-                  </p>
-                </div>
-                <FormField
-                  control={form.control}
-                  name="buildingNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        رقم المبنى
-                        {isB2B && <span className="text-destructive"> *</span>}
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="مثال: 1234" dir="ltr" className={`text-left ${isB2B && !field.value ? "border-blue-300" : ""}`} maxLength={4} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="street"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        الشارع
-                        {isB2B && <span className="text-destructive"> *</span>}
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="مثال: شارع الملك فهد" className={isB2B && !field.value ? "border-blue-300" : ""} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="district"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>الحي</FormLabel>
-                      <FormControl>
-                        <Input placeholder="مثال: العليا" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="city"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        المدينة
-                        {isB2B && <span className="text-destructive"> *</span>}
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="مثال: الرياض" className={isB2B && !field.value ? "border-blue-300" : ""} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="postalCode"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        الرمز البريدي
-                        {isB2B && <span className="text-destructive"> *</span>}
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="مثال: 12345" dir="ltr" className={`text-left ${isB2B && !field.value ? "border-blue-300" : ""}`} maxLength={5} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </CardContent>
-          </Card>
+                    {/* نوع العميل — segment buttons */}
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium">
+                        نوع العميل <span className="text-destructive">*</span>
+                      </label>
+                      <div className="flex gap-2">
+                        {[
+                          { val: "b2b", label: "شركة / منشأة", icon: Building2, desc: "B2B" },
+                          { val: "b2c", label: "فرد / مستهلك", icon: Users,     desc: "B2C" },
+                        ].map(opt => {
+                          const Icon = opt.icon;
+                          const active = customerType === opt.val;
+                          return (
+                            <button key={opt.val} type="button"
+                              onClick={() => form.setValue("customerType", opt.val as any)}
+                              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                                active
+                                  ? "bg-primary/10 border-primary text-primary shadow-sm"
+                                  : "border-input text-muted-foreground hover:bg-muted/50"
+                              }`}>
+                              <Icon className="h-4 w-4" />
+                              <span>{opt.label}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${active ? "bg-primary/20" : "bg-muted"}`}>
+                                {opt.desc}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {isB2B ? "يتطلب رقم ضريبي وعنوان وطني كامل" : "بيانات اختيارية — للفواتير المبسطة"}
+                      </p>
+                    </div>
 
-          <div className="flex justify-end gap-4 pb-12">
-            <Button type="button" variant="outline" asChild>
-              <Link href="/customers">إلغاء</Link>
-            </Button>
-            <Button type="submit" className="gap-2" disabled={createCustomer.isPending}>
-              <Save className="h-4 w-4" />
-              <span>{createCustomer.isPending ? "جاري الحفظ..." : "حفظ العميل"}</span>
-            </Button>
-          </div>
+                    {/* اسم عربي */}
+                    <FormField control={form.control} name="nameAr" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          اسم العميل أو الجهة (عربي) <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input placeholder="مثال: شركة الأمانة للتجارة" {...field} />
+                        </FormControl>
+                        <FormDescription>الاسم الرسمي كما في السجل التجاري</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+
+                    {/* اسم إنجليزي */}
+                    <FormField control={form.control} name="nameEn" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>الاسم (إنجليزي)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Al Amanah Trading Co." dir="ltr" className="text-left" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <div className="flex justify-start mt-6 pt-4 border-t">
+                    <Button type="button" variant="default" className="gap-2" onClick={() => setActiveTab("tax")}>
+                      التالي — البيانات الضريبية <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ══ TAB 2: البيانات الضريبية والتجارية ══ */}
+            <TabsContent value="tax" className="mt-0">
+              <Card className="rounded-t-none border-t-0">
+                <CardContent className="pt-6 space-y-6">
+
+                  {/* Banner */}
+                  <div className={`flex gap-3 p-4 rounded-lg border text-sm ${isB2B ? "bg-blue-50 border-blue-200 text-blue-800" : "bg-gray-50 border-gray-200 text-gray-700"}`}>
+                    <Info className={`h-4 w-4 mt-0.5 shrink-0 ${isB2B ? "text-blue-500" : "text-gray-400"}`} />
+                    <div>
+                      {isB2B
+                        ? <><p className="font-semibold mb-0.5">الحقول الإلزامية لفاتورة B2B حسب ZATCA:</p>
+                            <p className="text-xs">الرقم الضريبي 15 رقماً يبدأ بـ 3 ✓ — رقم السجل التجاري موصى به</p></>
+                        : <span>البيانات الضريبية <strong>اختيارية</strong> للعملاء الأفراد (B2C).</span>
+                      }
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* VAT */}
+                    <FormField control={form.control} name="vatNumber" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          الرقم الضريبي (VAT)
+                          {isB2B && <span className="text-destructive"> *</span>}
+                          {!isB2B && <span className="text-muted-foreground text-xs mr-1">(اختياري)</span>}
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="310000000000003"
+                            dir="ltr" className="text-left font-mono tracking-widest"
+                            maxLength={15}
+                            {...field}
+                            onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
+                          />
+                        </FormControl>
+                        <FormDescription>15 رقماً — يبدأ بـ 3 وينتهي بـ 3</FormDescription>
+                        <FormMessage />
+                        {vatValue.length > 0 && vatValue.length < 15 && (
+                          <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+                            <AlertTriangle className="h-3 w-3" />{15 - vatValue.length} رقم متبقٍ
+                          </p>
+                        )}
+                        {vatOk && (
+                          <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
+                            <CheckCircle2 className="h-3 w-3" />رقم ضريبي صحيح
+                          </p>
+                        )}
+                        {vatValue.length === 15 && !vatValue.startsWith("3") && (
+                          <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                            <AlertTriangle className="h-3 w-3" />يجب أن يبدأ بـ 3
+                          </p>
+                        )}
+                      </FormItem>
+                    )} />
+
+                    {/* CR */}
+                    <FormField control={form.control} name="crNumber" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>رقم السجل التجاري (CR)</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="1010000001"
+                            dir="ltr" className="text-left font-mono"
+                            {...field}
+                            onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
+                          />
+                        </FormControl>
+                        <FormDescription>موصى به للفواتير B2B — 10 أرقام</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t">
+                    <Button type="button" variant="ghost" className="gap-2 text-muted-foreground" onClick={() => setActiveTab("basic")}>
+                      <ChevronRight className="h-4 w-4" /> رجوع
+                    </Button>
+                    <Button type="button" variant="default" className="gap-2" onClick={() => setActiveTab("address")}>
+                      التالي — التواصل والعنوان <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ══ TAB 3: التواصل والعنوان الوطني ══ */}
+            <TabsContent value="address" className="mt-0">
+              <Card className="rounded-t-none border-t-0">
+                <CardContent className="pt-6 space-y-6">
+
+                  {/* Contact */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Phone className="h-4 w-4 text-primary" />
+                      <h3 className="font-semibold text-sm">معلومات التواصل</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <FormField control={form.control} name="email" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>البريد الإلكتروني</FormLabel>
+                          <FormControl>
+                            <Input type="email" placeholder="info@company.com" dir="ltr" className="text-left" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                      <FormField control={form.control} name="phone" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>رقم الهاتف</FormLabel>
+                          <FormControl>
+                            <Input placeholder="0500000000" dir="ltr" className="text-left" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                    </div>
+                  </div>
+
+                  {/* National Address */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <MapPin className="h-4 w-4 text-primary" />
+                      <h3 className="font-semibold text-sm">العنوان الوطني</h3>
+                      {isB2B && (
+                        <span className="text-xs bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">
+                          مطلوب للفواتير B2B
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      <FormField control={form.control} name="street" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>اسم الشارع {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormControl>
+                            <Input placeholder="شارع الملك فهد" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="buildingNumber" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>رقم المبنى {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="1234"
+                              dir="ltr" className="text-left"
+                              maxLength={4}
+                              {...field}
+                              onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
+                            />
+                          </FormControl>
+                          <FormDescription>4 أرقام</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="district" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>الحي</FormLabel>
+                          <FormControl><Input placeholder="العليا" {...field} /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="city" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>المدينة {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormControl><Input placeholder="الرياض" {...field} /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="postalCode" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>الرمز البريدي {isB2B && <span className="text-destructive">*</span>}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="12345"
+                              dir="ltr" className="text-left font-mono"
+                              maxLength={5}
+                              {...field}
+                              onChange={e => field.onChange(e.target.value.replace(/\D/g, ""))}
+                            />
+                          </FormControl>
+                          <FormDescription>5 أرقام</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between pt-4 border-t">
+                    <Button type="button" variant="ghost" className="gap-2 text-muted-foreground" onClick={() => setActiveTab("tax")}>
+                      <ChevronRight className="h-4 w-4" /> رجوع
+                    </Button>
+                    <div className="flex gap-3">
+                      <Button type="button" variant="outline" asChild>
+                        <Link href="/customers">إلغاء</Link>
+                      </Button>
+                      <Button type="submit" className="gap-2 min-w-[140px]" disabled={createCustomer.isPending}>
+                        <Save className="h-4 w-4" />
+                        {createCustomer.isPending ? "جاري الحفظ..." : "حفظ العميل"}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </form>
       </Form>
     </div>

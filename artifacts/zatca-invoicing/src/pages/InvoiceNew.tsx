@@ -343,33 +343,19 @@ export default function InvoiceNew() {
                         return (
                           <FormItem>
                             <FormLabel>الشركة المصدرة <span className="text-destructive">*</span></FormLabel>
-                            {/* Native datalist — no custom dropdown, just browser suggestions */}
-                            <datalist id="companies-list">
-                              {(companies ?? []).map(c => (
-                                <option key={c.id} value={c.nameAr} />
-                              ))}
-                            </datalist>
                             <FormControl>
-                              <div className="relative">
-                                <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-10" />
-                                <Input
-                                  list="companies-list"
-                                  placeholder="اكتب اسم الشركة..."
-                                  className="pr-9 pl-9"
-                                  value={companyText}
-                                  onChange={e => {
-                                    const val = e.target.value;
-                                    setCompanyText(val);
-                                    const found = (companies ?? []).find(
-                                      c => c.nameAr === val || c.nameEn === val
-                                    );
-                                    field.onChange(found ? found.id : undefined);
-                                  }}
-                                />
-                                {matched && (
-                                  <CheckCircle2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-green-500 pointer-events-none" />
-                                )}
-                              </div>
+                              <Input
+                                placeholder="اكتب اسم الشركة..."
+                                value={companyText}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setCompanyText(val);
+                                  const found = (companies ?? []).find(
+                                    c => c.nameAr === val || c.nameEn === val
+                                  );
+                                  field.onChange(found ? found.id : undefined);
+                                }}
+                              />
                             </FormControl>
                             {matched && (
                               <p className="text-xs text-green-700 font-mono">
