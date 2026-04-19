@@ -53,13 +53,21 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Enterprise: unlimited users + invoices, 899 SAR/mo (8990 SAR/yr)
 
 ## Database Schema
-- `companies` — ZATCA company settings (VAT number, CR, serials, CSID/PCSID)
+- `companies` — ZATCA company settings (VAT number, CR, serials, CSID/PCSID, menuPermissions JSON)
 - `customers` — Customer records linked to companies
 - `invoices` — E-invoices with QR code, hash, ZATCA status
 - `invoice_line_items` — Invoice line items with VAT calculation
 - `users` — Auth users (username, passwordHash, sessionToken, sessionId, companyId, role)
 - `subscriptions` — Company subscription plan, dates, limits
 - `suppliers` — Supplier/vendor records linked to companies
+
+## Menu Permissions System
+- Superadmin can toggle per-company menu visibility from `/admin/menu-permissions`
+- Permissions stored as JSON in `companies.menuPermissions` column
+- Keys: `dashboard`, `invoices`, `customers`, `suppliers`, `zatca` (all default true)
+- API: PATCH `/api/companies/:id/menu-permissions` with `{ menuPermissions: JSON string }`
+- Changes apply instantly — Layout.tsx reads permissions from auth context and filters nav items
+- Page shows toggle-matrix table, one row per company, one column per menu item
 
 ## Key Commands
 

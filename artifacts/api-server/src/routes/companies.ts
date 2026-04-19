@@ -72,6 +72,27 @@ router.put("/:id", async (req, res) => {
   res.json(company);
 });
 
+// PATCH /:id/menu-permissions — update which menus are visible for company users
+router.patch("/:id/menu-permissions", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { menuPermissions } = req.body as { menuPermissions?: string };
+  if (!menuPermissions) {
+    res.status(400).json({ error: "menuPermissions مطلوب" });
+    return;
+  }
+  // Validate JSON
+  try { JSON.parse(menuPermissions); } catch {
+    res.status(400).json({ error: "menuPermissions يجب أن يكون JSON صالح" });
+    return;
+  }
+  const [company] = await db.update(companiesTable).set({
+    menuPermissions,
+    updatedAt: new Date(),
+  }).where(eq(companiesTable.id, id)).returning();
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  res.json(company);
+});
+
 // PATCH /:id/zatca-settings — update device info + sandbox toggle (called by company users)
 router.patch("/:id/zatca-settings", async (req, res) => {
   const id = parseInt(req.params.id);

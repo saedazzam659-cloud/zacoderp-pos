@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, Settings2, Link2
+  Package, Clock, Settings2, Link2, SlidersHorizontal
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -16,29 +16,42 @@ import { cn } from "@/lib/utils";
 
 interface LayoutProps { children: React.ReactNode; }
 
-// Superadmin navigation
+// ─── Superadmin navigation ─────────────────────────────────────────────────────
 const superAdminNav = [
-  { name: "لوحة التحكم",       href: "/",                    icon: LayoutDashboard, exact: true },
-  { name: "طلبات التسجيل",     href: "/admin/requests",       icon: Clock },
-  { name: "إدارة الاشتراكات",  href: "/admin/subscriptions",  icon: Package },
-  { name: "إعدادات الباقات",   href: "/admin/plans",          icon: Settings2 },
-  { name: "الشركات",            href: "/companies",            icon: Building2 },
+  { name: "لوحة التحكم",       href: "/",                         icon: LayoutDashboard, exact: true },
+  { name: "طلبات التسجيل",     href: "/admin/requests",            icon: Clock },
+  { name: "إدارة الاشتراكات",  href: "/admin/subscriptions",       icon: Package },
+  { name: "إعدادات الباقات",   href: "/admin/plans",               icon: Settings2 },
+  { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
+  { name: "الشركات",            href: "/companies",                 icon: Building2 },
 ];
 
-// Company user navigation
+// ─── Company user navigation ──────────────────────────────────────────────────
 const companyNav = [
-  { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true, section: "main" },
+  { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true },
 ];
+
 const companyBusinessNav = [
-  { name: "الفواتير", href: "/invoices", icon: FileText },
-  { name: "العملاء", href: "/customers", icon: Users },
-  { name: "الموردون", href: "/suppliers", icon: Truck },
+  { name: "الفواتير",  href: "/invoices",  icon: FileText, permKey: "invoices" },
+  { name: "العملاء",   href: "/customers", icon: Users,    permKey: "customers" },
+  { name: "الموردون",  href: "/suppliers", icon: Truck,    permKey: "suppliers" },
 ];
 
 const companySystemNav = [
-  { name: "ربط ZATCA", href: "/zatca", icon: Link2 },
+  { name: "ربط ZATCA", href: "/zatca", icon: Link2, permKey: "zatca" },
 ];
 
+// ─── Parse menu permissions ────────────────────────────────────────────────────
+const DEFAULT_PERMS: Record<string, boolean> = {
+  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true,
+};
+
+function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
+  try { return { ...DEFAULT_PERMS, ...JSON.parse(raw ?? "{}") }; }
+  catch { return { ...DEFAULT_PERMS }; }
+}
+
+// ─── Nav item ─────────────────────────────────────────────────────────────────
 function NavItem({ item, location, onClick }: { item: any; location: string; onClick?: () => void }) {
   const isActive = item.exact
     ? location === item.href
@@ -58,11 +71,22 @@ function NavItem({ item, location, onClick }: { item: any; location: string; onC
   );
 }
 
+// ─── Main layout ──────────────────────────────────────────────────────────────
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isSuperAdmin = user?.role === "superadmin";
+
+  // Parse company's menu permissions
+  const menuPerms = parseMenuPerms(user?.company?.menuPermissions);
+
+  const filteredBusinessNav = companyBusinessNav.filter(item =>
+    menuPerms[item.permKey] !== false
+  );
+  const filteredSystemNav = companySystemNav.filter(item =>
+    menuPerms[item.permKey] !== false
+  );
 
   const PLAN_LABELS: Record<string, string> = {
     starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
@@ -125,27 +149,38 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         ) : (
           <>
-            <div className="space-y-0.5">
-              {companyNav.map(item => (
-                <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
-              ))}
-            </div>
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
+            {/* Dashboard — only if permitted */}
+            {menuPerms.dashboard !== false && (
               <div className="space-y-0.5">
-                {companyBusinessNav.map(item => (
+                {companyNav.map(item => (
                   <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
                 ))}
               </div>
-            </div>
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
-              <div className="space-y-0.5">
-                {companySystemNav.map(item => (
-                  <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
-                ))}
+            )}
+
+            {/* Business menus — filtered */}
+            {filteredBusinessNav.length > 0 && (
+              <div>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
+                <div className="space-y-0.5">
+                  {filteredBusinessNav.map(item => (
+                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* System menus — filtered */}
+            {filteredSystemNav.length > 0 && (
+              <div>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
+                <div className="space-y-0.5">
+                  {filteredSystemNav.map(item => (
+                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
       </nav>

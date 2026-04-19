@@ -24,6 +24,7 @@ import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
 import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
+import MenuPermissions from "@/pages/MenuPermissions";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -81,6 +82,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
+            {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}
