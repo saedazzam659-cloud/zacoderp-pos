@@ -11,7 +11,7 @@ import ZatcaOtpDialog from "@/components/ZatcaOtpDialog";
 import {
   ShieldCheck, Key, CheckCircle2, Loader2, AlertTriangle,
   RefreshCw, Globe, Lock, FileText, Cpu, ChevronDown, ChevronUp,
-  ExternalLink, Info, Zap, AlertCircle,
+  ExternalLink, Info, Zap, AlertCircle, Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -180,6 +180,35 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   function updateForm(patch: Partial<DeviceForm>) {
     setForm(prev => prev ? { ...prev, ...patch } : prev);
     setIsDirty(true);
+  }
+
+  // ── Auto-fill device fields with ZATCA-compliant defaults
+  function autoFill() {
+    if (!company) return;
+
+    // Generate a short UUID-like token for device serial 3
+    const uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = (Math.random() * 16) | 0;
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+
+    // Solution name: sanitize company nameEn or use standard
+    const rawName = (company.nameEn ?? company.nameAr ?? "").replace(/[^a-zA-Z0-9\-]/g, "").slice(0, 20) || "ZATCA-EGS";
+    const d1 = rawName;
+    const d2 = `LIC-${String(company.id).padStart(6, "0")}`;
+    const d3 = uuid.split("-")[0].toUpperCase(); // e.g. A3F2C1B4
+    const serial = `1-${d1}|2-${d2}|3-${d3}`;
+
+    setForm(prev => prev ? {
+      ...prev,
+      deviceSerial1: d1,
+      deviceSerial2: d2,
+      deviceSerial3: d3,
+      serialNumber: serial,
+    } : prev);
+    setIsDirty(true);
+    setStep1Error(null);
+    toast({ title: "✓ تم تعبئة الحقول تلقائياً" });
   }
 
   // ── Validate form
@@ -447,11 +476,23 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
             {/* Serial fields */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2 space-y-1.5">
+              <div className="sm:col-span-2 flex items-center justify-between gap-2">
                 <Label className="text-xs">
                   الرقم التسلسلي للجهاز (Serial Number)
                   <span className="text-red-500 mr-1">*</span>
                 </Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-xs h-7 px-2.5 border-dashed border-primary/40 text-primary hover:bg-primary/5"
+                  onClick={autoFill}
+                >
+                  <Wand2 className="h-3 w-3" />
+                  تعبئة تلقائية
+                </Button>
+              </div>
+              <div className="sm:col-span-2 space-y-1.5">
                 <Input
                   value={form.serialNumber}
                   onChange={e => updateForm({ serialNumber: e.target.value })}
