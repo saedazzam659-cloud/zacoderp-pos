@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2, ShieldCheck } from "lucide-react";
+import { Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2, ShieldCheck, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -20,11 +20,12 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { key: "dashboard", label: "لوحة التحكم",  icon: LayoutDashboard, section: "رئيسي" },
-  { key: "invoices",  label: "الفواتير",     icon: FileText,         section: "الأعمال" },
-  { key: "customers", label: "العملاء",      icon: Users,            section: "الأعمال" },
-  { key: "suppliers", label: "الموردون",     icon: Truck,            section: "الأعمال" },
-  { key: "zatca",     label: "ربط ZATCA",    icon: Link2,            section: "النظام" },
+  { key: "dashboard", label: "لوحة التحكم",     icon: LayoutDashboard, section: "رئيسي" },
+  { key: "invoices",  label: "الفواتير",         icon: FileText,        section: "الأعمال" },
+  { key: "customers", label: "العملاء",           icon: Users,           section: "الأعمال" },
+  { key: "suppliers", label: "الموردون",          icon: Truck,           section: "الأعمال" },
+  { key: "reports",   label: "الإقرار الضريبي",  icon: BarChart3,       section: "الأعمال" },
+  { key: "zatca",     label: "ربط ZATCA",         icon: Link2,           section: "النظام" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, boolean> = {
@@ -32,6 +33,7 @@ const DEFAULT_PERMISSIONS: Record<string, boolean> = {
   invoices: true,
   customers: true,
   suppliers: true,
+  reports: true,
   zatca: true,
 };
 

@@ -26,6 +26,7 @@ import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import MenuPermissions from "@/pages/MenuPermissions";
 import GeneralSettings from "@/pages/GeneralSettings";
+import VATDeclaration from "@/pages/VATDeclaration";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -96,6 +97,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
             {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
             {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
+            {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

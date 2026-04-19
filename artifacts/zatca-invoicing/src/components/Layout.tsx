@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders
+  Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -32,9 +32,10 @@ const companyNav = [
 ];
 
 const companyBusinessNav = [
-  { name: "الفواتير",  href: "/invoices",  icon: FileText, permKey: "invoices" },
-  { name: "العملاء",   href: "/customers", icon: Users,    permKey: "customers" },
-  { name: "الموردون",  href: "/suppliers", icon: Truck,    permKey: "suppliers" },
+  { name: "الفواتير",       href: "/invoices",         icon: FileText,  permKey: "invoices" },
+  { name: "العملاء",        href: "/customers",        icon: Users,     permKey: "customers" },
+  { name: "الموردون",       href: "/suppliers",        icon: Truck,     permKey: "suppliers" },
+  { name: "الإقرار الضريبي", href: "/vat-declaration", icon: BarChart3, permKey: "reports" },
 ];
 
 const companySystemNav = [
@@ -44,7 +45,7 @@ const companySystemNav = [
 
 // ─── Parse menu permissions ────────────────────────────────────────────────────
 const DEFAULT_PERMS: Record<string, boolean> = {
-  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true,
+  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true, reports: true,
 };
 
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
