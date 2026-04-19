@@ -233,59 +233,67 @@ export default function StockTransfer() {
             <h2 className="font-semibold">أمر تحويل جديد</h2>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-6">
-            {/* Header fields */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label>رقم الحركة</Label>
-                <Input
-                  placeholder="TRF-001 (تلقائي)"
-                  value={form.transferNumber}
-                  onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))}
-                />
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
+            {/* ── معلومات الحركة ────────────────────────────── */}
+            <div>
+              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">معلومات الحركة</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label>رقم الحركة</Label>
+                  <Input
+                    placeholder="TRF-001 (تلقائي)"
+                    value={form.transferNumber}
+                    onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>التاريخ *</Label>
+                  <Input
+                    type="date"
+                    value={form.transferDate}
+                    onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>من مخزن *</Label>
+                  <SearchCombobox
+                    items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                    value={form.fromWarehouseId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))}
+                    placeholder="— اختر مخزن المصدر —"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>إلى مخزن *</Label>
+                  <SearchCombobox
+                    items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                    value={form.toWarehouseId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))}
+                    placeholder="— اختر مخزن الوجهة —"
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+                  <Label>ملاحظات</Label>
+                  <Input
+                    placeholder="ملاحظات اختيارية"
+                    value={form.notes}
+                    onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
+                  />
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>التاريخ *</Label>
-                <Input
-                  type="date"
-                  value={form.transferDate}
-                  onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>من مخزن *</Label>
-                <SearchCombobox
-                  items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                  value={form.fromWarehouseId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))}
-                  placeholder="— اختر مخزن المصدر —"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>إلى مخزن *</Label>
-                <SearchCombobox
-                  items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                  value={form.toWarehouseId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))}
-                  placeholder="— اختر مخزن الوجهة —"
-                />
-              </div>
-              <div className="space-y-1.5">
+            </div>
+
+            {/* ── الربط المحاسبي ─────────────────────────────── */}
+            <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
+              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
+              <div className="max-w-xs">
                 <Label>الحساب المحاسبي</Label>
                 <AccountCombobox
                   value={form.accountId}
                   onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
                   placeholder="— اختر الحساب —"
                   grouped={false}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
-                <Label>ملاحظات</Label>
-                <Input
-                  placeholder="ملاحظات اختيارية"
-                  value={form.notes}
-                  onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
                 />
               </div>
             </div>

@@ -36,9 +36,7 @@ export default function WarehouseGroups() {
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteWarehouseGroup, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
-
   function handleEdit(g: Group) { setForm(g); setEditId(g.id); setShowForm(true); }
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (editId) updateMut.mutate({ id: editId, data: form });
@@ -54,8 +52,10 @@ export default function WarehouseGroups() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Layers className="h-6 w-6 text-primary" />مجموعات المخازن</h1>
-          <p className="text-muted-foreground text-sm mt-1">تصنيف وتجميع المخازن</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Layers className="h-6 w-6 text-primary" />مجموعات المخازن
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">تصنيف وتجميع المخازن في فئات</p>
         </div>
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
           <Plus className="h-4 w-4" />إضافة مجموعة
@@ -64,25 +64,30 @@ export default function WarehouseGroups() {
 
       {/* Form */}
       {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل مجموعة" : "مجموعة جديدة"}</h2>
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-primary" />
+              <h2 className="font-semibold">{editId ? "تعديل مجموعة" : "مجموعة جديدة"}</h2>
+            </div>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="space-y-1.5">
-              <Label>كود المجموعة *</Label>
-              <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} required />
+          <form onSubmit={handleSubmit} className="p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <Label>كود المجموعة *</Label>
+                <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>الاسم بالعربي *</Label>
+                <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>الاسم بالإنجليزي</Label>
+                <Input placeholder="Main Group" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي *</Label>
-              <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Main Group" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="sm:col-span-3 flex gap-2 justify-end pt-2 border-t">
+            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
               <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
               <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
                 {editId ? "حفظ التعديل" : "إضافة"}
@@ -103,9 +108,9 @@ export default function WarehouseGroups() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الكود</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-28">الكود</th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الاسم بالعربي</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الاسم بالإنجليزي</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">الاسم بالإنجليزي</th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">إجراءات</th>
             </tr>
           </thead>
@@ -115,18 +120,28 @@ export default function WarehouseGroups() {
                   <tr key={i}><td colSpan={4} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>
                 ))
               : filtered.length === 0
-              ? <tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground"><Layers className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد مجموعات</td></tr>
+              ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">
+                      <Layers className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                      <p className="font-medium">لا توجد مجموعات بعد</p>
+                      <p className="text-xs mt-1">أضف مجموعة لتنظيم مخازنك</p>
+                    </td>
+                  </tr>
+                )
               : filtered.map((g: Group) => (
-                  <tr key={g.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs">{g.code}</td>
+                  <tr key={g.id} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded font-medium">{g.code}</span>
+                    </td>
                     <td className="px-4 py-3 font-medium">{g.nameAr}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{g.nameEn ?? "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{g.nameEn ?? "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(g)}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary/10 hover:text-primary" onClick={() => handleEdit(g)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف المجموعة؟")) deleteMut.mutate(g.id); }}>
+                        <Button variant="ghost" size="icon" className={cn("h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10")} onClick={() => { if (confirm("حذف المجموعة؟")) deleteMut.mutate(g.id); }}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>

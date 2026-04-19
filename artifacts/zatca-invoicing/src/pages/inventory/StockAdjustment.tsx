@@ -227,59 +227,67 @@ export default function StockAdjustment() {
             <h2 className="font-semibold">تسوية مخزنية جديدة</h2>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-6">
-            {/* Header fields */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label>رقم التسوية</Label>
-                <Input
-                  placeholder="ADJ-001 (تلقائي)"
-                  value={form.adjustmentNumber}
-                  onChange={e => setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value }))}
-                />
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
+            {/* ── معلومات الحركة ────────────────────────────── */}
+            <div>
+              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">معلومات الحركة</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label>رقم التسوية</Label>
+                  <Input
+                    placeholder="ADJ-001 (تلقائي)"
+                    value={form.adjustmentNumber}
+                    onChange={e => setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>التاريخ *</Label>
+                  <Input
+                    type="date"
+                    value={form.adjustmentDate}
+                    onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>المخزن *</Label>
+                  <SearchCombobox
+                    items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                    value={form.warehouseId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
+                    placeholder="— اختر مخزن —"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>سبب التسوية</Label>
+                  <SearchCombobox
+                    items={REASONS.map(r => ({ value: r, label: r }))}
+                    value={form.reason}
+                    onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
+                    placeholder="— اختر السبب —"
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+                  <Label>ملاحظات</Label>
+                  <Input
+                    placeholder="ملاحظات اختيارية"
+                    value={form.notes}
+                    onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
+                  />
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>التاريخ *</Label>
-                <Input
-                  type="date"
-                  value={form.adjustmentDate}
-                  onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>المخزن *</Label>
-                <SearchCombobox
-                  items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                  value={form.warehouseId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
-                  placeholder="— اختر مخزن —"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>سبب التسوية</Label>
-                <SearchCombobox
-                  items={REASONS.map(r => ({ value: r, label: r }))}
-                  value={form.reason}
-                  onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
-                  placeholder="— اختر السبب —"
-                />
-              </div>
-              <div className="space-y-1.5">
+            </div>
+
+            {/* ── الربط المحاسبي ─────────────────────────────── */}
+            <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
+              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
+              <div className="max-w-xs">
                 <Label>الحساب المحاسبي</Label>
                 <AccountCombobox
                   value={form.accountId}
                   onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
                   placeholder="— اختر الحساب —"
                   grouped={false}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
-                <Label>ملاحظات</Label>
-                <Input
-                  placeholder="ملاحظات اختيارية"
-                  value={form.notes}
-                  onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
                 />
               </div>
             </div>
