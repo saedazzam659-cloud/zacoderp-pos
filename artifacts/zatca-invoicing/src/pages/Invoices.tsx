@@ -89,7 +89,7 @@ export default function Invoices() {
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
-    deleteInvoice.mutate(deleteTarget.id, {
+    deleteInvoice.mutate({ id: deleteTarget.id }, {
       onSuccess: () => {
         toast({ title: "تم الحذف", description: `تم حذف الفاتورة ${deleteTarget.number} بنجاح.` });
         queryClient.invalidateQueries({ queryKey: ["invoices"] });
