@@ -20,6 +20,7 @@ import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import PendingApproval from "@/pages/PendingApproval";
+import Settings from "@/pages/Settings";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -87,6 +88,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
 
             {/* Shared routes */}
+            <Route path="/settings" component={Settings} />
             <Route component={NotFound} />
           </Switch>
         </Layout>

@@ -241,4 +241,41 @@ router.post("/register", async (req, res) => {
   }
 });
 
+// PUT /api/auth/profile — change username / password
+router.put("/profile", async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const token = auth.slice(7);
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
+
+  const { currentPassword, newUsername, newPassword } = req.body;
+
+  // Always verify current password before any change
+  if (!currentPassword) { res.status(400).json({ error: "كلمة المرور الحالية مطلوبة" }); return; }
+  const passwordOk = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!passwordOk) { res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة" }); return; }
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+
+  if (newUsername && newUsername !== user.username) {
+    // Check uniqueness
+    const [existing] = await db.select().from(usersTable).where(eq(usersTable.username, newUsername));
+    if (existing) { res.status(409).json({ error: "اسم المستخدم مستخدم من قِبل حساب آخر" }); return; }
+    updates.username = newUsername;
+  }
+
+  if (newPassword) {
+    if (newPassword.length < 8) { res.status(400).json({ error: "كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل" }); return; }
+    updates.passwordHash = await bcrypt.hash(newPassword, 12);
+  }
+
+  if (Object.keys(updates).length === 1) { // only updatedAt
+    res.status(400).json({ error: "لم يتم تحديد أي تغيير" }); return;
+  }
+
+  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, user.id)).returning();
+  res.json({ ok: true, username: updated.username, message: "تم تحديث بيانات الحساب بنجاح" });
+});
+
 export default router;

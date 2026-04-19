@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, X
+  Package, Clock
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -161,13 +161,21 @@ export default function Layout({ children }: LayoutProps) {
               <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="w-48" dir="rtl">
+          <DropdownMenuContent align="end" side="top" className="w-52" dir="rtl">
             <DropdownMenuLabel className="font-normal">
               <div>
                 <p className="text-sm font-medium">{user?.username}</p>
-                {user?.email && <p className="text-xs text-muted-foreground">{user.email}</p>}
+                <p className="text-xs text-muted-foreground">
+                  {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير الشركة" : "مستخدم"}
+                </p>
               </div>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild className="gap-2 cursor-pointer">
+              <Link href="/settings">
+                <Settings className="h-4 w-4" />إعدادات الحساب
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive gap-2">
               <LogOut className="h-4 w-4" />تسجيل الخروج
