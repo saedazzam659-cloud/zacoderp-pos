@@ -47,6 +47,7 @@ import Regions  from "@/pages/org/Regions";
 import Branches from "@/pages/org/Branches";
 import JournalEntries from "@/pages/accounting/JournalEntries";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
+import Currencies from "@/pages/settings/Currencies";
 
 const queryClient = new QueryClient();
 
@@ -143,6 +144,9 @@ function AppRoutes() {
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}
             {!isSuperAdmin && <Route path="/org/branches" component={Branches} />}
+
+            {/* Settings routes */}
+            {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />
