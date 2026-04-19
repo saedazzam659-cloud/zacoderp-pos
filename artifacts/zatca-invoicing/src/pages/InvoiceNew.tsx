@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Save, Plus, Trash2, Info, AlertTriangle,
   CreditCard, ClipboardList, Package, ChevronLeft, ChevronRight, User,
-  BadgeCheck, Building2, MapPin, CheckCircle2,
+  BadgeCheck, Building2, MapPin, CheckCircle2, Tag,
 } from "lucide-react";
 import { Link } from "wouter";
 import { ZATCA_UNIT_CODES } from "@/lib/zatca-units";
@@ -186,11 +186,21 @@ export default function InvoiceNew() {
 
   const totals = watchLineItems.reduce(
     (acc, item) => {
-      const sub = (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0) - (Number(item.discountAmount) || 0);
-      const vat = sub * ((Number(item.vatRate) || 0) / 100);
-      return { subtotal: acc.subtotal + sub, vatTotal: acc.vatTotal + vat, grandTotal: acc.grandTotal + sub + vat };
+      const qty      = Number(item.quantity) || 0;
+      const price    = Number(item.unitPrice) || 0;
+      const discount = Number(item.discountAmount) || 0;
+      const gross    = qty * price;
+      const sub      = gross - discount;
+      const vat      = sub * ((Number(item.vatRate) || 0) / 100);
+      return {
+        gross:         acc.gross + gross,
+        discountTotal: acc.discountTotal + discount,
+        subtotal:      acc.subtotal + sub,
+        vatTotal:      acc.vatTotal + vat,
+        grandTotal:    acc.grandTotal + sub + vat,
+      };
     },
-    { subtotal: 0, vatTotal: 0, grandTotal: 0 }
+    { gross: 0, discountTotal: 0, subtotal: 0, vatTotal: 0, grandTotal: 0 }
   );
 
   const fmt = (n: number) => new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(n);
@@ -749,22 +759,63 @@ export default function InvoiceNew() {
                   </div>
 
                   {/* Totals */}
-                  <div className="p-6 bg-muted/10">
+                  <div className="p-6 bg-muted/10 border-t">
                     <div className="flex justify-end">
-                      <div className="w-full max-w-xs space-y-2.5">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">المجموع قبل الضريبة:</span>
-                          <span className="font-medium tabular-nums" dir="ltr">{fmt(totals.subtotal)}</span>
+                      <div className="w-full max-w-sm">
+                        {/* Rows */}
+                        <div className="space-y-0 divide-y divide-border/50 rounded-xl border bg-background shadow-sm overflow-hidden">
+
+                          {/* Gross (only show if there are discounts) */}
+                          {totals.discountTotal > 0 && (
+                            <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                              <span className="text-muted-foreground">إجمالي الأسعار:</span>
+                              <span className="tabular-nums font-medium" dir="ltr">{fmt(totals.gross)}</span>
+                            </div>
+                          )}
+
+                          {/* Discounts — highlighted */}
+                          {totals.discountTotal > 0 && (
+                            <div className="flex items-center justify-between px-4 py-2.5 text-sm bg-red-50/60">
+                              <span className="flex items-center gap-1.5 text-red-700 font-medium">
+                                <Tag className="h-3.5 w-3.5" />
+                                إجمالي الخصومات:
+                              </span>
+                              <span className="tabular-nums font-semibold text-red-700" dir="ltr">
+                                − {fmt(totals.discountTotal)}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Subtotal before VAT */}
+                          <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                            <span className="text-muted-foreground">
+                              {totals.discountTotal > 0 ? "الصافي قبل الضريبة:" : "المجموع قبل الضريبة:"}
+                            </span>
+                            <span className="tabular-nums font-medium" dir="ltr">{fmt(totals.subtotal)}</span>
+                          </div>
+
+                          {/* VAT */}
+                          <div className="flex items-center justify-between px-4 py-2.5 text-sm">
+                            <span className="text-primary/80">ضريبة القيمة المضافة (VAT 15%):</span>
+                            <span className="tabular-nums font-medium text-primary" dir="ltr">+ {fmt(totals.vatTotal)}</span>
+                          </div>
+
+                          {/* Grand total */}
+                          <div className="flex items-center justify-between px-4 py-3.5 bg-primary/5 text-base font-bold">
+                            <span>الإجمالي المستحق:</span>
+                            <span className="tabular-nums text-primary text-lg" dir="ltr">{fmt(totals.grandTotal)}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between text-sm text-primary">
-                          <span>ضريبة القيمة المضافة (VAT):</span>
-                          <span className="font-medium tabular-nums" dir="ltr">+{fmt(totals.vatTotal)}</span>
-                        </div>
-                        <div className="h-px bg-border" />
-                        <div className="flex justify-between text-base font-bold">
-                          <span>الإجمالي المستحق:</span>
-                          <span className="tabular-nums" dir="ltr">{fmt(totals.grandTotal)}</span>
-                        </div>
+
+                        {/* Discount savings badge */}
+                        {totals.discountTotal > 0 && (
+                          <div className="mt-3 flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                            <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              تم توفير <strong>{fmt(totals.discountTotal)}</strong> كخصم على هذه الفاتورة
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
