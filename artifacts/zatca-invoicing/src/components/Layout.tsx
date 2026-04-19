@@ -5,6 +5,7 @@ import {
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
+  Tag, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -39,14 +40,16 @@ const companySystemNav = [
 ];
 const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav = [
-  { name: "الأصناف",             href: "/inventory/items",       icon: Package           },
-  { name: "وحدات القياس",        href: "/inventory/units",       icon: Ruler             },
-  { name: "المخازن",             href: "/inventory/warehouses",  icon: Warehouse         },
-  { name: "التحويل بين المخازن",  href: "/inventory/transfers",   icon: ArrowRightLeft    },
-  { name: "التسوية المخزنية",    href: "/inventory/adjustments", icon: SlidersHorizontal },
-  { name: "الجرد المخزني",       href: "/inventory/counts",      icon: ClipboardList     },
-  { name: "دفتر الحركة",         href: "/inventory/ledger",      icon: BookOpen          },
-  { name: "رصيد المخزون",        href: "/inventory/balance",     icon: BarChart2         },
+  { name: "الأصناف",             href: "/inventory/items",            icon: Package           },
+  { name: "مجموعات الأصناف",     href: "/inventory/item-groups",      icon: Tag               },
+  { name: "وحدات القياس",        href: "/inventory/units",            icon: Ruler             },
+  { name: "المخازن",             href: "/inventory/warehouses",       icon: Warehouse         },
+  { name: "مجموعات المخازن",     href: "/inventory/warehouse-groups", icon: Layers            },
+  { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft    },
+  { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal },
+  { name: "الجرد المخزني",       href: "/inventory/counts",           icon: ClipboardList     },
+  { name: "دفتر الحركة",         href: "/inventory/ledger",           icon: BookOpen          },
+  { name: "رصيد المخزون",        href: "/inventory/balance",          icon: BarChart2         },
 ];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
