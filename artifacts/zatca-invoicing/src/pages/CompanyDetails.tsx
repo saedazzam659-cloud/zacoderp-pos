@@ -1,625 +1,613 @@
 import { useState } from "react";
-import { useParams, Link, useSearch } from "wouter";
-import { useGetCompany, useUpdateCompany } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useParams, Link } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowRight, Building2, CheckCircle2, XCircle, AlertTriangle,
-  Fingerprint, ShieldCheck, Key, FileCode2, Loader2, Copy, RefreshCw,
-  Send, Info, ExternalLink, Smartphone
+  ArrowRight, Building2, Users, FileText, Package, CheckCircle2,
+  XCircle, Plus, Trash2, RefreshCw, Calendar, ShieldCheck,
+  UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Pencil,
+  UserCheck, UserX, Truck, BarChart3, Key
 } from "lucide-react";
-import ZatcaOtpDialog from "@/components/ZatcaOtpDialog";
-import { format } from "date-fns";
-import { arSA } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
-interface ZatcaResponse {
-  success?: boolean;
-  error?: string;
-  hint?: string;
-  csr?: string;
-  message?: string;
-  binarySecurityToken?: string;
-  zatcaResponse?: unknown;
-  warningMessages?: Array<{ code: string; message: string }>;
-  errorMessages?: Array<{ code: string; message: string }>;
-}
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-function copyToClipboard(text: string, label: string, toast: ReturnType<typeof useToast>["toast"]) {
-  navigator.clipboard.writeText(text).then(() => {
-    toast({ title: `تم النسخ`, description: `تم نسخ ${label}` });
-  });
-}
+const PLAN_LABELS: Record<string, { label: string; color: string }> = {
+  starter:      { label: "مبتدئ",   color: "bg-blue-50 text-blue-700 border-blue-200" },
+  professional: { label: "احترافي", color: "bg-primary/10 text-primary border-primary/20" },
+  enterprise:   { label: "مؤسسي",   color: "bg-amber-50 text-amber-700 border-amber-200" },
+};
 
-function StepBadge({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+function StatCard({ label, value, icon: Icon, iconBg, iconColor, sub, warn }: any) {
   return (
-    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold
-      ${done ? "bg-green-500 text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-      {done ? <CheckCircle2 className="h-4 w-4" /> : n}
-    </span>
+    <div className={cn("rounded-xl border bg-card p-4 flex items-center gap-3", warn && "border-amber-300 bg-amber-50/50")}>
+      <div className={cn("h-10 w-10 rounded-lg flex items-center justify-center shrink-0", iconBg)}>
+        <Icon className={cn("h-5 w-5", iconColor)} />
+      </div>
+      <div>
+        <p className="text-2xl font-bold tabular-nums">{value ?? "—"}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        {sub && <p className="text-[11px] text-muted-foreground/70 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, ltr }: { label: string; value: any; ltr?: boolean }) {
+  return (
+    <div className="flex justify-between items-center border-b pb-2 last:border-0 py-2">
+      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="font-medium text-sm" dir={ltr ? "ltr" : undefined}>{value ?? "—"}</span>
+    </div>
+  );
+}
+
+function TabBtn({ active, onClick, children, count }: any) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+        active
+          ? "border-primary text-primary"
+          : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+      )}
+    >
+      {children}
+      {count != null && (
+        <span className={cn("text-xs rounded-full px-1.5 py-0 tabular-nums font-semibold",
+          active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
 export default function CompanyDetails() {
-  const params = useParams();
-  const id = parseInt(params.id || "0", 10);
-  const search = useSearch();
-  const defaultTab = new URLSearchParams(search).get("tab") ?? "general";
+  const { id: idStr } = useParams<{ id: string }>();
+  const id = parseInt(idStr ?? "0");
+  const { token } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
 
-  const { data: company, isLoading } = useGetCompany(id, {
-    query: { enabled: !!id, queryKey: ["company", id] }
+  const [tab, setTab] = useState("overview");
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+  const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "admin" });
+  const [resetPassDialog, setResetPassDialog] = useState<any | null>(null);
+  const [newPass, setNewPass] = useState("");
+
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["admin-company", id],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/admin/companies/${id}`, { headers });
+      if (!res.ok) throw new Error("company not found");
+      return res.json();
+    },
+    enabled: !!id,
   });
 
-  const [otpInput, setOtpInput] = useState("");
-  const [loading, setLoading] = useState<string | null>(null);
-  const [csrContent, setCsrContent] = useState<string | null>(null);
-  const [testInvoiceId, setTestInvoiceId] = useState("");
-  const [complianceCheckResult, setComplianceCheckResult] = useState<{ success: boolean; message?: string; error?: string; validationResults?: unknown } | null>(null);
-  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const company     = data?.company;
+  const subscription = data?.subscription;
+  const users       = data?.users ?? [];
+  const counts      = data?.counts ?? { invoices: 0, customers: 0, suppliers: 0 };
+
+  const addUserMutation = useMutation({
+    mutationFn: async (body: any) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "خطأ");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم إضافة المستخدم" });
+      setNewUser({ username: "", email: "", password: "", role: "admin" });
+      setShowAddUser(false);
+      qc.invalidateQueries({ queryKey: ["admin-company", id] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: number) => {
+      await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, { method: "DELETE", headers });
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم حذف المستخدم" });
+      qc.invalidateQueries({ queryKey: ["admin-company", id] });
+    },
+  });
+
+  const toggleUserMutation = useMutation({
+    mutationFn: async ({ userId, isActive }: { userId: number; isActive: boolean }) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, {
+        method: "PUT", headers, body: JSON.stringify({ isActive }),
+      });
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-company", id] }),
+  });
+
+  const resetPassMutation = useMutation({
+    mutationFn: async ({ userId, password }: { userId: number; password: string }) => {
+      const res = await fetch(`${API}/api/admin/companies/${id}/users/${userId}`, {
+        method: "PUT", headers, body: JSON.stringify({ password }),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "✓ تم تغيير كلمة المرور" });
+      setResetPassDialog(null);
+      setNewPass("");
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   if (isLoading) {
-    return <div className="space-y-6"><Skeleton className="h-12 w-1/3" /><Skeleton className="h-[400px] w-full" /></div>;
-  }
-  if (!company) return <div className="p-8 text-center">الشركة غير موجودة</div>;
-
-  const hasCsr = !!(company as Record<string, unknown>).zatcaCsr || !!csrContent;
-  const hasCsid = !!company.zatcaCsid;
-  const hasPcsid = !!company.zatcaPcsid;
-
-  async function apiCall(path: string, body?: unknown): Promise<ZatcaResponse> {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    return res.json();
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-12 w-1/2" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
   }
 
-  async function handleGenerateCsr() {
-    setLoading("csr");
-    try {
-      const data = await apiCall(`/api/companies/${id}/generate-csr`);
-      if (data.success) {
-        setCsrContent(data.csr ?? null);
-        toast({ title: "تم توليد CSR بنجاح", description: data.message });
-        queryClient.invalidateQueries({ queryKey: ["company", id] });
-      } else {
-        toast({ title: "فشل توليد CSR", description: data.error, variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "خطأ في الاتصال", variant: "destructive" });
-    } finally {
-      setLoading(null);
-    }
+  if (!company) {
+    return (
+      <div className="text-center py-20">
+        <Building2 className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+        <p className="text-muted-foreground font-medium">الشركة غير موجودة</p>
+        <Button asChild variant="outline" className="mt-4">
+          <Link href="/companies">العودة للشركات</Link>
+        </Button>
+      </div>
+    );
   }
 
-  async function handleCompliance(otp?: string) {
-    const usedOtp = (otp ?? otpInput).trim();
-    if (!usedOtp) {
-      toast({ title: "OTP مطلوب", description: "أدخل OTP من بوابة ZATCA", variant: "destructive" });
-      return;
-    }
-    setLoading("compliance");
-    try {
-      const data = await apiCall(`/api/companies/${id}/compliance`, { otp: usedOtp });
-      if (data.success) {
-        toast({ title: "تم ربط الجهاز بنجاح ✅", description: "تم الحصول على شهادة CSID من هيئة الزكاة والدخل" });
-        queryClient.invalidateQueries({ queryKey: ["company", id] });
-        setOtpInput("");
-        setOtpDialogOpen(false);
-      } else {
-        toast({ title: "فشل ربط الجهاز", description: data.error ?? "تحقق من الرمز وحاول مجدداً", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "خطأ في الاتصال", variant: "destructive" });
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function handleComplianceCheck() {
-    const invId = parseInt(testInvoiceId);
-    if (!invId) {
-      toast({ title: "أدخل رقم معرّف الفاتورة", variant: "destructive" });
-      return;
-    }
-    setLoading("compliance-check");
-    try {
-      const data = await apiCall(`/api/companies/${id}/compliance-check`, { invoiceId: invId });
-      setComplianceCheckResult({ success: !!data.success, message: data.message, error: data.error });
-      if (data.success) {
-        toast({ title: "نجح الفحص التجريبي", description: data.message });
-      } else {
-        toast({ title: "فشل الفحص", description: data.error, variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "خطأ في الاتصال", variant: "destructive" });
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function handleProductionCsid() {
-    setLoading("pcsid");
-    try {
-      const data = await apiCall(`/api/companies/${id}/production-csid`);
-      if (data.success) {
-        toast({ title: "تم الحصول على PCSID", description: data.message });
-        queryClient.invalidateQueries({ queryKey: ["company", id] });
-      } else {
-        toast({ title: "فشل الحصول على PCSID", description: data.error, variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "خطأ في الاتصال", variant: "destructive" });
-    } finally {
-      setLoading(null);
-    }
-  }
+  const planInfo = PLAN_LABELS[subscription?.plan ?? ""] ?? null;
+  const subExpired = subscription?.endDate && new Date(subscription.endDate) < new Date();
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-12">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+    <div className="space-y-5 pb-10" dir="rtl">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
           <Button asChild variant="ghost" size="icon">
             <Link href="/companies"><ArrowRight className="h-5 w-5" /></Link>
           </Button>
+          <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary font-bold text-lg flex items-center justify-center shrink-0">
+            {company.nameAr?.[0] ?? "ش"}
+          </div>
           <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold text-foreground">{company.nameAr}</h1>
-              <Badge variant={company.isSandbox ? "outline" : "default"}>
-                {company.isSandbox ? "Sandbox محاكاة" : "Production إنتاج"}
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold">{company.nameAr}</h1>
+              {company.nameEn && <span className="text-sm text-muted-foreground">{company.nameEn}</span>}
+              <Badge className={cn("text-xs border", company.status === "active"
+                ? "bg-green-50 text-green-700 border-green-200"
+                : company.status === "pending"
+                ? "bg-amber-50 text-amber-700 border-amber-200"
+                : "bg-red-50 text-red-700 border-red-200")}>
+                {company.status === "active" ? "نشطة" : company.status === "pending" ? "معلّقة" : "مرفوضة"}
               </Badge>
-              {hasPcsid && (
-                <Badge className="bg-green-100 text-green-800">
-                  <CheckCircle2 className="h-3 w-3 mr-1" /> مرتبط بالكامل
-                </Badge>
-              )}
-              {hasCsid && !hasPcsid && (
-                <Badge className="bg-blue-100 text-blue-800">
-                  <ShieldCheck className="h-3 w-3 mr-1" /> CSID فعّال
+              {planInfo && (
+                <Badge className={cn("text-xs border", planInfo.color)}>
+                  <Package className="h-3 w-3 ml-1" />{planInfo.label}
                 </Badge>
               )}
             </div>
-            {company.nameEn && <p className="text-muted-foreground mt-1">{company.nameEn}</p>}
+            <p className="text-xs text-muted-foreground mt-0.5 font-mono">{company.vatNumber}</p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" asChild>
-            <Link href={`/invoices?companyId=${company.id}`}>الفواتير</Link>
-          </Button>
-          <Button asChild>
-            <Link href={`/invoices/new?companyId=${company.id}`}>إنشاء فاتورة</Link>
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" />تحديث
+        </Button>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="w-full" dir="rtl">
-        <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6 overflow-x-auto">
-          {[
-            { value: "general", label: "عام" },
-            { value: "zatca", label: "ربط ZATCA", badge: hasPcsid ? "✓" : hasCsid ? "CSID" : "" },
-            { value: "settings", label: "السيريال" },
-            { value: "xml", label: "XML / QR" },
-          ].map(tab => (
-            <TabsTrigger key={tab.value} value={tab.value}
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium gap-2">
-              {tab.label}
-              {tab.badge && (
-                <span className="text-xs bg-green-100 text-green-700 px-1.5 rounded">{tab.badge}</span>
-              )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      {/* Stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="المستخدمون" value={users.length} icon={Users} iconBg="bg-blue-100" iconColor="text-blue-600"
+          sub={`${users.filter((u: any) => u.isActive).length} نشط`} />
+        <StatCard label="الفواتير" value={counts.invoices} icon={FileText} iconBg="bg-primary/10" iconColor="text-primary" />
+        <StatCard label="العملاء" value={counts.customers} icon={UserCheck} iconBg="bg-green-100" iconColor="text-green-600" />
+        <StatCard label="الموردون" value={counts.suppliers} icon={Truck} iconBg="bg-amber-100" iconColor="text-amber-600" />
+      </div>
 
-        {/* ─── General Tab ───────────────────────────────────────────── */}
-        <TabsContent value="general" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-primary" />
-                  بيانات الشركة
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {[
-                  { label: "الرقم الضريبي", value: company.vatNumber, ltr: true },
-                  { label: "رقم السجل التجاري", value: company.crNumber, ltr: true },
-                  { label: "مجال الصناعة", value: company.industryName || "-" },
-                  { label: "أنواع الفواتير", value: company.invoiceType === "both" ? "ضريبية ومبسطة" : company.invoiceType === "standard" ? "ضريبية فقط" : "مبسطة فقط" },
-                  { label: "عداد الفواتير", value: String((company as Record<string, unknown>).invoiceCounter ?? 0), ltr: true },
-                  { label: "تاريخ التسجيل", value: company.createdAt ? format(new Date(company.createdAt), "PPP", { locale: arSA }) : "-" },
-                ].map(row => (
-                  <div key={row.label} className="flex justify-between items-center border-b pb-2 last:border-0">
-                    <span className="text-muted-foreground">{row.label}:</span>
-                    <span className="font-medium" dir={row.ltr ? "ltr" : undefined}>{row.value}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">العنوان الوطني</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {[
-                  { label: "المدينة", value: company.city },
-                  { label: "الحي", value: company.district || "-" },
-                  { label: "الشارع والمبنى", value: `${company.street} - ${company.buildingNumber}` },
-                  { label: "الرمز البريدي", value: company.postalCode, ltr: true },
-                  { label: "الرقم الإضافي", value: company.additionalNumber || "-", ltr: true },
-                ].map(row => (
-                  <div key={row.label} className="flex justify-between items-center border-b pb-2 last:border-0">
-                    <span className="text-muted-foreground">{row.label}:</span>
-                    <span className="font-medium" dir={row.ltr ? "ltr" : undefined}>{row.value}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+      {/* Tabs */}
+      <div className="border-b flex gap-0 overflow-x-auto">
+        <TabBtn active={tab === "overview"} onClick={() => setTab("overview")}>
+          <Building2 className="h-4 w-4" />نظرة عامة
+        </TabBtn>
+        <TabBtn active={tab === "users"} onClick={() => setTab("users")} count={users.length}>
+          <Users className="h-4 w-4" />المستخدمون
+        </TabBtn>
+        <TabBtn active={tab === "subscription"} onClick={() => setTab("subscription")}>
+          <Package className="h-4 w-4" />الاشتراك
+        </TabBtn>
+        <TabBtn active={tab === "data"} onClick={() => setTab("data")}>
+          <BarChart3 className="h-4 w-4" />البيانات
+        </TabBtn>
+      </div>
 
-        {/* ─── ZATCA Integration Tab ────────────────────────────────── */}
-        <TabsContent value="zatca" className="space-y-6">
-          {/* Steps overview — 4 steps as per ZATCA onboarding */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            {[
-              { n: 1, label: "المفتاح والإعدادات", desc: "مفتاح ECDSA + CSR", done: hasCsr, icon: "🔑" },
-              { n: 2, label: "الشهادة الأولية", desc: "CSID عبر OTP", done: hasCsid, icon: "📜" },
-              { n: 3, label: "الفواتير التجريبية", desc: "التحقق قبل الإنتاج", done: hasCsid, icon: "🧪" },
-              { n: 4, label: "الشهادة النهائية", desc: "PCSID للإنتاج", done: hasPcsid, icon: "✅" },
-            ].map(step => (
-              <div key={step.n} className={`flex flex-col items-start gap-2 p-3 rounded-lg border ${step.done ? "bg-green-50 border-green-200" : "bg-card"}`}>
-                <div className="flex items-center gap-2 w-full">
-                  <StepBadge n={step.n} active={!step.done} done={step.done} />
-                  <span className="text-lg">{step.icon}</span>
-                </div>
-                <div>
-                  <p className="font-medium text-xs">{step.label}</p>
-                  <p className="text-muted-foreground text-xs mt-0.5">{step.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          {/* ZATCA Portal Link */}
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm">
-            <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium text-primary">بوابة هيئة الزكاة والدخل والجمارك (ZATCA)</p>
-              <p className="text-muted-foreground text-xs mt-1">
-                جميع خطوات الربط تتم عبر بوابة فاتورة الرسمية. للحصول على OTP وإدارة الشهادات:
-              </p>
-              <div className="flex gap-3 mt-2 flex-wrap">
-                <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline font-medium">
-                  <ExternalLink className="h-3 w-3" /> fatoora.zatca.gov.sa (الإنتاج)
-                </a>
-                <a href="https://fatoora.zatca.gov.sa/developer" target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
-                  <ExternalLink className="h-3 w-3" /> بوابة المطورين (Sandbox)
-                </a>
-              </div>
+      {/* ─── Overview Tab ─── */}
+      {tab === "overview" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="rounded-xl border bg-card p-5">
+            <h3 className="font-semibold mb-4 flex items-center gap-2 text-sm">
+              <Building2 className="h-4 w-4 text-primary" />بيانات الشركة
+            </h3>
+            <div className="space-y-1">
+              <InfoRow label="الاسم العربي" value={company.nameAr} />
+              <InfoRow label="الاسم الإنجليزي" value={company.nameEn} />
+              <InfoRow label="الرقم الضريبي" value={company.vatNumber} ltr />
+              <InfoRow label="السجل التجاري" value={company.crNumber} ltr />
+              <InfoRow label="مجال الصناعة" value={company.industryName} />
+              <InfoRow label="نوع الفواتير" value={
+                company.invoiceType === "both" ? "ضريبية ومبسطة"
+                : company.invoiceType === "standard" ? "ضريبية فقط" : "مبسطة فقط"
+              } />
+              <InfoRow label="تاريخ التسجيل" value={company.createdAt
+                ? new Date(company.createdAt).toLocaleDateString("ar-SA")
+                : "—"} />
             </div>
           </div>
+          <div className="rounded-xl border bg-card p-5">
+            <h3 className="font-semibold mb-4 flex items-center gap-2 text-sm">
+              <ShieldCheck className="h-4 w-4 text-primary" />العنوان الوطني
+            </h3>
+            <div className="space-y-1">
+              <InfoRow label="المدينة" value={company.city} />
+              <InfoRow label="الحي" value={company.district} />
+              <InfoRow label="الشارع" value={company.street} />
+              <InfoRow label="رقم المبنى" value={company.buildingNumber} ltr />
+              <InfoRow label="الرمز البريدي" value={company.postalCode} ltr />
+              <InfoRow label="الرقم الإضافي" value={company.additionalNumber} ltr />
+            </div>
+          </div>
+        </div>
+      )}
 
-          {/* Step 1: Generate CSR */}
-          <Card className={hasCsr ? "border-green-200" : ""}>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <StepBadge n={1} active={!hasCsr} done={hasCsr} />
-                  <div>
-                    <CardTitle className="text-base">الخطوة 1 — توليد CSR</CardTitle>
-                    <CardDescription>إنشاء مفتاح ECDSA secp256k1 وطلب الشهادة (Certificate Signing Request)</CardDescription>
-                  </div>
+      {/* ─── Users Tab ─── */}
+      {tab === "users" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold">مستخدمو الشركة</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">إدارة حسابات الدخول المرتبطة بهذه الشركة</p>
+            </div>
+            <Button size="sm" className="gap-2" onClick={() => setShowAddUser(v => !v)}>
+              <UserPlus className="h-4 w-4" />إضافة مستخدم
+            </Button>
+          </div>
+
+          {/* Add user form */}
+          {showAddUser && (
+            <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-5 space-y-4">
+              <h4 className="font-semibold text-sm flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-primary" />مستخدم جديد
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">اسم المستخدم *</Label>
+                  <Input value={newUser.username} onChange={e => setNewUser(u => ({ ...u, username: e.target.value }))}
+                    placeholder="username" dir="ltr" className="h-9" />
                 </div>
-                <Button
-                  variant={hasCsr ? "outline" : "default"}
-                  size="sm"
-                  className="gap-2"
-                  onClick={handleGenerateCsr}
-                  disabled={loading === "csr"}
-                >
-                  {loading === "csr" ? <><Loader2 className="h-4 w-4 animate-spin" />جاري التوليد...</> : <><Key className="h-4 w-4" />{hasCsr ? "إعادة التوليد" : "توليد CSR"}</>}
-                </Button>
-              </div>
-            </CardHeader>
-            {hasCsr && (
-              <CardContent>
-                <div className="flex items-center gap-2 mb-2 text-green-700">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span className="text-sm font-medium">تم توليد CSR بنجاح — المفتاح محفوظ بأمان في الخادم</span>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">البريد الإلكتروني</Label>
+                  <Input value={newUser.email} onChange={e => setNewUser(u => ({ ...u, email: e.target.value }))}
+                    placeholder="email@company.sa" dir="ltr" type="email" className="h-9" />
                 </div>
-                {csrContent && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">كلمة المرور *</Label>
                   <div className="relative">
-                    <pre className="bg-muted/50 rounded border p-3 text-xs font-mono overflow-auto max-h-32 text-left" dir="ltr">
-                      {csrContent.substring(0, 300)}...
-                    </pre>
-                    <Button size="sm" variant="ghost" className="absolute top-1 left-1"
-                      onClick={() => copyToClipboard(csrContent, "CSR", toast)}>
-                      <Copy className="h-3 w-3" />
-                    </Button>
+                    <Input value={newUser.password} onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))}
+                      type={showPass ? "text" : "password"} placeholder="••••••••" dir="ltr" className="h-9 pl-9" />
+                    <button type="button" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => setShowPass(v => !v)}>
+                      {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   </div>
-                )}
-              </CardContent>
-            )}
-          </Card>
-
-          {/* Step 2: CSID */}
-          <Card className={hasCsid ? "border-green-200" : ""}>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <StepBadge n={2} active={hasCsr && !hasCsid} done={hasCsid} />
-                <div>
-                  <CardTitle className="text-base">الخطوة 2 — الحصول على CSID</CardTitle>
-                  <CardDescription>أرسل CSR مع رمز OTP من بوابة ZATCA للحصول على شهادة التوافق</CardDescription>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">الصلاحية</Label>
+                  <div className="flex rounded-lg border overflow-hidden h-9">
+                    {[{ v: "admin", l: "مدير" }, { v: "user", l: "مستخدم" }].map((opt, i) => (
+                      <button key={opt.v} type="button"
+                        onClick={() => setNewUser(u => ({ ...u, role: opt.v }))}
+                        className={cn("flex-1 text-sm font-medium transition-colors", i > 0 && "border-r",
+                          newUser.role === opt.v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60")}>
+                        {opt.l}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {hasCsid ? (
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
-                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-green-800 text-sm">تم الحصول على CSID بنجاح</p>
-                    <p className="text-xs text-green-700 mt-1 font-mono break-all">
-                      {company.zatcaCsid?.substring(0, 60)}...
-                    </p>
-                    <Button size="sm" variant="ghost" className="mt-2 h-7 text-xs gap-1 text-green-700"
-                      onClick={() => copyToClipboard(company.zatcaCsid ?? "", "CSID Token", toast)}>
-                      <Copy className="h-3 w-3" /> نسخ CSID
-                    </Button>
-                  </div>
+              <div className="flex gap-2">
+                <Button size="sm" className="gap-2"
+                  disabled={addUserMutation.isPending || !newUser.username || !newUser.password}
+                  onClick={() => addUserMutation.mutate(newUser)}>
+                  <Plus className="h-3.5 w-3.5" />
+                  {addUserMutation.isPending ? "جاري الإضافة..." : "إضافة"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowAddUser(false)}>إلغاء</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Users list */}
+          <div className="rounded-xl border bg-card overflow-hidden">
+            {users.length === 0 ? (
+              <div className="py-16 text-center">
+                <Users className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-muted-foreground font-medium">لا يوجد مستخدمون بعد</p>
+                <p className="text-xs text-muted-foreground mt-1">أضف أول مستخدم للشركة</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {/* Header */}
+                <div className="grid items-center gap-3 px-4 py-2.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+                  style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr auto" }}>
+                  <span>المستخدم</span>
+                  <span>البريد</span>
+                  <span>الصلاحية</span>
+                  <span>الحالة</span>
+                  <span className="w-20 text-center">إجراءات</span>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {/* Explanation */}
-                  <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                    <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
-                    <div className="space-y-1">
-                      <p>ستحتاج إلى رمز OTP من البوابة الرسمية لهيئة الزكاة والدخل والجمارك لربط هذا الجهاز.</p>
-                      <p className="text-xs text-blue-700">
-                        الرمز يُرسَل إلى هاتف المسؤول المسجّل في البوابة ويصلح للاستخدام مرة واحدة فقط.
-                      </p>
+                {users.map((u: any) => (
+                  <div key={u.id} className={cn("grid items-center gap-3 px-4 py-3.5 hover:bg-muted/20 transition-colors",
+                    !u.isActive && "bg-muted/10 opacity-70")}
+                    style={{ gridTemplateColumns: "1fr 1fr 0.7fr 0.7fr auto" }}>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
+                        {u.username?.[0]?.toUpperCase() ?? "م"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm truncate">{u.username}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          آخر دخول: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar-SA") : "لم يدخل بعد"}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-
-                  {/* CTA Button — opens dialog */}
-                  <Button
-                    onClick={() => setOtpDialogOpen(true)}
-                    disabled={loading === "compliance"}
-                    className="w-full gap-2 h-11 text-base"
-                    size="lg"
-                  >
-                    <Smartphone className="h-5 w-5" />
-                    ربط الجهاز عبر رمز التحقق OTP
-                  </Button>
-
-                  {!hasCsr && (
-                    <p className="text-center text-xs text-amber-600 font-medium">
-                      ⚠️ يجب توليد CSR في الخطوة الأولى أولاً قبل الربط
-                    </p>
-                  )}
-                  {company.isSandbox && hasCsr && (
-                    <p className="text-center text-xs text-muted-foreground">
-                      🧪 بيئة الاختبار — الرمز التجريبي سيظهر داخل نافذة التحقق
-                    </p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Step 3: الفواتير التجريبية — Compliance Check */}
-          <Card className={!hasCsid ? "opacity-60" : complianceCheckResult?.success ? "border-green-200" : ""}>
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <StepBadge n={3} active={hasCsid && !hasPcsid} done={!!complianceCheckResult?.success} />
-                <div>
-                  <CardTitle className="text-base">الخطوة 3 — الفواتير التجريبية</CardTitle>
-                  <CardDescription>
-                    اختبر فاتورة مصدرة مقابل شهادة CSID للتأكد من التوافق قبل الانتقال للإنتاج
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {complianceCheckResult?.success ? (
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
-                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-green-800 text-sm">اجتاز فحص الامتثال بنجاح</p>
-                    <p className="text-xs text-green-700 mt-1">{complianceCheckResult.message}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
-                    <Info className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
-                    <div>
-                      <p>أنشئ فاتورة وأصدرها أولاً، ثم أدخل معرّفها (ID) هنا لاختبارها.</p>
-                      <p className="mt-1">يُتحقق ZATCA من صحة XML وتوقيع الشهادة قبل الإنتاج.</p>
+                    <p className="text-sm text-muted-foreground truncate font-mono" dir="ltr">{u.email || "—"}</p>
+                    <Badge variant="outline" className="text-xs w-fit">
+                      {u.role === "admin" ? "مدير" : "مستخدم"}
+                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Switch
+                        checked={u.isActive}
+                        onCheckedChange={v => toggleUserMutation.mutate({ userId: u.id, isActive: v })}
+                      />
+                      <span className={cn("text-xs", u.isActive ? "text-green-700" : "text-muted-foreground")}>
+                        {u.isActive ? "نشط" : "موقوف"}
+                      </span>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="معرّف الفاتورة (ID) — مثال: 5"
-                      value={testInvoiceId}
-                      onChange={e => setTestInvoiceId(e.target.value)}
-                      dir="ltr"
-                      type="number"
-                      min="1"
-                      disabled={!hasCsid}
-                      className="font-mono"
-                    />
-                    <Button
-                      onClick={handleComplianceCheck}
-                      disabled={!hasCsid || loading === "compliance-check" || !testInvoiceId}
-                      variant="outline"
-                      className="shrink-0 gap-2"
-                    >
-                      {loading === "compliance-check"
-                        ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الفحص...</>
-                        : <><RefreshCw className="h-4 w-4" />فحص الفاتورة</>}
-                    </Button>
-                  </div>
-                  {complianceCheckResult && !complianceCheckResult.success && (
-                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800">
-                      <p className="font-medium">فشل الفحص: {complianceCheckResult.error}</p>
+                    <div className="flex items-center gap-1 w-20 justify-end">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        title="تغيير كلمة المرور"
+                        onClick={() => { setResetPassDialog(u); setNewPass(""); }}>
+                        <Key className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                        title="حذف المستخدم"
+                        onClick={() => {
+                          if (confirm(`حذف المستخدم ${u.username}؟`)) deleteUserMutation.mutate(u.id);
+                        }}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Step 4: PCSID */}
-          <Card className={hasPcsid ? "border-green-200" : !hasCsid ? "opacity-60" : ""}>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <StepBadge n={4} active={hasCsid && !hasPcsid} done={hasPcsid} />
-                  <div>
-                    <CardTitle className="text-base">الخطوة 4 — الشهادة النهائية PCSID</CardTitle>
-                    <CardDescription>الشهادة الإنتاجية — تُفعَّل الفواتير الحقيقية بعد الحصول عليها</CardDescription>
-                  </div>
-                </div>
-                {!hasPcsid && hasCsid && (
-                  <Button
-                    onClick={handleProductionCsid}
-                    disabled={loading === "pcsid"}
-                    className="gap-2"
-                  >
-                    {loading === "pcsid"
-                      ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الطلب...</>
-                      : <><ShieldCheck className="h-4 w-4" />طلب PCSID</>
-                    }
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            {hasPcsid && (
-              <CardContent>
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
-                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-green-800 text-sm">الشركة مرتبطة بالكامل ببيئة {company.isSandbox ? "المحاكاة" : "الإنتاج"}</p>
-                    <p className="text-xs text-green-700 mt-1 font-mono break-all">
-                      {company.zatcaPcsid?.substring(0, 60)}...
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            )}
-          </Card>
-        </TabsContent>
-
-        {/* ─── Serial Settings Tab ──────────────────────────────────── */}
-        <TabsContent value="settings" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Fingerprint className="h-5 w-5 text-primary" />
-                أرقام السيريال المميزة للجهاز
-              </CardTitle>
-              <CardDescription>هذه الأرقام تُستخدم في إنشاء CSR وربط الجهاز مع هيئة الزكاة</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-muted/30 rounded-lg p-4 border font-mono text-sm break-all" dir="ltr">
-                {company.serialNumber
-                  ?? ((company.deviceSerial1)
-                    ? `1-${company.deviceSerial1}|2-${company.deviceSerial2}|3-${company.deviceSerial3}`
-                    : "غير محدد")}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 text-sm">
-                {[
-                  { label: "الشركة المصنعة", value: (company as Record<string, unknown>).deviceSerial1 as string },
-                  { label: "الموديل", value: (company as Record<string, unknown>).deviceSerial2 as string },
-                  { label: "الرقم التسلسلي", value: (company as Record<string, unknown>).deviceSerial3 as string },
-                ].map(item => item.value && (
-                  <div key={item.label} className="p-3 rounded border bg-muted/20">
-                    <p className="text-muted-foreground text-xs mb-1">{item.label}</p>
-                    <p className="font-mono text-xs break-all" dir="ltr">{item.value}</p>
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+            )}
+          </div>
+        </div>
+      )}
 
-        {/* ─── XML / QR Tab ────────────────────────────────────────── */}
-        <TabsContent value="xml" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileCode2 className="h-5 w-5 text-primary" />
-                QR Code (TLV) والـ XML
-              </CardTitle>
-              <CardDescription>
-                QR Code بصيغة TLV (Tag-Length-Value) المطلوبة من ZATCA — يتولّد عند إصدار أي فاتورة
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="p-4 rounded-lg border bg-muted/20 text-sm text-muted-foreground text-center py-10 space-y-2">
-                <FileCode2 className="h-8 w-8 mx-auto text-muted-foreground/50" />
-                <p>اذهب لأي فاتورة مُصدرة لرؤية QR Code بصيغة TLV وXML UBL 2.1 الكامل.</p>
-                <Button variant="outline" asChild className="mt-2">
-                  <Link href={`/invoices?companyId=${company.id}`}>
-                    عرض الفواتير
+      {/* ─── Subscription Tab ─── */}
+      {tab === "subscription" && (
+        <div className="space-y-4">
+          {!subscription ? (
+            <div className="rounded-xl border-2 border-dashed py-16 text-center">
+              <Package className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-muted-foreground font-medium">لا يوجد اشتراك مرتبط بهذه الشركة</p>
+              <p className="text-xs text-muted-foreground mt-1">يُنشأ الاشتراك تلقائياً عند التسجيل أو يمكن إضافته من صفحة إدارة الاشتراكات</p>
+            </div>
+          ) : (
+            <>
+              {/* Subscription summary */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <StatCard
+                  label="الباقة" value={planInfo?.label ?? subscription.plan}
+                  icon={Package} iconBg="bg-primary/10" iconColor="text-primary"
+                />
+                <StatCard
+                  label="الحد الأقصى للمستخدمين"
+                  value={subscription.maxUsers >= 999 ? "∞" : subscription.maxUsers}
+                  icon={Users} iconBg="bg-blue-100" iconColor="text-blue-600"
+                  sub={`الحالي: ${users.length}`}
+                  warn={users.length >= subscription.maxUsers}
+                />
+                <StatCard
+                  label="الحد الأقصى للفواتير"
+                  value={subscription.maxInvoices >= 999999 ? "∞" : subscription.maxInvoices}
+                  icon={FileText} iconBg="bg-green-100" iconColor="text-green-600"
+                  sub={`الحالي: ${counts.invoices}`}
+                  warn={counts.invoices >= subscription.maxInvoices}
+                />
+                <StatCard
+                  label="السعر الشهري"
+                  value={`${subscription.price} ر.س`}
+                  icon={TrendingUp} iconBg="bg-amber-100" iconColor="text-amber-600"
+                  sub={subscription.billingCycle === "annual" ? "دورة سنوية" : "دورة شهرية"}
+                />
+              </div>
+
+              {/* Details card */}
+              <div className="rounded-xl border bg-card p-5">
+                <h3 className="font-semibold mb-4 text-sm flex items-center gap-2">
+                  <Package className="h-4 w-4 text-primary" />تفاصيل الاشتراك
+                </h3>
+                <div className="space-y-1">
+                  <InfoRow label="الباقة" value={
+                    <span className={cn("text-xs border rounded-full px-2 py-0.5 font-semibold", planInfo?.color)}>
+                      {planInfo?.label ?? subscription.plan}
+                    </span>
+                  } />
+                  <InfoRow label="دورة الفوترة" value={subscription.billingCycle === "annual" ? "سنوية" : "شهرية"} />
+                  <InfoRow label="السعر" value={`${subscription.price} ر.س`} ltr />
+                  <InfoRow label="تاريخ البداية" value={subscription.startDate} ltr />
+                  <InfoRow label="تاريخ الانتهاء" value={
+                    <span className={cn("font-mono text-sm", subExpired ? "text-red-600 font-bold" : "")}>
+                      {subscription.endDate}
+                      {subExpired && " (منتهي)"}
+                    </span>
+                  } />
+                  <InfoRow label="الحالة" value={
+                    <span className={cn("text-xs border rounded-full px-2 py-0.5 font-semibold",
+                      subscription.isActive ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200")}>
+                      {subscription.isActive ? "نشط" : "موقوف"}
+                    </span>
+                  } />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button asChild variant="outline" size="sm" className="gap-2">
+                  <Link href="/admin/subscriptions">
+                    <Pencil className="h-3.5 w-3.5" />تعديل الاشتراك من صفحة الاشتراكات
                   </Link>
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </>
+          )}
+        </div>
+      )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">صيغة QR Code TLV — مثال</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 text-xs">
-                {[
-                  { tag: "1", name: "اسم البائع", example: company.nameAr },
-                  { tag: "2", name: "الرقم الضريبي", example: company.vatNumber },
-                  { tag: "3", name: "وقت الفاتورة", example: "2024-01-15T10:30:00+03:00" },
-                  { tag: "4", name: "إجمالي الفاتورة مع ضريبة", example: "1150.00" },
-                  { tag: "5", name: "مبلغ ضريبة القيمة المضافة", example: "150.00" },
-                ].map(row => (
-                  <div key={row.tag} className="flex items-start gap-3 p-2 rounded border bg-muted/20">
-                    <span className="shrink-0 rounded bg-primary/10 text-primary px-1.5 py-0.5 font-bold font-mono">
-                      Tag {row.tag}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-muted-foreground">{row.name}</p>
-                      <p className="font-mono break-all" dir="ltr">{row.example}</p>
-                    </div>
-                  </div>
-                ))}
+      {/* ─── Data Tab ─── */}
+      {tab === "data" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Invoices */}
+            <div className="rounded-xl border bg-card p-5 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <FileText className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">الفواتير</p>
+                  <p className="text-2xl font-bold text-primary">{counts.invoices}</p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              {counts.invoices === 0 ? (
+                <p className="text-xs text-muted-foreground">لا توجد فواتير بعد</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {counts.invoices} فاتورة مسجّلة
+                  {subscription?.maxInvoices < 999999 && ` من ${subscription.maxInvoices}`}
+                </p>
+              )}
+            </div>
 
-      {/* OTP Verification Dialog */}
-      <ZatcaOtpDialog
-        open={otpDialogOpen}
-        onOpenChange={setOtpDialogOpen}
-        companyName={company.nameAr ?? company.nameEn ?? ""}
-        vatNumber={company.vatNumber ?? ""}
-        isSandbox={!!company.isSandbox}
-        hasCsr={hasCsr}
-        loading={loading === "compliance"}
-        onSubmit={(otp) => handleCompliance(otp)}
-      />
+            {/* Customers */}
+            <div className="rounded-xl border bg-card p-5 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-9 rounded-lg bg-green-100 flex items-center justify-center">
+                  <UserCheck className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">العملاء</p>
+                  <p className="text-2xl font-bold text-green-600">{counts.customers}</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {counts.customers === 0 ? "لا يوجد عملاء بعد" : `${counts.customers} عميل مسجّل`}
+              </p>
+            </div>
+
+            {/* Suppliers */}
+            <div className="rounded-xl border bg-card p-5 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-9 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <Truck className="h-5 w-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">الموردون</p>
+                  <p className="text-2xl font-bold text-amber-600">{counts.suppliers}</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {counts.suppliers === 0 ? "لا يوجد موردون بعد" : `${counts.suppliers} مورد مسجّل`}
+              </p>
+            </div>
+          </div>
+
+          {/* Empty state notice */}
+          {counts.invoices === 0 && counts.customers === 0 && counts.suppliers === 0 && (
+            <div className="rounded-xl border-2 border-dashed border-muted p-8 text-center">
+              <BarChart3 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+              <p className="text-muted-foreground font-medium">الشركة جديدة — البيانات فارغة</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                ستظهر الفواتير والعملاء والموردون هنا بعد أن يبدأ مستخدمو الشركة العمل
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Reset Password Dialog */}
+      <Dialog open={!!resetPassDialog} onOpenChange={() => setResetPassDialog(null)}>
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5 text-primary" />
+              تغيير كلمة مرور: {resetPassDialog?.username}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">كلمة المرور الجديدة</Label>
+              <div className="relative">
+                <Input
+                  type={showPass ? "text" : "password"}
+                  value={newPass}
+                  onChange={e => setNewPass(e.target.value)}
+                  placeholder="••••••••"
+                  dir="ltr"
+                  className="pl-9"
+                />
+                <button type="button" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  onClick={() => setShowPass(v => !v)}>
+                  {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setResetPassDialog(null)}>إلغاء</Button>
+            <Button
+              disabled={!newPass || resetPassMutation.isPending}
+              onClick={() => resetPassMutation.mutate({ userId: resetPassDialog.id, password: newPass })}>
+              <Key className="h-4 w-4 ml-2" />
+              {resetPassMutation.isPending ? "جاري الحفظ..." : "حفظ"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

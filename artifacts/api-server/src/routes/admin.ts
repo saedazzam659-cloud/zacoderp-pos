@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable } from "@workspace/db";
-import { eq, and, asc } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, customersTable, suppliersTable } from "@workspace/db";
+import { eq, and, asc, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 
@@ -177,6 +177,66 @@ router.get("/stats", requireSuperAdmin, async (_req, res) => {
   const active = companies.filter(c => c.status === "active").length;
   const rejected = companies.filter(c => c.status === "rejected").length;
   res.json({ total: companies.length, pending, active, rejected, users: users.length });
+});
+
+// GET /api/admin/companies/:id — full company profile for superadmin
+router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+  const [subscription] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
+  const users = await db.select({
+    id: usersTable.id,
+    username: usersTable.username,
+    email: usersTable.email,
+    role: usersTable.role,
+    isActive: usersTable.isActive,
+    lastLoginAt: usersTable.lastLoginAt,
+    createdAt: usersTable.createdAt,
+  }).from(usersTable).where(eq(usersTable.companyId, id));
+
+  const [[{ invoiceCount }], [{ customerCount }], [{ supplierCount }]] = await Promise.all([
+    db.select({ invoiceCount: count() }).from(invoicesTable).where(eq(invoicesTable.companyId, id)),
+    db.select({ customerCount: count() }).from(customersTable).where(eq(customersTable.companyId, id)),
+    db.select({ supplierCount: count() }).from(suppliersTable).where(eq(suppliersTable.companyId, id)),
+  ]);
+
+  res.json({ company, subscription: subscription ?? null, users, counts: { invoices: invoiceCount, customers: customerCount, suppliers: supplierCount } });
+});
+
+// POST /api/admin/companies/:id/users — add user to a company
+router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
+  const companyId = parseInt(req.params.id);
+  const { username, email, password, role = "admin" } = req.body;
+  if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
+
+  const [existing] = await db.select().from(usersTable).where(eq(usersTable.username, username));
+  if (existing) { res.status(409).json({ error: "اسم المستخدم موجود مسبقاً" }); return; }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const [newUser] = await db.insert(usersTable).values({
+    username, email: email ?? null, passwordHash, companyId, role, isActive: true,
+  }).returning({ id: usersTable.id, username: usersTable.username, email: usersTable.email, role: usersTable.role, isActive: usersTable.isActive, createdAt: usersTable.createdAt });
+  res.status(201).json({ ok: true, user: newUser });
+});
+
+// DELETE /api/admin/companies/:id/users/:userId — remove user from a company
+router.delete("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
+  const userId = parseInt(req.params.userId);
+  await db.delete(usersTable).where(eq(usersTable.id, userId));
+  res.status(204).send();
+});
+
+// PUT /api/admin/companies/:id/users/:userId — toggle user active status
+router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) => {
+  const userId = parseInt(req.params.userId);
+  const { isActive, password } = req.body;
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (isActive != null) updates.isActive = isActive;
+  if (password) updates.passwordHash = await bcrypt.hash(password, 12);
+  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
+  res.json({ ok: true, user: updated });
 });
 
 // GET /api/admin/plans — public (used by Register page too)
