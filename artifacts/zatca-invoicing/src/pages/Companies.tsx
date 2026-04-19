@@ -1,130 +1,319 @@
+import { useState } from "react";
 import { useListCompanies } from "@workspace/api-client-react";
 import { Link } from "wouter";
-import { Plus, Building2, ExternalLink, ShieldCheck, AlertCircle, CheckCircle2 } from "lucide-react";
+import {
+  Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
+  CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
+  BadgeCheck, FileText, RefreshCw, Layers
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+const INVOICE_TYPE: Record<string, string> = {
+  standard:   "ضريبية",
+  simplified: "مبسطة",
+  both:       "ضريبية ومبسطة",
+};
+
+const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: any; rowBg: string }> = {
+  active:   { label: "نشطة",    variant: "bg-green-100 text-green-800 border-green-300",  icon: CheckCircle2, rowBg: "bg-white hover:bg-green-50/30" },
+  pending:  { label: "معلقة",   variant: "bg-amber-100 text-amber-800 border-amber-300",  icon: AlertCircle,  rowBg: "bg-amber-50/40 hover:bg-amber-50/70" },
+  rejected: { label: "مرفوضة",  variant: "bg-red-100 text-red-800 border-red-300",         icon: AlertCircle,  rowBg: "bg-red-50/20 hover:bg-red-50/40" },
+};
+
+const ZATCA_CONFIG = {
+  full:  { label: "مسجّلة ZATCA",        color: "bg-green-100 text-green-800 border-green-300" },
+  half:  { label: "CSID — ناقص PCSID",  color: "bg-blue-100 text-blue-800 border-blue-200" },
+  none:  { label: "غير مسجّلة",           color: "bg-amber-100 text-amber-700 border-amber-200" },
+};
+
+function StatCard({ label, value, color, border }: any) {
+  return (
+    <div className={cn("flex-1 min-w-[110px] rounded-xl border px-5 py-4 text-center", border)}>
+      <p className={cn("text-3xl font-bold tabular-nums", color)}>{value ?? "—"}</p>
+      <p className="text-xs text-muted-foreground mt-1 font-medium">{label}</p>
+    </div>
+  );
+}
 
 export default function Companies() {
-  const { data: companies, isLoading } = useListCompanies({
+  const { data: companies = [], isLoading, refetch } = useListCompanies({
     query: { queryKey: ["companies"] }
+  }) as any;
+
+  const [search, setSearch]       = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [expandedRow, setExpandedRow]   = useState<number | null>(null);
+
+  // Stats
+  const total    = companies.length;
+  const active   = companies.filter((c: any) => (c.status ?? "active") === "active").length;
+  const pending  = companies.filter((c: any) => c.status === "pending").length;
+  const zatcaDone = companies.filter((c: any) => c.zatcaPcsid).length;
+
+  // Filter
+  const filtered = companies.filter((c: any) => {
+    const matchSearch =
+      c.nameAr?.includes(search) ||
+      c.nameEn?.includes(search) ||
+      c.vatNumber?.includes(search) ||
+      c.city?.includes(search);
+    const matchStatus =
+      filterStatus === "all" || (c.status ?? "active") === filterStatus;
+    return matchSearch && matchStatus;
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-6" dir="rtl">
+
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">الشركات</h1>
-          <p className="text-muted-foreground mt-1">إدارة الشركات المسجلة في نظام الفوترة الإلكترونية</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Building2 className="h-6 w-6 text-primary" />
+            الشركات المسجّلة
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">إدارة الشركات المسجّلة في نظام الفاتورة الإلكترونية</p>
         </div>
-        <Button asChild>
-          <Link href="/companies/new" className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            <span>إضافة شركة</span>
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-2">
+            <RefreshCw className="h-3.5 w-3.5" />تحديث
+          </Button>
+          <Button asChild size="sm" className="gap-2">
+            <Link href="/companies/new">
+              <Plus className="h-3.5 w-3.5" />إضافة شركة
+            </Link>
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {isLoading ? (
-          Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i}>
-              <CardHeader>
-                <Skeleton className="h-6 w-3/4 mb-2" />
-                <Skeleton className="h-4 w-1/2" />
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-5/6" />
-                <div className="pt-4 flex justify-between">
-                  <Skeleton className="h-8 w-20" />
-                  <Skeleton className="h-8 w-24" />
+      {/* ── Stats ── */}
+      <div className="flex gap-3 flex-wrap">
+        <StatCard label="الإجمالي"     value={total}     color="text-foreground"  border="border bg-muted/30" />
+        <StatCard label="نشطة"         value={active}    color="text-green-700"   border="border-green-200 bg-green-50/60" />
+        <StatCard label="معلقة"        value={pending}   color="text-amber-700"   border="border-amber-200 bg-amber-50/60" />
+        <StatCard label="مسجّلة ZATCA" value={zatcaDone} color="text-primary"     border="border-primary/20 bg-primary/5" />
+      </div>
+
+      {/* ── Search + Filter ── */}
+      <div className="flex gap-3 flex-col sm:flex-row">
+        <div className="relative flex-1">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="ابحث بالاسم أو الرقم الضريبي أو المدينة..."
+            className="pr-10 h-9 text-sm" />
+        </div>
+        <div className="flex rounded-lg border overflow-hidden bg-background text-sm">
+          {[
+            { key: "all",      label: "الكل",    count: total },
+            { key: "active",   label: "نشطة",    count: active },
+            { key: "pending",  label: "معلقة",   count: pending },
+          ].map((tab, i) => (
+            <button key={tab.key}
+              onClick={() => setFilterStatus(tab.key)}
+              className={cn(
+                "px-4 py-1.5 flex items-center gap-1.5 transition-colors font-medium",
+                i > 0 && "border-r",
+                filterStatus === tab.key
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
+              )}>
+              {tab.label}
+              <span className={cn("text-[11px] rounded-full px-1.5 font-bold",
+                filterStatus === tab.key ? "bg-white/20" : "bg-muted"
+              )}>{tab.count}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Grid Table ── */}
+      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+
+        {/* Column headers */}
+        <div
+          className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
+          style={{ gridTemplateColumns: "2fr 1.3fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
+          <span>الشركة</span>
+          <span>الرقم الضريبي</span>
+          <span>المدينة</span>
+          <span>نوع الفاتورة</span>
+          <span>حالة ZATCA</span>
+          <span>الحالة</span>
+          <span className="text-center w-8">—</span>
+        </div>
+
+        {/* Loading skeleton */}
+        {isLoading && (
+          <div className="divide-y">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3.5 animate-pulse">
+                <div className="h-9 w-9 rounded-lg bg-muted shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3.5 w-40 bg-muted rounded" />
+                  <div className="h-3 w-28 bg-muted/60 rounded" />
                 </div>
-              </CardContent>
-            </Card>
-          ))
-        ) : companies?.length === 0 ? (
-          <div className="col-span-full py-12 text-center border rounded-lg bg-card text-muted-foreground border-dashed">
-            <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <h3 className="text-lg font-medium text-foreground mb-1">لا توجد شركات مسجلة</h3>
-            <p className="mb-4">ابدأ بإضافة أول شركة لنظام الفوترة الإلكترونية الخاص بك</p>
-            <Button asChild variant="outline">
-              <Link href="/companies/new">إضافة شركة جديدة</Link>
-            </Button>
+                <div className="h-3.5 w-32 bg-muted rounded" />
+                <div className="h-3.5 w-20 bg-muted rounded" />
+                <div className="h-6 w-20 bg-muted rounded-full" />
+                <div className="h-6 w-16 bg-muted rounded-full" />
+                <div className="h-7 w-7 bg-muted rounded" />
+              </div>
+            ))}
           </div>
-        ) : (
-          companies?.map((company) => (
-            <Card key={company.id} className="flex flex-col hover:border-primary transition-colors">
-              <CardHeader>
-                <div className="flex justify-between items-start mb-2">
-                  <CardTitle className="text-lg">{company.nameAr}</CardTitle>
-                  <Badge variant={company.zatcaPcsid ? "default" : "secondary"} className="shrink-0">
-                    {company.zatcaPcsid ? "مسجلة ZATCA" : "غير مسجلة"}
-                  </Badge>
+        )}
+
+        {/* Empty state */}
+        {!isLoading && filtered.length === 0 && (
+          <div className="py-20 text-center">
+            <Building2 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">
+              {search ? "لا توجد شركات مطابقة" : "لا توجد شركات مسجّلة"}
+            </p>
+            {!search && (
+              <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
+                <Link href="/companies/new"><Plus className="h-3.5 w-3.5" />إضافة أول شركة</Link>
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Rows */}
+        <div className="divide-y">
+          {filtered.map((company: any) => {
+            const status   = STATUS_CONFIG[company.status ?? "active"] ?? STATUS_CONFIG.active;
+            const StatusIcon = status.icon;
+            const zatcaKey = company.zatcaPcsid ? "full" : company.zatcaCsid ? "half" : "none";
+            const zatca    = ZATCA_CONFIG[zatcaKey];
+            const isExpanded = expandedRow === company.id;
+
+            return (
+              <div key={company.id} className={cn("transition-colors", status.rowBg)}>
+
+                {/* Main row */}
+                <div
+                  className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
+                  style={{ gridTemplateColumns: "2fr 1.3fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
+                  onClick={() => setExpandedRow(isExpanded ? null : company.id)}
+                >
+                  {/* Company name */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={cn(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-bold text-sm",
+                      company.zatcaPcsid ? "bg-green-100 text-green-700" :
+                      (company.status ?? "active") === "pending" ? "bg-amber-100 text-amber-700" :
+                      "bg-primary/10 text-primary"
+                    )}>
+                      {company.nameAr?.[0] ?? "ش"}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm text-foreground truncate leading-tight">{company.nameAr}</p>
+                      {company.nameEn && <p className="text-xs text-muted-foreground truncate leading-tight">{company.nameEn}</p>}
+                    </div>
+                  </div>
+
+                  {/* VAT */}
+                  <span className="font-mono text-xs text-muted-foreground tracking-wide truncate">
+                    {company.vatNumber}
+                  </span>
+
+                  {/* City */}
+                  <span className="text-sm text-foreground/80 truncate">{company.city || "—"}</span>
+
+                  {/* Invoice type */}
+                  <span className="text-xs text-muted-foreground truncate">
+                    {INVOICE_TYPE[company.invoiceType] ?? company.invoiceType ?? "—"}
+                  </span>
+
+                  {/* ZATCA status */}
+                  <span className={cn("inline-flex items-center gap-1 text-[11px] border rounded-full px-2 py-0.5 font-medium w-fit", zatca.color)}>
+                    {zatcaKey === "full"
+                      ? <CheckCircle2 className="h-3 w-3 shrink-0" />
+                      : <AlertCircle className="h-3 w-3 shrink-0" />}
+                    {zatca.label}
+                  </span>
+
+                  {/* Company status */}
+                  <span className={cn("inline-flex items-center gap-1 text-xs border rounded-full px-2 py-0.5 font-medium w-fit", status.variant)}>
+                    <StatusIcon className="h-3 w-3 shrink-0" />
+                    {status.label}
+                  </span>
+
+                  {/* Expand */}
+                  <button
+                    className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
+                    onClick={e => { e.stopPropagation(); setExpandedRow(isExpanded ? null : company.id); }}
+                  >
+                    {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
                 </div>
-                {company.nameEn && <CardDescription>{company.nameEn}</CardDescription>}
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col space-y-4">
-                <div className="space-y-2 text-sm flex-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">الرقم الضريبي:</span>
-                    <span className="font-medium">{company.vatNumber}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">السجل التجاري:</span>
-                    <span className="font-medium">{company.crNumber}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">نوع الفاتورة:</span>
-                    <span className="font-medium">
-                      {company.invoiceType === 'standard' ? 'ضريبية' : 
-                       company.invoiceType === 'simplified' ? 'مبسطة' : 'ضريبية ومبسطة'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">البيئة:</span>
-                    <Badge variant={company.isSandbox ? "outline" : "default"} className="text-[10px] px-1.5 h-4">
-                      {company.isSandbox ? "محاكاة Sandbox" : "إنتاج Production"}
-                    </Badge>
-                  </div>
-                </div>
-                
-                {/* ZATCA status bar */}
-                {!company.zatcaPcsid && (
-                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium
-                    ${company.zatcaCsid ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
-                    {company.zatcaCsid
-                      ? <><ShieldCheck className="h-3.5 w-3.5 shrink-0" /> اكتملت CSID — أكمل الخطوة الأخيرة (PCSID)</>
-                      : <><AlertCircle className="h-3.5 w-3.5 shrink-0" /> لم يكتمل الربط مع هيئة الزكاة</>
-                    }
+
+                {/* Expanded details */}
+                {isExpanded && (
+                  <div className="border-t bg-muted/20 px-4 pb-4 pt-3 space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      {[
+                        { icon: BadgeCheck, label: "الرقم الضريبي",   value: company.vatNumber,  mono: true },
+                        { icon: Building2,  label: "السجل التجاري",    value: company.crNumber,   mono: true },
+                        { icon: MapPin,     label: "العنوان",           value: [company.buildingNumber, company.street, company.district, company.city, company.postalCode].filter(Boolean).join("، ") },
+                        { icon: FileText,   label: "نوع الفاتورة",      value: INVOICE_TYPE[company.invoiceType] ?? company.invoiceType },
+                        { icon: Layers,     label: "البيئة",            value: company.isSandbox ? "محاكاة (Sandbox)" : "إنتاج (Production)" },
+                        { icon: ShieldCheck,label: "حالة ZATCA",       value: zatca.label },
+                      ].map(item => (
+                        <div key={item.label} className="flex items-start gap-2 bg-background/60 rounded-lg p-2.5 border">
+                          <item.icon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="text-[10px] text-muted-foreground/70 uppercase tracking-wide font-semibold">{item.label}</p>
+                            <p className={cn("text-xs font-medium truncate mt-0.5", item.mono ? "font-mono" : "")}>{item.value || "—"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ZATCA notice */}
+                    {!company.zatcaPcsid && (
+                      <div className={cn(
+                        "flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium border",
+                        company.zatcaCsid
+                          ? "bg-blue-50 text-blue-800 border-blue-200"
+                          : "bg-amber-50 text-amber-800 border-amber-200"
+                      )}>
+                        {company.zatcaCsid
+                          ? <><ShieldCheck className="h-3.5 w-3.5 shrink-0" />اكتملت CSID — أكمل الخطوة الأخيرة للحصول على PCSID</>
+                          : <><AlertCircle className="h-3.5 w-3.5 shrink-0" />لم يكتمل الربط مع هيئة الزكاة والدخل والجمارك</>
+                        }
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {!company.zatcaPcsid && (
+                        <Button asChild size="sm" className="gap-1.5 h-8">
+                          <Link href={`/companies/${company.id}?tab=zatca`}>
+                            <ShieldCheck className="h-3.5 w-3.5" />ربط ZATCA
+                          </Link>
+                        </Button>
+                      )}
+                      <Button asChild variant="outline" size="sm" className="gap-1.5 h-8">
+                        <Link href={`/companies/${company.id}`}>
+                          <ExternalLink className="h-3.5 w-3.5" />عرض التفاصيل
+                        </Link>
+                      </Button>
+                    </div>
                   </div>
                 )}
-                {company.zatcaPcsid && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> مسجّلة وجاهزة لإصدار الفواتير
-                  </div>
-                )}
-                
-                <div className="pt-3 border-t flex items-center gap-2">
-                  {!company.zatcaPcsid && (
-                    <Button asChild size="sm" className="flex-1 gap-1.5">
-                      <Link href={`/companies/${company.id}?tab=zatca`}>
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        ربط ZATCA
-                      </Link>
-                    </Button>
-                  )}
-                  <Button asChild variant="ghost" size="sm" className={`gap-1.5 ${!company.zatcaPcsid ? "" : "flex-1"}`}>
-                    <Link href={`/companies/${company.id}`}>
-                      <span>التفاصيل</span>
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        {!isLoading && filtered.length > 0 && (
+          <div className="border-t bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground flex items-center justify-between">
+            <span>عدد الشركات: <strong>{filtered.length}</strong></span>
+            <span className="text-muted-foreground/60">انقر على أي صف لعرض التفاصيل والإجراءات</span>
+          </div>
         )}
       </div>
     </div>
