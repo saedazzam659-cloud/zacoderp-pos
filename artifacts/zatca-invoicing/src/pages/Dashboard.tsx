@@ -9,7 +9,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FileText, CheckCircle2, XCircle, FileWarning, TrendingUp, ShieldCheck } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { useListCompanies } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
@@ -23,8 +22,9 @@ export default function Dashboard() {
     query: { queryKey: ["dashboard-summary", companyId] }
   });
 
-  const { data: companies } = useListCompanies({ query: { queryKey: ["companies"] } });
-  const unregisteredCompanies = companies?.filter(c => !c.zatcaPcsid) ?? [];
+  // Use own company's ZATCA registration status from auth context (no separate API call)
+  const ownCompany = user?.company;
+  const isNotRegistered = ownCompany && !ownCompany.zatcaPcsid;
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
     query: { queryKey: ["recent-invoices", companyId] }
@@ -52,37 +52,27 @@ export default function Dashboard() {
         <p className="text-muted-foreground mt-1">نظرة عامة على أداء نظام الفوترة الإلكترونية</p>
       </div>
 
-      {/* ZATCA onboarding banner */}
-      {unregisteredCompanies.length > 0 && (
+      {/* ZATCA onboarding banner — only shown on Dashboard, only for own company */}
+      {isNotRegistered && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
             <ShieldCheck className="h-5 w-5 text-amber-600" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-amber-800 text-sm">
-              {unregisteredCompanies.length === 1
-                ? `شركة "${unregisteredCompanies[0].nameAr}" لم تكتمل عملية الربط مع هيئة الزكاة والدخل`
-                : `${unregisteredCompanies.length} شركات لم تكتمل عملية الربط مع هيئة الزكاة والدخل`}
+              لم تكتمل عملية الربط مع هيئة الزكاة والدخل
             </p>
             <p className="text-xs text-amber-700 mt-0.5">
-              يجب ربط كل شركة بمنظومة فاتورة قبل إصدار فواتير رسمية
+              يجب ربط شركتك بمنظومة فاتورة قبل إصدار فواتير رسمية
             </p>
           </div>
           <div className="flex gap-2 shrink-0">
-            {unregisteredCompanies.length === 1 ? (
-              <Button asChild size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
-                <Link href={`/companies/${unregisteredCompanies[0].id}?tab=zatca`}>
-                  <ShieldCheck className="h-4 w-4" />
-                  ربط الشركة الآن
-                </Link>
-              </Button>
-            ) : (
-              <Button asChild size="sm" variant="outline" className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-100">
-                <Link href="/companies">
-                  عرض الشركات
-                </Link>
-              </Button>
-            )}
+            <Button asChild size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
+              <Link href="/zatca">
+                <ShieldCheck className="h-4 w-4" />
+                ربط الشركة الآن
+              </Link>
+            </Button>
           </div>
         </div>
       )}
