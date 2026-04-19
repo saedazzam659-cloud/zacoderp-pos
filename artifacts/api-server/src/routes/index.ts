@@ -6,12 +6,16 @@ import invoicesRouter from "./invoices";
 import dashboardRouter from "./dashboard";
 import deviceInfoRouter from "./device-info";
 import zatcaRouter from "./zatca";
+import authRouter from "./auth";
+import suppliersRouter from "./suppliers";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use("/auth", authRouter);
 router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);
+router.use("/suppliers", suppliersRouter);
 router.use("/invoices", invoicesRouter);
 router.use("/dashboard", dashboardRouter);
 router.use(deviceInfoRouter);

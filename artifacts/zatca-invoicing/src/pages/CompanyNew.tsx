@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { useCreateCompany } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -20,8 +19,9 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff } from "lucide-react";
 import { Link } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 
 const INVOICE_TYPE_OPTIONS: ComboboxItem[] = [
   { value: "standard",   code: "B2B",     label: "فاتورة ضريبية (B2B)",         description: "للشركات والجهات التجارية — تُرسل إلى ZATCA للتخليص" },
@@ -43,6 +43,17 @@ interface DeviceInfo {
   stableId: string;
 }
 
+const PLAN_OPTIONS: ComboboxItem[] = [
+  { value: "starter",      code: "99 ر.س/شهر",  label: "مبتدئ (Starter)",      description: "مستخدم واحد — 50 فاتورة شهرياً" },
+  { value: "professional", code: "299 ر.س/شهر", label: "احترافي (Professional)", description: "5 مستخدمين — 500 فاتورة شهرياً" },
+  { value: "enterprise",   code: "899 ر.س/شهر", label: "مؤسسي (Enterprise)",    description: "مستخدمون وفواتير غير محدودة" },
+];
+
+const BILLING_OPTIONS: ComboboxItem[] = [
+  { value: "monthly", code: "شهري",  label: "اشتراك شهري",  description: "سداد شهري بدون التزام" },
+  { value: "annual",  code: "سنوي",  label: "اشتراك سنوي",  description: "وفّر ~15% مقارنة بالشهري" },
+];
+
 const companySchema = z.object({
   nameAr: z.string().min(2, { message: "اسم الشركة مطلوب" }),
   nameEn: z.string().optional(),
@@ -62,6 +73,15 @@ const companySchema = z.object({
   deviceSerial1: z.string().optional(),
   deviceSerial2: z.string().optional(),
   deviceSerial3: z.string().optional(),
+  // Admin user
+  username: z.string().min(3, { message: "اسم المستخدم مطلوب (3 أحرف على الأقل)" }),
+  email: z.string().email({ message: "بريد إلكتروني غير صحيح" }).optional().or(z.literal("")),
+  password: z.string().min(8, { message: "كلمة المرور يجب أن تكون 8 أحرف على الأقل" }),
+  // Subscription
+  plan: z.enum(["starter", "professional", "enterprise"]).default("starter"),
+  billingCycle: z.enum(["monthly", "annual"]).default("monthly"),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
 });
 
 function InfoBox({ children }: { children: React.ReactNode }) {
@@ -99,31 +119,26 @@ export default function CompanyNew() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const createCompany = useCreateCompany();
+  const { token } = useAuth();
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+
+  const today = new Date().toISOString().split("T")[0];
+  const in30Days = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
 
   const form = useForm<z.infer<typeof companySchema>>({
     resolver: zodResolver(companySchema),
     defaultValues: {
-      nameAr: "",
-      nameEn: "",
-      vatNumber: "",
-      crNumber: "",
-      city: "",
-      district: "",
-      street: "",
-      buildingNumber: "",
-      postalCode: "",
-      additionalNumber: "",
-      country: "SA",
-      industryName: "",
-      invoiceType: "both",
-      isSandbox: true,
-      serialNumber: "",
-      deviceSerial1: "",
-      deviceSerial2: "",
-      deviceSerial3: "",
+      nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
+      city: "", district: "", street: "", buildingNumber: "", postalCode: "",
+      additionalNumber: "", country: "SA", industryName: "",
+      invoiceType: "both", isSandbox: true,
+      serialNumber: "", deviceSerial1: "", deviceSerial2: "", deviceSerial3: "",
+      username: "", email: "", password: "",
+      plan: "starter", billingCycle: "monthly",
+      startDate: today, endDate: in30Days,
     },
   });
 
@@ -156,33 +171,29 @@ export default function CompanyNew() {
     scanDevice();
   }, []);
 
-  const onSubmit = (values: z.infer<typeof companySchema>) => {
-    const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3)
-      ? `1-${values.deviceSerial1}|2-${values.deviceSerial2}|3-${values.deviceSerial3}`
-      : values.serialNumber;
+  const onSubmit = async (values: z.infer<typeof companySchema>) => {
+    setSubmitting(true);
+    try {
+      const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3)
+        ? `1-${values.deviceSerial1}|2-${values.deviceSerial2}|3-${values.deviceSerial3}`
+        : values.serialNumber;
 
-    createCompany.mutate({
-      data: {
-        ...values,
-        serialNumber: combinedSerial,
-      }
-    }, {
-      onSuccess: (company) => {
-        toast({
-          title: "تمت الإضافة بنجاح",
-          description: "تمت إضافة الشركة إلى النظام بنجاح.",
-        });
-        queryClient.invalidateQueries({ queryKey: ["companies"] });
-        setLocation(`/companies/${company.id}`);
-      },
-      onError: () => {
-        toast({
-          title: "حدث خطأ",
-          description: "لم نتمكن من إضافة الشركة. يرجى المحاولة مرة أخرى.",
-          variant: "destructive",
-        });
-      }
-    });
+      const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${BASE}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...values, serialNumber: combinedSerial }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
+      toast({ title: "تمت الإضافة بنجاح", description: "تمت إضافة الشركة والمستخدم الإداري بنجاح." });
+      queryClient.invalidateQueries({ queryKey: ["companies"] });
+      setLocation(`/companies/${data.user.companyId}`);
+    } catch (err: any) {
+      toast({ title: "حدث خطأ", description: err.message ?? "يرجى المحاولة مرة أخرى.", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -200,11 +211,12 @@ export default function CompanyNew() {
       </div>
 
       {/* Steps overview */}
-      <div className="grid grid-cols-3 gap-3 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         {[
           { n: "1", label: "البيانات الأساسية", desc: "اسم الشركة والأرقام الرسمية" },
           { n: "2", label: "العنوان الوطني", desc: "عنوان المنشأة الرسمي" },
           { n: "3", label: "إعدادات ZATCA", desc: "ربط الجهاز وبيئة العمل" },
+          { n: "4", label: "المستخدم والاشتراك", desc: "حساب الإدارة وخطة الاشتراك" },
         ].map((s) => (
           <div key={s.n} className="flex items-start gap-3 p-3 rounded-lg border bg-card">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">{s.n}</span>
@@ -673,14 +685,109 @@ export default function CompanyNew() {
             </CardContent>
           </Card>
 
+          {/* ─── Section 4: Admin User + Subscription ─── */}
+          <Card>
+            <SectionHeader icon={User} title="حساب المدير والاشتراك" description="أنشئ حساب مدير للشركة وحدد خطة الاشتراك ومدته" />
+            <CardContent className="pt-6 space-y-6">
+
+              <div>
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <User className="h-4 w-4 text-primary" />حساب المدير
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <FormField control={form.control} name="username" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>اسم المستخدم <span className="text-destructive">*</span></FormLabel>
+                      <FormControl>
+                        <Input placeholder="admin_company" dir="ltr" className="text-left font-mono" autoComplete="off"
+                          {...field} onChange={e => field.onChange(e.target.value.toLowerCase())} />
+                      </FormControl>
+                      <FormDescription>حروف صغيرة وأرقام فقط، بدون مسافات</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="email" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>البريد الإلكتروني <span className="text-muted-foreground text-xs">(اختياري)</span></FormLabel>
+                      <FormControl><Input type="email" placeholder="admin@company.sa" dir="ltr" className="text-left" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="password" render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                      <FormLabel>كلمة المرور <span className="text-destructive">*</span></FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input type={showPass ? "text" : "password"} placeholder="8 أحرف على الأقل"
+                            dir="ltr" className="text-left pl-10" autoComplete="new-password" {...field} />
+                          <button type="button" onClick={() => setShowPass(!showPass)}
+                            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                            {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+              </div>
+
+              <div className="border-t pt-5">
+                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Package className="h-4 w-4 text-primary" />خطة الاشتراك
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <FormField control={form.control} name="plan" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>الباقة</FormLabel>
+                      <FormControl>
+                        <SearchCombobox items={PLAN_OPTIONS} value={field.value} onValueChange={field.onChange}
+                          placeholder="اختر الباقة..." searchPlaceholder="ابحث..." />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="billingCycle" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>دورة الفوترة</FormLabel>
+                      <FormControl>
+                        <SearchCombobox items={BILLING_OPTIONS} value={field.value} onValueChange={(v) => {
+                          field.onChange(v);
+                          const days = v === "annual" ? 365 : 30;
+                          form.setValue("endDate", new Date(Date.now() + days * 86400000).toISOString().split("T")[0]);
+                        }} placeholder="اختر الدورة..." searchPlaceholder="ابحث..." />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="startDate" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>تاريخ بدء الاشتراك</FormLabel>
+                      <FormControl><Input type="date" dir="ltr" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="endDate" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>تاريخ انتهاء الاشتراك</FormLabel>
+                      <FormControl><Input type="date" dir="ltr" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
+              </div>
+
+            </CardContent>
+          </Card>
+
           {/* Actions */}
           <div className="flex justify-end gap-4">
             <Button type="button" variant="outline" asChild>
               <Link href="/companies">إلغاء</Link>
             </Button>
-            <Button type="submit" className="gap-2 min-w-36" disabled={createCompany.isPending}>
+            <Button type="submit" className="gap-2 min-w-36" disabled={submitting}>
               <Save className="h-4 w-4" />
-              <span>{createCompany.isPending ? "جاري الحفظ..." : "حفظ بيانات الشركة"}</span>
+              <span>{submitting ? "جاري الحفظ..." : "حفظ بيانات الشركة"}</span>
             </Button>
           </div>
         </form>
