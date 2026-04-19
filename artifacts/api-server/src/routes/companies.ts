@@ -72,6 +72,22 @@ router.put("/:id", async (req, res) => {
   res.json(company);
 });
 
+// PATCH /:id/zatca-settings — update device info + sandbox toggle (called by company users)
+router.patch("/:id/zatca-settings", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { serialNumber, deviceSerial1, deviceSerial2, deviceSerial3, isSandbox } = req.body;
+  const [company] = await db.update(companiesTable).set({
+    ...(serialNumber !== undefined && { serialNumber }),
+    ...(deviceSerial1 !== undefined && { deviceSerial1 }),
+    ...(deviceSerial2 !== undefined && { deviceSerial2 }),
+    ...(deviceSerial3 !== undefined && { deviceSerial3 }),
+    ...(isSandbox !== undefined && { isSandbox }),
+    updatedAt: new Date(),
+  }).where(eq(companiesTable.id, id)).returning();
+  if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+  res.json(company);
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);

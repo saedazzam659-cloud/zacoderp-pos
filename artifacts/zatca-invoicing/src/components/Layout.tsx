@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, Settings2
+  Package, Clock, Settings2, Link2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -33,6 +33,10 @@ const companyBusinessNav = [
   { name: "الفواتير", href: "/invoices", icon: FileText },
   { name: "العملاء", href: "/customers", icon: Users },
   { name: "الموردون", href: "/suppliers", icon: Truck },
+];
+
+const companySystemNav = [
+  { name: "ربط ZATCA", href: "/zatca", icon: Link2 },
 ];
 
 function NavItem({ item, location, onClick }: { item: any; location: string; onClick?: () => void }) {
@@ -130,6 +134,14 @@ export default function Layout({ children }: LayoutProps) {
               <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
               <div className="space-y-0.5">
                 {companyBusinessNav.map(item => (
+                  <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
+              <div className="space-y-0.5">
+                {companySystemNav.map(item => (
                   <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
                 ))}
               </div>

@@ -23,6 +23,7 @@ import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
 import PlanSettings from "@/pages/PlanSettings";
+import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
@@ -90,6 +91,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/customers/new" component={CustomerNew} />}
             {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
+            {!isSuperAdmin && <Route path="/zatca" component={ZatcaIntegration} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

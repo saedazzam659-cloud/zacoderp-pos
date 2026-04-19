@@ -16,8 +16,9 @@ import {
   ArrowRight, Building2, Users, FileText, Package, CheckCircle2,
   XCircle, Plus, Trash2, RefreshCw, Calendar, ShieldCheck,
   UserPlus, Eye, EyeOff, TrendingUp, AlertTriangle, Pencil,
-  UserCheck, UserX, Truck, BarChart3, Key
+  UserCheck, UserX, Truck, BarChart3, Key, Link2
 } from "lucide-react";
+import ZatcaIntegration from "@/pages/ZatcaIntegration";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -238,6 +239,9 @@ export default function CompanyDetails() {
         </TabBtn>
         <TabBtn active={tab === "subscription"} onClick={() => setTab("subscription")}>
           <Package className="h-4 w-4" />الاشتراك
+        </TabBtn>
+        <TabBtn active={tab === "zatca"} onClick={() => setTab("zatca")}>
+          <Link2 className="h-4 w-4" />ربط ZATCA
         </TabBtn>
         <TabBtn active={tab === "data"} onClick={() => setTab("data")}>
           <BarChart3 className="h-4 w-4" />البيانات
@@ -496,6 +500,11 @@ export default function CompanyDetails() {
             </>
           )}
         </div>
+      )}
+
+      {/* ─── ZATCA Tab ─── */}
+      {tab === "zatca" && (
+        <ZatcaIntegration companyId={id} />
       )}
 
       {/* ─── Data Tab ─── */}
