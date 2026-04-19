@@ -12,8 +12,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Building2, CheckCircle2, XCircle, AlertTriangle,
   Fingerprint, ShieldCheck, Key, FileCode2, Loader2, Copy, RefreshCw,
-  Send, Info, ExternalLink
+  Send, Info, ExternalLink, Smartphone
 } from "lucide-react";
+import ZatcaOtpDialog from "@/components/ZatcaOtpDialog";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 
@@ -59,6 +60,7 @@ export default function CompanyDetails() {
   const [csrContent, setCsrContent] = useState<string | null>(null);
   const [testInvoiceId, setTestInvoiceId] = useState("");
   const [complianceCheckResult, setComplianceCheckResult] = useState<{ success: boolean; message?: string; error?: string; validationResults?: unknown } | null>(null);
+  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
 
   if (isLoading) {
     return <div className="space-y-6"><Skeleton className="h-12 w-1/3" /><Skeleton className="h-[400px] w-full" /></div>;
@@ -96,20 +98,22 @@ export default function CompanyDetails() {
     }
   }
 
-  async function handleCompliance() {
-    if (!otpInput.trim()) {
+  async function handleCompliance(otp?: string) {
+    const usedOtp = (otp ?? otpInput).trim();
+    if (!usedOtp) {
       toast({ title: "OTP مطلوب", description: "أدخل OTP من بوابة ZATCA", variant: "destructive" });
       return;
     }
     setLoading("compliance");
     try {
-      const data = await apiCall(`/api/companies/${id}/compliance`, { otp: otpInput.trim() });
+      const data = await apiCall(`/api/companies/${id}/compliance`, { otp: usedOtp });
       if (data.success) {
-        toast({ title: "تم الحصول على CSID", description: data.message });
+        toast({ title: "تم ربط الجهاز بنجاح ✅", description: "تم الحصول على شهادة CSID من هيئة الزكاة والدخل" });
         queryClient.invalidateQueries({ queryKey: ["company", id] });
         setOtpInput("");
+        setOtpDialogOpen(false);
       } else {
-        toast({ title: "فشل الحصول على CSID", description: data.error, variant: "destructive" });
+        toast({ title: "فشل ربط الجهاز", description: data.error ?? "تحقق من الرمز وحاول مجدداً", variant: "destructive" });
       }
     } catch {
       toast({ title: "خطأ في الاتصال", variant: "destructive" });
@@ -127,7 +131,7 @@ export default function CompanyDetails() {
     setLoading("compliance-check");
     try {
       const data = await apiCall(`/api/companies/${id}/compliance-check`, { invoiceId: invId });
-      setComplianceCheckResult(data);
+      setComplianceCheckResult({ success: !!data.success, message: data.message, error: data.error });
       if (data.success) {
         toast({ title: "نجح الفحص التجريبي", description: data.message });
       } else {
@@ -375,42 +379,33 @@ export default function CompanyDetails() {
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {/* Explanation */}
                   <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
-                    <div>
-                      احصل على OTP من بوابة ZATCA:
-                      <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-blue-600 hover:underline mt-1 font-medium">
-                        fatoora.zatca.gov.sa <ExternalLink className="h-3 w-3" />
-                      </a>
-                      {company.isSandbox && (
-                        <p className="mt-1 text-blue-700">
-                          بيئة المحاكاة — OTP تجريبي: <code className="bg-blue-100 px-1 rounded font-mono">123345</code>
-                        </p>
-                      )}
+                    <Info className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+                    <div className="space-y-1">
+                      <p>ستحتاج إلى رمز OTP من البوابة الرسمية لهيئة الزكاة والدخل والجمارك لربط هذا الجهاز.</p>
+                      <p className="text-xs text-blue-700">
+                        الرمز يُرسَل إلى هاتف المسؤول المسجّل في البوابة ويصلح للاستخدام مرة واحدة فقط.
+                      </p>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="أدخل OTP من بوابة ZATCA"
-                      value={otpInput}
-                      onChange={e => setOtpInput(e.target.value)}
-                      dir="ltr"
-                      className="font-mono text-center tracking-widest text-lg"
-                      maxLength={10}
-                      disabled={!hasCsr}
-                    />
-                    <Button
-                      onClick={handleCompliance}
-                      disabled={!hasCsr || loading === "compliance" || !otpInput.trim()}
-                      className="gap-2 shrink-0"
-                    >
-                      {loading === "compliance"
-                        ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الإرسال...</>
-                        : <><Send className="h-4 w-4" />إرسال</>
-                      }
-                    </Button>
-                  </div>
+
+                  {/* CTA Button — opens dialog */}
+                  <Button
+                    onClick={() => setOtpDialogOpen(true)}
+                    disabled={!hasCsr || loading === "compliance"}
+                    className="w-full gap-2 h-11 text-base"
+                    size="lg"
+                  >
+                    <Smartphone className="h-5 w-5" />
+                    ربط الجهاز عبر رمز التحقق OTP
+                  </Button>
+
+                  {company.isSandbox && (
+                    <p className="text-center text-xs text-muted-foreground">
+                      🧪 بيئة الاختبار — الرمز التجريبي سيظهر داخل نافذة التحقق
+                    </p>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -606,6 +601,17 @@ export default function CompanyDetails() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* OTP Verification Dialog */}
+      <ZatcaOtpDialog
+        open={otpDialogOpen}
+        onOpenChange={setOtpDialogOpen}
+        companyName={company.nameAr ?? company.nameEn ?? ""}
+        vatNumber={company.vatNumber ?? ""}
+        isSandbox={!!company.isSandbox}
+        loading={loading === "compliance"}
+        onSubmit={(otp) => handleCompliance(otp)}
+      />
     </div>
   );
 }
