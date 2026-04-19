@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
 } from "@/components/ui/dialog";
@@ -18,6 +18,7 @@ interface ZatcaOtpDialogProps {
   companyName: string;
   vatNumber: string;
   isSandbox: boolean;
+  hasCsr: boolean;
   loading: boolean;
   onSubmit: (otp: string) => void;
 }
@@ -55,13 +56,14 @@ export default function ZatcaOtpDialog({
   companyName,
   vatNumber,
   isSandbox,
+  hasCsr,
   loading,
   onSubmit,
 }: ZatcaOtpDialogProps) {
   const [otp, setOtp] = useState("");
   const [currentStep, setCurrentStep] = useState(isSandbox ? 3 : 0);
 
-  const isReady = otp.length === 6;
+  const isReady = otp.length === 6 && hasCsr;
 
   function handleSubmit() {
     if (isReady) onSubmit(otp);
@@ -115,8 +117,21 @@ export default function ZatcaOtpDialog({
           )}
         </div>
 
+        {/* No CSR Warning */}
+        {!hasCsr && (
+          <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+            <span className="text-lg shrink-0 mt-0.5">🔑</span>
+            <div>
+              <p className="font-semibold">يجب توليد CSR أولاً</p>
+              <p className="text-xs mt-0.5 text-red-700">
+                اذهب للخطوة الأولى "المفتاح والإعدادات" وولِّد مفتاح ECDSA وطلب الشهادة (CSR) قبل المتابعة.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Sandbox shortcut notice */}
-        {isSandbox && (
+        {isSandbox && hasCsr && (
           <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
             <span className="text-lg shrink-0">🧪</span>
             <div>

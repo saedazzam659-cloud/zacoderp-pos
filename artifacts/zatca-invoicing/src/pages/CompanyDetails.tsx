@@ -352,7 +352,7 @@ export default function CompanyDetails() {
           </Card>
 
           {/* Step 2: CSID */}
-          <Card className={hasCsid ? "border-green-200" : !hasCsr ? "opacity-60" : ""}>
+          <Card className={hasCsid ? "border-green-200" : ""}>
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <StepBadge n={2} active={hasCsr && !hasCsid} done={hasCsid} />
@@ -393,7 +393,7 @@ export default function CompanyDetails() {
                   {/* CTA Button — opens dialog */}
                   <Button
                     onClick={() => setOtpDialogOpen(true)}
-                    disabled={!hasCsr || loading === "compliance"}
+                    disabled={loading === "compliance"}
                     className="w-full gap-2 h-11 text-base"
                     size="lg"
                   >
@@ -401,7 +401,12 @@ export default function CompanyDetails() {
                     ربط الجهاز عبر رمز التحقق OTP
                   </Button>
 
-                  {company.isSandbox && (
+                  {!hasCsr && (
+                    <p className="text-center text-xs text-amber-600 font-medium">
+                      ⚠️ يجب توليد CSR في الخطوة الأولى أولاً قبل الربط
+                    </p>
+                  )}
+                  {company.isSandbox && hasCsr && (
                     <p className="text-center text-xs text-muted-foreground">
                       🧪 بيئة الاختبار — الرمز التجريبي سيظهر داخل نافذة التحقق
                     </p>
@@ -609,6 +614,7 @@ export default function CompanyDetails() {
         companyName={company.nameAr ?? company.nameEn ?? ""}
         vatNumber={company.vatNumber ?? ""}
         isSandbox={!!company.isSandbox}
+        hasCsr={hasCsr}
         loading={loading === "compliance"}
         onSubmit={(otp) => handleCompliance(otp)}
       />
