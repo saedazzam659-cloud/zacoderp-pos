@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -82,7 +82,9 @@ export default function CompanyDetails() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [tab, setTab] = useState("overview");
+  const search = useSearch();
+  const initialTab = new URLSearchParams(search).get("tab") ?? "overview";
+  const [tab, setTab] = useState(initialTab);
   const [showAddUser, setShowAddUser] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "admin" });
