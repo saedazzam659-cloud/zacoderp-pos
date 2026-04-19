@@ -106,6 +106,27 @@ export default function SuperAdminDashboard() {
             </div>
           </CardContent>
         </Card>
+
+        <Card className="border-dashed border-2 hover:border-primary/50 transition-colors md:col-span-2">
+          <CardContent className="pt-5 pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl flex items-center justify-center bg-primary/10">
+                  <Package className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">إدارة الاشتراكات والباقات</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">تعديل باقات الشركات وبيانات الاشتراك والأسعار</p>
+                </div>
+              </div>
+              <Button asChild variant="outline" size="sm" className="gap-1.5">
+                <Link href="/admin/subscriptions">
+                  عرض الاشتراكات <ArrowLeft className="h-3.5 w-3.5" />
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Recent pending requests */}
