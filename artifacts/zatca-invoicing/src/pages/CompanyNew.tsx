@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -145,6 +145,10 @@ export default function CompanyNew() {
       setScanning(false);
     }
   };
+
+  useEffect(() => {
+    scanDevice();
+  }, []);
 
   const onSubmit = (values: z.infer<typeof companySchema>) => {
     const combinedSerial = (values.deviceSerial1 && values.deviceSerial2 && values.deviceSerial3)
@@ -546,7 +550,7 @@ export default function CompanyNew() {
                   </div>
                   <Button
                     type="button"
-                    variant="default"
+                    variant={deviceInfo ? "outline" : "default"}
                     size="sm"
                     className="gap-2 shrink-0"
                     onClick={scanDevice}
@@ -554,7 +558,9 @@ export default function CompanyNew() {
                   >
                     {scanning
                       ? <><Loader2 className="h-4 w-4 animate-spin" />جاري المسح...</>
-                      : <><ScanSearch className="h-4 w-4" />مسح الجهاز تلقائياً</>
+                      : deviceInfo
+                        ? <><ScanSearch className="h-4 w-4" />إعادة المسح</>
+                        : <><ScanSearch className="h-4 w-4" />مسح الجهاز تلقائياً</>
                     }
                   </Button>
                 </div>
@@ -599,9 +605,15 @@ export default function CompanyNew() {
                   </div>
                 )}
 
-                {!deviceInfo && (
+                {!deviceInfo && scanning && (
+                  <div className="flex items-center gap-3 p-3 rounded-lg border bg-amber-50 border-amber-200 text-sm text-amber-800">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-600 shrink-0" />
+                    <span>جاري قراءة معلومات الجهاز تلقائياً...</span>
+                  </div>
+                )}
+                {!deviceInfo && !scanning && (
                   <InfoBox>
-                    اضغط <strong>مسح الجهاز تلقائياً</strong> لقراءة معلومات الجهاز مباشرة. أو يمكنك إدخالها يدوياً:
+                    فشل المسح التلقائي. يمكنك إدخال البيانات يدوياً أو الضغط على <strong>إعادة المسح</strong>.
                     الصيغة المطلوبة في ZATCA:{" "}
                     <code className="bg-blue-100 px-1 rounded font-mono">
                       1-{"{"}الشركة المصنعة{"}"} | 2-{"{"}الموديل{"}"} | 3-{"{"}الرقم الفريد{"}"}
