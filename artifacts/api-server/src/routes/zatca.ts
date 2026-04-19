@@ -30,30 +30,49 @@ function basicAuth(token: string, secret: string): string {
 // ─── 1. Generate CSR ─────────────────────────────────────────────────────────
 router.post("/companies/:id/generate-csr", async (req, res) => {
   const id = parseInt(req.params.id);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "معرف الشركة غير صالح" });
+    return;
+  }
+
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
   if (!company) {
-    res.status(404).json({ error: "Company not found" });
+    res.status(404).json({ error: "الشركة غير موجودة" });
+    return;
+  }
+
+  // Validate required company fields
+  if (!company.nameAr?.trim()) {
+    res.status(400).json({ error: "اسم الشركة بالعربي مطلوب لتوليد CSR" });
+    return;
+  }
+  if (!company.vatNumber?.trim()) {
+    res.status(400).json({ error: "الرقم الضريبي (VAT) مطلوب لتوليد CSR" });
     return;
   }
 
   try {
-    const serialNumber = company.serialNumber
-      ?? (company.deviceSerial1
-          ? `1-${company.deviceSerial1}|2-${company.deviceSerial2}|3-${company.deviceSerial3}`
-          : `1-Server|2-Node|3-${company.id}`);
+    // Build serial number: prefer explicit serialNumber, then deviceSerials, then fallback
+    const serial1 = (company.deviceSerial1 ?? "").trim();
+    const serial2 = (company.deviceSerial2 ?? "").trim();
+    const serial3 = (company.deviceSerial3 ?? "").trim();
+
+    const serialNumber = (company.serialNumber ?? "").trim()
+      || (serial1 ? `1-${serial1}|2-${serial2 || "Node"}|3-${serial3 || company.id}` : `1-Server|2-Node|3-${company.id}`);
 
     const { privateKey, csr } = generateCsr({
       commonName: serialNumber,
-      organizationName: company.nameAr,
-      organizationUnit: company.industryName ?? "E-Invoice",
-      country: company.country ?? "SA",
+      organizationName: company.nameAr.trim(),
+      organizationUnit: (company.industryName ?? "E-Invoice").trim(),
+      country: (company.country ?? "SA").trim(),
       serialNumber,
-      vatNumber: company.vatNumber,
+      vatNumber: company.vatNumber.trim(),
       invoiceType: company.invoiceType ?? "both",
       isSandbox: company.isSandbox ?? true,
     });
 
     await db.update(companiesTable).set({
+      serialNumber,
       zatcaPrivateKey: privateKey,
       zatcaCsr: csr,
       updatedAt: new Date(),
@@ -62,11 +81,12 @@ router.post("/companies/:id/generate-csr", async (req, res) => {
     res.json({
       success: true,
       csr,
-      message: "تم توليد CSR بنجاح. الخطوة التالية: احصل على OTP من بوابة ZATCA واستخدم مسار /compliance",
+      serialNumber,
+      message: "تم توليد CSR بنجاح. الخطوة التالية: احصل على OTP من بوابة ZATCA",
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: "فشل توليد CSR", details: message });
+    const details = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: "فشل توليد CSR", details });
   }
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,25 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import ZatcaOtpDialog from "@/components/ZatcaOtpDialog";
 import {
-  ShieldCheck, Key, CheckCircle2, XCircle, Loader2, AlertTriangle,
+  ShieldCheck, Key, CheckCircle2, Loader2, AlertTriangle,
   RefreshCw, Globe, Lock, FileText, Cpu, ChevronDown, ChevronUp,
-  Copy, ExternalLink, Info, Zap
+  ExternalLink, Info, Zap, AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// ─── Status helpers ─────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface DeviceForm {
+  serialNumber: string;
+  deviceSerial1: string;
+  deviceSerial2: string;
+  deviceSerial3: string;
+  isSandbox: boolean;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function mask(val: string | null | undefined): string {
   if (!val) return "—";
@@ -34,10 +44,10 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-// ─── Step wrapper ─────────────────────────────────────────────────────────────
+// ─── Step card ────────────────────────────────────────────────────────────────
 
 function StepCard({
-  num, title, subtitle, status, children, defaultOpen
+  num, title, subtitle, status, children, defaultOpen,
 }: {
   num: number; title: string; subtitle: string;
   status: "done" | "active" | "locked"; children: React.ReactNode;
@@ -45,19 +55,23 @@ function StepCard({
 }) {
   const [open, setOpen] = useState(defaultOpen ?? status === "active");
 
+  useEffect(() => {
+    if (status === "active" && defaultOpen) setOpen(true);
+  }, [status]);
+
   return (
     <div className={cn(
       "rounded-xl border transition-colors",
       status === "done"   ? "border-green-200 bg-green-50/30" :
       status === "active" ? "border-primary/40 bg-primary/5 shadow-sm" :
-      "border-border bg-muted/20 opacity-70"
+      "border-border bg-muted/20 opacity-60"
     )}>
       <button
+        type="button"
         className="w-full flex items-center gap-4 px-5 py-4 text-right"
         onClick={() => status !== "locked" && setOpen(v => !v)}
         disabled={status === "locked"}
       >
-        {/* Step number bubble */}
         <div className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-sm border-2",
           status === "done"   ? "bg-green-500 text-white border-green-500" :
@@ -90,7 +104,23 @@ function StepCard({
   );
 }
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
+// ─── Error alert ─────────────────────────────────────────────────────────────
+
+function ErrorAlert({ message, details }: { message: string; details?: string }) {
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
+      <p className="font-medium flex items-center gap-1.5">
+        <AlertCircle className="h-4 w-4 shrink-0" />
+        {message}
+      </p>
+      {details && (
+        <p className="text-xs font-mono text-red-600 break-all pr-5">{details}</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 interface ZatcaIntegrationProps {
   companyId?: number;
@@ -102,37 +132,42 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const qc = useQueryClient();
 
   const companyId = propCompanyId ?? user?.companyId;
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token ?? ""}`,
+    "Content-Type": "application/json",
+  };
 
-  // ── OTP dialog state
+  // ── State
   const [otpOpen, setOtpOpen] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
-
-  // ── Device form state
-  const [deviceForm, setDeviceForm] = useState<{
-    serialNumber: string; deviceSerial1: string; deviceSerial2: string; deviceSerial3: string; isSandbox: boolean;
-  } | null>(null);
-  const [deviceSaved, setDeviceSaved] = useState(false);
-
-  // ── Compliance check state
+  const [form, setForm] = useState<DeviceForm | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
   const [checkInvoiceId, setCheckInvoiceId] = useState("");
   const [checkResult, setCheckResult] = useState<any | null>(null);
+  const [step1Error, setStep1Error] = useState<{ message: string; details?: string } | null>(null);
+  const seeded = useRef(false);
 
   // ── Load company
   const { data: company, isLoading, refetch } = useQuery({
     queryKey: ["company-zatca", companyId],
     queryFn: async () => {
+      if (!companyId) throw new Error("companyId غير محدد");
       const res = await fetch(`${API}/api/companies/${companyId}`, { headers });
-      if (!res.ok) throw new Error("فشل تحميل بيانات الشركة");
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error ?? "فشل تحميل بيانات الشركة");
+      }
       return res.json();
     },
     enabled: !!companyId,
+    retry: 1,
   });
 
-  // Seed form from loaded company (once)
+  // Seed form from loaded company (only once)
   useEffect(() => {
-    if (company && !deviceForm) {
-      setDeviceForm({
+    if (company && !seeded.current) {
+      seeded.current = true;
+      setForm({
         serialNumber: company.serialNumber ?? "",
         deviceSerial1: company.deviceSerial1 ?? "",
         deviceSerial2: company.deviceSerial2 ?? "",
@@ -142,11 +177,29 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     }
   }, [company]);
 
+  function updateForm(patch: Partial<DeviceForm>) {
+    setForm(prev => prev ? { ...prev, ...patch } : prev);
+    setIsDirty(true);
+  }
+
+  // ── Validate form
+  function validateForm(f: DeviceForm): string | null {
+    if (!f.serialNumber.trim()) {
+      return "الرقم التسلسلي للجهاز (Serial Number) مطلوب";
+    }
+    if (f.serialNumber.trim().length < 3) {
+      return "الرقم التسلسلي قصير جداً — يجب أن يكون 3 أحرف على الأقل";
+    }
+    return null;
+  }
+
   // ── Save device settings
   const saveDeviceMutation = useMutation({
-    mutationFn: async (form: typeof deviceForm) => {
+    mutationFn: async (f: DeviceForm) => {
       const res = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
-        method: "PATCH", headers, body: JSON.stringify(form),
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(f),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "خطأ في الحفظ");
@@ -154,35 +207,59 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     },
     onSuccess: () => {
       toast({ title: "✓ تم حفظ إعدادات الجهاز" });
-      setDeviceSaved(true);
+      setIsDirty(false);
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // ── Generate CSR (auto-saves device settings first)
+  // ── Generate CSR
   const generateCsrMutation = useMutation({
     mutationFn: async () => {
-      // Auto-save device settings before generating
-      if (form && !deviceSaved) {
+      if (!form) throw new Error("لم يتم تحميل بيانات النموذج بعد");
+
+      const validationError = validateForm(form);
+      if (validationError) throw new Error(validationError);
+
+      // Save settings first if dirty
+      if (isDirty) {
         const saveRes = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
-          method: "PATCH", headers, body: JSON.stringify(form),
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(form),
         });
-        if (!saveRes.ok) throw new Error("فشل حفظ إعدادات الجهاز");
-        setDeviceSaved(true);
+        const saveJson = await saveRes.json();
+        if (!saveRes.ok) {
+          throw new Error(saveJson.error ?? "فشل حفظ إعدادات الجهاز");
+        }
       }
+
       const res = await fetch(`${API}/api/companies/${companyId}/generate-csr`, {
-        method: "POST", headers, body: JSON.stringify({}),
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "فشل توليد CSR");
+      if (!res.ok) {
+        const err = new Error(json.error ?? "فشل توليد CSR") as any;
+        err.details = json.details;
+        throw err;
+      }
       return json;
     },
     onSuccess: () => {
-      toast({ title: "✓ تم توليد CSR بنجاح", description: "الخطوة التالية: احصل على OTP من بوابة ZATCA" });
+      setIsDirty(false);
+      setStep1Error(null);
+      toast({
+        title: "✓ تم توليد CSR بنجاح",
+        description: "الخطوة التالية: احصل على OTP من بوابة ZATCA",
+      });
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
-    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      setStep1Error({ message: e.message, details: e.details });
+      toast({ title: e.message, variant: "destructive" });
+    },
   });
 
   // ── Submit compliance OTP
@@ -190,11 +267,16 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     setComplianceLoading(true);
     try {
       const res = await fetch(`${API}/api/companies/${companyId}/compliance`, {
-        method: "POST", headers, body: JSON.stringify({ otp }),
+        method: "POST",
+        headers,
+        body: JSON.stringify({ otp }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "فشل الاتصال بـ ZATCA");
-      toast({ title: "✓ تم الحصول على CSID بنجاح", description: "الشركة مهيأة لإصدار الفواتير التجريبية" });
+      toast({
+        title: "✓ تم الحصول على CSID بنجاح",
+        description: "الشركة مهيأة لإصدار الفواتير التجريبية",
+      });
       setOtpOpen(false);
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     } catch (e: any) {
@@ -208,14 +290,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const complianceCheckMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API}/api/companies/${companyId}/compliance-check`, {
-        method: "POST", headers, body: JSON.stringify({ invoiceId: parseInt(checkInvoiceId) }),
+        method: "POST",
+        headers,
+        body: JSON.stringify({ invoiceId: parseInt(checkInvoiceId) }),
       });
       const json = await res.json();
       setCheckResult(json);
       if (!res.ok) throw new Error(json.error ?? "فشل الفحص");
       return json;
     },
-    onSuccess: () => toast({ title: "✓ نجح الفحص التجريبي", description: "الفاتورة صحيحة — يمكنك الانتقال للإنتاج" }),
+    onSuccess: () => toast({
+      title: "✓ نجح الفحص التجريبي",
+      description: "الفاتورة صحيحة — يمكنك الانتقال للإنتاج",
+    }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -223,19 +310,25 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const productionCsidMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API}/api/companies/${companyId}/production-csid`, {
-        method: "POST", headers, body: JSON.stringify({}),
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "فشل استخراج PCSID");
       return json;
     },
     onSuccess: () => {
-      toast({ title: "✓ تم الحصول على PCSID", description: "الشركة مرتبطة بالإنتاج بالكامل" });
+      toast({
+        title: "✓ تم الحصول على PCSID",
+        description: "الشركة مرتبطة بالإنتاج بالكامل",
+      });
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  // ── Loading
   if (isLoading || !company) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -244,29 +337,24 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     );
   }
 
-  const hasCsr    = !!company.zatcaCsr;
-  const hasCsid   = !!company.zatcaCsidToken;
-  const hasPcsid  = !!company.zatcaPcsidToken;
-  const isSandbox = company.isSandbox ?? true;
+  if (!form) return null;
 
-  // Determine step statuses
+  const hasCsr   = !!company.zatcaCsr;
+  const hasCsid  = !!company.zatcaCsidToken;
+  const hasPcsid = !!company.zatcaPcsidToken;
+
+  // Status uses form.isSandbox (reflects the user's current selection, not just DB state)
+  const envLabel = form.isSandbox ? "اختبارية" : "إنتاج";
+
   const step1Status = hasCsr ? "done" : "active";
   const step2Status = !hasCsr ? "locked" : hasCsid ? "done" : "active";
-  const step3Status = !hasCsid ? "locked" : "active";
+  const step3Status: "active" | "locked" = !hasCsid ? "locked" : "active";
   const step4Status = !hasCsid ? "locked" : hasPcsid ? "done" : "active";
-
-  const form = deviceForm ?? {
-    serialNumber: company.serialNumber ?? "",
-    deviceSerial1: company.deviceSerial1 ?? "",
-    deviceSerial2: company.deviceSerial2 ?? "",
-    deviceSerial3: company.deviceSerial3 ?? "",
-    isSandbox: company.isSandbox ?? true,
-  };
 
   return (
     <div className="space-y-6 pb-10 max-w-3xl mx-auto" dir="rtl">
 
-      {/* ── Page Header */}
+      {/* ── Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -300,10 +388,10 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "البيئة",    value: isSandbox ? "اختبارية" : "إنتاج",   ok: true,    icon: Globe },
-            { label: "CSR",       value: hasCsr ? "مولَّد"  : "لم يولَّد",  ok: hasCsr,  icon: Key },
-            { label: "CSID",      value: hasCsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasCsid, icon: ShieldCheck },
-            { label: "PCSID",     value: hasPcsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasPcsid, icon: Lock },
+            { label: "البيئة", value: envLabel,                             ok: true,    icon: Globe },
+            { label: "CSR",    value: hasCsr ? "مولَّد" : "لم يولَّد",     ok: hasCsr,  icon: Key },
+            { label: "CSID",   value: hasCsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasCsid, icon: ShieldCheck },
+            { label: "PCSID",  value: hasPcsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasPcsid, icon: Lock },
           ].map(({ label, value, ok, icon: Icon }) => (
             <div key={label} className="flex items-center gap-2 p-3 rounded-lg bg-muted/40 border">
               <StatusDot ok={ok} />
@@ -334,7 +422,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       {/* ── Steps */}
       <div className="space-y-3">
 
-        {/* Step 1: Device Config + CSR */}
+        {/* Step 1 — Device Config + CSR */}
         <StepCard
           num={1}
           title="إعداد الجهاز وتوليد CSR"
@@ -353,61 +441,103 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               </div>
               <Switch
                 checked={form.isSandbox}
-                onCheckedChange={v => {
-                  setDeviceForm(f => ({ ...(f!), isSandbox: v }));
-                  setDeviceSaved(false);
-                }}
+                onCheckedChange={v => updateForm({ isSandbox: v })}
               />
             </div>
 
-            {/* Serial numbers */}
+            {/* Serial fields */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2 space-y-1.5">
-                <Label className="text-xs">الرقم التسلسلي للجهاز (Serial Number)</Label>
+                <Label className="text-xs">
+                  الرقم التسلسلي للجهاز (Serial Number)
+                  <span className="text-red-500 mr-1">*</span>
+                </Label>
                 <Input
                   value={form.serialNumber}
-                  onChange={e => { setDeviceForm(f => ({ ...(f!), serialNumber: e.target.value })); setDeviceSaved(false); }}
-                  placeholder="1-Server|2-Node|3-مثال"
+                  onChange={e => updateForm({ serialNumber: e.target.value })}
+                  placeholder="مثال: 1-TST|2-TAX|3-EGS"
                   dir="ltr"
                   className="h-9 font-mono text-sm"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  مثال: <span className="font-mono">1-TST|2-TAX|3-EGS</span> — يُستخدم كـ Common Name في شهادة SSL
+                  يُستخدم كـ <span className="font-mono">Common Name</span> في شهادة SSL — مثال:{" "}
+                  <span className="font-mono text-primary">1-TST|2-TAX|3-EGS</span>
                 </p>
               </div>
+
               <div className="space-y-1.5">
-                <Label className="text-xs">Device Serial 1 (اسم الحل)</Label>
-                <Input value={form.deviceSerial1} dir="ltr" className="h-9 font-mono text-sm" placeholder="اسم الحل البرمجي"
-                  onChange={e => { setDeviceForm(f => ({ ...(f!), deviceSerial1: e.target.value })); setDeviceSaved(false); }} />
+                <Label className="text-xs text-muted-foreground">
+                  Device Serial 1 <span className="font-normal">(اسم الحل البرمجي)</span>
+                </Label>
+                <Input
+                  value={form.deviceSerial1}
+                  dir="ltr"
+                  className="h-9 font-mono text-sm"
+                  placeholder="Solution Name"
+                  onChange={e => updateForm({ deviceSerial1: e.target.value })}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Device Serial 2 (رقم الترخيص)</Label>
-                <Input value={form.deviceSerial2} dir="ltr" className="h-9 font-mono text-sm" placeholder="رقم ترخيص البرنامج"
-                  onChange={e => { setDeviceForm(f => ({ ...(f!), deviceSerial2: e.target.value })); setDeviceSaved(false); }} />
+                <Label className="text-xs text-muted-foreground">
+                  Device Serial 2 <span className="font-normal">(رقم الترخيص)</span>
+                </Label>
+                <Input
+                  value={form.deviceSerial2}
+                  dir="ltr"
+                  className="h-9 font-mono text-sm"
+                  placeholder="License Number"
+                  onChange={e => updateForm({ deviceSerial2: e.target.value })}
+                />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Device Serial 3 (المعرف الفريد)</Label>
-                <Input value={form.deviceSerial3} dir="ltr" className="h-9 font-mono text-sm" placeholder="UUID أو رقم الجهاز"
-                  onChange={e => { setDeviceForm(f => ({ ...(f!), deviceSerial3: e.target.value })); setDeviceSaved(false); }} />
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Device Serial 3 <span className="font-normal">(المعرف الفريد / UUID)</span>
+                </Label>
+                <Input
+                  value={form.deviceSerial3}
+                  dir="ltr"
+                  className="h-9 font-mono text-sm"
+                  placeholder="UUID or Device ID"
+                  onChange={e => updateForm({ deviceSerial3: e.target.value })}
+                />
               </div>
             </div>
 
+            {/* Inline validation error */}
+            {step1Error && <ErrorAlert message={step1Error.message} details={step1Error.details} />}
+
+            {/* Dirty warning */}
+            {isDirty && !step1Error && (
+              <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                يوجد تغييرات غير محفوظة — ستُحفظ تلقائياً عند توليد CSR
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2 pt-1">
               <Button
+                type="button"
                 size="sm"
                 variant="outline"
                 className="gap-2"
-                disabled={saveDeviceMutation.isPending}
+                disabled={saveDeviceMutation.isPending || !isDirty}
                 onClick={() => saveDeviceMutation.mutate(form)}
               >
-                {saveDeviceMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {saveDeviceMutation.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Cpu className="h-3.5 w-3.5" />
+                }
                 حفظ الإعدادات
               </Button>
               <Button
+                type="button"
                 size="sm"
                 className="gap-2"
                 disabled={generateCsrMutation.isPending}
-                onClick={() => generateCsrMutation.mutate()}
+                onClick={() => {
+                  setStep1Error(null);
+                  generateCsrMutation.mutate();
+                }}
               >
                 {generateCsrMutation.isPending
                   ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />جاري التوليد...</>
@@ -425,7 +555,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           </div>
         </StepCard>
 
-        {/* Step 2: Compliance CSID via OTP */}
+        {/* Step 2 — Compliance CSID */}
         <StepCard
           num={2}
           title="شهادة الامتثال (CSID)"
@@ -463,6 +593,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
               </div>
             ) : (
               <Button
+                type="button"
                 className="gap-2"
                 onClick={() => setOtpOpen(true)}
                 disabled={!hasCsr}
@@ -474,7 +605,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
           </div>
         </StepCard>
 
-        {/* Step 3: Compliance Check */}
+        {/* Step 3 — Compliance Check */}
         <StepCard
           num={3}
           title="الفحص التجريبي"
@@ -497,6 +628,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                 className="h-9 max-w-xs font-mono"
               />
               <Button
+                type="button"
                 size="sm"
                 variant="outline"
                 className="gap-2 whitespace-nowrap"
@@ -514,62 +646,64 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             {checkResult && (
               <div className={cn(
                 "rounded-lg border p-3 text-sm space-y-1",
-                checkResult.success ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800"
+                checkResult.success
+                  ? "bg-green-50 border-green-200 text-green-800"
+                  : "bg-red-50 border-red-200 text-red-800"
               )}>
-                <p className="font-semibold flex items-center gap-2">
+                <p className="font-medium flex items-center gap-1.5">
                   {checkResult.success
-                    ? <><CheckCircle2 className="h-4 w-4" />نجح الفحص التجريبي</>
-                    : <><XCircle className="h-4 w-4" />فشل الفحص — {checkResult.error}</>
+                    ? <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    : <AlertCircle className="h-4 w-4 shrink-0" />
                   }
+                  {checkResult.success ? "نجح الفحص التجريبي" : "فشل الفحص التجريبي"}
                 </p>
-                {checkResult.validationResults?.warningMessages?.length > 0 && (
-                  <p className="text-xs">تحذيرات: {checkResult.validationResults.warningMessages.length}</p>
+                {checkResult.validationResults?.errorMessages?.length > 0 && (
+                  <ul className="list-disc list-inside text-xs space-y-0.5 pr-1">
+                    {checkResult.validationResults.errorMessages.map((m: any, i: number) => (
+                      <li key={i}>{m.message} <span className="opacity-60">({m.code})</span></li>
+                    ))}
+                  </ul>
+                )}
+                {checkResult.hint && (
+                  <p className="text-xs opacity-80">{checkResult.hint}</p>
                 )}
               </div>
             )}
           </div>
         </StepCard>
 
-        {/* Step 4: Production PCSID */}
+        {/* Step 4 — Production CSID */}
         <StepCard
           num={4}
           title="شهادة الإنتاج (PCSID)"
-          subtitle="احصل على شهادة الإنتاج لإصدار فواتير رسمية معتمدة من ZATCA"
+          subtitle="احصل على شهادة الإنتاج لبدء إرسال الفواتير الرسمية لـ ZATCA"
           status={step4Status}
           defaultOpen={hasCsid && !hasPcsid}
         >
           <div className="space-y-4">
-            {!isSandbox ? (
-              <div className="p-3 rounded-lg bg-muted/50 border text-xs text-muted-foreground flex gap-2">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>
-                  للحصول على PCSID يجب أن تكون في بيئة الاختبار (Sandbox). عند الانتقال للإنتاج،
-                  تأكد من اجتياز الفحص التجريبي أولاً.
-                </span>
-              </div>
-            ) : (
-              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
-                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>
-                  بعد الحصول على PCSID ستتمكن من إرسال الفواتير الرسمية لـ ZATCA مباشرةً. تأكد من اجتياز الفحص التجريبي أولاً.
-                </span>
-              </div>
-            )}
+            <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                بعد الحصول على PCSID، ستُرسَل جميع الفواتير الجديدة تلقائياً لـ ZATCA.
+                تأكد من اجتياز الفحص التجريبي أولاً.
+              </span>
+            </div>
 
             {hasPcsid ? (
               <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                تم استخراج PCSID — الشركة مرتبطة بالكامل ببيئة الإنتاج
+                تم استخراج شهادة الإنتاج PCSID بنجاح — الشركة مرتبطة بالكامل
               </div>
             ) : (
               <Button
+                type="button"
                 className="gap-2"
                 disabled={productionCsidMutation.isPending || !hasCsid}
                 onClick={() => productionCsidMutation.mutate()}
               >
                 {productionCsidMutation.isPending
                   ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الاستخراج...</>
-                  : <><Cpu className="h-4 w-4" />استخراج PCSID</>
+                  : <><Lock className="h-4 w-4" />استخراج شهادة الإنتاج</>
                 }
               </Button>
             )}
@@ -577,31 +711,16 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         </StepCard>
       </div>
 
-      {/* ── Completion Banner */}
-      {hasPcsid && (
-        <div className="rounded-xl border-2 border-green-300 bg-green-50 p-5 flex items-start gap-4">
-          <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="h-7 w-7 text-green-600" />
-          </div>
-          <div>
-            <p className="font-bold text-green-800 text-base">اكتمل الربط مع هيئة الزكاة والدخل!</p>
-            <p className="text-sm text-green-700 mt-1">
-              الشركة مهيأة بالكامل لإصدار الفواتير الإلكترونية المعتمدة وفق متطلبات المرحلة الثانية من FATOORA.
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* OTP Dialog */}
       <ZatcaOtpDialog
         open={otpOpen}
-        onOpenChange={setOtpOpen}
+        onOpenChange={v => { if (!v) setOtpOpen(false); }}
+        onSubmit={handleOtpSubmit}
+        loading={complianceLoading}
         companyName={company.nameAr ?? ""}
         vatNumber={company.vatNumber ?? ""}
-        isSandbox={isSandbox}
+        isSandbox={form.isSandbox}
         hasCsr={hasCsr}
-        loading={complianceLoading}
-        onSubmit={handleOtpSubmit}
       />
     </div>
   );

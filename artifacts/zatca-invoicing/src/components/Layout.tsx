@@ -175,7 +175,7 @@ export default function Layout({ children }: LayoutProps) {
               <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="w-52" dir="rtl">
+          <DropdownMenuContent align="end" side="top" className="w-52">
             <DropdownMenuLabel className="font-normal">
               <div>
                 <p className="text-sm font-medium">{user?.username}</p>

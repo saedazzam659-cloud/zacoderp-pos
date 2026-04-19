@@ -91,7 +91,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/customers/new" component={CustomerNew} />}
             {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
-            {!isSuperAdmin && <Route path="/zatca" component={ZatcaIntegration} />}
+            {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />
