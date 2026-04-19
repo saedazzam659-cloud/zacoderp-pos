@@ -1,0 +1,263 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { inventoryApi } from "@/lib/inventoryApi";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { cn } from "@/lib/utils";
+import ExportButtons from "@/components/ExportButtons";
+
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  draft:  { label: "مسودة",  color: "bg-amber-50 text-amber-700" },
+  posted: { label: "مُعتمد", color: "bg-green-50 text-green-700" },
+};
+
+export default function StockCounting() {
+  const { user } = useAuth();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState<any>({ countNumber: "", countDate: new Date().toISOString().slice(0, 10), warehouseId: "", notes: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [editedLines, setEditedLines] = useState<Record<number, string>>({});
+  const [savingId, setSavingId] = useState<number | null>(null);
+
+  const { data: counts = [], isLoading } = useQuery({ queryKey: ["stock-counts", cid], queryFn: () => inventoryApi.getCounts(cid) });
+  const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
+  const { data: countDetail, refetch: refetchDetail } = useQuery({ queryKey: ["count-detail", expandedId], queryFn: () => inventoryApi.getCount(expandedId!), enabled: expandedId !== null });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["stock-counts"] });
+  const createMut = useMutation({ mutationFn: inventoryApi.createCount, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إنشاء ورقة الجرد وتحميل الأرصدة الحالية" }); } });
+  const postMut   = useMutation({ mutationFn: inventoryApi.postCount, onSuccess: () => { invalidate(); qc.invalidateQueries({ queryKey: ["stock-balance"] }); toast({ title: "تم اعتماد الجرد وتحديث أرصدة المخزون" }); } });
+  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteCount, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
+
+  function reset() { setForm({ countNumber: "", countDate: new Date().toISOString().slice(0, 10), warehouseId: "", notes: "" }); setShowForm(false); }
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.warehouseId) return;
+    createMut.mutate({ ...form, warehouseId: Number(form.warehouseId) });
+  }
+
+  async function saveActualQty(countId: number) {
+    if (!countDetail?.items) return;
+    setSavingId(countId);
+    const updatedItems = countDetail.items.map((it: any) => ({
+      id: it.id,
+      actualQty: editedLines[it.id] !== undefined ? editedLines[it.id] : it.actualQty,
+      systemQty: it.systemQty,
+    }));
+    await inventoryApi.updateCount(countId, { items: updatedItems });
+    await refetchDetail();
+    setEditedLines({});
+    setSavingId(null);
+    toast({ title: "تم حفظ الكميات الفعلية" });
+  }
+
+  const filtered = counts.filter((c: any) =>
+    c.countNumber.includes(search) || (c.warehouse?.nameAr ?? "").includes(search)
+  );
+
+  // Export rows for count detail
+  const countExportRows = (countDetail?.items ?? []).map((it: any) => ({
+    itemCode:   it.item?.code ?? "",
+    itemNameAr: it.item?.nameAr ?? "",
+    systemQty:  Number(it.systemQty).toFixed(2),
+    actualQty:  Number(it.actualQty).toFixed(2),
+    diff:       Number(it.diff).toFixed(2),
+    costPrice:  Number(it.costPrice).toFixed(2),
+    totalDiff:  (Number(it.diff) * Number(it.costPrice)).toFixed(2),
+  }));
+
+  return (
+    <div className="space-y-6" dir="rtl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardList className="h-6 w-6 text-primary" />الجرد المخزني</h1>
+          <p className="text-muted-foreground text-sm mt-1">مقارنة الكميات الفعلية بالكميات النظامية واعتماد الفروقات</p>
+        </div>
+        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+          <Plus className="h-4 w-4" />جرد جديد
+        </Button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
+            <h2 className="font-semibold">ورقة جرد جديدة</h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-1.5">
+                <Label>رقم الجرد</Label>
+                <Input placeholder="CNT-001 (تلقائي)" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>التاريخ *</Label>
+                <Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>المخزن *</Label>
+                <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={form.warehouseId} onChange={e => setForm((p: any) => ({ ...p, warehouseId: e.target.value }))} required>
+                  <option value="">— اختر مخزن —</option>
+                  {warehouses.map((w: any) => <option key={w.id} value={w.id}>[{w.code}] {w.nameAr}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>ملاحظات</Label>
+                <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-4 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
+            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
+              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
+              <Button type="submit" disabled={createMut.isPending}>إنشاء ورقة الجرد</Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <div className="relative">
+        <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input className="pr-9" placeholder="بحث برقم الجرد أو المخزن..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 border-b">
+            <tr>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8"></th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">رقم الجرد</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المخزن</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-32">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {isLoading ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6}><Skeleton className="h-6 m-4" /></td></tr>)
+              : filtered.length === 0 ? <tr><td colSpan={6} className="py-10 text-center text-muted-foreground"><ClipboardList className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد أوراق جرد</td></tr>
+              : filtered.map((cnt: any) => {
+                  const st = STATUS_CONFIG[cnt.status] ?? STATUS_CONFIG.draft;
+                  return (
+                    <>
+                      <tr key={cnt.id} className="hover:bg-muted/30">
+                        <td className="px-4 py-3">
+                          <button onClick={() => { setExpandedId(expandedId === cnt.id ? null : cnt.id); setEditedLines({}); }} className="text-muted-foreground">
+                            {expandedId === cnt.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs font-bold">{cnt.countNumber}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{cnt.countDate}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell">{cnt.warehouse?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 text-center"><span className={cn("text-[10px] font-medium rounded-full px-2.5 py-1", st.color)}>{st.label}</span></td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1">
+                            {cnt.status === "draft" && (
+                              <>
+                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50" onClick={() => { if (confirm("اعتماد الجرد وتحديث أرصدة المخزون بناءً على الكميات الفعلية؟")) postMut.mutate(cnt.id); }}>
+                                  <Send className="h-3 w-3" />اعتماد
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => { if (confirm("حذف ورقة الجرد؟")) deleteMut.mutate(cnt.id); }}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {expandedId === cnt.id && (
+                        <tr key={`exp-${cnt.id}`} className="bg-muted/5">
+                          <td colSpan={6} className="px-4 py-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="text-xs font-semibold">تفاصيل الجرد</h3>
+                              <div className="flex gap-2">
+                                {cnt.status === "draft" && (
+                                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => saveActualQty(cnt.id)} disabled={savingId === cnt.id}>
+                                    <Save className="h-3 w-3" />{savingId === cnt.id ? "جاري الحفظ..." : "حفظ الكميات الفعلية"}
+                                  </Button>
+                                )}
+                                <ExportButtons
+                                  rows={countExportRows}
+                                  columns={[
+                                    { key: "itemCode",   header: "كود الصنف",     width: 16 },
+                                    { key: "itemNameAr", header: "اسم الصنف",     width: 30 },
+                                    { key: "systemQty",  header: "الكمية النظامية", width: 18 },
+                                    { key: "actualQty",  header: "الكمية الفعلية", width: 18 },
+                                    { key: "diff",       header: "الفرق",          width: 14 },
+                                    { key: "costPrice",  header: "سعر التكلفة",    width: 16 },
+                                    { key: "totalDiff",  header: "قيمة الفرق",     width: 16 },
+                                  ]}
+                                  filename={`جرد-${cnt.countNumber}`}
+                                  title="تقرير الجرد المخزني"
+                                  subtitle={`${cnt.warehouse?.nameAr ?? ""} — ${cnt.countDate}`}
+                                  size="sm"
+                                />
+                              </div>
+                            </div>
+                            {!countDetail?.items?.length ? <p className="text-xs text-muted-foreground">لا توجد أصناف</p> : (
+                              <div className="rounded-lg border overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-muted/50 border-b">
+                                    <tr>
+                                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground">الصنف</th>
+                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-28">الكمية النظامية</th>
+                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-32">الكمية الفعلية</th>
+                                      <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-24">الفرق</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y">
+                                    {countDetail.items.map((it: any) => {
+                                      const actualVal = editedLines[it.id] !== undefined ? editedLines[it.id] : String(it.actualQty);
+                                      const diff = Number(actualVal) - Number(it.systemQty);
+                                      return (
+                                        <tr key={it.id} className={cn(diff !== 0 ? "bg-amber-50/50" : "")}>
+                                          <td className="px-3 py-2">
+                                            <p className="font-medium">{it.item?.nameAr ?? it.itemId}</p>
+                                            <p className="text-[10px] text-muted-foreground font-mono">{it.item?.code}</p>
+                                          </td>
+                                          <td className="px-3 py-2 text-center tabular-nums">{Number(it.systemQty).toFixed(2)}</td>
+                                          <td className="px-3 py-2">
+                                            {cnt.status === "draft" ? (
+                                              <Input
+                                                type="number"
+                                                step="any"
+                                                className="h-7 text-xs text-center"
+                                                value={actualVal}
+                                                onChange={e => setEditedLines(p => ({ ...p, [it.id]: e.target.value }))}
+                                              />
+                                            ) : (
+                                              <p className="text-center tabular-nums">{Number(it.actualQty).toFixed(2)}</p>
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2 text-center">
+                                            <span className={cn("font-bold tabular-nums", diff > 0 ? "text-green-600" : diff < 0 ? "text-red-600" : "text-muted-foreground")}>
+                                              {diff >= 0 ? "+" : ""}{diff.toFixed(2)}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
+          </tbody>
+        </table>
+        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} ورقة جرد</div>}
+      </div>
+    </div>
+  );
+}

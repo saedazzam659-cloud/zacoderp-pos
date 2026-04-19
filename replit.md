@@ -89,6 +89,26 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Success/error toast shown after each toggle save
 - HTTP caching disabled on API server (no ETags, Cache-Control: no-store) to prevent stale responses after PATCH
 
+## Inventory Management Module
+- Routes: `/inventory/*` (company users only)
+- Nav section: "المخازن والمخزون" in sidebar (8 links)
+- DB Tables (lib/db/src/schema/inventory.ts): warehouse_groups, warehouses, item_groups, units, items, stock_balance, stock_ledger, stock_transfers + stock_transfer_items, stock_adjustments + stock_adjustment_items, stock_counts + stock_count_items (13 tables total)
+- API routes: `/api/inventory/*` in `artifacts/api-server/src/routes/inventory.ts`
+- Frontend API client: `artifacts/zatca-invoicing/src/lib/inventoryApi.ts` (uses `zatca_token` from localStorage)
+- Cost method: Weighted Average (متوسط مرجح) — auto-computed on stock-in, unchanged on stock-out
+- Pages (artifacts/zatca-invoicing/src/pages/inventory/):
+  - `InventoryDashboard.tsx` — KPI cards + quick actions + recent movements
+  - `Warehouses.tsx` — CRUD with group, city, allow-negative-stock toggle
+  - `WarehouseGroups.tsx` — CRUD
+  - `Items.tsx` — CRUD with expandable warehouse balances per item
+  - `ItemGroups.tsx` — CRUD
+  - `Units.tsx` — CRUD with conversion factor
+  - `StockTransfer.tsx` — Draft/post workflow, from→to warehouse, auto-deduct/add balance
+  - `StockAdjustment.tsx` — +/- qty adjustments with reason, draft/post
+  - `StockCounting.tsx` — Auto-loads system balances, enter actual qty, approve → post diffs
+  - `StockLedger.tsx` — Full movement history with filters (date range, item, warehouse)
+  - `StockBalance.tsx` — Current balance per item×warehouse with alert for below-reorder items
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages

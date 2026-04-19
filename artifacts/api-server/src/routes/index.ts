@@ -10,6 +10,7 @@ import authRouter from "./auth";
 import suppliersRouter from "./suppliers";
 import adminRouter from "./admin";
 import reportsRouter from "./reports";
+import inventoryRouter from "./inventory";
 
 const router: IRouter = Router();
 
@@ -22,6 +23,7 @@ router.use("/suppliers", suppliersRouter);
 router.use("/invoices", invoicesRouter);
 router.use("/dashboard", dashboardRouter);
 router.use("/reports", reportsRouter);
+router.use("/inventory", inventoryRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

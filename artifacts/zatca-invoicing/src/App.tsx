@@ -29,6 +29,18 @@ import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
+// Inventory
+import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
+import WarehouseGroups from "@/pages/inventory/WarehouseGroups";
+import Warehouses from "@/pages/inventory/Warehouses";
+import ItemGroups from "@/pages/inventory/ItemGroups";
+import Units from "@/pages/inventory/Units";
+import Items from "@/pages/inventory/Items";
+import StockTransfer from "@/pages/inventory/StockTransfer";
+import StockAdjustment from "@/pages/inventory/StockAdjustment";
+import StockCounting from "@/pages/inventory/StockCounting";
+import StockLedger from "@/pages/inventory/StockLedger";
+import StockBalance from "@/pages/inventory/StockBalance";
 
 const queryClient = new QueryClient();
 
@@ -98,6 +110,23 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
             {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
             {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
+
+            {/* Inventory routes */}
+            {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}
+            {!isSuperAdmin && <Route path="/inventory/warehouse-groups" component={WarehouseGroups} />}
+            {!isSuperAdmin && <Route path="/inventory/warehouses" component={Warehouses} />}
+            {!isSuperAdmin && <Route path="/inventory/item-groups" component={ItemGroups} />}
+            {!isSuperAdmin && <Route path="/inventory/units" component={Units} />}
+            {!isSuperAdmin && <Route path="/inventory/items" component={Items} />}
+            {!isSuperAdmin && <Route path="/inventory/items/new" component={Items} />}
+            {!isSuperAdmin && <Route path="/inventory/transfers" component={StockTransfer} />}
+            {!isSuperAdmin && <Route path="/inventory/transfers/new" component={StockTransfer} />}
+            {!isSuperAdmin && <Route path="/inventory/adjustments" component={StockAdjustment} />}
+            {!isSuperAdmin && <Route path="/inventory/adjustments/new" component={StockAdjustment} />}
+            {!isSuperAdmin && <Route path="/inventory/counts" component={StockCounting} />}
+            {!isSuperAdmin && <Route path="/inventory/counts/new" component={StockCounting} />}
+            {!isSuperAdmin && <Route path="/inventory/ledger" component={StockLedger} />}
+            {!isSuperAdmin && <Route path="/inventory/balance" component={StockBalance} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

@@ -3,7 +3,8 @@ import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ShieldCheck,
-  Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3
+  Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
+  Warehouse, Tag, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2, Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -43,9 +44,20 @@ const companySystemNav = [
   { name: "الإعدادات العامة", href: "/general-settings",  icon: Sliders,  permKey: "always" },
 ];
 
+const companyInventoryNav = [
+  { name: "لوحة المخازن",       href: "/inventory",                  icon: LayoutDashboard, exact: true, permKey: "inventory" },
+  { name: "الأصناف",             href: "/inventory/items",            icon: Package,         permKey: "inventory" },
+  { name: "المخازن",             href: "/inventory/warehouses",       icon: Warehouse,       permKey: "inventory" },
+  { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft,  permKey: "inventory" },
+  { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "inventory" },
+  { name: "الجرد المخزني",       href: "/inventory/counts",           icon: ClipboardList,   permKey: "inventory" },
+  { name: "دفتر الحركة",         href: "/inventory/ledger",           icon: BookOpen,        permKey: "inventory" },
+  { name: "رصيد المخزون",        href: "/inventory/balance",          icon: BarChart2,       permKey: "inventory" },
+];
+
 // ─── Parse menu permissions ────────────────────────────────────────────────────
 const DEFAULT_PERMS: Record<string, boolean> = {
-  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true, reports: true,
+  dashboard: true, invoices: true, customers: true, suppliers: true, zatca: true, reports: true, inventory: true,
 };
 
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
@@ -83,12 +95,9 @@ export default function Layout({ children }: LayoutProps) {
   // Parse company's menu permissions
   const menuPerms = parseMenuPerms(user?.company?.menuPermissions);
 
-  const filteredBusinessNav = companyBusinessNav.filter(item =>
-    menuPerms[item.permKey] !== false
-  );
-  const filteredSystemNav = companySystemNav.filter(item =>
-    menuPerms[item.permKey] !== false
-  );
+  const filteredBusinessNav  = companyBusinessNav.filter(item => menuPerms[item.permKey] !== false);
+  const filteredSystemNav    = companySystemNav.filter(item => menuPerms[item.permKey] !== false);
+  const filteredInventoryNav = companyInventoryNav.filter(item => menuPerms[item.permKey] !== false);
 
   const PLAN_LABELS: Record<string, string> = {
     starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
@@ -166,6 +175,18 @@ export default function Layout({ children }: LayoutProps) {
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
                 <div className="space-y-0.5">
                   {filteredBusinessNav.map(item => (
+                    <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inventory menus */}
+            {filteredInventoryNav.length > 0 && (
+              <div>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المخازن والمخزون</p>
+                <div className="space-y-0.5">
+                  {filteredInventoryNav.map(item => (
                     <NavItem key={item.href} item={item} location={location} onClick={() => setMobileOpen(false)} />
                   ))}
                 </div>
