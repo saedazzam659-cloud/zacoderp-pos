@@ -34,6 +34,7 @@ export const companiesTable = pgTable("companies", {
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),
+  registrationIp: text("registration_ip"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -170,6 +170,12 @@ router.post("/register", async (req, res) => {
   const companyStatus = callerIsSuperAdmin ? "active" : "pending";
   const userIsActive = callerIsSuperAdmin;
 
+  // Capture registration IP (respects X-Forwarded-For for proxied environments)
+  const registrationIp =
+    (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    null;
+
   // Create company
   const [company] = await db.insert(companiesTable).values({
     nameAr,
@@ -186,6 +192,7 @@ router.post("/register", async (req, res) => {
     invoiceType: invoiceType ?? "both",
     isSandbox: false,
     status: companyStatus,
+    registrationIp,
   }).returning();
 
   // Create subscription

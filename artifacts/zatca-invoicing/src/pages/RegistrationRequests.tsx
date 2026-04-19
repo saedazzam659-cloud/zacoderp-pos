@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2, XCircle, Trash2, Clock, Building2, User,
   Search, MapPin, BadgeCheck, AlertTriangle, RefreshCw,
-  Package, ChevronDown, ChevronUp, MoreVertical
+  Package, ChevronDown, ChevronUp, MoreVertical, Wifi
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -193,12 +193,13 @@ export default function RegistrationRequests() {
 
         {/* Column headers */}
         <div className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
-          style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 0.8fr auto" }}>
+          style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 1fr 0.8fr auto" }}>
           <span>الشركة</span>
           <span>الرقم الضريبي</span>
           <span>المدينة</span>
           <span>المستخدم</span>
           <span>الباقة</span>
+          <span>عنوان IP</span>
           <span>الحالة</span>
           <span className="text-center w-8">—</span>
         </div>
@@ -248,7 +249,7 @@ export default function RegistrationRequests() {
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
-                  style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 0.8fr auto" }}
+                  style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 1fr 0.8fr auto" }}
                   onClick={() => setExpandedRow(isExpanded ? null : co.id)}
                 >
                   {/* Company name + avatar */}
@@ -285,6 +286,18 @@ export default function RegistrationRequests() {
                     ) : <span className="text-muted-foreground/50 text-xs">—</span>}
                   </span>
 
+                  {/* Registration IP */}
+                  <span className="flex items-center gap-1 min-w-0">
+                    {co.registrationIp ? (
+                      <>
+                        <Wifi className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                        <span className="font-mono text-xs text-muted-foreground truncate" title={co.registrationIp}>{co.registrationIp}</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground/40 text-xs">—</span>
+                    )}
+                  </span>
+
                   {/* Status badge */}
                   <span className={cn("inline-flex items-center gap-1 text-xs border rounded-full px-2 py-0.5 font-medium w-fit", status.variant)}>
                     <StatusIcon className="h-3 w-3 shrink-0" />
@@ -311,6 +324,7 @@ export default function RegistrationRequests() {
                         { icon: MapPin,     label: "العنوان",          value: [co.street, co.district, co.city].filter(Boolean).join("، ") },
                         { icon: Package,    label: "الباقة والفاتورة", value: sub ? `${PLAN_LABELS[sub.plan] ?? sub.plan} — ${sub.price} ر.س/${sub.billingCycle === "annual" ? "سنة" : "شهر"}` : "—" },
                         { icon: User,       label: "اسم المستخدم",    value: user?.username,  mono: true },
+                        { icon: Wifi,       label: "عنوان IP التسجيل", value: co.registrationIp || "غير متاح", mono: true },
                         { icon: Clock,      label: "تاريخ الطلب",      value: new Date(co.createdAt).toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" }) },
                         sub?.startDate && { icon: Clock, label: "بداية الاشتراك", value: sub.startDate },
                         sub?.endDate   && { icon: Clock, label: "نهاية الاشتراك", value: sub.endDate },
