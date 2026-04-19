@@ -3,31 +3,19 @@ import { db } from "@workspace/db";
 import { invoicesTable, invoiceLineItemsTable, companiesTable, customersTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { createHash } from "crypto";
-import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams, GetInvoiceParams, IssueInvoiceParams, CancelInvoiceParams } from "@workspace/api-zod";
+import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@workspace/api-zod";
+import { generateZatcaQr } from "../lib/zatca-tlv.js";
+import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 
 const router = Router();
+
+const GENESIS_HASH = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZmNTI5OWIxNmI2ZjRiMmUyNjY5MDkwMzBiMzdhZGZiMzU3NGI0OTJiNA==";
 
 function generateInvoiceNumber(companyId: number): string {
   const now = new Date();
   const year = now.getFullYear();
   const seq = Math.floor(Math.random() * 900000) + 100000;
   return `INV-${year}-${companyId}-${seq}`;
-}
-
-function generateQrCode(invoice: typeof invoicesTable.$inferSelect, company: typeof companiesTable.$inferSelect | null): string {
-  const data = [
-    company?.nameAr ?? "",
-    company?.vatNumber ?? "",
-    invoice.issueDate,
-    invoice.grandTotal,
-    invoice.vatTotal,
-  ].join("|");
-  return Buffer.from(data).toString("base64");
-}
-
-function generateHash(invoice: typeof invoicesTable.$inferSelect): string {
-  const data = `${invoice.id}|${invoice.invoiceNumber}|${invoice.grandTotal}|${invoice.issueDate}`;
-  return createHash("sha256").update(data).digest("hex");
 }
 
 async function getInvoiceWithRelations(id: number) {
@@ -220,22 +208,105 @@ router.post("/:id/issue", async (req, res) => {
     res.status(404).json({ error: "Invoice not found" });
     return;
   }
-  
+
+  if (existing.status !== "draft") {
+    res.status(400).json({ error: "يمكن إصدار المسودات فقط" });
+    return;
+  }
+
   const [company] = existing.companyId
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, existing.companyId))
     : [null];
+
+  const [customer] = existing.customerId
+    ? await db.select().from(customersTable).where(eq(customersTable.id, existing.customerId))
+    : [null];
+
+  const lineItems = await db.select().from(invoiceLineItemsTable)
+    .where(eq(invoiceLineItemsTable.invoiceId, id));
+
+  // Increment invoice counter
+  const nextCounter = (company?.invoiceCounter ?? 0) + 1;
+  if (company) {
+    await db.update(companiesTable).set({
+      invoiceCounter: nextCounter,
+      updatedAt: new Date(),
+    }).where(eq(companiesTable.id, company.id));
+  }
+
+  // Get previous invoice hash for chaining
+  const previousInvoices = await db.select()
+    .from(invoicesTable)
+    .where(eq(invoicesTable.companyId, existing.companyId!))
+    .orderBy(desc(invoicesTable.createdAt))
+    .limit(2);
   
-  const qrCode = generateQrCode(existing, company ?? null);
-  const invoiceHash = generateHash(existing);
-  
-  const [invoice] = await db.update(invoicesTable).set({
+  const prevInvoice = previousInvoices.find(inv => inv.id !== id && inv.invoiceHash);
+  const previousInvoiceHash = prevInvoice?.invoiceHash ?? GENESIS_HASH;
+
+  // Generate TLV QR code
+  const issueTimestamp = new Date().toISOString().replace("Z", "+03:00");
+  const qrCode = generateZatcaQr({
+    sellerName: company?.nameAr ?? "",
+    vatNumber: company?.vatNumber ?? "",
+    invoiceTimestamp: issueTimestamp,
+    invoiceTotal: existing.grandTotal,
+    vatAmount: existing.vatTotal,
+  });
+
+  // Generate UBL 2.1 XML
+  const xmlContent = generateZatcaXml({
+    invoiceNumber: existing.invoiceNumber,
+    invoiceType: existing.invoiceType,
+    issueDate: existing.issueDate,
+    issueTime: new Date().toTimeString().split(" ")[0],
+    supplyDate: existing.supplyDate,
+    currency: existing.currency,
+    subtotal: existing.subtotal,
+    discountTotal: existing.discountTotal,
+    vatTotal: existing.vatTotal,
+    grandTotal: existing.grandTotal,
+    notes: existing.notes,
+    invoiceCounterValue: nextCounter,
+    previousInvoiceHash,
+    qrCode,
+    lineItems: lineItems.map(li => ({
+      id: li.id,
+      description: li.description,
+      quantity: li.quantity,
+      unitPrice: li.unitPrice,
+      discountAmount: li.discountAmount,
+      vatRate: li.vatRate,
+      vatAmount: li.vatAmount,
+      subtotal: li.subtotal,
+      total: li.total,
+    })),
+    company: company ?? {
+      nameAr: "غير محدد",
+      vatNumber: "",
+      crNumber: "",
+      street: "",
+      buildingNumber: "",
+      city: "",
+      postalCode: "",
+      country: "SA",
+    },
+    customer: customer ?? null,
+  });
+
+  const invoiceHash = hashXml(xmlContent);
+
+  await db.update(invoicesTable).set({
     status: "issued",
     qrCode,
     invoiceHash,
-    zatcaStatus: "reported",
+    xmlContent,
+    invoiceCounterValue: nextCounter,
+    previousInvoiceHash,
+    zatcaStatus: "pending",
     updatedAt: new Date(),
-  }).where(eq(invoicesTable.id, id)).returning();
-  
+  }).where(eq(invoicesTable.id, id));
+
   const result = await getInvoiceWithRelations(id);
   res.json(result);
 });

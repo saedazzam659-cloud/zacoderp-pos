@@ -23,7 +23,16 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Path**: `artifacts/zatca-invoicing/`
 - **Preview**: `/` (root)
 - **Purpose**: Saudi ZATCA e-invoicing system — multi-company, Arabic/English RTL UI
-- **Features**: Company management, customer management, invoices (standard/simplified), QR code generation, ZATCA compliance, monthly stats dashboard
+- **Features**: Company management, customer management, invoices (standard/simplified), QR code generation (TLV Annex B), ZATCA compliance, monthly stats dashboard
+- **ZATCA Integration**:
+  - CSR generation: ECDSA secp256k1 via openssl, ZATCA-specific OIDs (2.16.840.1.114028.10.1.11-15)
+  - Compliance API: POST /api/companies/:id/compliance (OTP → CSID)
+  - Production CSID: POST /api/companies/:id/production-csid (PCSID onboarding)
+  - Invoice submission: POST /api/invoices/:id/submit (clearance B2B / reporting B2C)
+  - QR Code: TLV binary encoding (Tags 1-5) stored as base64, rendered via qrcode.react
+  - XML: UBL 2.1 full ZATCA namespace, invoice hash chaining (SHA-256), counter tracking
+  - Sandbox URL: gw-fatoora.zatca.gov.sa/e-invoicing/developer-portal
+  - Production URL: gw-fatoora.zatca.gov.sa/e-invoicing/core
 
 ### api-server
 - **Path**: `artifacts/api-server/`

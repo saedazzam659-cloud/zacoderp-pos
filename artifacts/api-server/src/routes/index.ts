@@ -5,6 +5,7 @@ import customersRouter from "./customers";
 import invoicesRouter from "./invoices";
 import dashboardRouter from "./dashboard";
 import deviceInfoRouter from "./device-info";
+import zatcaRouter from "./zatca";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use("/customers", customersRouter);
 router.use("/invoices", invoicesRouter);
 router.use("/dashboard", dashboardRouter);
 router.use(deviceInfoRouter);
+router.use(zatcaRouter);
 
 export default router;

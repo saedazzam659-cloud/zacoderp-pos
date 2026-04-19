@@ -1,49 +1,159 @@
+import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { useGetCompany } from "@workspace/api-client-react";
+import { useGetCompany, useUpdateCompany } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowRight, Building2, CheckCircle2, XCircle, AlertTriangle, Fingerprint, ShieldCheck } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
+import {
+  ArrowRight, Building2, CheckCircle2, XCircle, AlertTriangle,
+  Fingerprint, ShieldCheck, Key, FileCode2, Loader2, Copy, RefreshCw,
+  Send, Info, ExternalLink
+} from "lucide-react";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
+
+interface ZatcaResponse {
+  success?: boolean;
+  error?: string;
+  hint?: string;
+  csr?: string;
+  message?: string;
+  binarySecurityToken?: string;
+  zatcaResponse?: unknown;
+  warningMessages?: Array<{ code: string; message: string }>;
+  errorMessages?: Array<{ code: string; message: string }>;
+}
+
+function copyToClipboard(text: string, label: string, toast: ReturnType<typeof useToast>["toast"]) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast({ title: `تم النسخ`, description: `تم نسخ ${label}` });
+  });
+}
+
+function StepBadge({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  return (
+    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold
+      ${done ? "bg-green-500 text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+      {done ? <CheckCircle2 className="h-4 w-4" /> : n}
+    </span>
+  );
+}
 
 export default function CompanyDetails() {
   const params = useParams();
   const id = parseInt(params.id || "0", 10);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: company, isLoading } = useGetCompany(id, {
     query: { enabled: !!id, queryKey: ["company", id] }
   });
 
+  const [otpInput, setOtpInput] = useState("");
+  const [loading, setLoading] = useState<string | null>(null);
+  const [csrContent, setCsrContent] = useState<string | null>(null);
+
   if (isLoading) {
     return <div className="space-y-6"><Skeleton className="h-12 w-1/3" /><Skeleton className="h-[400px] w-full" /></div>;
   }
+  if (!company) return <div className="p-8 text-center">الشركة غير موجودة</div>;
 
-  if (!company) {
-    return <div className="p-8 text-center">الشركة غير موجودة</div>;
+  const hasCsr = !!(company as Record<string, unknown>).zatcaCsr || !!csrContent;
+  const hasCsid = !!company.zatcaCsid;
+  const hasPcsid = !!company.zatcaPcsid;
+
+  async function apiCall(path: string, body?: unknown): Promise<ZatcaResponse> {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return res.json();
+  }
+
+  async function handleGenerateCsr() {
+    setLoading("csr");
+    try {
+      const data = await apiCall(`/api/companies/${id}/generate-csr`);
+      if (data.success) {
+        setCsrContent(data.csr ?? null);
+        toast({ title: "تم توليد CSR بنجاح", description: data.message });
+        queryClient.invalidateQueries({ queryKey: ["company", id] });
+      } else {
+        toast({ title: "فشل توليد CSR", description: data.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "خطأ في الاتصال", variant: "destructive" });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleCompliance() {
+    if (!otpInput.trim()) {
+      toast({ title: "OTP مطلوب", description: "أدخل OTP من بوابة ZATCA", variant: "destructive" });
+      return;
+    }
+    setLoading("compliance");
+    try {
+      const data = await apiCall(`/api/companies/${id}/compliance`, { otp: otpInput.trim() });
+      if (data.success) {
+        toast({ title: "تم الحصول على CSID", description: data.message });
+        queryClient.invalidateQueries({ queryKey: ["company", id] });
+        setOtpInput("");
+      } else {
+        toast({ title: "فشل الحصول على CSID", description: data.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "خطأ في الاتصال", variant: "destructive" });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleProductionCsid() {
+    setLoading("pcsid");
+    try {
+      const data = await apiCall(`/api/companies/${id}/production-csid`);
+      if (data.success) {
+        toast({ title: "تم الحصول على PCSID", description: data.message });
+        queryClient.invalidateQueries({ queryKey: ["company", id] });
+      } else {
+        toast({ title: "فشل الحصول على PCSID", description: data.error, variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "خطأ في الاتصال", variant: "destructive" });
+    } finally {
+      setLoading(null);
+    }
   }
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto pb-12">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost" size="icon">
-            <Link href="/companies">
-              <ArrowRight className="h-5 w-5" />
-            </Link>
+            <Link href="/companies"><ArrowRight className="h-5 w-5" /></Link>
           </Button>
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold text-foreground">{company.nameAr}</h1>
               <Badge variant={company.isSandbox ? "outline" : "default"}>
                 {company.isSandbox ? "Sandbox محاكاة" : "Production إنتاج"}
               </Badge>
-              {company.zatcaPcsid && (
-                <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                  <CheckCircle2 className="h-3 w-3 mr-1 ml-1" />
-                  مكتمل الربط
+              {hasPcsid && (
+                <Badge className="bg-green-100 text-green-800">
+                  <CheckCircle2 className="h-3 w-3 mr-1" /> مرتبط بالكامل
+                </Badge>
+              )}
+              {hasCsid && !hasPcsid && (
+                <Badge className="bg-blue-100 text-blue-800">
+                  <ShieldCheck className="h-3 w-3 mr-1" /> CSID فعّال
                 </Badge>
               )}
             </div>
@@ -61,21 +171,24 @@ export default function CompanyDetails() {
       </div>
 
       <Tabs defaultValue="general" className="w-full" dir="rtl">
-        <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6">
-          <TabsTrigger value="general" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium">
-            عام
-          </TabsTrigger>
-          <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium">
-            المفتاح والإعدادات
-          </TabsTrigger>
-          <TabsTrigger value="csid" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium">
-            الشهادة الأولية CSID
-          </TabsTrigger>
-          <TabsTrigger value="pcsid" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium">
-            الشهادة النهائية PCSID
-          </TabsTrigger>
+        <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6 overflow-x-auto">
+          {[
+            { value: "general", label: "عام" },
+            { value: "zatca", label: "ربط ZATCA", badge: hasPcsid ? "✓" : hasCsid ? "CSID" : "" },
+            { value: "settings", label: "السيريال" },
+            { value: "xml", label: "XML / QR" },
+          ].map(tab => (
+            <TabsTrigger key={tab.value} value={tab.value}
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2 font-medium gap-2">
+              {tab.label}
+              {tab.badge && (
+                <span className="text-xs bg-green-100 text-green-700 px-1.5 rounded">{tab.badge}</span>
+              )}
+            </TabsTrigger>
+          ))}
         </TabsList>
-        
+
+        {/* ─── General Tab ───────────────────────────────────────────── */}
         <TabsContent value="general" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
@@ -85,160 +198,298 @@ export default function CompanyDetails() {
                   بيانات الشركة
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">الرقم الضريبي:</span>
-                  <span className="font-medium" dir="ltr">{company.vatNumber}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">رقم السجل التجاري:</span>
-                  <span className="font-medium" dir="ltr">{company.crNumber}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">مجال الصناعة:</span>
-                  <span className="font-medium">{company.industryName || '-'}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">تاريخ التسجيل:</span>
-                  <span className="font-medium" dir="ltr">
-                    {company.createdAt ? format(new Date(company.createdAt), 'PPP', { locale: arSA }) : '-'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <span className="text-muted-foreground">أنواع الفواتير:</span>
-                  <span className="font-medium">
-                    {company.invoiceType === 'both' ? 'ضريبية ومبسطة' : 
-                     company.invoiceType === 'standard' ? 'ضريبية فقط' : 'مبسطة فقط'}
-                  </span>
-                </div>
+              <CardContent className="space-y-3 text-sm">
+                {[
+                  { label: "الرقم الضريبي", value: company.vatNumber, ltr: true },
+                  { label: "رقم السجل التجاري", value: company.crNumber, ltr: true },
+                  { label: "مجال الصناعة", value: company.industryName || "-" },
+                  { label: "أنواع الفواتير", value: company.invoiceType === "both" ? "ضريبية ومبسطة" : company.invoiceType === "standard" ? "ضريبية فقط" : "مبسطة فقط" },
+                  { label: "عداد الفواتير", value: String((company as Record<string, unknown>).invoiceCounter ?? 0), ltr: true },
+                  { label: "تاريخ التسجيل", value: company.createdAt ? format(new Date(company.createdAt), "PPP", { locale: arSA }) : "-" },
+                ].map(row => (
+                  <div key={row.label} className="flex justify-between items-center border-b pb-2 last:border-0">
+                    <span className="text-muted-foreground">{row.label}:</span>
+                    <span className="font-medium" dir={row.ltr ? "ltr" : undefined}>{row.value}</span>
+                  </div>
+                ))}
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">العنوان الوطني</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">المدينة:</span>
-                  <span className="font-medium">{company.city}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">الحي:</span>
-                  <span className="font-medium">{company.district || '-'}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">الشارع والمبنى:</span>
-                  <span className="font-medium">{company.street} - {company.buildingNumber}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm border-b pb-2">
-                  <span className="text-muted-foreground">الرمز البريدي:</span>
-                  <span className="font-medium" dir="ltr">{company.postalCode}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <span className="text-muted-foreground">الرقم الإضافي:</span>
-                  <span className="font-medium" dir="ltr">{company.additionalNumber || '-'}</span>
-                </div>
+              <CardContent className="space-y-3 text-sm">
+                {[
+                  { label: "المدينة", value: company.city },
+                  { label: "الحي", value: company.district || "-" },
+                  { label: "الشارع والمبنى", value: `${company.street} - ${company.buildingNumber}` },
+                  { label: "الرمز البريدي", value: company.postalCode, ltr: true },
+                  { label: "الرقم الإضافي", value: company.additionalNumber || "-", ltr: true },
+                ].map(row => (
+                  <div key={row.label} className="flex justify-between items-center border-b pb-2 last:border-0">
+                    <span className="text-muted-foreground">{row.label}:</span>
+                    <span className="font-medium" dir={row.ltr ? "ltr" : undefined}>{row.value}</span>
+                  </div>
+                ))}
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
+        {/* ─── ZATCA Integration Tab ────────────────────────────────── */}
+        <TabsContent value="zatca" className="space-y-6">
+          {/* Steps overview */}
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            {[
+              { n: 1, label: "توليد CSR", desc: "مفتاح ECDSA + طلب الشهادة", done: hasCsr },
+              { n: 2, label: "الحصول على CSID", desc: "إرسال CSR + OTP إلى ZATCA", done: hasCsid },
+              { n: 3, label: "الحصول على PCSID", desc: "شهادة الإنتاج النهائية", done: hasPcsid },
+            ].map(step => (
+              <div key={step.n} className={`flex items-start gap-3 p-3 rounded-lg border ${step.done ? "bg-green-50 border-green-200" : "bg-card"}`}>
+                <StepBadge n={step.n} active={!step.done} done={step.done} />
+                <div>
+                  <p className="font-medium">{step.label}</p>
+                  <p className="text-muted-foreground text-xs mt-0.5">{step.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Step 1: Generate CSR */}
+          <Card className={hasCsr ? "border-green-200" : ""}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <StepBadge n={1} active={!hasCsr} done={hasCsr} />
+                  <div>
+                    <CardTitle className="text-base">الخطوة 1 — توليد CSR</CardTitle>
+                    <CardDescription>إنشاء مفتاح ECDSA secp256k1 وطلب الشهادة (Certificate Signing Request)</CardDescription>
+                  </div>
+                </div>
+                <Button
+                  variant={hasCsr ? "outline" : "default"}
+                  size="sm"
+                  className="gap-2"
+                  onClick={handleGenerateCsr}
+                  disabled={loading === "csr"}
+                >
+                  {loading === "csr" ? <><Loader2 className="h-4 w-4 animate-spin" />جاري التوليد...</> : <><Key className="h-4 w-4" />{hasCsr ? "إعادة التوليد" : "توليد CSR"}</>}
+                </Button>
+              </div>
+            </CardHeader>
+            {hasCsr && (
+              <CardContent>
+                <div className="flex items-center gap-2 mb-2 text-green-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span className="text-sm font-medium">تم توليد CSR بنجاح — المفتاح محفوظ بأمان في الخادم</span>
+                </div>
+                {csrContent && (
+                  <div className="relative">
+                    <pre className="bg-muted/50 rounded border p-3 text-xs font-mono overflow-auto max-h-32 text-left" dir="ltr">
+                      {csrContent.substring(0, 300)}...
+                    </pre>
+                    <Button size="sm" variant="ghost" className="absolute top-1 left-1"
+                      onClick={() => copyToClipboard(csrContent, "CSR", toast)}>
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
+
+          {/* Step 2: CSID */}
+          <Card className={hasCsid ? "border-green-200" : !hasCsr ? "opacity-60" : ""}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <StepBadge n={2} active={hasCsr && !hasCsid} done={hasCsid} />
+                <div>
+                  <CardTitle className="text-base">الخطوة 2 — الحصول على CSID</CardTitle>
+                  <CardDescription>أرسل CSR مع رمز OTP من بوابة ZATCA للحصول على شهادة التوافق</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {hasCsid ? (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
+                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-green-800 text-sm">تم الحصول على CSID بنجاح</p>
+                    <p className="text-xs text-green-700 mt-1 font-mono break-all">
+                      {company.zatcaCsid?.substring(0, 60)}...
+                    </p>
+                    <Button size="sm" variant="ghost" className="mt-2 h-7 text-xs gap-1 text-green-700"
+                      onClick={() => copyToClipboard(company.zatcaCsid ?? "", "CSID Token", toast)}>
+                      <Copy className="h-3 w-3" /> نسخ CSID
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div>
+                      احصل على OTP من بوابة ZATCA:
+                      <a href="https://fatoora.zatca.gov.sa" target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-blue-600 hover:underline mt-1 font-medium">
+                        fatoora.zatca.gov.sa <ExternalLink className="h-3 w-3" />
+                      </a>
+                      {company.isSandbox && (
+                        <p className="mt-1 text-blue-700">
+                          بيئة المحاكاة — OTP تجريبي: <code className="bg-blue-100 px-1 rounded font-mono">123345</code>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="أدخل OTP من بوابة ZATCA"
+                      value={otpInput}
+                      onChange={e => setOtpInput(e.target.value)}
+                      dir="ltr"
+                      className="font-mono text-center tracking-widest text-lg"
+                      maxLength={10}
+                      disabled={!hasCsr}
+                    />
+                    <Button
+                      onClick={handleCompliance}
+                      disabled={!hasCsr || loading === "compliance" || !otpInput.trim()}
+                      className="gap-2 shrink-0"
+                    >
+                      {loading === "compliance"
+                        ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الإرسال...</>
+                        : <><Send className="h-4 w-4" />إرسال</>
+                      }
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Step 3: PCSID */}
+          <Card className={hasPcsid ? "border-green-200" : !hasCsid ? "opacity-60" : ""}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <StepBadge n={3} active={hasCsid && !hasPcsid} done={hasPcsid} />
+                  <div>
+                    <CardTitle className="text-base">الخطوة 3 — الشهادة النهائية PCSID</CardTitle>
+                    <CardDescription>الشهادة الإنتاجية — تُفعَّل الفواتير الحقيقية بعد الحصول عليها</CardDescription>
+                  </div>
+                </div>
+                {!hasPcsid && hasCsid && (
+                  <Button
+                    onClick={handleProductionCsid}
+                    disabled={loading === "pcsid"}
+                    className="gap-2"
+                  >
+                    {loading === "pcsid"
+                      ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الطلب...</>
+                      : <><ShieldCheck className="h-4 w-4" />طلب PCSID</>
+                    }
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            {hasPcsid && (
+              <CardContent>
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-green-50 border border-green-200">
+                  <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-green-800 text-sm">الشركة مرتبطة بالكامل ببيئة {company.isSandbox ? "المحاكاة" : "الإنتاج"}</p>
+                    <p className="text-xs text-green-700 mt-1 font-mono break-all">
+                      {company.zatcaPcsid?.substring(0, 60)}...
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* ─── Serial Settings Tab ──────────────────────────────────── */}
         <TabsContent value="settings" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Fingerprint className="h-5 w-5 text-primary" />
-                أرقام السيريال المميزة
+                أرقام السيريال المميزة للجهاز
               </CardTitle>
-              <CardDescription>هذه الأرقام تستخدم في إنشاء مفاتيح الربط مع هيئة الزكاة</CardDescription>
+              <CardDescription>هذه الأرقام تُستخدم في إنشاء CSR وربط الجهاز مع هيئة الزكاة</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="bg-muted/30 rounded-lg p-4 border font-mono text-sm" dir="ltr">
-                {company.serialNumber || (company.deviceSerial1 && `${company.deviceSerial1}|${company.deviceSerial2}|${company.deviceSerial3}`) || 'غير محدد'}
+              <div className="bg-muted/30 rounded-lg p-4 border font-mono text-sm break-all" dir="ltr">
+                {company.serialNumber
+                  ?? ((company.deviceSerial1)
+                    ? `1-${company.deviceSerial1}|2-${company.deviceSerial2}|3-${company.deviceSerial3}`
+                    : "غير محدد")}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 text-sm">
+                {[
+                  { label: "الشركة المصنعة", value: (company as Record<string, unknown>).deviceSerial1 as string },
+                  { label: "الموديل", value: (company as Record<string, unknown>).deviceSerial2 as string },
+                  { label: "الرقم التسلسلي", value: (company as Record<string, unknown>).deviceSerial3 as string },
+                ].map(item => item.value && (
+                  <div key={item.label} className="p-3 rounded border bg-muted/20">
+                    <p className="text-muted-foreground text-xs mb-1">{item.label}</p>
+                    <p className="font-mono text-xs break-all" dir="ltr">{item.value}</p>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="csid" className="space-y-6">
+        {/* ─── XML / QR Tab ────────────────────────────────────────── */}
+        <TabsContent value="xml" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5 text-primary" />
-                حالة الشهادة الأولية (CSID)
+                <FileCode2 className="h-5 w-5 text-primary" />
+                QR Code (TLV) والـ XML
               </CardTitle>
-              <CardDescription>الشهادة اللازمة لإصدار الفواتير التجريبية والمراجعة</CardDescription>
+              <CardDescription>
+                QR Code بصيغة TLV (Tag-Length-Value) المطلوبة من ZATCA — يتولّد عند إصدار أي فاتورة
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {company.zatcaCsid ? (
-                <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg p-4 flex items-start gap-4">
-                  <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-500 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-medium text-green-900 dark:text-green-400 mb-1">الشهادة الأولية مُصدرة وصالحة</h4>
-                    <p className="text-sm text-green-700 dark:text-green-500/80 mb-3">تم إصدار الشهادة بنجاح والشركة جاهزة لمرحلة الاختبار.</p>
-                    <div className="bg-white dark:bg-black/20 p-2 rounded text-xs font-mono break-all text-muted-foreground border border-green-100 dark:border-green-900/20">
-                      {company.zatcaCsid.substring(0, 40)}...
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/30 rounded-lg p-4 flex items-start gap-4">
-                  <AlertTriangle className="h-6 w-6 text-yellow-600 dark:text-yellow-500 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-medium text-yellow-900 dark:text-yellow-400 mb-1">الشهادة الأولية غير متوفرة</h4>
-                    <p className="text-sm text-yellow-700 dark:text-yellow-500/80 mb-3">يجب إصدار الشهادة الأولية للتمكن من ربط المنشأة.</p>
-                    <Button variant="outline" className="bg-white dark:bg-black/20 hover:bg-yellow-100 dark:hover:bg-yellow-900/30">
-                      إصدار شهادة CSID الآن
-                    </Button>
-                  </div>
-                </div>
-              )}
+            <CardContent>
+              <div className="p-4 rounded-lg border bg-muted/20 text-sm text-muted-foreground text-center py-10 space-y-2">
+                <FileCode2 className="h-8 w-8 mx-auto text-muted-foreground/50" />
+                <p>اذهب لأي فاتورة مُصدرة لرؤية QR Code بصيغة TLV وXML UBL 2.1 الكامل.</p>
+                <Button variant="outline" asChild className="mt-2">
+                  <Link href={`/invoices?companyId=${company.id}`}>
+                    عرض الفواتير
+                  </Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="pcsid" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5 text-primary" />
-                حالة الشهادة النهائية (PCSID)
-              </CardTitle>
-              <CardDescription>الشهادة النهائية اللازمة لإصدار واعتماد الفواتير في بيئة الإنتاج</CardDescription>
+              <CardTitle className="text-base">صيغة QR Code TLV — مثال</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {!company.zatcaCsid ? (
-                <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-lg p-4 flex items-start gap-4">
-                  <XCircle className="h-6 w-6 text-red-600 dark:text-red-500 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-medium text-red-900 dark:text-red-400 mb-1">متطلبات غير مكتملة</h4>
-                    <p className="text-sm text-red-700 dark:text-red-500/80">يجب استخراج الشهادة الأولية (CSID) أولاً قبل طلب الشهادة النهائية.</p>
-                  </div>
-                </div>
-              ) : company.zatcaPcsid ? (
-                <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg p-4 flex items-start gap-4">
-                  <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-500 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-medium text-green-900 dark:text-green-400 mb-1">الشهادة النهائية مُصدرة</h4>
-                    <p className="text-sm text-green-700 dark:text-green-500/80 mb-3">الشركة مرتبطة بنجاح بنظام هيئة الزكاة وجاهزة لإصدار الفواتير.</p>
-                    <div className="bg-white dark:bg-black/20 p-2 rounded text-xs font-mono break-all text-muted-foreground border border-green-100 dark:border-green-900/20">
-                      {company.zatcaPcsid.substring(0, 40)}...
+            <CardContent>
+              <div className="space-y-2 text-xs">
+                {[
+                  { tag: "1", name: "اسم البائع", example: company.nameAr },
+                  { tag: "2", name: "الرقم الضريبي", example: company.vatNumber },
+                  { tag: "3", name: "وقت الفاتورة", example: "2024-01-15T10:30:00+03:00" },
+                  { tag: "4", name: "إجمالي الفاتورة مع ضريبة", example: "1150.00" },
+                  { tag: "5", name: "مبلغ ضريبة القيمة المضافة", example: "150.00" },
+                ].map(row => (
+                  <div key={row.tag} className="flex items-start gap-3 p-2 rounded border bg-muted/20">
+                    <span className="shrink-0 rounded bg-primary/10 text-primary px-1.5 py-0.5 font-bold font-mono">
+                      Tag {row.tag}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground">{row.name}</p>
+                      <p className="font-mono break-all" dir="ltr">{row.example}</p>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/30 rounded-lg p-4 flex items-start gap-4">
-                  <AlertTriangle className="h-6 w-6 text-blue-600 dark:text-blue-500 shrink-0 mt-1" />
-                  <div>
-                    <h4 className="font-medium text-blue-900 dark:text-blue-400 mb-1">جاهز لطلب الشهادة النهائية</h4>
-                    <p className="text-sm text-blue-700 dark:text-blue-500/80 mb-3">الشهادة الأولية متوفرة. يمكنك الآن طلب الشهادة النهائية للربط مع بيئة {company.isSandbox ? "المحاكاة" : "الإنتاج"}.</p>
-                    <Button className="bg-blue-600 hover:bg-blue-700 text-white">
-                      طلب شهادة PCSID
-                    </Button>
-                  </div>
-                </div>
-              )}
+                ))}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

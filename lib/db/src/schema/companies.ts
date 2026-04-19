@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -24,6 +24,13 @@ export const companiesTable = pgTable("companies", {
   deviceSerial3: text("device_serial3"),
   zatcaCsid: text("zatca_csid"),
   zatcaPcsid: text("zatca_pcsid"),
+  zatcaPrivateKey: text("zatca_private_key"),
+  zatcaCsr: text("zatca_csr"),
+  zatcaCsidToken: text("zatca_csid_token"),
+  zatcaCsidSecret: text("zatca_csid_secret"),
+  zatcaPcsidToken: text("zatca_pcsid_token"),
+  zatcaPcsidSecret: text("zatca_pcsid_secret"),
+  invoiceCounter: integer("invoice_counter").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
