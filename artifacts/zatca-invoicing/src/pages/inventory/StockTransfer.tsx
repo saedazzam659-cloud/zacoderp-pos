@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -8,8 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Plus, Pencil, Trash2, ArrowRightLeft, Search, X,
-  ChevronLeft, CheckCircle2, Clock, Send, ChevronDown, ChevronUp
+  Plus, Trash2, ArrowRightLeft, Search, X,
+  CheckCircle2, Send, ChevronDown, ChevronUp, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,9 +18,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   posted:    { label: "مُرحَّل",  color: "bg-green-50 text-green-700" },
   cancelled: { label: "ملغي",    color: "bg-red-50 text-red-600" },
 };
-
 const EMPTY_FORM = { transferNumber: "", transferDate: new Date().toISOString().slice(0, 10), fromWarehouseId: "", toWarehouseId: "", notes: "" };
-const EMPTY_LINE = { itemId: "", unitId: "", qty: "1", costPrice: "0" };
+const EMPTY_LINE = { itemId: "", unitId: "", qty: "1", costPrice: "0", conversionFactor: "1" };
 
 export default function StockTransfer() {
   const { user } = useAuth();
@@ -33,11 +32,10 @@ export default function StockTransfer() {
   const [editId, setEditId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Cache item unit prices keyed by itemId
+  const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
 
-  const { data: transfers = [], isLoading } = useQuery({
-    queryKey: ["stock-transfers", cid],
-    queryFn: () => inventoryApi.getTransfers(cid),
-  });
+  const { data: transfers = [], isLoading } = useQuery({ queryKey: ["stock-transfers", cid], queryFn: () => inventoryApi.getTransfers(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
   const { data: items = [] } = useQuery({ queryKey: ["items", cid], queryFn: () => inventoryApi.getItems(cid) });
   const { data: units = [] } = useQuery({ queryKey: ["units", cid], queryFn: () => inventoryApi.getUnits(cid) });
@@ -50,23 +48,64 @@ export default function StockTransfer() {
 
   function reset() { setForm(EMPTY_FORM); setLines([{ ...EMPTY_LINE }]); setEditId(null); setShowForm(false); }
 
+  // Fetch and cache unit prices for an item
+  const loadItemUnits = useCallback(async (itemId: string) => {
+    if (!itemId || itemUnitsMap[itemId] !== undefined) return itemUnitsMap[itemId] ?? [];
+    try {
+      const ups = await inventoryApi.getItemUnits(Number(itemId));
+      setItemUnitsMap(prev => ({ ...prev, [itemId]: ups }));
+      return ups;
+    } catch { return []; }
+  }, [itemUnitsMap]);
+
+  // When item is selected: load its unit prices and auto-fill base cost
+  async function handleItemSelect(i: number, itemId: string) {
+    const item = items.find((it: any) => String(it.id) === itemId);
+    const ups = await loadItemUnits(itemId);
+    // Find base unit or first available
+    const baseUp = ups.find((u: any) => u.isBase) ?? ups[0];
+    setLines(prev => prev.map((l, idx) => idx === i ? {
+      ...l,
+      itemId,
+      unitId: baseUp ? String(baseUp.unitId) : "",
+      costPrice: baseUp ? String(baseUp.costPrice) : (item?.costPrice ?? "0"),
+      conversionFactor: baseUp ? String(baseUp.conversionFactor) : "1",
+    } : l));
+  }
+
+  // When unit is selected: look up cost from item_unit_prices
+  function handleUnitSelect(i: number, unitId: string) {
+    const line = lines[i];
+    const ups: any[] = itemUnitsMap[line.itemId] ?? [];
+    const up = ups.find((u: any) => String(u.unitId) === unitId);
+    setLines(prev => prev.map((l, idx) => idx === i ? {
+      ...l,
+      unitId,
+      costPrice: up ? String(up.costPrice) : l.costPrice,
+      conversionFactor: up ? String(up.conversionFactor) : "1",
+    } : l));
+  }
+
+  function updateLine(i: number, key: string, val: string) { setLines(p => p.map((l, idx) => idx === i ? { ...l, [key]: val } : l)); }
+  function addLine() { setLines(p => [...p, { ...EMPTY_LINE }]); }
+  function removeLine(i: number) { setLines(p => p.filter((_, idx) => idx !== i)); }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.fromWarehouseId || !form.toWarehouseId) return;
     const validLines = lines.filter(l => l.itemId && Number(l.qty) > 0);
     if (!validLines.length) { toast({ title: "يجب إضافة صنف واحد على الأقل", variant: "destructive" }); return; }
-    createMut.mutate({ ...form, fromWarehouseId: Number(form.fromWarehouseId), toWarehouseId: Number(form.toWarehouseId), items: validLines.map(l => ({ ...l, itemId: Number(l.itemId), unitId: l.unitId ? Number(l.unitId) : null })) });
-  }
-
-  function addLine() { setLines(p => [...p, { ...EMPTY_LINE }]); }
-  function removeLine(i: number) { setLines(p => p.filter((_, idx) => idx !== i)); }
-  function updateLine(i: number, key: string, val: string) { setLines(p => p.map((l, idx) => idx === i ? { ...l, [key]: val } : l)); }
-
-  // Auto-fill cost price when item is selected
-  function handleItemSelect(i: number, itemId: string) {
-    const item = items.find((it: any) => String(it.id) === itemId);
-    updateLine(i, "itemId", itemId);
-    if (item) updateLine(i, "costPrice", item.costPrice ?? "0");
+    createMut.mutate({
+      ...form,
+      fromWarehouseId: Number(form.fromWarehouseId),
+      toWarehouseId: Number(form.toWarehouseId),
+      items: validLines.map(l => ({
+        itemId: Number(l.itemId),
+        unitId: l.unitId ? Number(l.unitId) : null,
+        qty: l.qty,
+        costPrice: l.costPrice,
+      })),
+    });
   }
 
   const filtered = transfers.filter((t: any) =>
@@ -75,19 +114,25 @@ export default function StockTransfer() {
     (t.toWarehouse?.nameAr ?? "").includes(search)
   );
 
+  // For a line: get available units (from item_unit_prices or fallback to global)
+  function getLineUnits(line: any): any[] {
+    const ups: any[] = itemUnitsMap[line.itemId] ?? [];
+    if (ups.length > 0) return ups.map((u: any) => ({ id: u.unitId, nameAr: u.unit?.nameAr ?? "—", code: u.unit?.code, isBase: u.isBase }));
+    return units as any[];
+  }
+
   return (
     <div className="space-y-6" dir="rtl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowRightLeft className="h-6 w-6 text-primary" />التحويل بين المخازن</h1>
-          <p className="text-muted-foreground text-sm mt-1">نقل الأصناف بين المخازن مع تحديث الأرصدة تلقائياً</p>
+          <p className="text-muted-foreground text-sm mt-1">نقل الأصناف بين المخازن — الوحدة تملأ السعر تلقائياً</p>
         </div>
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
           <Plus className="h-4 w-4" />تحويل جديد
         </Button>
       </div>
 
-      {/* Form */}
       {showForm && (
         <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
@@ -95,7 +140,6 @@ export default function StockTransfer() {
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
           <form onSubmit={handleSubmit} className="p-5 space-y-6">
-            {/* Header */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="space-y-1.5">
                 <Label>رقم الحركة</Label>
@@ -136,44 +180,77 @@ export default function StockTransfer() {
                   <thead className="bg-muted/50 border-b">
                     <tr>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground">الصنف</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الوحدة</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-32">الوحدة</th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">الكمية</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">سعر التكلفة</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-32">
+                        <span className="flex items-center gap-1">سعر التكلفة <Zap className="h-3 w-3 text-amber-500" /></span>
+                      </th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الإجمالي</th>
                       <th className="px-3 py-2 w-10"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {lines.map((line, i) => (
-                      <tr key={i}>
-                        <td className="px-3 py-2">
-                          <select className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs shadow-sm" value={line.itemId} onChange={e => handleItemSelect(i, e.target.value)} required>
-                            <option value="">— اختر صنف —</option>
-                            {items.filter((it: any) => it.itemType === "stock").map((it: any) => <option key={it.id} value={it.id}>[{it.code}] {it.nameAr}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs shadow-sm" value={line.unitId} onChange={e => updateLine(i, "unitId", e.target.value)}>
-                            <option value="">الأساسية</option>
-                            {units.map((u: any) => <option key={u.id} value={u.id}>{u.nameAr}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <Input type="number" step="any" min="0.001" className="h-8 text-xs" value={line.qty} onChange={e => updateLine(i, "qty", e.target.value)} />
-                        </td>
-                        <td className="px-3 py-2">
-                          <Input type="number" step="any" min="0" className="h-8 text-xs" value={line.costPrice} onChange={e => updateLine(i, "costPrice", e.target.value)} />
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-xs text-muted-foreground">
-                          {(Number(line.qty) * Number(line.costPrice)).toFixed(2)}
-                        </td>
-                        <td className="px-3 py-2">
-                          {lines.length > 1 && (
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(i)}><X className="h-3 w-3" /></Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {lines.map((line, i) => {
+                      const lineUnits = getLineUnits(line);
+                      const cf = Number(line.conversionFactor || "1");
+                      const baseQty = Number(line.qty || "0") * cf;
+                      return (
+                        <tr key={i}>
+                          <td className="px-3 py-2">
+                            <select
+                              className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs shadow-sm"
+                              value={line.itemId}
+                              onChange={e => handleItemSelect(i, e.target.value)}
+                              required
+                            >
+                              <option value="">— اختر صنف —</option>
+                              {(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => <option key={it.id} value={it.id}>[{it.code}] {it.nameAr}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              className="flex h-8 w-full rounded-md border border-input bg-background px-2 text-xs shadow-sm"
+                              value={line.unitId}
+                              onChange={e => handleUnitSelect(i, e.target.value)}
+                              disabled={!line.itemId}
+                            >
+                              <option value="">الأساسية</option>
+                              {lineUnits.map((u: any) => <option key={u.id} value={u.id}>{u.nameAr ?? u.code}</option>)}
+                            </select>
+                            {/* Conversion hint */}
+                            {line.itemId && cf !== 1 && (
+                              <p className="text-[10px] text-purple-600 mt-0.5 font-medium">
+                                ×{cf} → {baseQty.toFixed(2)} وحدة أساسية
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <Input type="number" step="any" min="0.001" className="h-8 text-xs" value={line.qty} onChange={e => updateLine(i, "qty", e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="relative">
+                              <Input
+                                type="number" step="any" min="0"
+                                className={cn("h-8 text-xs", line.unitId && (itemUnitsMap[line.itemId] ?? []).some((u: any) => String(u.unitId) === line.unitId) && "border-amber-300 bg-amber-50")}
+                                value={line.costPrice}
+                                onChange={e => updateLine(i, "costPrice", e.target.value)}
+                              />
+                              {line.unitId && (itemUnitsMap[line.itemId] ?? []).some((u: any) => String(u.unitId) === line.unitId) && (
+                                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-600 bg-amber-100 rounded px-0.5">تلقائي</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-muted-foreground">
+                            {(Number(line.qty) * Number(line.costPrice)).toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2">
+                            {lines.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLine(i)}><X className="h-3 w-3" /></Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot className="bg-muted/30 border-t">
                     <tr>
@@ -184,7 +261,11 @@ export default function StockTransfer() {
                   </tfoot>
                 </table>
               </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                <Zap className="h-3 w-3 text-amber-500" />عند اختيار الصنف تُملأ الوحدة والتكلفة تلقائياً من وحدات التسعير المعرّفة للصنف
+              </p>
             </div>
+
             <div className="flex gap-2 justify-end pt-2 border-t">
               <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
               <Button type="submit" disabled={createMut.isPending}>حفظ كمسودة</Button>
@@ -193,13 +274,11 @@ export default function StockTransfer() {
         </div>
       )}
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث برقم الحركة أو المخزن..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      {/* List */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -247,6 +326,7 @@ export default function StockTransfer() {
                                 </Button>
                               </>
                             )}
+                            {tr.status === "posted" && <CheckCircle2 className="h-4 w-4 text-green-600 mx-auto" />}
                           </div>
                         </td>
                       </tr>
@@ -255,12 +335,20 @@ export default function StockTransfer() {
                           <td colSpan={7} className="px-6 py-4">
                             {!trDetail?.items?.length ? <p className="text-xs text-muted-foreground">لا توجد أصناف</p> : (
                               <table className="w-full text-xs">
-                                <thead><tr className="text-muted-foreground"><th className="text-right pb-2">الصنف</th><th className="text-right pb-2">الوحدة</th><th className="text-right pb-2">الكمية</th><th className="text-right pb-2">التكلفة</th><th className="text-right pb-2">الإجمالي</th></tr></thead>
+                                <thead>
+                                  <tr className="text-muted-foreground">
+                                    <th className="text-right pb-2">الصنف</th>
+                                    <th className="text-right pb-2">الوحدة</th>
+                                    <th className="text-right pb-2">الكمية</th>
+                                    <th className="text-right pb-2">التكلفة</th>
+                                    <th className="text-right pb-2">الإجمالي</th>
+                                  </tr>
+                                </thead>
                                 <tbody className="divide-y divide-border/50">
                                   {trDetail.items.map((l: any) => (
                                     <tr key={l.id}>
                                       <td className="py-1.5">{l.item?.nameAr ?? l.itemId}</td>
-                                      <td className="py-1.5">{l.unit?.nameAr ?? "—"}</td>
+                                      <td className="py-1.5">{l.unit?.nameAr ?? "وحدة أساسية"}</td>
                                       <td className="py-1.5 tabular-nums">{Number(l.qty).toFixed(2)}</td>
                                       <td className="py-1.5 tabular-nums">{Number(l.costPrice).toFixed(2)}</td>
                                       <td className="py-1.5 tabular-nums font-medium">{(Number(l.qty) * Number(l.costPrice)).toFixed(2)}</td>

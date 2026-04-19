@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   warehouseGroupsTable, warehousesTable, itemGroupsTable, unitsTable,
-  itemsTable, stockBalanceTable, stockLedgerTable,
+  itemsTable, itemUnitPricesTable, stockBalanceTable, stockLedgerTable,
   stockTransfersTable, stockTransferItemsTable,
   stockAdjustmentsTable, stockAdjustmentItemsTable,
   stockCountsTable, stockCountItemsTable,
@@ -239,6 +239,77 @@ router.put("/items/:id", async (req, res) => {
 router.delete("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   await db.delete(itemsTable).where(and(eq(itemsTable.id, Number(req.params.id)), eq(itemsTable.companyId, cid)));
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// ITEM UNIT PRICES (multi-unit per item)
+// ═══════════════════════════════════════════════════════════════════
+router.get("/items/:id/units", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const itemId = Number(req.params.id);
+  const rows = await db.select({ up: itemUnitPricesTable, unit: unitsTable })
+    .from(itemUnitPricesTable)
+    .leftJoin(unitsTable, eq(itemUnitPricesTable.unitId, unitsTable.id))
+    .where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.companyId, cid)))
+    .orderBy(asc(itemUnitPricesTable.id));
+  res.json(rows.map(r => ({ ...r.up, unit: r.unit })));
+});
+
+// GET unit prices for a specific item+unit combination (used in transaction forms)
+router.get("/items/:id/units/:unitId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const itemId = Number(req.params.id);
+  const unitId = Number(req.params.unitId);
+  const [row] = await db.select({ up: itemUnitPricesTable, unit: unitsTable })
+    .from(itemUnitPricesTable)
+    .leftJoin(unitsTable, eq(itemUnitPricesTable.unitId, unitsTable.id))
+    .where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.unitId, unitId), eq(itemUnitPricesTable.companyId, cid)));
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json({ ...row.up, unit: row.unit });
+});
+
+router.post("/items/:id/units", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const itemId = Number(req.params.id);
+  const { unitId, conversionFactor, costPrice, salePrice, isBase } = req.body;
+  if (!unitId) { res.status(400).json({ error: "وحدة القياس مطلوبة" }); return; }
+  // If setting as base, clear other base flags first
+  if (isBase) {
+    await db.update(itemUnitPricesTable).set({ isBase: false }).where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.companyId, cid)));
+  }
+  const [row] = await db.insert(itemUnitPricesTable).values({
+    companyId: cid, itemId, unitId: Number(unitId),
+    conversionFactor: String(conversionFactor || "1"),
+    costPrice: String(costPrice || "0"),
+    salePrice: String(salePrice || "0"),
+    isBase: !!isBase,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/items/:id/units/:upId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const itemId = Number(req.params.id);
+  const upId = Number(req.params.upId);
+  const { unitId, conversionFactor, costPrice, salePrice, isBase } = req.body;
+  if (isBase) {
+    await db.update(itemUnitPricesTable).set({ isBase: false }).where(and(eq(itemUnitPricesTable.itemId, itemId), eq(itemUnitPricesTable.companyId, cid)));
+  }
+  const [row] = await db.update(itemUnitPricesTable).set({
+    unitId: unitId ? Number(unitId) : undefined,
+    conversionFactor: String(conversionFactor || "1"),
+    costPrice: String(costPrice || "0"),
+    salePrice: String(salePrice || "0"),
+    isBase: !!isBase,
+  }).where(and(eq(itemUnitPricesTable.id, upId), eq(itemUnitPricesTable.companyId, cid))).returning();
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json(row);
+});
+
+router.delete("/items/:id/units/:upId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  await db.delete(itemUnitPricesTable).where(and(eq(itemUnitPricesTable.id, Number(req.params.upId)), eq(itemUnitPricesTable.companyId, cid)));
   res.json({ ok: true });
 });
 

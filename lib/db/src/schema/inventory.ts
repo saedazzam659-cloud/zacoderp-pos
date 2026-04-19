@@ -80,6 +80,20 @@ export const itemsTable = pgTable("items", {
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ─── Item Unit Prices (multi-unit per item with conversion factor) ────────────
+// Example: Item "Sugar" — base unit واحدة (×1, cost 5, sale 10), unit كرتونة (×12, cost 60, sale 100)
+export const itemUnitPricesTable = pgTable("item_unit_prices", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  unitId:           integer("unit_id").notNull().references(() => unitsTable.id, { onDelete: "cascade" }),
+  conversionFactor: numeric("conversion_factor", { precision: 14, scale: 6 }).notNull().default("1"),
+  costPrice:        numeric("cost_price",  { precision: 14, scale: 4 }).notNull().default("0"),
+  salePrice:        numeric("sale_price",  { precision: 14, scale: 4 }).notNull().default("0"),
+  isBase:           boolean("is_base").notNull().default(false),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+
 // ─── Stock Balance (summary per item per warehouse) ───────────────────────────
 export const stockBalanceTable = pgTable("stock_balance", {
   id:          serial("id").primaryKey(),

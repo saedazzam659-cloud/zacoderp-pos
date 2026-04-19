@@ -55,6 +55,12 @@ export const inventoryApi = {
   createItem: (data: any)    => post<any>("/items", data),
   updateItem: (id: number, data: any) => put<any>(`/items/${id}`, data),
   deleteItem: (id: number)   => del(`/items/${id}`),
+  // Item Unit Prices
+  getItemUnits:    (itemId: number)                  => get<any[]>(`/items/${itemId}/units`),
+  getItemUnitPrice: (itemId: number, unitId: number) => get<any>(`/items/${itemId}/units/${unitId}`),
+  addItemUnit:     (itemId: number, data: any)       => post<any>(`/items/${itemId}/units`, data),
+  updateItemUnit:  (itemId: number, upId: number, data: any) => put<any>(`/items/${itemId}/units/${upId}`, data),
+  deleteItemUnit:  (itemId: number, upId: number)    => del(`/items/${itemId}/units/${upId}`),
   // Stock Transfers
   getTransfers:   (cid?: number) => get<any[]>(`/stock-transfers${cid ? `?companyId=${cid}` : ""}`),
   getTransfer:    (id: number)   => get<any>(`/stock-transfers/${id}`),

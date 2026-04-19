@@ -92,19 +92,29 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ## Inventory Management Module
 - Routes: `/inventory/*` (company users only)
 - Nav section: "المخازن والمخزون" in sidebar (8 links)
-- DB Tables (lib/db/src/schema/inventory.ts): warehouse_groups, warehouses, item_groups, units, items, stock_balance, stock_ledger, stock_transfers + stock_transfer_items, stock_adjustments + stock_adjustment_items, stock_counts + stock_count_items (13 tables total)
+- DB Tables (lib/db/src/schema/inventory.ts): warehouse_groups, warehouses, item_groups, units, items, **item_unit_prices**, stock_balance, stock_ledger, stock_transfers + stock_transfer_items, stock_adjustments + stock_adjustment_items, stock_counts + stock_count_items (14 tables total)
 - API routes: `/api/inventory/*` in `artifacts/api-server/src/routes/inventory.ts`
 - Frontend API client: `artifacts/zatca-invoicing/src/lib/inventoryApi.ts` (uses `zatca_token` from localStorage)
 - Cost method: Weighted Average (متوسط مرجح) — auto-computed on stock-in, unchanged on stock-out
-- Pages (artifacts/zatca-invoicing/src/pages/inventory/):
+
+### Multi-Unit Per Item (item_unit_prices table)
+- Each item can have multiple units with different conversion factors and prices
+- Example: Item "سكر" — واحدة (×1, cost 5, sale 10) + كرتونة (×12, cost 60, sale 100)
+- `item_unit_prices` columns: companyId, itemId, unitId, conversionFactor, costPrice, salePrice, isBase
+- API: GET/POST/PUT/DELETE `/api/inventory/items/:id/units` + GET `/api/inventory/items/:id/units/:unitId`
+- In Items.tsx expanded row, "وحدات التسعير" tab lets user add/edit/delete unit-price rows per item
+- In StockTransfer/StockAdjustment: selecting item fetches its unit prices, auto-selects base unit + fills cost; changing unit auto-fills cost from item_unit_prices; shows conversion hint (e.g., "×12 → 24 وحدة أساسية")
+- Global units page (`Units.tsx`) now has preset quick-add buttons and concept explanation
+
+### Pages (artifacts/zatca-invoicing/src/pages/inventory/):
   - `InventoryDashboard.tsx` — KPI cards + quick actions + recent movements
   - `Warehouses.tsx` — CRUD with group, city, allow-negative-stock toggle
   - `WarehouseGroups.tsx` — CRUD
-  - `Items.tsx` — CRUD with expandable warehouse balances per item
+  - `Items.tsx` — CRUD + expandable row with 2 tabs: (1) أرصدة المخازن, (2) وحدات التسعير (multi-unit management)
   - `ItemGroups.tsx` — CRUD
-  - `Units.tsx` — CRUD with conversion factor
-  - `StockTransfer.tsx` — Draft/post workflow, from→to warehouse, auto-deduct/add balance
-  - `StockAdjustment.tsx` — +/- qty adjustments with reason, draft/post
+  - `Units.tsx` — CRUD with quick-presets (PCS, CTN, KG...) + concept explanation panel
+  - `StockTransfer.tsx` — Draft/post workflow; smart unit selection auto-fills cost from item_unit_prices
+  - `StockAdjustment.tsx` — +/- qty adjustments with reason + smart unit auto-fill
   - `StockCounting.tsx` — Auto-loads system balances, enter actual qty, approve → post diffs
   - `StockLedger.tsx` — Full movement history with filters (date range, item, warehouse)
   - `StockBalance.tsx` — Current balance per item×warehouse with alert for below-reorder items
