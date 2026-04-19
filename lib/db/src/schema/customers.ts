@@ -1,4 +1,5 @@
 import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
+
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
@@ -17,7 +18,8 @@ export const customersTable = pgTable("customers", {
   street: text("street"),
   buildingNumber: text("building_number"),
   postalCode: text("postal_code"),
-  country: text("country").default("SA"),
+  country:   text("country").default("SA"),
+  accountId: integer("account_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

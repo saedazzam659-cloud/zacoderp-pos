@@ -17,7 +17,8 @@ export const suppliersTable = pgTable("suppliers", {
   street: text("street"),
   buildingNumber: text("building_number"),
   postalCode: text("postal_code"),
-  country: text("country").default("SA"),
+  country:   text("country").default("SA"),
+  accountId: integer("account_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

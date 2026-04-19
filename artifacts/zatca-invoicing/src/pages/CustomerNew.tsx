@@ -15,8 +15,9 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight, Save, Users, Info, Building2, MapPin, Phone,
-  BadgeCheck, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle2,
+  BadgeCheck, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle2, BookMarked,
 } from "lucide-react";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -53,6 +54,7 @@ export default function CustomerNew() {
 
   // Superadmin: company text input state
   const [companyText, setCompanyText] = useState("");
+  const [custAccountId, setCustAccountId] = useState("");
   const { data: companies } = useListCompanies({
     query: { queryKey: ["companies"], enabled: isSuperAdmin }
   });
@@ -91,7 +93,7 @@ export default function CustomerNew() {
   const onSubmit = (values: FormValues) => {
     if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
     const { customerType: _ct, ...rest } = values;
-    createCustomer.mutate({ data: rest }, {
+    createCustomer.mutate({ data: { ...rest, accountId: custAccountId ? Number(custAccountId) : null } as any }, {
       onSuccess: () => {
         toast({ title: "✓ تمت الإضافة بنجاح", description: "تمت إضافة العميل إلى النظام." });
         queryClient.invalidateQueries({ queryKey: ["customers"] });
@@ -492,6 +494,22 @@ export default function CustomerNew() {
                         </FormItem>
                       )} />
                     </div>
+                  </div>
+
+                  {/* Accounting link */}
+                  <div className="pt-4 border-t space-y-1.5">
+                    <label className="text-sm font-medium flex items-center gap-1.5">
+                      <BookMarked className="h-3.5 w-3.5 text-muted-foreground" />
+                      حساب المدينين (العميل)
+                    </label>
+                    <AccountCombobox
+                      value={custAccountId}
+                      onValueChange={setCustAccountId}
+                      placeholder="— اختر الحساب المحاسبي —"
+                      filterTypes={["asset"]}
+                      grouped={false}
+                    />
+                    <p className="text-xs text-muted-foreground">اختياري — الحساب المرتبط بهذا العميل في دفتر الأستاذ</p>
                   </div>
 
                   <div className="flex justify-between pt-4 border-t">

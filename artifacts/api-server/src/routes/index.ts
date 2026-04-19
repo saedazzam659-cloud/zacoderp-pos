@@ -11,6 +11,7 @@ import suppliersRouter from "./suppliers";
 import adminRouter from "./admin";
 import reportsRouter from "./reports";
 import inventoryRouter from "./inventory";
+import accountsRouter from "./accounts";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,7 @@ router.use("/invoices", invoicesRouter);
 router.use("/dashboard", dashboardRouter);
 router.use("/reports", reportsRouter);
 router.use("/inventory", inventoryRouter);
+router.use("/accounts", accountsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

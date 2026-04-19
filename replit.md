@@ -37,7 +37,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ### api-server
 - **Path**: `artifacts/api-server/`
 - **Preview**: `/api`
-- **Routes**: /auth, /companies, /customers, /suppliers, /invoices, /dashboard/summary|recent-invoices|monthly-stats
+- **Routes**: /auth, /companies, /customers, /suppliers, /invoices, /dashboard/summary|recent-invoices|monthly-stats, /inventory/*, /accounts (CRUD)
 
 ## Auth System
 - JWT-style Bearer tokens stored in localStorage
@@ -54,12 +54,16 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Database Schema
 - `companies` — ZATCA company settings (VAT number, CR, serials, CSID/PCSID, menuPermissions JSON)
-- `customers` — Customer records linked to companies
+- `customers` — Customer records linked to companies (+accountId FK)
 - `invoices` — E-invoices with QR code, hash, ZATCA status
 - `invoice_line_items` — Invoice line items with VAT calculation
 - `users` — Auth users (username, passwordHash, sessionToken, sessionId, companyId, role)
 - `subscriptions` — Company subscription plan, dates, limits
-- `suppliers` — Supplier/vendor records linked to companies
+- `suppliers` — Supplier/vendor records linked to companies (+accountId FK)
+- `accounts` — Chart of accounts (code, nameAr, nameEn, accountType enum, parentId self-ref, level, isPosting, isActive, notes)
+- `inventory_items` — (+costAccountId, revenueAccountId FKs)
+- `item_groups` — (+costAccountId, revenueAccountId FKs)
+- `warehouses` — (+accountId FK)
 
 ## General Settings (Company)
 - Route: `/general-settings` (company users only)

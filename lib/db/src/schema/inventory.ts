@@ -33,17 +33,20 @@ export const warehousesTable = pgTable("warehouses", {
   allowNegative:  boolean("allow_negative").default(false).notNull(),
   negativeLimit:  numeric("negative_limit", { precision: 14, scale: 4 }),
   isActive:       boolean("is_active").default(true).notNull(),
+  accountId:      integer("account_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Item Groups ──────────────────────────────────────────────────────────────
 export const itemGroupsTable = pgTable("item_groups", {
-  id:        serial("id").primaryKey(),
-  companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
-  code:      text("code").notNull(),
-  nameAr:    text("name_ar").notNull(),
-  nameEn:    text("name_en"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  id:              serial("id").primaryKey(),
+  companyId:       integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  code:            text("code").notNull(),
+  nameAr:          text("name_ar").notNull(),
+  nameEn:          text("name_en"),
+  costAccountId:   integer("cost_account_id"),
+  revenueAccountId:integer("revenue_account_id"),
+  createdAt:       timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Units of Measure ─────────────────────────────────────────────────────────
@@ -73,11 +76,13 @@ export const itemsTable = pgTable("items", {
   vatRate:      numeric("vat_rate",    { precision: 5,  scale: 2  }).default("15").notNull(),
   reorderLevel: numeric("reorder_level", { precision: 14, scale: 4 }).default("0"),
   maxLevel:     numeric("max_level",     { precision: 14, scale: 4 }),
-  costMethod:   costMethodEnum("cost_method").default("weighted_avg").notNull(),
-  status:       itemStatusEnum("item_status").default("active").notNull(),
-  description:  text("description"),
-  createdAt:    timestamp("created_at").defaultNow().notNull(),
-  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+  costMethod:       costMethodEnum("cost_method").default("weighted_avg").notNull(),
+  status:           itemStatusEnum("item_status").default("active").notNull(),
+  description:      text("description"),
+  costAccountId:    integer("cost_account_id"),
+  revenueAccountId: integer("revenue_account_id"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });
 
 // ─── Item Unit Prices (multi-unit per item with conversion factor) ────────────

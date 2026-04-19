@@ -41,6 +41,8 @@ import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
+// Accounting
+import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
 
 const queryClient = new QueryClient();
 
@@ -127,6 +129,9 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/inventory/counts/new" component={StockCounting} />}
             {!isSuperAdmin && <Route path="/inventory/ledger" component={StockLedger} />}
             {!isSuperAdmin && <Route path="/inventory/balance" component={StockBalance} />}
+
+            {/* Accounting routes */}
+            {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle } from "lucide-react";
+import { ArrowRight, Save, Truck, MapPin, Phone, AlertTriangle, BookMarked } from "lucide-react";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -45,7 +47,7 @@ export default function SupplierNew() {
       const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/suppliers`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...values, companyId: user?.companyId }),
+        body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null }),
       });
       if (!res.ok) throw new Error("فشل الحفظ");
       return res.json();
@@ -58,6 +60,7 @@ export default function SupplierNew() {
     onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
   });
 
+  const [accountId, setAccountId] = useState("");
   const vatVal = form.watch("vatNumber");
 
   return (
@@ -190,6 +193,28 @@ export default function SupplierNew() {
                     <FormMessage />
                   </FormItem>
                 )} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Accounting */}
+          <Card>
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="text-base flex items-center gap-2">
+                <BookMarked className="h-4 w-4" />الربط المحاسبي
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-5">
+              <div className="max-w-sm space-y-1.5">
+                <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
+                <AccountCombobox
+                  value={accountId}
+                  onValueChange={setAccountId}
+                  placeholder="— اختر حساب الدائنين —"
+                  filterTypes={["liability"]}
+                  grouped={false}
+                />
+                <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ</p>
               </div>
             </CardContent>
           </Card>

@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import ExportButtons from "@/components/ExportButtons";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import {
   Plus, Pencil, Trash2, Package, Search, X,
@@ -21,6 +22,7 @@ const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock",
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
+  costAccountId: "", revenueAccountId: "",
 };
 const UNIT_EMPTY = { unitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false };
 
@@ -241,6 +243,8 @@ export default function Items() {
       costPrice: item.costPrice ?? "0", salePrice: item.salePrice ?? "0",
       vatRate: item.vatRate ?? "15", reorderLevel: item.reorderLevel ?? "0",
       maxLevel: item.maxLevel ?? "",
+      costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
+      revenueAccountId: item.revenueAccountId ? String(item.revenueAccountId) : "",
     });
     setEditId(item.id);
     setShowForm(true);
@@ -248,7 +252,13 @@ export default function Items() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, groupId: form.groupId ? Number(form.groupId) : null, unitId: form.unitId ? Number(form.unitId) : null };
+    const payload = {
+      ...form,
+      groupId:          form.groupId          ? Number(form.groupId)          : null,
+      unitId:           form.unitId           ? Number(form.unitId)           : null,
+      costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
+      revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+    };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
@@ -366,6 +376,31 @@ export default function Items() {
                 <div className="space-y-1.5"><Label>حد الطلب</Label><Input type="number" step="any" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>الحد الأقصى للمخزون</Label><Input type="number" step="any" placeholder="اختياري" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></div>
                 <div className="space-y-1.5"><Label>ملاحظات / وصف</Label><Input placeholder="وصف الصنف" value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></div>
+              </div>
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">الربط المحاسبي</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>حساب التكلفة</Label>
+                  <AccountCombobox
+                    value={form.costAccountId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
+                    placeholder="— اختر حساب التكلفة —"
+                    filterTypes={["expense", "asset"]}
+                    grouped={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>حساب الإيراد</Label>
+                  <AccountCombobox
+                    value={form.revenueAccountId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
+                    placeholder="— اختر حساب الإيراد —"
+                    filterTypes={["revenue"]}
+                    grouped={false}
+                  />
+                </div>
               </div>
             </div>
             <div className="flex gap-2 justify-end pt-2 border-t">

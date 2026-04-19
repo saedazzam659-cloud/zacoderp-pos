@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Tag, Search, X } from "lucide-react";
+import { AccountCombobox } from "@/components/AccountCombobox";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", costAccountId: "", revenueAccountId: "" };
 
 export default function ItemGroups() {
   const { user } = useAuth();
@@ -32,11 +33,24 @@ export default function ItemGroups() {
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItemGroup, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
-  function handleEdit(g: any) { setForm(g); setEditId(g.id); setShowForm(true); }
+  function handleEdit(g: any) {
+    setForm({
+      ...g,
+      costAccountId:    g.costAccountId    ? String(g.costAccountId)    : "",
+      revenueAccountId: g.revenueAccountId ? String(g.revenueAccountId) : "",
+    });
+    setEditId(g.id);
+    setShowForm(true);
+  }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (editId) updateMut.mutate({ id: editId, data: form });
-    else        createMut.mutate(form);
+    const payload = {
+      ...form,
+      costAccountId:    form.costAccountId    ? Number(form.costAccountId)    : null,
+      revenueAccountId: form.revenueAccountId ? Number(form.revenueAccountId) : null,
+    };
+    if (editId) updateMut.mutate({ id: editId, data: payload });
+    else        createMut.mutate(payload);
   }
 
   const filtered = data.filter((g: any) =>
@@ -61,7 +75,7 @@ export default function ItemGroups() {
             <h2 className="font-semibold">{editId ? "تعديل مجموعة" : "مجموعة جديدة"}</h2>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-1.5">
               <Label>كود المجموعة *</Label>
               <Input placeholder="GRP-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
@@ -74,7 +88,28 @@ export default function ItemGroups() {
               <Label>الاسم بالإنجليزي</Label>
               <Input placeholder="Electronics" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
             </div>
-            <div className="sm:col-span-3 flex gap-2 justify-end pt-2 border-t">
+            <div className="lg:col-span-1" />
+            <div className="space-y-1.5">
+              <Label>حساب التكلفة الافتراضي</Label>
+              <AccountCombobox
+                value={form.costAccountId}
+                onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
+                placeholder="— اختر حساب التكلفة —"
+                filterTypes={["expense", "asset"]}
+                grouped={false}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>حساب الإيراد الافتراضي</Label>
+              <AccountCombobox
+                value={form.revenueAccountId}
+                onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
+                placeholder="— اختر حساب الإيراد —"
+                filterTypes={["revenue"]}
+                grouped={false}
+              />
+            </div>
+            <div className="sm:col-span-2 lg:col-span-4 flex gap-2 justify-end pt-2 border-t">
               <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
               <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>{editId ? "حفظ التعديل" : "إضافة"}</Button>
             </div>

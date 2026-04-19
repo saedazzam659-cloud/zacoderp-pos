@@ -10,9 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Warehouse, Search, X, CheckCircle2, XCircle } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { cn } from "@/lib/utils";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", city: "", region: "", allowNegative: false, negativeLimit: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "" };
 
 export default function Warehouses() {
   const { user } = useAuth();
@@ -39,10 +40,19 @@ export default function Warehouses() {
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteWarehouse, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
-  function handleEdit(w: any) { setForm({ ...w, groupId: w.groupId ?? "", negativeLimit: w.negativeLimit ?? "" }); setEditId(w.id); setShowForm(true); }
+  function handleEdit(w: any) {
+    setForm({ ...w, groupId: w.groupId ?? "", negativeLimit: w.negativeLimit ?? "", accountId: w.accountId ? String(w.accountId) : "" });
+    setEditId(w.id);
+    setShowForm(true);
+  }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, groupId: form.groupId ? Number(form.groupId) : null, negativeLimit: form.negativeLimit || null };
+    const payload = {
+      ...form,
+      groupId:       form.groupId  ? Number(form.groupId)  : null,
+      negativeLimit: form.negativeLimit || null,
+      accountId:     form.accountId ? Number(form.accountId) : null,
+    };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
@@ -109,6 +119,16 @@ export default function Warehouses() {
                 <Input type="number" placeholder="0.00" value={form.negativeLimit} onChange={e => setForm((p: any) => ({ ...p, negativeLimit: e.target.value }))} />
               </div>
             )}
+            <div className="space-y-1.5">
+              <Label>حساب المخزون</Label>
+              <AccountCombobox
+                value={form.accountId}
+                onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
+                placeholder="— اختر حساب المخزون —"
+                filterTypes={["asset"]}
+                grouped={false}
+              />
+            </div>
             <div className="sm:col-span-2 lg:col-span-3 flex gap-2 justify-end pt-2 border-t">
               <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
               <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
