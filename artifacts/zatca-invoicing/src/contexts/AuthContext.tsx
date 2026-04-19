@@ -91,10 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Initial check
   useEffect(() => { checkSession(); }, [checkSession]);
 
-  // Poll every 30s for single-session enforcement
+  // Poll every 10s for single-session enforcement and real-time permission updates
   useEffect(() => {
     if (user) {
-      pollRef.current = setInterval(checkSession, 30000);
+      pollRef.current = setInterval(checkSession, 10000);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
     }

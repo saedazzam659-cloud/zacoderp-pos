@@ -42,7 +42,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 ## Auth System
 - JWT-style Bearer tokens stored in localStorage
 - Single-session enforcement: login regenerates sessionToken (invalidates old sessions)
-- Frontend polls /api/auth/me every 30s — logs out if session changed elsewhere
+- Frontend polls /api/auth/me every 10s — logs out if session changed elsewhere; also updates menuPermissions in real-time
 - Routes: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/auth/me
 - Password hashing: bcryptjs (12 rounds)
 - Register flow creates: company + subscription + admin user atomically
@@ -86,6 +86,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - API: PATCH `/api/companies/:id/menu-permissions` with `{ menuPermissions: JSON string }`
 - Changes apply instantly — Layout.tsx reads permissions from auth context and filters nav items
 - Page shows toggle-matrix table, one row per company, one column per menu item
+- Success/error toast shown after each toggle save
+- HTTP caching disabled on API server (no ETags, Cache-Control: no-store) to prevent stale responses after PATCH
 
 ## Key Commands
 

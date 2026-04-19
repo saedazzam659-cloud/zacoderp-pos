@@ -104,9 +104,10 @@ export default function MenuPermissions() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["companies-menu-perms"] });
       setSavingId(null);
+      toast({ title: "تم حفظ الصلاحيات بنجاح", variant: "default" });
     },
     onError: (e: any) => {
-      toast({ title: e.message, variant: "destructive" });
+      toast({ title: "فشل الحفظ: " + e.message, variant: "destructive" });
       setSavingId(null);
     },
   });

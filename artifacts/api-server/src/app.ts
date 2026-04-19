@@ -6,6 +6,9 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Disable ETag generation to prevent 304 stale responses
+app.set("etag", false);
+
 app.use(
   pinoHttp({
     logger,
@@ -28,6 +31,13 @@ app.use(
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Prevent HTTP caching on all API responses so clients always get fresh data
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
 
 app.use("/api", router);
 
