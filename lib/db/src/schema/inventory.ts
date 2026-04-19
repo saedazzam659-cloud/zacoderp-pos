@@ -137,6 +137,7 @@ export const stockTransfersTable = pgTable("stock_transfers", {
   transferDate:    date("transfer_date").notNull(),
   fromWarehouseId: integer("from_warehouse_id").notNull().references(() => warehousesTable.id),
   toWarehouseId:   integer("to_warehouse_id").notNull().references(() => warehousesTable.id),
+  accountId:       integer("account_id").references(() => accountsTable.id),
   status:          docStatusEnum("status").default("draft").notNull(),
   notes:           text("notes"),
   createdAt:       timestamp("created_at").defaultNow().notNull(),

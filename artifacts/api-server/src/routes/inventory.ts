@@ -353,11 +353,11 @@ router.get("/stock-transfers/:id", async (req, res) => {
 
 router.post("/stock-transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, notes, items } = req.body;
+  const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, notes, items } = req.body;
   if (!transferDate || !fromWarehouseId || !toWarehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
   // Auto-number if not provided
   const num = transferNumber || `TRF-${Date.now()}`;
-  const [tr] = await db.insert(stockTransfersTable).values({ companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId, notes, status: "draft" }).returning();
+  const [tr] = await db.insert(stockTransfersTable).values({ companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId, accountId: accountId || null, notes, status: "draft" }).returning();
   if (items?.length) {
     await db.insert(stockTransferItemsTable).values(items.map((it: any) => ({ transferId: tr.id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0) })));
   }
