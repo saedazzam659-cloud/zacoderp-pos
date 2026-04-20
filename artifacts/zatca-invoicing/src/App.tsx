@@ -53,6 +53,13 @@ import AccountStatement from "@/pages/accounting/reports/AccountStatement";
 import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
 import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
 import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
+// Purchasing
+import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
+import LetterOfCredit       from "@/pages/purchasing/LetterOfCredit";
+import PurchaseInvoices     from "@/pages/purchasing/PurchaseInvoices";
+import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
+import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
+import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
 
 const queryClient = new QueryClient();
 
@@ -154,6 +161,15 @@ function AppRoutes() {
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}
             {!isSuperAdmin && <Route path="/org/branches" component={Branches} />}
+
+            {/* Purchasing routes */}
+            {!isSuperAdmin && <Route path="/purchasing/supplier-groups" component={SupplierGroups} />}
+            {!isSuperAdmin && <Route path="/purchasing/lc"              component={LetterOfCredit} />}
+            {!isSuperAdmin && <Route path="/purchasing/invoices/new"    component={PurchaseInvoiceForm} />}
+            {!isSuperAdmin && <Route path="/purchasing/invoices/:id"    component={PurchaseInvoiceForm} />}
+            {!isSuperAdmin && <Route path="/purchasing/invoices"        component={PurchaseInvoices} />}
+            {!isSuperAdmin && <Route path="/purchasing/returns"         component={PurchaseReturns} />}
+            {!isSuperAdmin && <Route path="/purchasing/settlements"     component={SupplierSettlement} />}
 
             {/* Settings routes */}
             {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}

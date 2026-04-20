@@ -1,0 +1,226 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Plus, Trash2, Banknote, X, CheckCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+const today = () => new Date().toISOString().slice(0, 10);
+
+const EMPTY = { docNumber: "", settlementDate: today(), supplierId: "", paymentMethod: "bank", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
+
+export default function SupplierSettlement() {
+  const { user, token } = useAuth() as any;
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const authH = { Authorization: `Bearer ${token}` };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm]         = useState<any>(EMPTY);
+
+  const { data: settlements = [], isLoading } = useQuery<any[]>({
+    queryKey: ["supplier-settlements", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/purchasing/supplier-settlements?companyId=${cid}` : `${API}/api/purchasing/supplier-settlements`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: suppliers = [] } = useQuery<any[]>({
+    queryKey: ["suppliers", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ["accounts", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["supplier-settlements"] });
+
+  const saveMut = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch(`${API}/api/purchasing/supplier-settlements`, { method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }) });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم حفظ التسوية" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const postMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/purchasing/supplier-settlements/${id}/post`, { method: "PATCH", headers });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+      return res.json();
+    },
+    onSuccess: () => { invalidate(); toast({ title: "✓ تم ترحيل التسوية" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/purchasing/supplier-settlements/${id}`, { method: "DELETE", headers });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+    },
+    onSuccess: () => { invalidate(); toast({ title: "✓ تم الحذف" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  function reset() { setForm(EMPTY); setShowForm(false); }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    saveMut.mutate({ ...form, supplierId: form.supplierId || null, accountId: form.accountId || null });
+  }
+
+  const supplierItems = [{ value: "", label: "— اختر المورد —" }, ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr }))];
+  const accountItems  = [{ value: "", label: "— حساب البنك/الخزنة —" }, ...accounts.filter((a: any) => a.isPosting).map((a: any) => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}` }))];
+  const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, s.nameAr]));
+  const accMap = Object.fromEntries(accounts.map((a: any) => [a.id, `${a.code} — ${a.nameAr}`]));
+
+  const totalPosted = settlements.filter(s => s.status === "posted").reduce((t, s) => t + Number(s.amount || 0), 0);
+
+  return (
+    <div className="space-y-6" dir="rtl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Banknote className="h-6 w-6 text-primary" />تسوية الموردين</h1>
+          <p className="text-sm text-muted-foreground mt-1">سداد مستحقات الموردين وترحيل القيود</p>
+        </div>
+        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
+          <Plus className="h-4 w-4" />تسوية جديدة
+        </Button>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
+          <p className="text-xs text-muted-foreground mb-1">إجمالي التسويات</p>
+          <p className="text-xl font-bold text-primary">{settlements.length}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
+          <p className="text-xs text-muted-foreground mb-1">المرحّلة</p>
+          <p className="text-xl font-bold text-green-700">{settlements.filter(s => s.status === "posted").length}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-4 shadow-sm">
+          <p className="text-xs text-muted-foreground mb-1">إجمالي المدفوع</p>
+          <p className="text-xl font-bold font-mono text-primary">{fmt(totalPosted)}</p>
+        </div>
+      </div>
+
+      {showForm && (
+        <div className="rounded-xl border bg-card p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">تسوية جديدة</h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-1.5">
+                <Label>رقم المستند</Label>
+                <Input placeholder="تلقائي" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>التاريخ *</Label>
+                <Input type="date" value={form.settlementDate} onChange={e => setForm((p: any) => ({ ...p, settlementDate: e.target.value }))} required />
+              </div>
+              <div className="space-y-1.5 lg:col-span-2">
+                <Label>المورد *</Label>
+                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-1.5">
+                <Label>طريقة الدفع</Label>
+                <Select value={form.paymentMethod} onValueChange={v => setForm((p: any) => ({ ...p, paymentMethod: v }))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank">تحويل بنكي</SelectItem>
+                    <SelectItem value="cash">نقدي</SelectItem>
+                    <SelectItem value="check">شيك</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 lg:col-span-2">
+                <Label>حساب البنك / الخزنة</Label>
+                <SearchCombobox items={accountItems} value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="اختر الحساب..." />
+              </div>
+              <div className="space-y-1.5">
+                <Label>المبلغ *</Label>
+                <Input type="text" inputMode="decimal" placeholder="0.00" value={form.amount}
+                  onChange={e => setForm((p: any) => ({ ...p, amount: e.target.value.replace(/[^0-9.]/g, "") }))} required />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>ملاحظات</Label>
+              <Textarea className="resize-none text-sm" rows={2} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <div className="flex gap-2 justify-end pt-2 border-t">
+              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
+              <Button type="submit" disabled={saveMut.isPending}>حفظ التسوية</Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+        {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل...</div>
+          : settlements.length === 0 ? <div className="p-12 text-center text-muted-foreground text-sm">لا توجد تسويات بعد</div>
+          : (
+          <table className="w-full text-sm">
+            <thead><tr className="bg-muted/50 border-b">
+              {["رقم المستند","التاريخ","المورد","طريقة الدفع","الحساب","المبلغ","العملة","الحالة","إجراءات"].map(h =>
+                <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {settlements.map(s => (
+                <tr key={s.id} className="border-b hover:bg-muted/30">
+                  <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{s.docNumber ?? `SS-${s.id}`}</td>
+                  <td className="px-3 py-2.5">{s.settlementDate}</td>
+                  <td className="px-3 py-2.5">{supMap[s.supplierId] ?? "—"}</td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {s.paymentMethod === "bank" ? "تحويل بنكي" : s.paymentMethod === "cash" ? "نقدي" : "شيك"}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{accMap[s.accountId] ?? "—"}</td>
+                  <td className="px-3 py-2.5 font-mono font-semibold">{fmt(s.amount)}</td>
+                  <td className="px-3 py-2.5">{s.currencyCode}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
+                      s.status === "posted" ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200"
+                    )}>{s.status === "posted" ? "مرحّلة" : "مسودة"}</span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex gap-1">
+                      {s.status === "draft" && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
+                          onClick={() => { if (confirm("ترحيل التسوية؟")) postMut.mutate(s.id); }}>
+                          <CheckCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {s.status === "draft" && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => { if (confirm("حذف التسوية؟")) deleteMut.mutate(s.id); }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -6,7 +6,7 @@ import {
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
-  TrendingUp, Scale, PieChart,
+  TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -30,10 +30,19 @@ const companyNav = [
   { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true },
 ];
 const companyBusinessNav = [
-  { name: "الفواتير",        href: "/invoices",         icon: FileText,  permKey: "invoices" },
-  { name: "العملاء",         href: "/customers",        icon: Users,     permKey: "customers" },
-  { name: "الموردون",        href: "/suppliers",        icon: Truck,     permKey: "suppliers" },
-  { name: "الإقرار الضريبي", href: "/vat-declaration",  icon: BarChart3, permKey: "reports" },
+  { name: "الفواتير",        href: "/invoices",        icon: FileText,  permKey: "invoices" },
+  { name: "العملاء",         href: "/customers",       icon: Users,     permKey: "customers" },
+  { name: "الإقرار الضريبي", href: "/vat-declaration", icon: BarChart3, permKey: "reports" },
+];
+
+// ─── Purchasing Sub Nav ────────────────────────────────────────────────────────
+const purchasingSubNav = [
+  { name: "الموردون",                href: "/suppliers",                  icon: Truck        },
+  { name: "مجموعات الموردين",        href: "/purchasing/supplier-groups", icon: Users        },
+  { name: "الاعتمادات المستندية",    href: "/purchasing/lc",              icon: CreditCard   },
+  { name: "فواتير المشتريات",        href: "/purchasing/invoices",        icon: ShoppingCart },
+  { name: "مرتجعات المشتريات",      href: "/purchasing/returns",         icon: RotateCcw    },
+  { name: "تسوية الموردين",          href: "/purchasing/settlements",     icon: Banknote     },
 ];
 const companySystemNav = [
   { name: "ربط ZATCA",            href: "/zatca",                   icon: Link2,      permKey: "zatca" },
@@ -104,6 +113,46 @@ function NavItem({
         {item.name}
       </span>
     </Link>
+  );
+}
+
+// ─── PurchasingNavGroup ────────────────────────────────────────────────────────
+function PurchasingNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnPurchasing = location.startsWith("/purchasing") || location.startsWith("/suppliers");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnPurchasing && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <ShoppingCart className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">الموردون والمشتريات</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        }
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {purchasingSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -202,6 +251,8 @@ function SidebarInner({
   onInventoryToggle,
   reportsOpen,
   onReportsToggle,
+  purchasingOpen,
+  onPurchasingToggle,
   onNavigate,
   onLogout,
 }: {
@@ -213,6 +264,8 @@ function SidebarInner({
   onInventoryToggle: () => void;
   reportsOpen: boolean;
   onReportsToggle: () => void;
+  purchasingOpen: boolean;
+  onPurchasingToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -295,6 +348,18 @@ function SidebarInner({
                 </div>
               </div>
             )}
+
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المشتريات</p>
+              <div className="space-y-0.5">
+                <PurchasingNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={purchasingOpen}
+                  onToggle={onPurchasingToggle}
+                />
+              </div>
+            </div>
 
             {menuPerms.inventory !== false && (
               <div>
@@ -403,15 +468,17 @@ function SidebarInner({
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
-  const [mobileOpen, setMobileOpen]       = useState(false);
-  const [inventoryOpen, setInventoryOpen] = useState(() => location.startsWith("/inventory"));
-  const [reportsOpen, setReportsOpen]     = useState(() => location.startsWith("/accounting/reports"));
+  const [mobileOpen, setMobileOpen]           = useState(false);
+  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
+  const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
+  const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
 
-  const handleInventoryToggle = () => setInventoryOpen(v => !v);
-  const handleReportsToggle   = () => setReportsOpen(v => !v);
+  const handleInventoryToggle  = () => setInventoryOpen(v => !v);
+  const handleReportsToggle    = () => setReportsOpen(v => !v);
+  const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -423,6 +490,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onInventoryToggle: handleInventoryToggle,
     reportsOpen,
     onReportsToggle: handleReportsToggle,
+    purchasingOpen,
+    onPurchasingToggle: handlePurchasingToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };

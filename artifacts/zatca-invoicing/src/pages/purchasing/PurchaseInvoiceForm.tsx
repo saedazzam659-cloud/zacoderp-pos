@@ -1,0 +1,370 @@
+import { useState, useEffect } from "react";
+import { useRoute, useLocation } from "wouter";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle } from "lucide-react";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+const today = () => new Date().toISOString().slice(0, 10);
+
+interface InvoiceLine {
+  _id: string;
+  itemName: string;
+  itemCode: string;
+  unit: string;
+  qty: string;
+  weight: string;
+  unitPrice: string;
+  discount: string;
+  vatRate: string;
+  lineTotal: string;
+  expenseShare: string;
+  finalCost: string;
+  notes: string;
+}
+
+function newLine(): InvoiceLine {
+  return { _id: crypto.randomUUID(), itemName: "", itemCode: "", unit: "", qty: "1", weight: "0",
+    unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0", expenseShare: "0", finalCost: "0", notes: "" };
+}
+
+function calcLine(l: InvoiceLine) {
+  const qty = Number(l.qty) || 0;
+  const price = Number(l.unitPrice) || 0;
+  const disc = Number(l.discount) || 0;
+  const subtotal = qty * price * (1 - disc / 100);
+  const vat = subtotal * ((Number(l.vatRate) || 0) / 100);
+  return { lineTotal: subtotal + vat, subtotal };
+}
+
+export default function PurchaseInvoiceForm() {
+  const { user, token } = useAuth() as any;
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [, navigate] = useLocation();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const authH = { Authorization: `Bearer ${token}` };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const [matchNew]  = useRoute("/purchasing/invoices/new");
+  const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
+  const isNew  = !!matchNew;
+  const editId = matchEdit ? Number((params as any).id) : null;
+
+  const [activeTab,   setActiveTab]   = useState("header");
+  const [docNumber,   setDocNumber]   = useState("");
+  const [invoiceDate, setInvoiceDate] = useState(today());
+  const [supplierId,  setSupplierId]  = useState("");
+  const [paymentType, setPaymentType] = useState("credit");
+  const [currencyCode,setCurrencyCode]= useState("SAR");
+  const [exchangeRate,setExchangeRate]= useState("1");
+  const [lcId,        setLcId]        = useState("");
+  const [distMethod,  setDistMethod]  = useState("value");
+  const [notes,       setNotes]       = useState("");
+  const [lines,       setLines]       = useState<InvoiceLine[]>([newLine()]);
+
+  const { data: suppliers = [] } = useQuery<any[]>({
+    queryKey: ["suppliers", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: lcs = [] } = useQuery<any[]>({
+    queryKey: ["lc", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/purchasing/letters-of-credit?companyId=${cid}` : `${API}/api/purchasing/letters-of-credit`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: existing, isLoading: loadingEdit } = useQuery({
+    queryKey: ["purchase-invoice", editId],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/purchasing/purchase-invoices/${editId}?companyId=${cid}`, { headers: authH });
+      return r.json();
+    },
+    enabled: !!editId,
+  });
+
+  useEffect(() => {
+    if (!existing) return;
+    setDocNumber(existing.docNumber ?? "");
+    setInvoiceDate(existing.invoiceDate ?? today());
+    setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
+    setPaymentType(existing.paymentType ?? "credit");
+    setCurrencyCode(existing.currencyCode ?? "SAR");
+    setExchangeRate(String(existing.exchangeRate ?? "1"));
+    setLcId(existing.lcId ? String(existing.lcId) : "");
+    setDistMethod(existing.distributionMethod ?? "value");
+    setNotes(existing.notes ?? "");
+    setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
+      _id: crypto.randomUUID(), itemName: l.itemName ?? "", itemCode: l.itemCode ?? "",
+      unit: l.unit ?? "", qty: String(l.qty), weight: String(l.weight ?? "0"),
+      unitPrice: String(l.unitPrice), discount: String(l.discount ?? "0"),
+      vatRate: String(l.vatRate ?? "15"), lineTotal: String(l.lineTotal),
+      expenseShare: String(l.expenseShare ?? "0"), finalCost: String(l.finalCost ?? "0"),
+      notes: l.notes ?? "",
+    })) : [newLine()]);
+  }, [existing]);
+
+  function updateLine(id: string, field: keyof InvoiceLine, value: string) {
+    setLines(prev => prev.map(l => {
+      if (l._id !== id) return l;
+      const updated = { ...l, [field]: value };
+      const { lineTotal } = calcLine(updated);
+      return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
+    }));
+  }
+
+  // LC expenses distribution
+  const selectedLc = lcs.find((lc: any) => String(lc.id) === lcId);
+  const totalLcExpenses = selectedLc ? Number(selectedLc.totalExpensesLoaded ?? 0) : 0;
+
+  function distributeExpenses() {
+    if (!selectedLc || !lines.length) return;
+    const totalBase = distMethod === "qty"
+      ? lines.reduce((s, l) => s + (Number(l.qty) || 0), 0)
+      : lines.reduce((s, l) => s + (Number(l.lineTotal) || 0), 0);
+    if (!totalBase) return;
+    setLines(prev => prev.map(l => {
+      const base = distMethod === "qty" ? Number(l.qty) : Number(l.lineTotal);
+      const share = (base / totalBase) * totalLcExpenses;
+      const finalCost = Number(l.lineTotal) + share;
+      return { ...l, expenseShare: share.toFixed(2), finalCost: finalCost.toFixed(2) };
+    }));
+  }
+
+  const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
+  const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
+  const totalAmount    = subtotal + vatAmount;
+  const totalExpLoaded = lines.reduce((s, l) => s + (Number(l.expenseShare) || 0), 0);
+
+  const saveMut = useMutation({
+    mutationFn: async (data: any) => {
+      const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;
+      const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+      toast({ title: isNew ? "✓ تم إنشاء الفاتورة" : "✓ تم الحفظ" });
+      navigate("/purchasing/invoices");
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  function handleSave() {
+    saveMut.mutate({
+      companyId: cid, docNumber: docNumber || null, invoiceDate,
+      supplierId: supplierId || null, paymentType, currencyCode,
+      exchangeRate, lcId: lcId || null, distributionMethod: distMethod,
+      subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
+      discountAmount: "0", totalExpensesLoaded: totalExpLoaded.toFixed(2),
+      totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
+      notes: notes || null,
+      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+    });
+  }
+
+  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
+
+  const supplierItems = [{ value: "", label: "— بدون مورد —" }, ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr }))];
+  const lcItems = [{ value: "", label: "— بدون اعتماد —" }, ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => ({ value: String(l.id), label: `${l.lcNumber} (${l.currencyCode})` }))];
+
+  return (
+    <div className="space-y-5 max-w-5xl mx-auto" dir="rtl">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <ShoppingCart className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{isNew ? "فاتورة مشتريات جديدة" : `تعديل الفاتورة #${editId}`}</h1>
+            <p className="text-xs text-muted-foreground">{isNew ? "إنشاء فاتورة مشتريات مع تحميل مصاريف الاعتماد" : "تعديل بيانات الفاتورة"}</p>
+          </div>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {activeTab === "header" ? "أدخل بيانات الفاتورة الرأسية"
+                  : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount + totalExpLoaded)}`}
+              </p>
+              <TabsList className="h-8 bg-background border gap-1">
+                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+                </TabsTrigger>
+                <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemName).length})
+                </TabsTrigger>
+              </TabsList>
+            </div>
+          </CardHeader>
+
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">رقم الفاتورة</Label>
+                  <Input className="h-9 text-sm" placeholder="تلقائي" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">التاريخ *</Label>
+                  <Input type="date" className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
+                </div>
+                <div className="space-y-1.5 lg:col-span-2">
+                  <Label className="text-xs">المورد</Label>
+                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">نوع الدفع</Label>
+                  <Select value={paymentType} onValueChange={setPaymentType}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="credit">آجل</SelectItem>
+                      <SelectItem value="cash">نقدي</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">العملة</Label>
+                  <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">سعر الصرف</Label>
+                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">طريقة التوزيع</Label>
+                  <Select value={distMethod} onValueChange={setDistMethod}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="value">حسب القيمة</SelectItem>
+                      <SelectItem value="qty">حسب الكمية</SelectItem>
+                      <SelectItem value="weight">حسب الوزن</SelectItem>
+                      <SelectItem value="manual">يدوي</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
+                <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— اختر اعتماد مستندي —" />
+                {selectedLc && (
+                  <div className="flex items-center gap-3 mt-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>الاعتماد: {selectedLc.lcNumber} | المتبقي: {fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))} {selectedLc.currencyCode}</span>
+                    <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs" onClick={distributeExpenses}>توزيع المصاريف</Button>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">ملاحظات</Label>
+                <Textarea className="resize-none text-sm" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+              <div className="flex justify-start">
+                <Button type="button" variant="outline" className="gap-2 text-sm" onClick={() => setActiveTab("lines")}>
+                  <ListOrdered className="h-4 w-4" />التالي: الأصناف
+                </Button>
+              </div>
+            </CardContent>
+          </TabsContent>
+
+          <TabsContent value="lines" className="mt-0">
+            <CardContent className="pt-4 pb-5">
+              <div className="space-y-2 mb-3">
+                {lines.map(l => (
+                  <div key={l._id} className="grid gap-2 p-3 rounded-lg border bg-muted/20" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr auto" }}>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">الصنف *</p>
+                      <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                        onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">الكمية</p>
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
+                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">سعر الوحدة</p>
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">خصم%</p>
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">ضريبة%</p>
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                        onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">مصاريف</p>
+                      <Input className="h-8 text-xs bg-muted/40" readOnly value={fmt(l.expenseShare)} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground font-semibold text-primary">التكلفة النهائية</p>
+                      <Input className="h-8 text-xs bg-primary/5 font-semibold" readOnly value={fmt(l.finalCost)} />
+                    </div>
+                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
+                      onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
+                <Plus className="h-4 w-4" />إضافة صنف
+              </Button>
+
+              {/* Totals */}
+              <div className="mt-5 flex justify-end">
+                <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
+                  <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">مصاريف الاعتماد</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
+                  <div className="flex justify-between font-bold border-t pt-2 text-base">
+                    <span>الإجمالي</span><span className="font-mono text-primary">{fmt(totalAmount + totalExpLoaded)}</span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </TabsContent>
+        </Card>
+      </Tabs>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
+        <Button onClick={handleSave} disabled={saveMut.isPending}>
+          {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
+        </Button>
+      </div>
+    </div>
+  );
+}
