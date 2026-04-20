@@ -334,13 +334,12 @@ export default function PurchaseReturns() {
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">الوحدة</p>
                       {units.length > 0 ? (
-                        <Select value={l.unitId} onValueChange={v => {
+                        <Select value={l.unitId || undefined} onValueChange={v => {
                           const u = units.find((u: any) => String(u.id) === v);
                           setLines(prev => prev.map(x => x._id === l._id ? { ...x, unitId: v, unit: u?.nameAr ?? "" } : x));
                         }}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">—</SelectItem>
                             {units.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.nameAr}</SelectItem>)}
                           </SelectContent>
                         </Select>
