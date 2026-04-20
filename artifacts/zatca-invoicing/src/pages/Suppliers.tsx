@@ -4,9 +4,21 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
+  Pencil, Trash2, Save, X, TrendingUp, TrendingDown, Minus,
+} from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
 
 const SUPPLIER_EXPORT_COLS = [
   { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
@@ -16,8 +28,7 @@ const SUPPLIER_EXPORT_COLS = [
   { key: "phone",      header: "الهاتف",              width: 18 },
   { key: "email",      header: "البريد الإلكتروني",  width: 28 },
   { key: "city",       header: "المدينة",             width: 16 },
-  { key: "district",   header: "الحي",               width: 16 },
-  { key: "postalCode", header: "الرقم البريدي",      width: 14 },
+  { key: "balance",    header: "الرصيد",              width: 16 },
 ];
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,10 +39,24 @@ const TYPE_TABS = [
   { key: "noVat",   label: "غير مسجّلين" },
 ];
 
+const EMPTY_FORM = {
+  nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
+  email: "", phone: "", city: "", district: "",
+  street: "", buildingNumber: "", postalCode: "", country: "SA",
+};
+
 export default function Suppliers() {
   const { user, token } = useAuth();
-  const [search, setSearch]       = useState("");
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const [search,    setSearch]    = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const [editSup,   setEditSup]   = useState<any>(null);
+  const [editForm,  setEditForm]  = useState<typeof EMPTY_FORM>(EMPTY_FORM);
+  const [deleteSup, setDeleteSup] = useState<any>(null);
+
+  const headers = { Authorization: `Bearer ${token}` };
 
   const { data: suppliers = [], isLoading } = useQuery({
     queryKey: ["suppliers", user?.companyId],
@@ -39,11 +64,27 @@ export default function Suppliers() {
       const url = user?.companyId
         ? `${API}/api/suppliers?companyId=${user.companyId}`
         : `${API}/api/suppliers`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { headers });
       return res.json();
     },
     enabled: !!user,
   });
+
+  const { data: balances = [] } = useQuery({
+    queryKey: ["supplier-balances", user?.companyId],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API}/api/suppliers/balances?companyId=${user!.companyId}`,
+        { headers }
+      );
+      return res.json();
+    },
+    enabled: !!user?.companyId,
+  });
+
+  const balanceMap: Record<number, number> = Object.fromEntries(
+    (balances as any[]).map((b: any) => [b.supplierId, b.balance])
+  );
 
   const filtered = suppliers.filter((s: any) => {
     const matchSearch =
@@ -60,6 +101,94 @@ export default function Suppliers() {
   });
 
   const withVat = suppliers.filter((s: any) => s.vatNumber).length;
+
+  function openEdit(sup: any) {
+    setEditSup(sup);
+    setEditForm({
+      nameAr:         sup.nameAr         ?? "",
+      nameEn:         sup.nameEn         ?? "",
+      vatNumber:      sup.vatNumber      ?? "",
+      crNumber:       sup.crNumber       ?? "",
+      email:          sup.email          ?? "",
+      phone:          sup.phone          ?? "",
+      city:           sup.city           ?? "",
+      district:       sup.district       ?? "",
+      street:         sup.street         ?? "",
+      buildingNumber: sup.buildingNumber ?? "",
+      postalCode:     sup.postalCode     ?? "",
+      country:        sup.country        ?? "SA",
+    });
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: async (values: typeof EMPTY_FORM) => {
+      const res = await fetch(`${API}/api/suppliers/${editSup.id}`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      if (!res.ok) throw new Error("فشل التحديث");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم تحديث بيانات المورد" });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      setEditSup(null);
+    },
+    onError: () => toast({ title: "حدث خطأ أثناء التحديث", variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/suppliers/${id}`, {
+        method: "DELETE", headers,
+      });
+      if (!res.ok) throw new Error("فشل الحذف");
+    },
+    onSuccess: () => {
+      toast({ title: "تم حذف المورد" });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      setDeleteSup(null);
+    },
+    onError: () => toast({ title: "تعذّر الحذف — قد يكون مرتبطاً بفواتير", variant: "destructive" }),
+  });
+
+  function BalanceBadge({ supplierId }: { supplierId: number }) {
+    const bal = balanceMap[supplierId] ?? 0;
+    if (bal === 0) return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Minus className="h-3 w-3" />—
+      </span>
+    );
+    if (bal > 0) return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 whitespace-nowrap" dir="ltr">
+        <TrendingUp className="h-3 w-3 shrink-0" />
+        {bal.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} مدين
+      </span>
+    );
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 whitespace-nowrap" dir="ltr">
+        <TrendingDown className="h-3 w-3 shrink-0" />
+        {Math.abs(bal).toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} دائن
+      </span>
+    );
+  }
+
+  function Field({ label, name, placeholder, dir: d }: { label: string; name: keyof typeof EMPTY_FORM; placeholder?: string; dir?: string }) {
+    return (
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">{label}</label>
+        <Input
+          placeholder={placeholder}
+          dir={d}
+          className={d === "ltr" ? "text-left font-mono" : undefined}
+          value={(editForm as any)[name]}
+          onChange={e => setEditForm(f => ({ ...f, [name]: e.target.value }))}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -81,8 +210,7 @@ export default function Suppliers() {
               phone:      s.phone      ?? "",
               email:      s.email      ?? "",
               city:       s.city       ?? "",
-              district:   s.district   ?? "",
-              postalCode: s.postalCode ?? "",
+              balance:    (balanceMap[s.id] ?? 0).toFixed(2),
             }))}
             columns={SUPPLIER_EXPORT_COLS}
             filename={`موردون-${new Date().toISOString().slice(0, 10)}`}
@@ -166,20 +294,22 @@ export default function Suppliers() {
                 <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">الهاتف / البريد</th>
                 <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">الفئة</th>
                 <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">حالة الضريبة</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">الرصيد</th>
+                <th className="h-10 px-4 text-center font-medium text-muted-foreground text-xs tracking-wide w-20">إجراء</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 6 }).map((_, j) => (
+                    {Array.from({ length: 8 }).map((_, j) => (
                       <td key={j} className="px-5 py-4"><Skeleton className="h-4 w-full max-w-32" /></td>
                     ))}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={8} className="py-16 text-center text-muted-foreground">
                     <Truck className="h-10 w-10 mx-auto mb-3 opacity-30" />
                     <p className="text-sm">{search ? "لا توجد نتائج مطابقة" : "لا يوجد موردون بعد"}</p>
                     {!search && (
@@ -191,14 +321,20 @@ export default function Suppliers() {
                 </tr>
               ) : (
                 filtered.map((supplier: any) => (
-                  <tr key={supplier.id} className="border-b transition-colors hover:bg-muted/30 cursor-pointer group">
-                    <td className="px-5 py-3.5">
+                  <tr key={supplier.id}
+                    className="border-b transition-colors hover:bg-muted/30 cursor-pointer group">
+                    {/* Name — double-click to edit */}
+                    <td className="px-5 py-3.5"
+                      onDoubleClick={() => openEdit(supplier)}
+                      title="انقر مرتين للتعديل">
                       <div className="flex items-center gap-3">
                         <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
                           {supplier.nameAr?.[0] ?? "م"}
                         </div>
                         <div>
-                          <p className="font-medium text-foreground">{supplier.nameAr}</p>
+                          <p className="font-medium text-foreground group-hover:text-primary transition-colors">
+                            {supplier.nameAr}
+                          </p>
                           {supplier.nameEn && <p className="text-xs text-muted-foreground">{supplier.nameEn}</p>}
                         </div>
                       </div>
@@ -234,6 +370,27 @@ export default function Suppliers() {
                           : <><Building2 className="h-3 w-3" />غير مسجّل</>}
                       </span>
                     </td>
+                    {/* Balance column */}
+                    <td className="px-5 py-3.5 hidden sm:table-cell">
+                      <BalanceBadge supplierId={supplier.id} />
+                    </td>
+                    {/* Actions */}
+                    <td className="px-4 py-3.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={e => { e.stopPropagation(); openEdit(supplier); }}
+                          className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                          title="تعديل">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setDeleteSup(supplier); }}
+                          className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
+                          title="حذف">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -248,6 +405,87 @@ export default function Suppliers() {
           </div>
         )}
       </div>
+
+      {/* ────────── Edit Dialog ────────── */}
+      <Dialog open={!!editSup} onOpenChange={open => { if (!open) setEditSup(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Pencil className="h-4 w-4 text-primary" />
+              تعديل بيانات المورد — {editSup?.nameAr}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {/* Identity */}
+            <div className="rounded-lg border p-4 space-y-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <Truck className="h-3.5 w-3.5" />بيانات الهوية التجارية
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <Field label="اسم المورد (عربي) *" name="nameAr" placeholder="شركة التوريدات الوطنية" />
+                </div>
+                <Field label="الاسم (إنجليزي)" name="nameEn" placeholder="National Supply Co." dir="ltr" />
+                <Field label="الرقم الضريبي" name="vatNumber" placeholder="310000000000003" dir="ltr" />
+                <Field label="السجل التجاري" name="crNumber" placeholder="1010000001" dir="ltr" />
+                <Field label="البريد الإلكتروني" name="email" placeholder="info@supplier.com" dir="ltr" />
+                <Field label="الهاتف" name="phone" placeholder="0500000000" dir="ltr" />
+              </div>
+            </div>
+
+            {/* Address */}
+            <div className="rounded-lg border p-4 space-y-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5" />العنوان الوطني
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Field label="اسم الشارع" name="street" placeholder="شارع الملك فهد" />
+                <Field label="رقم المبنى" name="buildingNumber" placeholder="1234" dir="ltr" />
+                <Field label="الحي / المنطقة" name="district" placeholder="حي العليا" />
+                <Field label="المدينة" name="city" placeholder="الرياض" />
+                <Field label="الرمز البريدي" name="postalCode" placeholder="12345" dir="ltr" />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setEditSup(null)}>
+              <X className="h-4 w-4 mr-1" />إلغاء
+            </Button>
+            <Button
+              onClick={() => updateMutation.mutate(editForm)}
+              disabled={updateMutation.isPending || !editForm.nameAr.trim()}>
+              <Save className="h-4 w-4 mr-1" />
+              {updateMutation.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ────────── Delete Confirm ────────── */}
+      <AlertDialog open={!!deleteSup} onOpenChange={open => { if (!open) setDeleteSup(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />حذف المورد
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد من حذف المورد <strong>{deleteSup?.nameAr}</strong>؟
+              لا يمكن التراجع عن هذا الإجراء. إذا كان المورد مرتبطاً بفواتير لن يتم حذفه.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              onClick={() => deleteMutation.mutate(deleteSup.id)}
+              disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? "جاري الحذف..." : "تأكيد الحذف"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { suppliersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable } from "@workspace/db";
+import { eq, and, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
@@ -15,6 +15,60 @@ router.get("/", async (req, res) => {
     : db.select().from(suppliersTable);
   const suppliers = await query;
   res.json(suppliers);
+});
+
+/* GET /api/suppliers/balances?companyId=X
+   Returns [{ supplierId, invoicesTotal, returnsTotal, settlementsTotal, balance }] */
+router.get("/balances", async (req, res) => {
+  const rawCompanyId = req.query.companyId ? parseInt(req.query.companyId as string) : undefined;
+  const companyId = resolveCompanyId(req, rawCompanyId);
+  if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+  const [invRows, retRows, setRows] = await Promise.all([
+    db
+      .select({
+        supplierId: purchaseInvoicesTable.supplierId,
+        total: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}),0)`,
+      })
+      .from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.companyId, companyId), eq(purchaseInvoicesTable.status, "posted")))
+      .groupBy(purchaseInvoicesTable.supplierId),
+
+    db
+      .select({
+        supplierId: purchaseReturnsTable.supplierId,
+        total: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount}),0)`,
+      })
+      .from(purchaseReturnsTable)
+      .where(and(eq(purchaseReturnsTable.companyId, companyId), eq(purchaseReturnsTable.status, "posted")))
+      .groupBy(purchaseReturnsTable.supplierId),
+
+    db
+      .select({
+        supplierId: supplierSettlementsTable.supplierId,
+        total: sql<string>`coalesce(sum(${supplierSettlementsTable.amount}),0)`,
+      })
+      .from(supplierSettlementsTable)
+      .where(eq(supplierSettlementsTable.companyId, companyId))
+      .groupBy(supplierSettlementsTable.supplierId),
+  ]);
+
+  const invMap  = Object.fromEntries(invRows.map(r => [r.supplierId, parseFloat(r.total)]));
+  const retMap  = Object.fromEntries(retRows.map(r => [r.supplierId, parseFloat(r.total)]));
+  const setMap  = Object.fromEntries(setRows.map(r => [r.supplierId, parseFloat(r.total)]));
+
+  const suppliers = await db.select({ id: suppliersTable.id })
+    .from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
+
+  const result = suppliers.map(s => {
+    const inv = invMap[s.id]  ?? 0;
+    const ret = retMap[s.id]  ?? 0;
+    const set = setMap[s.id]  ?? 0;
+    const balance = inv - ret - set;
+    return { supplierId: s.id, invoicesTotal: inv, returnsTotal: ret, settlementsTotal: set, balance };
+  });
+
+  res.json(result);
 });
 
 router.post("/", async (req, res) => {
