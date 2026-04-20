@@ -211,7 +211,7 @@ export default function PurchaseReturns() {
             unitId:      l.unitId      ? String(l.unitId)      : "",
             unit:        l.unit        ?? "",
             warehouseId: l.warehouseId ? String(l.warehouseId) : "",
-            qty:         String(l.qty      ?? 1),
+            qty:         String(Math.round(Number(l.qty ?? 1))),
             unitPrice:   String(l.unitPrice ?? 0),
             vatRate:     String(l.vatRate   ?? 15),
             lineTotal:   String(l.lineTotal ?? 0),
@@ -430,8 +430,8 @@ export default function PurchaseReturns() {
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">الكمية</p>
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
-                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
+                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">السعر</p>
