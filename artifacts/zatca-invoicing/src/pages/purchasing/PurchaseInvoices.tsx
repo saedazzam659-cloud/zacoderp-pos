@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText } from "lucide-react";
+import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -175,6 +175,13 @@ export default function PurchaseInvoices() {
                             onClick={() => navigate(`/purchasing/invoices/${inv.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
+                          {inv.status === "posted" && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                              title="إنشاء مرتجع من هذه الفاتورة"
+                              onClick={() => navigate(`/purchasing/returns?fromInvoice=${inv.id}`)}>
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           {inv.status === "draft" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
                               onClick={() => { if (confirm("ترحيل الفاتورة؟")) postMut.mutate(inv.id); }}>

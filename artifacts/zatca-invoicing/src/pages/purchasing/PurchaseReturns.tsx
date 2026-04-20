@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -165,7 +165,63 @@ export default function PurchaseReturns() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  function reset() { setForm({ ...EMPTY }); setLines([newLine()]); setShowForm(false); }
+  function reset() {
+    setForm({ ...EMPTY });
+    setLines([newLine()]);
+    setShowForm(false);
+    // clear fromInvoice param from URL without navigation
+    const url = new URL(window.location.href);
+    url.searchParams.delete("fromInvoice");
+    window.history.replaceState({}, "", url.toString());
+  }
+
+  // ── Pre-fill form from purchase invoice (fromInvoice param) ─
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefilledRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const invId = params.get("fromInvoice");
+    if (!invId || !user || !currencies.length) return;
+    prefilledRef.current = true;
+
+    (async () => {
+      try {
+        const res = await fetch(`${API}/api/purchasing/purchase-invoices/${invId}`, { headers: authH });
+        if (!res.ok) return;
+        const inv = await res.json();
+
+        // set header
+        setForm({
+          docNumber: "",
+          returnDate: today(),
+          supplierId: inv.supplierId ? String(inv.supplierId) : "",
+          invoiceId:  String(inv.id),
+          currencyCode:  inv.currencyCode  ?? defaultCurrency?.code ?? "",
+          exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
+          notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
+        });
+
+        // map invoice lines → return lines
+        if (inv.lines?.length) {
+          setLines(inv.lines.map((l: any) => ({
+            _id:         crypto.randomUUID(),
+            itemId:      l.itemId      ? String(l.itemId)      : "",
+            itemName:    l.itemName    ?? "",
+            itemCode:    l.itemCode    ?? "",
+            unitId:      l.unitId      ? String(l.unitId)      : "",
+            unit:        l.unit        ?? "",
+            warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+            qty:         String(l.qty      ?? 1),
+            unitPrice:   String(l.unitPrice ?? 0),
+            vatRate:     String(l.vatRate   ?? 15),
+            lineTotal:   String(l.lineTotal ?? 0),
+          })));
+        }
+
+        setShowForm(true);
+      } catch (_) { /* silent */ }
+    })();
+  }, [user, currencies.length]);
 
   // ── Line helpers ─────────────────────────────────────────
   function calcLineTotal(l: ReturnLine) {
@@ -255,7 +311,18 @@ export default function PurchaseReturns() {
       {showForm && (
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center justify-between px-5 py-3 border-b">
-            <h2 className="font-semibold">مرتجع مشتريات جديد</h2>
+            <div>
+              <h2 className="font-semibold">مرتجع مشتريات جديد</h2>
+              {form.invoiceId && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  مستند من فاتورة رقم{" "}
+                  <span className="font-mono text-orange-600">
+                    {invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}
+                  </span>
+                  {" — يمكنك تعديل الكميات قبل الحفظ"}
+                </p>
+              )}
+            </div>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
 
