@@ -26,13 +26,17 @@ const superAdminNav = [
   { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
   { name: "الشركات",            href: "/companies",                 icon: Building2 },
 ];
-const companyNav = [
-  { name: "لوحة التحكم", href: "/", icon: LayoutDashboard, exact: true },
-];
 const companyBusinessNav = [
-  { name: "الفواتير",        href: "/invoices",        icon: FileText,  permKey: "invoices" },
-  { name: "العملاء",         href: "/customers",       icon: Users,     permKey: "customers" },
-  { name: "الإقرار الضريبي", href: "/vat-declaration", icon: BarChart3, permKey: "reports" },
+  { name: "العملاء", href: "/customers", icon: Users, permKey: "customers" },
+];
+const dashboardSubNav = [
+  { name: "المناطق الجغرافية", href: "/org/regions",          icon: MapPin     },
+  { name: "الفروع",            href: "/org/branches",         icon: BranchIcon },
+  { name: "ربط ZATCA",         href: "/zatca",                 icon: Link2      },
+  { name: "الإعدادات العامة",  href: "/general-settings",     icon: Sliders    },
+  { name: "العملات والتحويل",  href: "/settings/currencies",  icon: DollarSign },
+  { name: "الفواتير",          href: "/invoices",             icon: FileText   },
+  { name: "الإقرار الضريبي",  href: "/vat-declaration",      icon: BarChart3  },
 ];
 
 // ─── Purchasing Sub Nav ────────────────────────────────────────────────────────
@@ -45,15 +49,8 @@ const purchasingSubNav = [
   { name: "تسوية الموردين",          href: "/purchasing/settlements",     icon: Banknote     },
 ];
 const companySystemNav = [
-  { name: "ربط ZATCA",            href: "/zatca",                   icon: Link2,      permKey: "zatca" },
-  { name: "الإعدادات العامة",     href: "/general-settings",        icon: Sliders,    permKey: "always" },
-  { name: "شجرة الحسابات",        href: "/accounting/accounts",     icon: BookMarked, permKey: "always" },
-  { name: "القيود المحاسبية",     href: "/accounting/journals",     icon: BookOpen,   permKey: "always" },
-  { name: "العملات والتحويل",     href: "/settings/currencies",     icon: DollarSign, permKey: "always" },
-];
-const orgNav = [
-  { name: "المناطق الجغرافية", href: "/org/regions",  icon: MapPin      },
-  { name: "الفروع",            href: "/org/branches", icon: BranchIcon  },
+  { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked, permKey: "always" },
+  { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen,   permKey: "always" },
 ];
 const reportsSubNav = [
   { name: "كشف حساب",               href: "/accounting/reports/account-statement", icon: FileText    },
@@ -240,6 +237,48 @@ function ReportsNavGroup({
   );
 }
 
+// ─── DashboardNavGroup ─────────────────────────────────────────────────────────
+function DashboardNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isActive = location === "/";
+  const isOnSub  = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
+  return (
+    <div>
+      <div className={cn(
+        "flex items-center rounded-lg transition-colors",
+        (isActive || (isOnSub && !open))
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}>
+        <Link href="/" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
+          <LayoutDashboard className="h-4 w-4 shrink-0" />
+          <span>لوحة التحكم</span>
+        </Link>
+        <button onClick={onToggle} className="px-2 py-2 rounded-lg" title="عرض القائمة الفرعية">
+          {open
+            ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+            : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          }
+        </button>
+      </div>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {dashboardSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -247,6 +286,8 @@ function SidebarInner({
   isSuperAdmin,
   user,
   menuPerms,
+  dashboardOpen,
+  onDashboardToggle,
   inventoryOpen,
   onInventoryToggle,
   reportsOpen,
@@ -260,6 +301,8 @@ function SidebarInner({
   isSuperAdmin: boolean;
   user: any;
   menuPerms: Record<string, boolean>;
+  dashboardOpen: boolean;
+  onDashboardToggle: () => void;
   inventoryOpen: boolean;
   onInventoryToggle: () => void;
   reportsOpen: boolean;
@@ -332,9 +375,12 @@ function SidebarInner({
           <>
             {menuPerms.dashboard !== false && (
               <div className="space-y-0.5">
-                {companyNav.map(item => (
-                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
-                ))}
+                <DashboardNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={dashboardOpen}
+                  onToggle={onDashboardToggle}
+                />
               </div>
             )}
 
@@ -374,15 +420,6 @@ function SidebarInner({
                 </div>
               </div>
             )}
-
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">التنظيم الجغرافي</p>
-              <div className="space-y-0.5">
-                {orgNav.map(item => (
-                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
-                ))}
-              </div>
-            </div>
 
             <div>
               <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">التقارير</p>
@@ -469,6 +506,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen]           = useState(false);
+  const [dashboardOpen, setDashboardOpen]     = useState(() =>
+    location === "/" ||
+    ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
+  );
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
@@ -476,6 +517,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
 
+  const handleDashboardToggle  = () => setDashboardOpen(v => !v);
   const handleInventoryToggle  = () => setInventoryOpen(v => !v);
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
@@ -486,6 +528,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     isSuperAdmin,
     user,
     menuPerms,
+    dashboardOpen,
+    onDashboardToggle: handleDashboardToggle,
     inventoryOpen,
     onInventoryToggle: handleInventoryToggle,
     reportsOpen,
