@@ -27,13 +27,7 @@ const ENTRY_TYPES = [
   { value: "depreciation", label: "قيد إهلاك" },
 ];
 
-const CURRENCIES = [
-  { value: "SAR", label: "ريال سعودي (SAR)" },
-  { value: "USD", label: "دولار أمريكي (USD)" },
-  { value: "EUR", label: "يورو (EUR)" },
-  { value: "AED", label: "درهم إماراتي (AED)" },
-  { value: "GBP", label: "جنيه إسترليني (GBP)" },
-];
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface JournalLine {
   id:          string;
@@ -72,11 +66,64 @@ export default function JournalEntryForm() {
   const [branchId,     setBranchId]     = useState("");
   const [lines,        setLines]        = useState<JournalLine[]>([newLine(), newLine()]);
 
+  const { token } = useAuth() as any;
+  const authHeaders = { Authorization: `Bearer ${token}` };
+
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
     queryFn: () => branchesApi.getBranches(cid),
     enabled: !!user,
   });
+
+  const { data: dbCurrencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`;
+      const res = await fetch(url, { headers: authHeaders });
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
+  const { data: exchangeRates = [] } = useQuery<any[]>({
+    queryKey: ["exchange-rates", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`;
+      const res = await fetch(url, { headers: authHeaders });
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
+  const hasCurrencies = dbCurrencies.length > 0;
+  const defaultCurrency = dbCurrencies.find((c: any) => c.isDefault) ?? dbCurrencies[0];
+
+  function getLatestRate(selectedCode: string): string {
+    if (!hasCurrencies) return "1";
+    const selected = dbCurrencies.find((c: any) => c.code === selectedCode);
+    const base     = defaultCurrency;
+    if (!selected || !base || selected.id === base.id) return "1";
+    const rate = exchangeRates
+      .filter((r: any) =>
+        (r.fromCurrencyId === selected.id && r.toCurrencyId === base.id) ||
+        (r.fromCurrencyId === base.id     && r.toCurrencyId === selected.id)
+      )
+      .sort((a: any, b: any) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+    if (!rate) return "1";
+    if (rate.fromCurrencyId === selected.id) return String(rate.rate);
+    return String((1 / Number(rate.rate)).toFixed(6));
+  }
+
+  function handleCurrencyChange(code: string) {
+    setCurrency(code);
+    setExchangeRate(getLatestRate(code));
+  }
+
+  useEffect(() => {
+    if (!isNew || !hasCurrencies || !defaultCurrency) return;
+    setCurrency(defaultCurrency.code);
+    setExchangeRate("1");
+  }, [isNew, defaultCurrency?.code]);
 
   const { data: existing, isLoading: loadingEdit } = useQuery({
     queryKey: ["journal-entry", editId],
@@ -271,16 +318,29 @@ export default function JournalEntryForm() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">العملة</Label>
-                  <Select value={currency} onValueChange={setCurrency}>
+                  <Select value={currency} onValueChange={handleCurrencyChange}>
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {CURRENCIES.map(c => (
-                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                      ))}
+                      {hasCurrencies
+                        ? dbCurrencies
+                            .filter((c: any) => c.isActive)
+                            .map((c: any) => (
+                              <SelectItem key={c.code} value={c.code}>
+                                {c.symbol ? `${c.symbol} ` : ""}{c.nameAr} ({c.code})
+                                {c.isDefault ? " ★" : ""}
+                              </SelectItem>
+                            ))
+                        : <SelectItem value="SAR">ريال سعودي (SAR)</SelectItem>
+                      }
                     </SelectContent>
                   </Select>
+                  {!hasCurrencies && (
+                    <p className="text-[10px] text-amber-600 mt-0.5">
+                      أضف عملات من شاشة العملات لتظهر هنا
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -289,13 +349,21 @@ export default function JournalEntryForm() {
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">سعر الصرف</Label>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={exchangeRate}
-                    onChange={e => setExchangeRate(e.target.value)}
+                    onChange={e => {
+                      const v = e.target.value.replace(/[^0-9.]/g, "").replace(/^(\d*\.?\d*).*/, "$1");
+                      setExchangeRate(v);
+                    }}
                     className="h-9 text-sm"
-                    min="0"
-                    step="0.0001"
+                    dir="ltr"
                   />
+                  {hasCurrencies && currency && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      1 {currency} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">النوع</Label>
