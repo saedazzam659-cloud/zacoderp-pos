@@ -25,6 +25,7 @@ interface InvoiceLine {
   itemCode: string;
   unitId: string;
   unit: string;
+  warehouseId: string;
   qty: string;
   weight: string;
   unitPrice: string;
@@ -38,7 +39,8 @@ interface InvoiceLine {
 
 function newLine(): InvoiceLine {
   return {
-    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "", unitId: "", unit: "",
+    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
+    unitId: "", unit: "", warehouseId: "",
     qty: "1", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", expenseShare: "0", finalCost: "0", notes: "",
   };
@@ -116,6 +118,12 @@ export default function PurchaseInvoiceForm() {
     enabled: !!user,
   });
 
+  const { data: warehouses = [] } = useQuery<any[]>({
+    queryKey: ["warehouses", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
   // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -169,14 +177,21 @@ export default function PurchaseInvoiceForm() {
     setNotes(existing.notes ?? "");
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       _id: crypto.randomUUID(),
-      itemId: l.itemId ? String(l.itemId) : "",
-      itemName: l.itemName ?? "", itemCode: l.itemCode ?? "",
-      unitId: l.unitId ? String(l.unitId) : "", unit: l.unit ?? "",
-      qty: String(l.qty), weight: String(l.weight ?? "0"),
-      unitPrice: String(l.unitPrice), discount: String(l.discount ?? "0"),
-      vatRate: String(l.vatRate ?? "15"), lineTotal: String(l.lineTotal),
-      expenseShare: String(l.expenseShare ?? "0"), finalCost: String(l.finalCost ?? "0"),
-      notes: l.notes ?? "",
+      itemId:      l.itemId      ? String(l.itemId)      : "",
+      itemName:    l.itemName    ?? "",
+      itemCode:    l.itemCode    ?? "",
+      unitId:      l.unitId      ? String(l.unitId)      : "",
+      unit:        l.unit        ?? "",
+      warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+      qty:         String(l.qty),
+      weight:      String(l.weight ?? "0"),
+      unitPrice:   String(l.unitPrice),
+      discount:    String(l.discount ?? "0"),
+      vatRate:     String(l.vatRate ?? "15"),
+      lineTotal:   String(l.lineTotal),
+      expenseShare:String(l.expenseShare ?? "0"),
+      finalCost:   String(l.finalCost ?? "0"),
+      notes:       l.notes ?? "",
     })) : [newLine()]);
   }, [existing]);
 
@@ -494,20 +509,43 @@ export default function PurchaseInvoiceForm() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                    {/* Row 2: Code, Expense share, Final cost */}
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr 1fr auto" }}>
+                    {/* Row 2: Warehouse, Code, Weight, Notes, Expense, FinalCost */}
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "1.8fr 1.2fr 0.8fr 1.5fr 0.9fr 0.9fr auto" }}>
+                      {/* Warehouse — for stock movement */}
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                          المستودع
+                          {!l.warehouseId && l.itemId && (
+                            <span className="text-amber-600 text-[9px]">⚠ مطلوب للمخزون</span>
+                          )}
+                        </p>
+                        {warehouses.length > 0 ? (
+                          <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                            <SelectTrigger className={cn("h-7 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                              <SelectValue placeholder="اختر مستودع..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {warehouses.map((w: any) => (
+                                <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-7 text-xs" placeholder="—" readOnly />
+                        )}
+                      </div>
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">كود الصنف</p>
                         <Input className="h-7 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
                           onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">وزن (اختياري)</p>
+                        <p className="text-[10px] text-muted-foreground">وزن</p>
                         <Input className="h-7 text-xs" type="text" inputMode="decimal" value={l.weight}
                           onChange={e => updateLine(l._id, "weight", e.target.value.replace(/[^0-9.]/g, ""))} />
                       </div>
-                      <div className="space-y-1 col-span-2">
-                        <p className="text-[10px] text-muted-foreground">ملاحظات السطر</p>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">ملاحظات</p>
                         <Input className="h-7 text-xs" value={l.notes}
                           onChange={e => updateLine(l._id, "notes", e.target.value)} />
                       </div>

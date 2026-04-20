@@ -8,6 +8,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -222,8 +223,10 @@ router.post("/purchase-invoices", async (req, res) => {
       await db.insert(purchaseInvoiceLinesTable).values(
         lines.map((l: any) => ({
           invoiceId: inv.id, companyId: cid,
+          itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null,
           unit: l.unit || null,
+          unitId: l.unitId ? Number(l.unitId) : null,
           qty: String(l.qty || "1"), weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
@@ -268,8 +271,10 @@ router.put("/purchase-invoices/:id", async (req, res) => {
         await db.insert(purchaseInvoiceLinesTable).values(
           lines.map((l: any) => ({
             invoiceId: id, companyId: cid,
+            itemId: l.itemId ? Number(l.itemId) : null,
             itemName: l.itemName, itemCode: l.itemCode || null,
             unit: l.unit || null,
+            unitId: l.unitId ? Number(l.unitId) : null,
             qty: String(l.qty || "1"), weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
@@ -291,12 +296,46 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [inv] = await db.update(purchaseInvoicesTable)
-      .set({ status: "posted", updatedAt: new Date() })
-      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)))
-      .returning();
+
+    const [inv] = await db.select().from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
-    res.json(inv);
+    if (inv.status === "posted") { res.status(400).json({ error: "الفاتورة مُرحَّلة مسبقاً" }); return; }
+
+    const lines = await db.select().from(purchaseInvoiceLinesTable)
+      .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
+    if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
+
+    // Update stock balance for each stockable line (has itemId + warehouseId)
+    for (const line of lines) {
+      if (!line.itemId || !line.warehouseId) continue;
+      const qty      = Number(line.qty);
+      const cost     = Number(line.finalCost || line.unitPrice);
+      const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice);
+
+      await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
+      const newBal = await getBalance(cid, line.itemId, line.warehouseId);
+      await addStockLedgerEntry({
+        companyId:   cid,
+        itemId:      line.itemId,
+        warehouseId: line.warehouseId,
+        txDate:      inv.invoiceDate,
+        txType:      "purchase",
+        qty:         String(qty),
+        costPrice:   String(costUnit.toFixed(4)),
+        totalCost:   String(cost.toFixed(2)),
+        balanceQty:  String(newBal),
+        refId:       id,
+        refType:     "purchase_invoice",
+        notes:       line.notes ?? undefined,
+      });
+    }
+
+    const [updated] = await db.update(purchaseInvoicesTable)
+      .set({ status: "posted", updatedAt: new Date() })
+      .where(eq(purchaseInvoicesTable.id, id))
+      .returning();
+    res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -343,7 +382,10 @@ router.post("/purchase-returns", async (req, res) => {
       await db.insert(purchaseReturnLinesTable).values(
         lines.map((l: any) => ({
           returnId: ret.id, companyId: cid,
+          itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
+          unitId: l.unitId ? Number(l.unitId) : null,
+          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
@@ -351,6 +393,52 @@ router.post("/purchase-returns", async (req, res) => {
       );
     }
     res.status(201).json(ret);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch("/purchase-returns/:id/post", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [ret] = await db.select().from(purchaseReturnsTable)
+      .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
+    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    if (ret.status === "posted") { res.status(400).json({ error: "المرتجع مُرحَّل مسبقاً" }); return; }
+
+    const lines = await db.select().from(purchaseReturnLinesTable)
+      .where(eq(purchaseReturnLinesTable.returnId, id));
+    if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
+
+    // Decrease stock for each stockable return line
+    for (const line of lines) {
+      if (!line.itemId || !line.warehouseId) continue;
+      const qty      = Number(line.qty);
+      const costUnit = Number(line.unitPrice);
+
+      await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);
+      const newBal = await getBalance(cid, line.itemId, line.warehouseId);
+      await addStockLedgerEntry({
+        companyId:   cid,
+        itemId:      line.itemId,
+        warehouseId: line.warehouseId,
+        txDate:      ret.returnDate,
+        txType:      "purchase_return",
+        qty:         String(-qty),
+        costPrice:   String(costUnit.toFixed(4)),
+        totalCost:   String((-qty * costUnit).toFixed(2)),
+        balanceQty:  String(newBal),
+        refId:       id,
+        refType:     "purchase_return",
+        notes:       line.notes ?? undefined,
+      });
+    }
+
+    const [updated] = await db.update(purchaseReturnsTable)
+      .set({ status: "posted", updatedAt: new Date() })
+      .where(eq(purchaseReturnsTable.id, id))
+      .returning();
+    res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

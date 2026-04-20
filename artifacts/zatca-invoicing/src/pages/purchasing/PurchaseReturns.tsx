@@ -5,10 +5,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, X } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -22,6 +21,7 @@ interface ReturnLine {
   itemCode: string;
   unitId: string;
   unit: string;
+  warehouseId: string;
   qty: string;
   unitPrice: string;
   vatRate: string;
@@ -31,7 +31,8 @@ interface ReturnLine {
 function newLine(): ReturnLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
-    unitId: "", unit: "", qty: "1", unitPrice: "0", vatRate: "15", lineTotal: "0",
+    unitId: "", unit: "", warehouseId: "",
+    qty: "1", unitPrice: "0", vatRate: "15", lineTotal: "0",
   };
 }
 
@@ -98,6 +99,12 @@ export default function PurchaseReturns() {
     enabled: !!user,
   });
 
+  const { data: warehouses = [] } = useQuery<any[]>({
+    queryKey: ["warehouses", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
   // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -121,7 +128,6 @@ export default function PurchaseReturns() {
     setForm((p: any) => ({ ...p, currencyCode: code, exchangeRate: getLatestRate(code) }));
   }
 
-  // Set default currency when form opens or when currencies load
   useEffect(() => {
     if (!showForm || !defaultCurrency || form.currencyCode) return;
     setForm((p: any) => ({ ...p, currencyCode: defaultCurrency.code }));
@@ -138,6 +144,15 @@ export default function PurchaseReturns() {
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
     onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم إنشاء المرتجع" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const postMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: () => { invalidate(); toast({ title: "✓ تم ترحيل المرتجع وتحديث المخزون" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -167,7 +182,7 @@ export default function PurchaseReturns() {
 
   function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
-    if (!item) { return; }
+    if (!item) return;
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       const unit = units.find((u: any) => u.id === item.unitId);
@@ -229,7 +244,7 @@ export default function PurchaseReturns() {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <RotateCcw className="h-6 w-6 text-primary" />مرتجعات المشتريات
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">إدارة مرتجعات الموردين وعكس الحركات</p>
+          <p className="text-sm text-muted-foreground mt-1">إدارة مرتجعات الموردين — عند الترحيل يُنقص رصيد المخزون تلقائياً</p>
         </div>
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
           <Plus className="h-4 w-4" />مرتجع جديد
@@ -274,7 +289,7 @@ export default function PurchaseReturns() {
               <div className="space-y-1.5">
                 <Label className="text-sm">العملة</Label>
                 {currencies.length > 0 ? (
-                  <Select value={form.currencyCode} onValueChange={handleCurrencyChange}>
+                  <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="العملة..." /></SelectTrigger>
                     <SelectContent>
                       {currencies.map((c: any) => (
@@ -313,9 +328,8 @@ export default function PurchaseReturns() {
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
               {lines.map(l => (
                 <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                  {/* Row 1 */}
+                  {/* Row 1: Item, Unit, Qty, Price, VAT, Delete */}
                   <div className="grid gap-2" style={{ gridTemplateColumns: "3fr 1.2fr 1fr 1fr 0.8fr auto" }}>
-                    {/* Item from inventory */}
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">الصنف</p>
                       {inventoryItems.length > 0 ? (
@@ -330,7 +344,6 @@ export default function PurchaseReturns() {
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
                     </div>
-                    {/* Unit from units screen */}
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">الوحدة</p>
                       {units.length > 0 ? (
@@ -368,17 +381,41 @@ export default function PurchaseReturns() {
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                  {/* Row 2: Code + total */}
-                  <div className="flex gap-4 items-end">
-                    <div className="flex-1 space-y-1">
+                  {/* Row 2: Warehouse, Code, Total */}
+                  <div className="grid gap-2" style={{ gridTemplateColumns: "2fr 1.2fr 1fr auto" }}>
+                    {/* Warehouse — required for stock deduction */}
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                        المستودع
+                        {!l.warehouseId && l.itemId && (
+                          <span className="text-amber-600 text-[9px]">⚠ مطلوب لإنقاص المخزون</span>
+                        )}
+                      </p>
+                      {warehouses.length > 0 ? (
+                        <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                          <SelectTrigger className={cn("h-7 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                            <SelectValue placeholder="اختر مستودع..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {warehouses.map((w: any) => (
+                              <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input className="h-7 text-xs" placeholder="—" readOnly />
+                      )}
+                    </div>
+                    <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">كود الصنف</p>
                       <Input className="h-7 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                     </div>
-                    <div className="space-y-1 text-left">
+                    <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">الإجمالي</p>
-                      <Input className="h-7 text-xs bg-muted/40 w-32 text-left font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      <Input className="h-7 text-xs bg-muted/40 font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
                     </div>
+                    <div />
                   </div>
                 </div>
               ))}
@@ -450,10 +487,24 @@ export default function PurchaseReturns() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                      onClick={() => { if (confirm("حذف المرتجع؟")) deleteMut.mutate(r.id); }}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {r.status === "draft" && (
+                        <Button
+                          variant="outline" size="sm"
+                          className="h-7 text-xs gap-1 text-green-700 border-green-300 hover:bg-green-50"
+                          disabled={postMut.isPending}
+                          onClick={() => postMut.mutate(r.id)}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />ترحيل
+                        </Button>
+                      )}
+                      {r.status === "draft" && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                          onClick={() => { if (confirm("حذف المرتجع؟")) deleteMut.mutate(r.id); }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
