@@ -61,6 +61,12 @@ import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
 import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
 
+import CashBoxes        from "@/pages/cash/CashBoxes";
+import BankAccounts     from "@/pages/cash/BankAccounts";
+import ReceiptVouchers  from "@/pages/cash/ReceiptVouchers";
+import PaymentVouchers  from "@/pages/cash/PaymentVouchers";
+import CashTransfers    from "@/pages/cash/CashTransfers";
+
 const queryClient = new QueryClient();
 
 function LoadingScreen() {
@@ -170,6 +176,13 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/purchasing/invoices"        component={PurchaseInvoices} />}
             {!isSuperAdmin && <Route path="/purchasing/returns"         component={PurchaseReturns} />}
             {!isSuperAdmin && <Route path="/purchasing/settlements"     component={SupplierSettlement} />}
+
+            {/* Cash & Banks */}
+            {!isSuperAdmin && <Route path="/cash/boxes"            component={CashBoxes}       />}
+            {!isSuperAdmin && <Route path="/cash/banks"            component={BankAccounts}    />}
+            {!isSuperAdmin && <Route path="/cash/receipt-vouchers" component={ReceiptVouchers} />}
+            {!isSuperAdmin && <Route path="/cash/payment-vouchers" component={PaymentVouchers} />}
+            {!isSuperAdmin && <Route path="/cash/transfers"        component={CashTransfers}   />}
 
             {/* Settings routes */}
             {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}

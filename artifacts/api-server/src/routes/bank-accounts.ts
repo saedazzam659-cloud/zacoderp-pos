@@ -1,0 +1,107 @@
+import { Router } from "express";
+import { db } from "@workspace/db";
+import { bankAccountsTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
+import { eq, and, sql } from "drizzle-orm";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+const router = Router();
+router.use(extractAuth);
+
+router.get("/", async (req, res) => {
+  const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  const rows = cid
+    ? await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid))
+    : await db.select().from(bankAccountsTable);
+  res.json(rows);
+});
+
+router.get("/balances", async (req, res) => {
+  const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+  const banks = await db.select({ id: bankAccountsTable.id })
+    .from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
+
+  const [recv, paid] = await Promise.all([
+    db.select({
+      bankAccountId: receiptVouchersTable.bankAccountId,
+      total: sql<string>`coalesce(sum(${receiptVouchersTable.amount}),0)`,
+    }).from(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")))
+      .groupBy(receiptVouchersTable.bankAccountId),
+
+    db.select({
+      bankAccountId: paymentVouchersTable.bankAccountId,
+      total: sql<string>`coalesce(sum(${paymentVouchersTable.amount}),0)`,
+    }).from(paymentVouchersTable)
+      .where(and(eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")))
+      .groupBy(paymentVouchersTable.bankAccountId),
+  ]);
+
+  const recvMap = Object.fromEntries(recv.map(r => [r.bankAccountId!, parseFloat(r.total)]));
+  const paidMap = Object.fromEntries(paid.map(r => [r.bankAccountId!, parseFloat(r.total)]));
+
+  res.json(banks.map(b => ({
+    bankAccountId: b.id,
+    balance: (recvMap[b.id] ?? 0) - (paidMap[b.id] ?? 0),
+  })));
+});
+
+router.get("/:id", async (req, res) => {
+  const [row] = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.id, parseInt(req.params.id)));
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json(row);
+});
+
+router.post("/", async (req, res) => {
+  const d = req.body;
+  const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
+  if (!cid)   { res.status(400).json({ error: "companyId مطلوب" }); return; }
+  if (!d.nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
+  if (!d.code)   { res.status(400).json({ error: "الكود مطلوب" }); return; }
+  const [row] = await db.insert(bankAccountsTable).values({
+    companyId:     cid,
+    branchId:      d.branchId      ? parseInt(d.branchId)      : null,
+    code:          d.code,
+    nameAr:        d.nameAr,
+    nameEn:        d.nameEn        ?? null,
+    bankName:      d.bankName      ?? null,
+    bankNameEn:    d.bankNameEn    ?? null,
+    accountNumber: d.accountNumber ?? null,
+    iban:          d.iban          ?? null,
+    swiftCode:     d.swiftCode     ?? null,
+    currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
+    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
+    isActive:      d.isActive      ?? true,
+    notes:         d.notes         ?? null,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.put("/:id", async (req, res) => {
+  const d = req.body;
+  const [row] = await db.update(bankAccountsTable).set({
+    branchId:      d.branchId      ? parseInt(d.branchId)      : null,
+    code:          d.code,
+    nameAr:        d.nameAr,
+    nameEn:        d.nameEn        ?? null,
+    bankName:      d.bankName      ?? null,
+    bankNameEn:    d.bankNameEn    ?? null,
+    accountNumber: d.accountNumber ?? null,
+    iban:          d.iban          ?? null,
+    swiftCode:     d.swiftCode     ?? null,
+    currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
+    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
+    isActive:      d.isActive      ?? true,
+    notes:         d.notes         ?? null,
+  }).where(eq(bankAccountsTable.id, parseInt(req.params.id))).returning();
+  if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  res.json(row);
+});
+
+router.delete("/:id", async (req, res) => {
+  await db.delete(bankAccountsTable).where(eq(bankAccountsTable.id, parseInt(req.params.id)));
+  res.status(204).send();
+});
+
+export default router;

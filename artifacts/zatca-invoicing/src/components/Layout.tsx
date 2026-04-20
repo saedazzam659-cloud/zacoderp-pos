@@ -7,6 +7,7 @@ import {
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
+  Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -58,6 +59,15 @@ const reportsSubNav = [
   { name: "المركز المالي",           href: "/accounting/reports/balance-sheet",     icon: PieChart    },
   { name: "قائمة الدخل",            href: "/accounting/reports/income-statement",  icon: TrendingUp  },
 ];
+// ─── Cash Sub Nav ─────────────────────────────────────────────────────────────
+const cashSubNav = [
+  { name: "الخزن",          href: "/cash/boxes",             icon: Wallet           },
+  { name: "البنوك",          href: "/cash/banks",             icon: Landmark         },
+  { name: "سندات القبض",    href: "/cash/receipt-vouchers",  icon: ArrowDownCircle  },
+  { name: "سندات الصرف",    href: "/cash/payment-vouchers",  icon: ArrowUpCircle    },
+  { name: "التحويلات",       href: "/cash/transfers",         icon: ArrowLeftRight   },
+];
+
 const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav = [
   { name: "الأصناف",             href: "/inventory/items",            icon: Package           },
@@ -71,6 +81,30 @@ const inventorySubNav = [
   { name: "دفتر الحركة",         href: "/inventory/ledger",           icon: BookOpen          },
   { name: "رصيد المخزون",        href: "/inventory/balance",          icon: BarChart2         },
 ];
+
+// ─── CashNavGroup ──────────────────────────────────────────────────────────────
+function CashNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const isOnCash = location.startsWith("/cash");
+  return (
+    <div>
+      <button onClick={onToggle} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isOnCash && !open ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
+        <Wallet className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">النقد والبنوك</span>
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {cashSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 const DEFAULT_PERMS: Record<string, boolean> = {
@@ -294,6 +328,8 @@ function SidebarInner({
   onReportsToggle,
   purchasingOpen,
   onPurchasingToggle,
+  cashOpen,
+  onCashToggle,
   onNavigate,
   onLogout,
 }: {
@@ -309,6 +345,8 @@ function SidebarInner({
   onReportsToggle: () => void;
   purchasingOpen: boolean;
   onPurchasingToggle: () => void;
+  cashOpen: boolean;
+  onCashToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -433,6 +471,18 @@ function SidebarInner({
               </div>
             </div>
 
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">إدارة النقد والبنوك</p>
+              <div className="space-y-0.5">
+                <CashNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={cashOpen}
+                  onToggle={onCashToggle}
+                />
+              </div>
+            </div>
+
             {filteredSystem.length > 0 && (
               <div>
                 <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
@@ -513,6 +563,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
+  const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -521,6 +572,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleInventoryToggle  = () => setInventoryOpen(v => !v);
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
+  const handleCashToggle       = () => setCashOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -536,6 +588,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onReportsToggle: handleReportsToggle,
     purchasingOpen,
     onPurchasingToggle: handlePurchasingToggle,
+    cashOpen,
+    onCashToggle: handleCashToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };

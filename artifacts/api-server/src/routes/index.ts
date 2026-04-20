@@ -17,6 +17,11 @@ import journalEntriesRouter from "./journalEntries";
 import currenciesRouter from "./currencies";
 import accountingReportsRouter from "./reports-accounting";
 import purchasingRouter from "./purchasing";
+import cashBoxesRouter from "./cash-boxes";
+import bankAccountsRouter from "./bank-accounts";
+import receiptVouchersRouter from "./receipt-vouchers";
+import paymentVouchersRouter from "./payment-vouchers";
+import cashTransfersRouter from "./cash-transfers";
 
 const router: IRouter = Router();
 
@@ -36,6 +41,11 @@ router.use("/journal-entries", journalEntriesRouter);
 router.use("/currencies", currenciesRouter);
 router.use("/accounting-reports", accountingReportsRouter);
 router.use("/purchasing", purchasingRouter);
+router.use("/cash-boxes",         cashBoxesRouter);
+router.use("/bank-accounts",      bankAccountsRouter);
+router.use("/receipt-vouchers",   receiptVouchersRouter);
+router.use("/payment-vouchers",   paymentVouchersRouter);
+router.use("/cash-transfers",     cashTransfersRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

@@ -10,3 +10,4 @@ export * from "./branches";
 export * from "./journalEntries";
 export * from "./currencies";
 export * from "./purchasing";
+export * from "./cash";
