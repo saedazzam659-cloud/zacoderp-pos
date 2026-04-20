@@ -5,8 +5,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw } from "lucide-react";
+import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import PurchasePrintModal from "./PurchasePrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -28,6 +29,7 @@ export default function PurchaseInvoices() {
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [printData, setPrintData] = useState<any>(null);
 
   const { data: invoices = [], isLoading } = useQuery<any[]>({
     queryKey: ["purchase-invoices", cid],
@@ -67,6 +69,13 @@ export default function PurchaseInvoices() {
     onSuccess: () => { invalidate(); toast({ title: "✓ تم الحذف" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
+
+  async function openPrint(inv: any) {
+    const res = await fetch(`${API}/api/purchasing/purchase-invoices/${inv.id}`, { headers: authH });
+    const full = await res.json();
+    const supplier = suppliers.find((s: any) => s.id === inv.supplierId) ?? null;
+    setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], supplier, company: user?.company ?? null });
+  }
 
   const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, s.nameAr]));
 
@@ -175,6 +184,11 @@ export default function PurchaseInvoices() {
                             onClick={() => navigate(`/purchasing/invoices/${inv.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10"
+                            title="طباعة الفاتورة"
+                            onClick={() => openPrint(inv)}>
+                            <Printer className="h-3.5 w-3.5" />
+                          </Button>
                           {inv.status === "posted" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
                               title="إنشاء مرتجع من هذه الفاتورة"
@@ -204,6 +218,12 @@ export default function PurchaseInvoices() {
           </div>
         )}
       </div>
+
+      <PurchasePrintModal
+        open={!!printData}
+        onClose={() => setPrintData(null)}
+        data={printData}
+      />
     </div>
   );
 }

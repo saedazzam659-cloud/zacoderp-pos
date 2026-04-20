@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import PurchasePrintModal from "./PurchasePrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -52,6 +53,7 @@ export default function PurchaseReturns() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  const [printData, setPrintData] = useState<any>(null);
 
   // ── Lookups ─────────────────────────────────────────────
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
@@ -173,6 +175,13 @@ export default function PurchaseReturns() {
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
     window.history.replaceState({}, "", url.toString());
+  }
+
+  async function openPrint(ret: any) {
+    const res = await fetch(`${API}/api/purchasing/purchase-returns/${ret.id}`, { headers: authH });
+    const full = await res.json();
+    const supplier = suppliers.find((s: any) => s.id === ret.supplierId) ?? null;
+    setPrintData({ type: "return", doc: full, lines: full.lines ?? [], supplier, company: user?.company ?? null });
   }
 
   // ── Pre-fill form from purchase invoice (fromInvoice param) ─
@@ -555,6 +564,10 @@ export default function PurchaseReturns() {
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10"
+                        title="طباعة المرتجع" onClick={() => openPrint(r)}>
+                        <Printer className="h-3.5 w-3.5" />
+                      </Button>
                       {r.status === "draft" && (
                         <Button
                           variant="outline" size="sm"
@@ -579,6 +592,12 @@ export default function PurchaseReturns() {
           </table>
         )}
       </div>
+
+      <PurchasePrintModal
+        open={!!printData}
+        onClose={() => setPrintData(null)}
+        data={printData}
+      />
     </div>
   );
 }

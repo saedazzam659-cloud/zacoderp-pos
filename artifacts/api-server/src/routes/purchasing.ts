@@ -362,6 +362,20 @@ router.get("/purchase-returns", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.get("/purchase-returns/:id", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    const id = Number(req.params.id);
+    const [ret] = await db.select().from(purchaseReturnsTable)
+      .where(and(eq(purchaseReturnsTable.id, id), cid ? eq(purchaseReturnsTable.companyId, cid) : sql`true`));
+    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    const lines = await db.select().from(purchaseReturnLinesTable)
+      .where(eq(purchaseReturnLinesTable.returnId, id))
+      .orderBy(asc(purchaseReturnLinesTable.id));
+    res.json({ ...ret, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
