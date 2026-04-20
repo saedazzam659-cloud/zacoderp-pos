@@ -20,8 +20,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 interface InvoiceLine {
   _id: string;
+  itemId: string;
   itemName: string;
   itemCode: string;
+  unitId: string;
   unit: string;
   qty: string;
   weight: string;
@@ -35,8 +37,11 @@ interface InvoiceLine {
 }
 
 function newLine(): InvoiceLine {
-  return { _id: crypto.randomUUID(), itemName: "", itemCode: "", unit: "", qty: "1", weight: "0",
-    unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0", expenseShare: "0", finalCost: "0", notes: "" };
+  return {
+    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "", unitId: "", unit: "",
+    qty: "1", weight: "0", unitPrice: "0", discount: "0", vatRate: "15",
+    lineTotal: "0", expenseShare: "0", finalCost: "0", notes: "",
+  };
 }
 
 function calcLine(l: InvoiceLine) {
@@ -54,7 +59,7 @@ export default function PurchaseInvoiceForm() {
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
-  const authH = { Authorization: `Bearer ${token}` };
+  const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [matchNew]  = useRoute("/purchasing/invoices/new");
@@ -62,27 +67,22 @@ export default function PurchaseInvoiceForm() {
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
 
-  const [activeTab,   setActiveTab]   = useState("header");
-  const [docNumber,   setDocNumber]   = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(today());
-  const [supplierId,  setSupplierId]  = useState("");
-  const [paymentType, setPaymentType] = useState("credit");
-  const [currencyCode,setCurrencyCode]= useState("SAR");
-  const [exchangeRate,setExchangeRate]= useState("1");
-  const [lcId,        setLcId]        = useState("");
-  const [distMethod,  setDistMethod]  = useState("value");
-  const [notes,       setNotes]       = useState("");
-  const [lines,       setLines]       = useState<InvoiceLine[]>([newLine()]);
+  const [activeTab,    setActiveTab]    = useState("header");
+  const [docNumber,    setDocNumber]    = useState("");
+  const [invoiceDate,  setInvoiceDate]  = useState(today());
+  const [supplierId,   setSupplierId]   = useState("");
+  const [paymentType,  setPaymentType]  = useState("credit");
+  const [currencyCode, setCurrencyCode] = useState("");
+  const [exchangeRate, setExchangeRate] = useState("1");
+  const [lcId,         setLcId]         = useState("");
+  const [distMethod,   setDistMethod]   = useState("value");
+  const [notes,        setNotes]        = useState("");
+  const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
 
+  // ── Lookups ─────────────────────────────────────────────
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
-    enabled: !!user,
-  });
-
-  const { data: lcs = [] } = useQuery<any[]>({
-    queryKey: ["lc", cid],
-    queryFn: async () => { const r = await fetch(cid ? `${API}/api/purchasing/letters-of-credit?companyId=${cid}` : `${API}/api/purchasing/letters-of-credit`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
 
@@ -92,6 +92,61 @@ export default function PurchaseInvoiceForm() {
     enabled: !!user,
   });
 
+  const { data: exchangeRates = [] } = useQuery<any[]>({
+    queryKey: ["exchange-rates", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: lcs = [] } = useQuery<any[]>({
+    queryKey: ["lc", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/purchasing/letters-of-credit?companyId=${cid}` : `${API}/api/purchasing/letters-of-credit`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: inventoryItems = [] } = useQuery<any[]>({
+    queryKey: ["inventory-items", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: units = [] } = useQuery<any[]>({
+    queryKey: ["units", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  // ── Currency helpers ─────────────────────────────────────
+  const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
+
+  function getLatestRate(selectedCode: string): string {
+    if (!currencies.length) return "1";
+    const selected = currencies.find((c: any) => c.code === selectedCode);
+    const base = defaultCurrency;
+    if (!selected || !base || selected.id === base.id) return "1";
+    const rate = exchangeRates
+      .filter((r: any) =>
+        (r.fromCurrencyId === selected.id && r.toCurrencyId === base.id) ||
+        (r.fromCurrencyId === base.id     && r.toCurrencyId === selected.id)
+      )
+      .sort((a: any, b: any) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+    if (!rate) return "1";
+    if (rate.fromCurrencyId === selected.id) return String(rate.rate);
+    return String((1 / Number(rate.rate)).toFixed(6));
+  }
+
+  function handleCurrencyChange(code: string) {
+    setCurrencyCode(code);
+    setExchangeRate(getLatestRate(code));
+  }
+
+  // Set default currency on first load
+  useEffect(() => {
+    if (!isNew || !defaultCurrency || currencyCode) return;
+    setCurrencyCode(defaultCurrency.code);
+  }, [isNew, defaultCurrency?.code]);
+
+  // ── Load existing invoice ────────────────────────────────
   const { data: existing, isLoading: loadingEdit } = useQuery({
     queryKey: ["purchase-invoice", editId],
     queryFn: async () => {
@@ -113,8 +168,11 @@ export default function PurchaseInvoiceForm() {
     setDistMethod(existing.distributionMethod ?? "value");
     setNotes(existing.notes ?? "");
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
-      _id: crypto.randomUUID(), itemName: l.itemName ?? "", itemCode: l.itemCode ?? "",
-      unit: l.unit ?? "", qty: String(l.qty), weight: String(l.weight ?? "0"),
+      _id: crypto.randomUUID(),
+      itemId: l.itemId ? String(l.itemId) : "",
+      itemName: l.itemName ?? "", itemCode: l.itemCode ?? "",
+      unitId: l.unitId ? String(l.unitId) : "", unit: l.unit ?? "",
+      qty: String(l.qty), weight: String(l.weight ?? "0"),
       unitPrice: String(l.unitPrice), discount: String(l.discount ?? "0"),
       vatRate: String(l.vatRate ?? "15"), lineTotal: String(l.lineTotal),
       expenseShare: String(l.expenseShare ?? "0"), finalCost: String(l.finalCost ?? "0"),
@@ -122,6 +180,7 @@ export default function PurchaseInvoiceForm() {
     })) : [newLine()]);
   }, [existing]);
 
+  // ── Line helpers ─────────────────────────────────────────
   function updateLine(id: string, field: keyof InvoiceLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
@@ -131,9 +190,26 @@ export default function PurchaseInvoiceForm() {
     }));
   }
 
-  // LC expenses distribution
-  const selectedLc = lcs.find((lc: any) => String(lc.id) === lcId);
-  const totalLcExpenses = selectedLc ? Number(selectedLc.totalExpensesLoaded ?? 0) : 0;
+  function selectItem(lineId: string, itemId: string) {
+    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+    if (!item) { updateLine(lineId, "itemId", ""); return; }
+    setLines(prev => prev.map(l => {
+      if (l._id !== lineId) return l;
+      const unit = units.find((u: any) => u.id === item.unitId);
+      const updated: InvoiceLine = {
+        ...l,
+        itemId:    String(item.id),
+        itemName:  item.nameAr ?? "",
+        itemCode:  item.code   ?? "",
+        unitId:    item.unitId ? String(item.unitId) : "",
+        unit:      unit?.nameAr ?? "",
+        unitPrice: String(item.costPrice ?? "0"),
+        vatRate:   String(item.vatRate   ?? "15"),
+      };
+      const { lineTotal } = calcLine(updated);
+      return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
+    }));
+  }
 
   function distributeExpenses() {
     if (!selectedLc || !lines.length) return;
@@ -141,6 +217,7 @@ export default function PurchaseInvoiceForm() {
       ? lines.reduce((s, l) => s + (Number(l.qty) || 0), 0)
       : lines.reduce((s, l) => s + (Number(l.lineTotal) || 0), 0);
     if (!totalBase) return;
+    const totalLcExpenses = Number(selectedLc.totalExpensesLoaded ?? 0);
     setLines(prev => prev.map(l => {
       const base = distMethod === "qty" ? Number(l.qty) : Number(l.lineTotal);
       const share = (base / totalBase) * totalLcExpenses;
@@ -149,11 +226,14 @@ export default function PurchaseInvoiceForm() {
     }));
   }
 
+  // ── Totals ───────────────────────────────────────────────
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
   const totalAmount    = subtotal + vatAmount;
   const totalExpLoaded = lines.reduce((s, l) => s + (Number(l.expenseShare) || 0), 0);
+  const selectedLc     = lcs.find((lc: any) => String(lc.id) === lcId);
 
+  // ── Save ─────────────────────────────────────────────────
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;
@@ -183,11 +263,32 @@ export default function PurchaseInvoiceForm() {
 
   if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
 
-  const supplierItems = [{ value: "", label: "— بدون مورد —" }, ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr }))];
-  const lcItems = [{ value: "", label: "— بدون اعتماد —" }, ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => ({ value: String(l.id), label: `${l.lcNumber} (${l.currencyCode})` }))];
+  // ── Combobox data ────────────────────────────────────────
+  const supplierItems = [
+    { value: "", label: "— بدون مورد —" },
+    ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr })),
+  ];
+  const lcItems = [
+    { value: "", label: "— بدون اعتماد —" },
+    ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => ({
+      value: String(l.id), label: `${l.lcNumber} (${l.currencyCode} ${fmt(l.totalAmount)})`,
+    })),
+  ];
+  const itemComboItems = [
+    { value: "", label: "— اختر صنف —" },
+    ...inventoryItems.map((i: any) => ({
+      value: String(i.id),
+      label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr,
+    })),
+  ];
+  const unitItems = [
+    { value: "", label: "—" },
+    ...units.map((u: any) => ({ value: String(u.id), label: u.nameAr })),
+  ];
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto" dir="rtl">
+    <div className="space-y-5 max-w-6xl mx-auto" dir="rtl">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
           <ArrowRight className="h-4 w-4" />
@@ -198,7 +299,7 @@ export default function PurchaseInvoiceForm() {
           </div>
           <div>
             <h1 className="text-lg font-bold">{isNew ? "فاتورة مشتريات جديدة" : `تعديل الفاتورة #${editId}`}</h1>
-            <p className="text-xs text-muted-foreground">{isNew ? "إنشاء فاتورة مشتريات مع تحميل مصاريف الاعتماد" : "تعديل بيانات الفاتورة"}</p>
+            <p className="text-xs text-muted-foreground">إنشاء فاتورة مشتريات مع تحميل مصاريف الاعتماد</p>
           </div>
         </div>
       </div>
@@ -208,7 +309,8 @@ export default function PurchaseInvoiceForm() {
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {activeTab === "header" ? "أدخل بيانات الفاتورة الرأسية"
+                {activeTab === "header"
+                  ? "أدخل بيانات الفاتورة الرأسية"
                   : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount + totalExpLoaded)}`}
               </p>
               <TabsList className="h-8 bg-background border gap-1">
@@ -222,6 +324,7 @@ export default function PurchaseInvoiceForm() {
             </div>
           </CardHeader>
 
+          {/* ── Header Tab ──────────────────────────────────── */}
           <TabsContent value="header" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -238,6 +341,7 @@ export default function PurchaseInvoiceForm() {
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
                 </div>
               </div>
+
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">نوع الدفع</Label>
@@ -249,15 +353,41 @@ export default function PurchaseInvoiceForm() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Currency from currencies screen */}
                 <div className="space-y-1.5">
                   <Label className="text-xs">العملة</Label>
-                  <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                  {currencies.length > 0 ? (
+                    <Select value={currencyCode} onValueChange={handleCurrencyChange}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="العملة..." /></SelectTrigger>
+                      <SelectContent>
+                        {currencies.map((c: any) => (
+                          <SelectItem key={c.id} value={c.code}>
+                            {c.code} {c.nameAr ? `— ${c.nameAr}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                  )}
                 </div>
+
+                {/* Exchange rate — auto-filled from currency screen rates */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs">سعر الصرف</Label>
-                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
+                  <Label className="text-xs flex items-center justify-between">
+                    <span>سعر الصرف</span>
+                    {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        1 {currencyCode} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                      </span>
+                    )}
+                  </Label>
+                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr"
+                    value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
+
                 <div className="space-y-1.5">
                   <Label className="text-xs">طريقة التوزيع</Label>
                   <Select value={distMethod} onValueChange={setDistMethod}>
@@ -271,17 +401,24 @@ export default function PurchaseInvoiceForm() {
                   </Select>
                 </div>
               </div>
+
+              {/* LC */}
               <div className="space-y-1.5">
                 <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
                 <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— اختر اعتماد مستندي —" />
                 {selectedLc && (
                   <div className="flex items-center gap-3 mt-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
                     <AlertCircle className="h-4 w-4 shrink-0" />
-                    <span>الاعتماد: {selectedLc.lcNumber} | المتبقي: {fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))} {selectedLc.currencyCode}</span>
-                    <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs" onClick={distributeExpenses}>توزيع المصاريف</Button>
+                    <span>
+                      الاعتماد: <strong>{selectedLc.lcNumber}</strong> | المتبقي: <strong>{fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))}</strong> {selectedLc.currencyCode}
+                    </span>
+                    <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs border-blue-300 text-blue-700" onClick={distributeExpenses}>
+                      توزيع المصاريف
+                    </Button>
                   </div>
                 )}
               </div>
+
               <div className="space-y-1.5">
                 <Label className="text-xs">ملاحظات</Label>
                 <Textarea className="resize-none text-sm" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
@@ -294,51 +431,103 @@ export default function PurchaseInvoiceForm() {
             </CardContent>
           </TabsContent>
 
+          {/* ── Lines Tab ────────────────────────────────────── */}
           <TabsContent value="lines" className="mt-0">
             <CardContent className="pt-4 pb-5">
               <div className="space-y-2 mb-3">
                 {lines.map(l => (
-                  <div key={l._id} className="grid gap-2 p-3 rounded-lg border bg-muted/20" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1fr auto" }}>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">الصنف *</p>
-                      <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
-                        onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                  <div key={l._id} className="rounded-lg border bg-muted/20 p-3">
+                    {/* Row 1: Item, Unit, Qty, Price, Discount, VAT */}
+                    <div className="grid gap-2 mb-2" style={{ gridTemplateColumns: "3fr 1.2fr 1fr 1.2fr 0.8fr 0.8fr auto" }}>
+                      {/* Item — from inventory screen */}
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الصنف</p>
+                        {inventoryItems.length > 0 ? (
+                          <SearchCombobox
+                            items={itemComboItems}
+                            value={l.itemId}
+                            onValueChange={v => selectItem(l._id, v)}
+                            placeholder="اختر أو ابحث عن صنف..."
+                          />
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                            onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                        )}
+                      </div>
+                      {/* Unit — from units screen */}
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الوحدة</p>
+                        {units.length > 0 ? (
+                          <Select value={l.unitId} onValueChange={v => {
+                            const u = units.find((u: any) => String(u.id) === v);
+                            setLines(prev => prev.map(x => x._id === l._id ? { ...x, unitId: v, unit: u?.nameAr ?? "" } : x));
+                          }}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectContent>
+                              {unitItems.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الكمية</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
+                          onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">سعر الوحدة</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
+                          onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">خصم%</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
+                          onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">ضريبة%</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                          onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
+                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">الكمية</p>
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
-                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    {/* Row 2: Code, Expense share, Final cost */}
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr 1fr auto" }}>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">كود الصنف</p>
+                        <Input className="h-7 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">وزن (اختياري)</p>
+                        <Input className="h-7 text-xs" type="text" inputMode="decimal" value={l.weight}
+                          onChange={e => updateLine(l._id, "weight", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1 col-span-2">
+                        <p className="text-[10px] text-muted-foreground">ملاحظات السطر</p>
+                        <Input className="h-7 text-xs" value={l.notes}
+                          onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">مصاريف الاعتماد</p>
+                        <Input className="h-7 text-xs bg-blue-50 text-blue-700" readOnly value={fmt(l.expenseShare)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground font-semibold text-primary">التكلفة النهائية</p>
+                        <Input className="h-7 text-xs bg-primary/5 font-semibold text-primary" readOnly value={fmt(l.finalCost)} />
+                      </div>
+                      <div />
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">سعر الوحدة</p>
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
-                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">خصم%</p>
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
-                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">ضريبة%</p>
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
-                        onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground">مصاريف</p>
-                      <Input className="h-8 text-xs bg-muted/40" readOnly value={fmt(l.expenseShare)} />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground font-semibold text-primary">التكلفة النهائية</p>
-                      <Input className="h-8 text-xs bg-primary/5 font-semibold" readOnly value={fmt(l.finalCost)} />
-                    </div>
-                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
-                      onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
                   </div>
                 ))}
               </div>
+
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
@@ -350,8 +539,14 @@ export default function PurchaseInvoiceForm() {
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">مصاريف الاعتماد</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
-                    <span>الإجمالي</span><span className="font-mono text-primary">{fmt(totalAmount + totalExpLoaded)}</span>
+                    <span>الإجمالي</span>
+                    <span className="font-mono text-primary">{fmt(totalAmount + totalExpLoaded)}</span>
                   </div>
+                  {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
+                    <p className="text-[10px] text-muted-foreground border-t pt-1">
+                      المكافئ بـ {defaultCurrency?.code ?? "SAR"}: {fmt((totalAmount + totalExpLoaded) / Number(exchangeRate))}
+                    </p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -359,6 +554,7 @@ export default function PurchaseInvoiceForm() {
         </Card>
       </Tabs>
 
+      {/* Footer actions */}
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
         <Button onClick={handleSave} disabled={saveMut.isPending}>
