@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Layers, Search, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Layers, Search, Save, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Group = { id: number; code: string; nameAr: string; nameEn?: string };
-
 const EMPTY: Omit<Group, "id"> = { code: "", nameAr: "", nameEn: "" };
 
 export default function WarehouseGroups() {
@@ -30,7 +30,6 @@ export default function WarehouseGroups() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["warehouse-groups"] });
-
   const createMut = useMutation({ mutationFn: inventoryApi.createWarehouseGroup, onSuccess: () => { invalidate(); reset(); toast({ title: "تم الحفظ" }); } });
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateWarehouseGroup(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم التعديل" }); } });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteWarehouseGroup, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
@@ -49,7 +48,6 @@ export default function WarehouseGroups() {
 
   return (
     <div className="space-y-6" dir="rtl">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -62,48 +60,11 @@ export default function WarehouseGroups() {
         </Button>
       </div>
 
-      {/* Form */}
-      {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
-            <div className="flex items-center gap-2">
-              <Layers className="h-4 w-4 text-primary" />
-              <h2 className="font-semibold">{editId ? "تعديل مجموعة" : "مجموعة جديدة"}</h2>
-            </div>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="space-y-1.5">
-                <Label>كود المجموعة *</Label>
-                <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>الاسم بالعربي *</Label>
-                <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>الاسم بالإنجليزي</Label>
-                <Input placeholder="Main Group" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
-                {editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Search */}
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -156,6 +117,37 @@ export default function WarehouseGroups() {
           </div>
         )}
       </div>
+
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-primary" />
+              {editId ? "تعديل مجموعة مخازن" : "إضافة مجموعة جديدة"}
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>كود المجموعة <span className="text-destructive">*</span></Label>
+              <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+              <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالإنجليزي</Label>
+              <Input placeholder="Main Group" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

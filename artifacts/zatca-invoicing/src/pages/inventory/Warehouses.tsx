@@ -7,12 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Warehouse, Search, X, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
+import { Plus, Pencil, Trash2, Warehouse, Search, Save, X, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "" };
 
@@ -75,100 +75,6 @@ export default function Warehouses() {
         </Button>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل مخزن" : "مخزن جديد"}</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit}>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs text-muted-foreground">اختر التبويب لتعبئة البيانات</span>
-                <TabsList className="h-9">
-                  <TabsTrigger value="basic"    className="text-xs gap-1.5 px-3"><Warehouse  className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                  <TabsTrigger value="location" className="text-xs gap-1.5 px-3"><MapPin     className="h-3.5 w-3.5" />الموقع والإعدادات</TabsTrigger>
-                  <TabsTrigger value="accounts" className="text-xs gap-1.5 px-3"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
-                </TabsList>
-              </div>
-
-              {/* Tab 1 — البيانات الأساسية */}
-              <TabsContent value="basic" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>كود المخزن *</Label>
-                    <Input placeholder="WH-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>الاسم بالعربي *</Label>
-                    <Input placeholder="المخزن الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>الاسم بالإنجليزي</Label>
-                    <Input placeholder="Main Warehouse" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>مجموعة المخزن</Label>
-                    <SearchCombobox
-                      items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]}
-                      value={form.groupId}
-                      onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))}
-                      placeholder="— اختر مجموعة —"
-                    />
-                  </div>
-                </div>
-              </TabsContent>
-
-              {/* Tab 2 — الموقع والإعدادات */}
-              <TabsContent value="location" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>المدينة</Label>
-                    <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>المنطقة</Label>
-                    <Input placeholder="منطقة الرياض" value={form.region} onChange={e => setForm((p: any) => ({ ...p, region: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1.5 flex items-center gap-3 pt-3">
-                    <Switch checked={form.allowNegative} onCheckedChange={v => setForm((p: any) => ({ ...p, allowNegative: v }))} id="allow-neg" />
-                    <Label htmlFor="allow-neg">السماح بالسحب على المكشوف</Label>
-                  </div>
-                  {form.allowNegative && (
-                    <div className="space-y-1.5">
-                      <Label>حد السحب (اختياري)</Label>
-                      <Input type="number" placeholder="0.00" value={form.negativeLimit} onChange={e => setForm((p: any) => ({ ...p, negativeLimit: e.target.value }))} />
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Tab 3 — الربط المحاسبي */}
-              <TabsContent value="accounts" className="mt-0">
-                <div className="max-w-sm space-y-1.5">
-                  <Label>حساب المخزون</Label>
-                  <AccountCombobox
-                    value={form.accountId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
-                    placeholder="— اختر حساب المخزون —"
-                    filterTypes={["asset"]}
-                    grouped={false}
-                  />
-                  <p className="text-[10px] text-muted-foreground">الحساب المحاسبي الذي يُمثّل رصيد هذا المخزن في دفتر الأستاذ</p>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
-                {editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -205,24 +111,102 @@ export default function Warehouses() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف المخزن؟")) deleteMut.mutate(w.id); }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف المخزن؟")) deleteMut.mutate(w.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </td>
                   </tr>
                 ))}
           </tbody>
         </table>
-        {!isLoading && (
-          <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} مخزن
-          </div>
-        )}
+        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} مخزن</div>}
       </div>
+
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <Warehouse className="h-5 w-5 text-primary" />
+              {editId ? "تعديل مخزن" : "إضافة مخزن جديد"}
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="w-full h-9 mb-4">
+                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1"><Warehouse  className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
+                <TabsTrigger value="location" className="flex-1 text-xs gap-1"><MapPin     className="h-3.5 w-3.5" />الموقع</TabsTrigger>
+                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1"><BookMarked className="h-3.5 w-3.5" />المحاسبة</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="basic" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>كود المخزن <span className="text-destructive">*</span></Label>
+                  <Input placeholder="WH-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+                  <Input placeholder="المخزن الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالإنجليزي</Label>
+                  <Input placeholder="Main Warehouse" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>مجموعة المخزن</Label>
+                  <SearchCombobox
+                    items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]}
+                    value={form.groupId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))}
+                    placeholder="— اختر مجموعة —"
+                  />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="location" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>المدينة</Label>
+                  <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>المنطقة</Label>
+                  <Input placeholder="منطقة الرياض" value={form.region} onChange={e => setForm((p: any) => ({ ...p, region: e.target.value }))} />
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <Switch checked={form.allowNegative} onCheckedChange={v => setForm((p: any) => ({ ...p, allowNegative: v }))} id="allow-neg" />
+                  <Label htmlFor="allow-neg">السماح بالسحب على المكشوف</Label>
+                </div>
+                {form.allowNegative && (
+                  <div className="space-y-1.5">
+                    <Label>حد السحب (اختياري)</Label>
+                    <Input type="number" placeholder="0.00" value={form.negativeLimit} onChange={e => setForm((p: any) => ({ ...p, negativeLimit: e.target.value }))} />
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="accounts" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>حساب المخزون</Label>
+                  <AccountCombobox
+                    value={form.accountId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
+                    placeholder="— اختر حساب المخزون —"
+                    filterTypes={["asset"]}
+                    grouped={false}
+                  />
+                  <p className="text-[10px] text-muted-foreground">الحساب المحاسبي الذي يُمثّل رصيد هذا المخزن في دفتر الأستاذ</p>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

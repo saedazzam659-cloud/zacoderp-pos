@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Tag, Search, X, BookMarked } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Search, Save, X, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -71,75 +72,6 @@ export default function ItemGroups() {
         </Button>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل مجموعة" : "مجموعة جديدة"}</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit}>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs text-muted-foreground">اختر التبويب لتعبئة البيانات</span>
-                <TabsList className="h-9">
-                  <TabsTrigger value="basic"    className="text-xs gap-1.5 px-3"><Tag        className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                  <TabsTrigger value="accounts" className="text-xs gap-1.5 px-3"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
-                </TabsList>
-              </div>
-
-              <TabsContent value="basic" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>كود المجموعة *</Label>
-                    <Input placeholder="GRP-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>الاسم بالعربي *</Label>
-                    <Input placeholder="إلكترونيات" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>الاسم بالإنجليزي</Label>
-                    <Input placeholder="Electronics" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="accounts" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>حساب التكلفة الافتراضي</Label>
-                    <AccountCombobox
-                      value={form.costAccountId}
-                      onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
-                      placeholder="— اختر حساب التكلفة —"
-                      filterTypes={["expense", "asset"]}
-                      grouped={false}
-                    />
-                    <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>حساب الإيراد الافتراضي</Label>
-                    <AccountCombobox
-                      value={form.revenueAccountId}
-                      onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
-                      placeholder="— اختر حساب الإيراد —"
-                      filterTypes={["revenue"]}
-                      grouped={false}
-                    />
-                    <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>{editId ? "حفظ التعديل" : "إضافة"}</Button>
-            </div>
-          </form>
-        </div>
-      )}
-
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -177,6 +109,72 @@ export default function ItemGroups() {
         </table>
         {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} مجموعة</div>}
       </div>
+
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <Tag className="h-5 w-5 text-primary" />
+              {editId ? "تعديل مجموعة أصناف" : "إضافة مجموعة جديدة"}
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="w-full h-9 mb-4">
+                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Tag        className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
+                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="basic" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>كود المجموعة <span className="text-destructive">*</span></Label>
+                  <Input placeholder="GRP-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+                  <Input placeholder="إلكترونيات" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالإنجليزي</Label>
+                  <Input placeholder="Electronics" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="accounts" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>حساب التكلفة الافتراضي</Label>
+                  <AccountCombobox
+                    value={form.costAccountId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
+                    placeholder="— اختر حساب التكلفة —"
+                    filterTypes={["expense", "asset"]}
+                    grouped={false}
+                  />
+                  <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>حساب الإيراد الافتراضي</Label>
+                  <AccountCombobox
+                    value={form.revenueAccountId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
+                    placeholder="— اختر حساب الإيراد —"
+                    filterTypes={["revenue"]}
+                    grouped={false}
+                  />
+                  <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

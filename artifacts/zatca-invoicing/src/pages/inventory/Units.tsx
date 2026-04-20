@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Ruler, Search, X, Info, ArrowRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Ruler, Search, Save, X, Info, ArrowRight } from "lucide-react";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", conversionFactor: "1" };
 
-// Preset quick-add units
 const PRESETS = [
   { code: "PCS",  nameAr: "قطعة",    nameEn: "Piece",   conversionFactor: "1" },
   { code: "BOX",  nameAr: "علبة",    nameEn: "Box",     conversionFactor: "1" },
@@ -61,7 +61,6 @@ export default function Units() {
 
   return (
     <div className="space-y-6" dir="rtl">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><Ruler className="h-6 w-6 text-primary" />وحدات القياس</h1>
@@ -72,7 +71,6 @@ export default function Units() {
         </Button>
       </div>
 
-      {/* Concept Explanation */}
       <div className="rounded-xl border bg-blue-50 border-blue-100 p-4">
         <div className="flex items-start gap-3">
           <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
@@ -88,22 +86,20 @@ export default function Units() {
                   <div className="flex items-center gap-2">
                     <span className="bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-mono font-bold">واحدة</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>معامل ×1 — تكلفة <b>5</b> ر.س — بيع <b>10</b> ر.س</span>
+                    <span>معامل ×1 — تكلفة <b>5</b> ر.س</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="bg-purple-100 text-purple-700 rounded px-1.5 py-0.5 font-mono font-bold">كرتونة</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>معامل ×12 — تكلفة <b>60</b> ر.س — بيع <b>100</b> ر.س</span>
+                    <span>معامل ×12 — تكلفة <b>60</b> ر.س</span>
                   </div>
                 </div>
-                <p className="text-[10px] text-blue-500 mt-1.5">عند اختيار "كرتونة" في أي حركة → يتحول تلقائياً إلى 12 واحدة في المخزون</p>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Quick Presets */}
       <div className="rounded-xl border bg-card p-4">
         <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">وحدات شائعة — انقر للإضافة السريعة</p>
         <div className="flex flex-wrap gap-2">
@@ -122,39 +118,6 @@ export default function Units() {
           ))}
         </div>
       </div>
-
-      {/* Form */}
-      {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل وحدة" : "وحدة جديدة"}</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="space-y-1.5">
-              <Label>كود الوحدة *</Label>
-              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} required className="font-mono" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي *</Label>
-              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Piece" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>معامل التحويل الافتراضي</Label>
-              <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
-              <p className="text-[10px] text-muted-foreground">مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف</p>
-            </div>
-            <div className="col-span-2 sm:col-span-4 flex gap-2 justify-end pt-2 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>{editId ? "حفظ التعديل" : "إضافة"}</Button>
-            </div>
-          </form>
-        </div>
-      )}
 
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -205,10 +168,46 @@ export default function Units() {
         </table>
         {!isLoading && (
           <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} وحدة — لربط الوحدات بالأصناف وتحديد الأسعار انتقل إلى صفحة الأصناف
+            {filtered.length} وحدة
           </div>
         )}
       </div>
+
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <Ruler className="h-5 w-5 text-primary" />
+              {editId ? "تعديل وحدة قياس" : "إضافة وحدة جديدة"}
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>كود الوحدة <span className="text-destructive">*</span></Label>
+              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} required className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالإنجليزي</Label>
+              <Input placeholder="Piece" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>معامل التحويل الافتراضي</Label>
+              <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
+              <p className="text-[10px] text-muted-foreground">مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف</p>
+            </div>
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
-import { Plus, Pencil, Trash2, BookOpen, Search, X, ChevronLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, BookOpen, Search, Save, X, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -59,11 +60,11 @@ export default function ChartOfAccounts() {
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
-  const [search, setSearch]   = useState("");
+  const [search, setSearch]         = useState("");
   const [filterType, setFilterType] = useState("all");
-  const [form, setForm]       = useState<any>(EMPTY);
-  const [editId, setEditId]   = useState<number | null>(null);
-  const [showForm, setShowForm] = useState(false);
+  const [form, setForm]             = useState<any>(EMPTY);
+  const [editId, setEditId]         = useState<number | null>(null);
+  const [showForm, setShowForm]     = useState(false);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -85,7 +86,7 @@ export default function ChartOfAccounts() {
       const json = await res.json(); if (!res.ok) throw new Error(json.error);
       return json;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم حفظ الحساب" }); },
+    onSuccess: () => { invalidate(); reset(); toast({ title: "تم حفظ الحساب" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -95,7 +96,7 @@ export default function ChartOfAccounts() {
       const json = await res.json(); if (!res.ok) throw new Error(json.error);
       return json;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم التعديل" }); },
+    onSuccess: () => { invalidate(); reset(); toast({ title: "تم التعديل" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -104,7 +105,7 @@ export default function ChartOfAccounts() {
       const res = await fetch(`${API}/api/accounts/${id}`, { method: "DELETE", headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
     },
-    onSuccess: () => { invalidate(); toast({ title: "✓ تم الحذف" }); },
+    onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -114,16 +115,11 @@ export default function ChartOfAccounts() {
     setForm({ ...a, parentId: a.parentId ? String(a.parentId) : "", reportDirection: a.reportDirection ?? "" });
     setEditId(a.id);
     setShowForm(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = {
-      ...form,
-      parentId: form.parentId ? Number(form.parentId) : null,
-      level:    Number(form.level) || 1,
-    };
+    const payload = { ...form, parentId: form.parentId ? Number(form.parentId) : null, level: Number(form.level) || 1 };
     if (editId) updateMut.mutate({ id: editId, data: payload });
     else        createMut.mutate(payload);
   }
@@ -147,19 +143,15 @@ export default function ChartOfAccounts() {
 
   const parentItems = [
     { value: "", label: "— بدون حساب رئيسي —" },
-    ...accounts
-      .filter((a: any) => a.id !== editId)
-      .map((a: any) => ({ value: String(a.id), code: a.code, label: a.nameAr })),
+    ...accounts.filter((a: any) => a.id !== editId).map((a: any) => ({ value: String(a.id), code: a.code, label: a.nameAr })),
   ];
 
   return (
     <div className="space-y-6" dir="rtl">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <BookOpen className="h-6 w-6 text-primary" />
-            شجرة الحسابات
+            <BookOpen className="h-6 w-6 text-primary" />شجرة الحسابات
           </h1>
           <p className="text-muted-foreground text-sm mt-1">دليل الحسابات المالية — ربط الحسابات بالأصناف والعملاء والموردين والمخازن</p>
         </div>
@@ -171,85 +163,6 @@ export default function ChartOfAccounts() {
         </div>
       </div>
 
-      {/* Form */}
-      {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل حساب" : "حساب جديد"}</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label>كود الحساب *</Label>
-                <Input placeholder="1101" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>اسم الحساب (عربي) *</Label>
-                <Input placeholder="الصندوق" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>اسم الحساب (إنجليزي)</Label>
-                <Input placeholder="Cash" dir="ltr" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>نوع الحساب *</Label>
-                <SearchCombobox
-                  items={ACCOUNT_TYPES.map(t => ({ value: t.value, label: t.label, badge: t.label, badgeClass: t.badgeClass }))}
-                  value={form.accountType}
-                  onValueChange={v => setForm((p: any) => ({ ...p, accountType: v, reportDirection: p.reportDirection || "" }))}
-                  placeholder="نوع الحساب"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>توجيه الحساب في التقارير</Label>
-                <SearchCombobox
-                  items={REPORT_DIRECTIONS.map(d => ({ value: d.value, label: d.label }))}
-                  value={form.reportDirection ?? ""}
-                  onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
-                  placeholder={`تلقائي: ${DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? "مركز مالي" : "قائمة دخل"}`}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>الحساب الرئيسي</Label>
-                <SearchCombobox
-                  items={parentItems}
-                  value={form.parentId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
-                  placeholder="— بدون رئيسي —"
-                  searchPlaceholder="ابحث..."
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>المستوى</Label>
-                <Input type="number" min="1" max="10" value={form.level} onChange={e => setForm((p: any) => ({ ...p, level: Number(e.target.value) }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>ملاحظات</Label>
-                <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-              </div>
-              <div className="space-y-3 pt-1">
-                <div className="flex items-center gap-2">
-                  <Switch id="is-posting" checked={form.isPosting} onCheckedChange={v => setForm((p: any) => ({ ...p, isPosting: v }))} />
-                  <Label htmlFor="is-posting" className="cursor-pointer">حساب قيد (يقبل حركات)</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Switch id="is-active" checked={form.isActive} onCheckedChange={v => setForm((p: any) => ({ ...p, isActive: v }))} />
-                  <Label htmlFor="is-active" className="cursor-pointer">نشط</Label>
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end pt-2 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>
-                {editId ? "حفظ التعديل" : "إضافة الحساب"}
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Type filter chips */}
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setFilterType("all")}
@@ -275,13 +188,11 @@ export default function ChartOfAccounts() {
         })}
       </div>
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -298,21 +209,19 @@ export default function ChartOfAccounts() {
           </thead>
           <tbody className="divide-y">
             {isLoading
-              ? [...Array(5)].map((_, i) => (
-                  <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>
-                ))
+              ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
               ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
-                      <BookOpen className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                      <p className="font-medium">لا توجد حسابات</p>
-                      <p className="text-xs mt-1">أضف حسابك الأول لبدء الربط مع الأصناف والعملاء</p>
-                    </td>
-                  </tr>
-                )
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                    <BookOpen className="h-10 w-10 mx-auto mb-2 opacity-20" />
+                    <p className="font-medium">لا توجد حسابات</p>
+                    <p className="text-xs mt-1">أضف حسابك الأول لبدء الربط مع الأصناف والعملاء</p>
+                  </td>
+                </tr>
+              )
               : filtered.map((a: any) => {
-                  const typeInfo = TYPE_MAP[a.accountType];
+                  const typeInfo  = TYPE_MAP[a.accountType];
                   const parentAcc = a.parentId ? accounts.find((x: any) => x.id === a.parentId) : null;
                   return (
                     <tr key={a.id} className="hover:bg-muted/30">
@@ -329,34 +238,24 @@ export default function ChartOfAccounts() {
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell" dir="ltr">{a.nameEn ?? "—"}</td>
                       <td className="px-4 py-3 text-center">
-                        {typeInfo && (
-                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5 border", typeInfo.badgeClass)}>
-                            {typeInfo.label}
-                          </span>
-                        )}
+                        {typeInfo && <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5 border", typeInfo.badgeClass)}>{typeInfo.label}</span>}
                       </td>
                       <td className="px-4 py-3 text-center text-xs text-muted-foreground hidden sm:table-cell">{a.level}</td>
                       <td className="px-4 py-3 text-center hidden sm:table-cell">
                         {a.isPosting
                           ? <span className="text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">قيد</span>
-                          : <span className="text-[10px] bg-muted text-muted-foreground border rounded-full px-2 py-0.5">رأسي</span>
-                        }
+                          : <span className="text-[10px] bg-muted text-muted-foreground border rounded-full px-2 py-0.5">رأسي</span>}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {a.isActive
                           ? <span className="text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">نشط</span>
-                          : <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">موقوف</span>
-                        }
+                          : <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">موقوف</span>}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => { if (confirm("حذف هذا الحساب؟")) deleteMut.mutate(a.id); }}
-                          >
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => { if (confirm("حذف هذا الحساب؟")) deleteMut.mutate(a.id); }}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -366,12 +265,85 @@ export default function ChartOfAccounts() {
                 })}
           </tbody>
         </table>
-        {!isLoading && (
-          <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} حساب
-          </div>
-        )}
+        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} حساب</div>}
       </div>
+
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-primary" />
+              {editId ? "تعديل حساب" : "إضافة حساب جديد"}
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>كود الحساب <span className="text-destructive">*</span></Label>
+              <Input placeholder="1101" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>اسم الحساب (عربي) <span className="text-destructive">*</span></Label>
+              <Input placeholder="الصندوق" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>اسم الحساب (إنجليزي)</Label>
+              <Input placeholder="Cash" dir="ltr" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>نوع الحساب <span className="text-destructive">*</span></Label>
+              <SearchCombobox
+                items={ACCOUNT_TYPES.map(t => ({ value: t.value, label: t.label, badge: t.label, badgeClass: t.badgeClass }))}
+                value={form.accountType}
+                onValueChange={v => setForm((p: any) => ({ ...p, accountType: v, reportDirection: p.reportDirection || "" }))}
+                placeholder="نوع الحساب"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>توجيه الحساب في التقارير</Label>
+              <SearchCombobox
+                items={REPORT_DIRECTIONS.map(d => ({ value: d.value, label: d.label }))}
+                value={form.reportDirection ?? ""}
+                onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
+                placeholder={`تلقائي: ${DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? "مركز مالي" : "قائمة دخل"}`}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الحساب الرئيسي</Label>
+              <SearchCombobox
+                items={parentItems}
+                value={form.parentId}
+                onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
+                placeholder="— بدون رئيسي —"
+                searchPlaceholder="ابحث..."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>المستوى</Label>
+              <Input type="number" min="1" max="10" value={form.level} onChange={e => setForm((p: any) => ({ ...p, level: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>ملاحظات</Label>
+              <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <div className="space-y-3 pt-1">
+              <div className="flex items-center gap-2">
+                <Switch id="is-posting" checked={form.isPosting} onCheckedChange={v => setForm((p: any) => ({ ...p, isPosting: v }))} />
+                <Label htmlFor="is-posting" className="cursor-pointer">حساب قيد (يقبل حركات)</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="is-active" checked={form.isActive} onCheckedChange={v => setForm((p: any) => ({ ...p, isActive: v }))} />
+                <Label htmlFor="is-active" className="cursor-pointer">نشط</Label>
+              </div>
+            </div>
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الحساب"}
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
