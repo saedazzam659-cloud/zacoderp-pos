@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -319,9 +319,9 @@ export default function PurchaseReturns() {
       {/* ── Form ────────────────────────────────────────── */}
       {showForm && (
         <div className="rounded-xl border bg-card shadow-sm">
-          <div className="flex items-center justify-between px-5 py-3 border-b">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
             <div>
-              <h2 className="font-semibold">مرتجع مشتريات جديد</h2>
+              <h2 className="font-semibold flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" />مرتجع مشتريات جديد</h2>
               {form.invoiceId && (
                 <p className="text-xs text-muted-foreground mt-0.5">
                   مستند من فاتورة رقم{" "}
@@ -521,9 +521,9 @@ export default function PurchaseReturns() {
               </div>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={saveMut.isPending}>حفظ المرتجع</Button>
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1.5" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1.5" disabled={saveMut.isPending}><Send className="h-4 w-4" />حفظ المرتجع</Button>
             </div>
           </form>
         </div>

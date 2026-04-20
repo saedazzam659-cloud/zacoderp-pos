@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 
@@ -84,49 +85,51 @@ export default function StockCounting() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardList className="h-6 w-6 text-primary" />الجرد المخزني</h1>
           <p className="text-muted-foreground text-sm mt-1">مقارنة الكميات الفعلية بالكميات النظامية واعتماد الفروقات</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
           <Plus className="h-4 w-4" />جرد جديد
         </Button>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
-            <h2 className="font-semibold">ورقة جرد جديدة</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label>رقم الجرد</Label>
-                <Input placeholder="CNT-001 (تلقائي)" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>التاريخ *</Label>
-                <Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>المخزن *</Label>
-                <SearchCombobox
-                  items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                  value={form.warehouseId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
-                  placeholder="— اختر مخزن —"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>ملاحظات</Label>
-                <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-              </div>
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-primary" />
+              ورقة جرد جديدة
+            </SheetTitle>
+          </SheetHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>رقم الجرد</Label>
+              <Input placeholder="CNT-001 (تلقائي)" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} />
             </div>
-            <p className="text-xs text-muted-foreground mt-4 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
-            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending}>إنشاء ورقة الجرد</Button>
+            <div className="space-y-1.5">
+              <Label>التاريخ <span className="text-destructive">*</span></Label>
+              <Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} required />
             </div>
+            <div className="space-y-1.5">
+              <Label>المخزن <span className="text-destructive">*</span></Label>
+              <SearchCombobox
+                items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                value={form.warehouseId}
+                onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
+                placeholder="— اختر مخزن —"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>ملاحظات</Label>
+              <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <p className="text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
+            <SheetFooter className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending}>
+                <Save className="h-4 w-4" />إنشاء ورقة الجرد
+              </Button>
+            </SheetFooter>
           </form>
-        </div>
-      )}
+        </SheetContent>
+      </Sheet>
 
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

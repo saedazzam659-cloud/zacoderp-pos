@@ -223,8 +223,10 @@ export default function StockAdjustment() {
       {/* Form */}
       {showForm && (
         <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b bg-muted/30">
-            <h2 className="font-semibold">تسوية مخزنية جديدة</h2>
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <SlidersHorizontal className="h-5 w-5 text-primary" />تسوية مخزنية جديدة
+            </h2>
             <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
           </div>
           <form onSubmit={handleSubmit} className="p-5 space-y-5">
@@ -429,9 +431,9 @@ export default function StockAdjustment() {
               </p>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending}>حفظ التسوية</Button>
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1.5" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1.5" disabled={createMut.isPending}><Send className="h-4 w-4" />حفظ التسوية</Button>
             </div>
           </form>
         </div>

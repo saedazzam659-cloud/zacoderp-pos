@@ -12,11 +12,12 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
 import {
-  Plus, Pencil, Trash2, Package, Search, X,
+  Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
   AlertTriangle, BookMarked,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const EMPTY = {
@@ -250,7 +251,6 @@ export default function Items() {
     });
     setEditId(item.id);
     setShowForm(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -299,34 +299,32 @@ export default function Items() {
         </div>
         <div className="flex gap-2">
           <ExportButtons rows={exportRows} columns={ITEM_EXPORT_COLS} filename={`أصناف-${new Date().toISOString().slice(0,10)}`} title="قائمة الأصناف" />
-          <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+          <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
             <Plus className="h-4 w-4" />صنف جديد
           </Button>
         </div>
       </div>
 
-      {/* Form */}
-      {showForm && (
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">{editId ? "تعديل صنف" : "صنف جديد"}</h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
+      {/* Form — Sheet */}
+      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto" dir="rtl">
+          <SheetHeader className="border-b pb-4 mb-5">
+            <SheetTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-primary" />
+              {editId ? "تعديل صنف" : "صنف جديد"}
+            </SheetTitle>
+          </SheetHeader>
           <form onSubmit={handleSubmit}>
             <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
-              {/* Tab bar — top right */}
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs text-muted-foreground">اختر التبويب لتعبئة البيانات</span>
-                <TabsList className="h-9">
-                  <TabsTrigger value="basic"    className="text-xs gap-1.5 px-3"><Package   className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                  <TabsTrigger value="pricing"  className="text-xs gap-1.5 px-3"><Ruler      className="h-3.5 w-3.5" />التسعير والتحكم</TabsTrigger>
-                  <TabsTrigger value="accounts" className="text-xs gap-1.5 px-3"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
-                </TabsList>
-              </div>
+              <TabsList className="w-full h-9 mb-5">
+                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
+                <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />التسعير والتحكم</TabsTrigger>
+                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
+              </TabsList>
 
               {/* ── Tab 1: البيانات الأساسية ─────────────────────────────── */}
               <TabsContent value="basic" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5"><Label>كود الصنف *</Label><Input placeholder="ITM-001" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required /></div>
                   <div className="space-y-1.5"><Label>الاسم بالعربي *</Label><Input placeholder="اسم الصنف" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required /></div>
                   <div className="space-y-1.5"><Label>الاسم بالإنجليزي</Label><Input placeholder="Item Name" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></div>
@@ -373,7 +371,7 @@ export default function Items() {
                 <div className="space-y-5">
                   <div>
                     <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">التسعير الافتراضي</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5"><Label>سعر التكلفة</Label><Input type="number" step="any" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></div>
                       <div className="space-y-1.5"><Label>سعر البيع</Label><Input type="number" step="any" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></div>
                       <div className="space-y-1.5"><Label>نسبة الضريبة %</Label><Input type="number" step="any" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></div>
@@ -389,7 +387,7 @@ export default function Items() {
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">بيانات التحكم</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-1.5"><Label>حد الطلب</Label><Input type="number" step="any" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></div>
                       <div className="space-y-1.5"><Label>الحد الأقصى للمخزون</Label><Input type="number" step="any" placeholder="اختياري" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></div>
                       <div className="space-y-1.5"><Label>ملاحظات / وصف</Label><Input placeholder="وصف الصنف" value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></div>
@@ -424,14 +422,15 @@ export default function Items() {
                 </div>
               </TabsContent>
             </Tabs>
-
-            <div className="flex gap-2 justify-end pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" onClick={reset}>إلغاء</Button>
-              <Button type="submit" disabled={createMut.isPending || updateMut.isPending}>{editId ? "حفظ التعديل" : "إضافة الصنف"}</Button>
-            </div>
+            <SheetFooter className="flex gap-2 pt-4 mt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الصنف"}
+              </Button>
+            </SheetFooter>
           </form>
-        </div>
-      )}
+        </SheetContent>
+      </Sheet>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
