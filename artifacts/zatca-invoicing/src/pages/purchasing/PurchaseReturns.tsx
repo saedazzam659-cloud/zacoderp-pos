@@ -177,9 +177,16 @@ export default function PurchaseReturns() {
       const res = await fetch(`${API}/api/purchasing/purchase-returns`, {
         method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(j.error);
+      if (j?.id && (j.status ?? "draft") === "draft") {
+        const pr = await fetch(`${API}/api/purchasing/purchase-returns/${j.id}/post`, { method: "PATCH", headers });
+        const pj = await pr.json().catch(() => ({}));
+        if (!pr.ok) throw new Error(`تم الحفظ ولكن فشل الترحيل: ${pj.error || pr.statusText}`);
+        return pj;
+      }
+      return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم إنشاء المرتجع" }); },
+    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم إنشاء المرتجع وترحيله" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 

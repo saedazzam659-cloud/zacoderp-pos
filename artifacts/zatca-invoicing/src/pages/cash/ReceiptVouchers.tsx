@@ -76,9 +76,16 @@ export default function ReceiptVouchers() {
       const url = editing ? `${API}/api/receipt-vouchers/${editing.id}` : `${API}/api/receipt-vouchers`;
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const j = await res.json();
+      if (j?.id && (j.status ?? "draft") === "draft") {
+        const pr = await fetch(`${API}/api/receipt-vouchers/${j.id}/post`, { method: "POST", headers: h });
+        const pj = await pr.json().catch(() => ({}));
+        if (!pr.ok) throw new Error(`تم الحفظ ولكن فشل الترحيل: ${pj.error || pr.statusText}`);
+        return pj;
+      }
+      return j;
     },
-    onSuccess: () => { toast({ title: editing ? "تم التحديث" : "تم إنشاء السند" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setPanel(false); },
+    onSuccess: () => { toast({ title: editing ? "تم التحديث والترحيل" : "تم إنشاء السند وترحيله" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setPanel(false); },
     onError: (e: any) => toast({ title: e.message || "حدث خطأ", variant: "destructive" }),
   });
 

@@ -275,11 +275,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/sales/${apiPath}/${editId}` : `${API}/api/sales/${apiPath}`;
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(j.error);
+
+      // Auto-post (ترحيل) immediately after save for invoices only (not quotations)
+      if (isInvoice && j?.id && (j.status ?? "draft") === "draft") {
+        const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
+          method: "PATCH", headers,
+        });
+        const postJson = await postRes.json().catch(() => ({}));
+        if (!postRes.ok) {
+          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${postJson.error || postRes.statusText}`);
+        }
+        return postJson;
+      }
+      return j;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : "sales-quotations"] });
-      toast({ title: isNew ? (isInvoice ? "✓ تم إنشاء الفاتورة" : "✓ تم إنشاء العرض") : "✓ تم الحفظ" });
+      toast({ title: isNew
+        ? (isInvoice ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم إنشاء العرض")
+        : (isInvoice ? "✓ تم الحفظ والترحيل" : "✓ تم الحفظ") });
       navigate(basePath);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),

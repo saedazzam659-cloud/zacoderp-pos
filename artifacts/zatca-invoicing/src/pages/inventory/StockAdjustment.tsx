@@ -72,8 +72,24 @@ export default function StockAdjustment() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["stock-adjustments"] });
   const createMut = useMutation({
-    mutationFn: inventoryApi.createAdjustment,
-    onSuccess: () => { invalidate(); reset(); toast({ title: "تم إنشاء التسوية" }); },
+    mutationFn: async (d: any) => {
+      const created: any = await inventoryApi.createAdjustment(d);
+      if (created?.id && (created.status ?? "draft") === "draft") {
+        try {
+          return await inventoryApi.postAdjustment(created.id);
+        } catch (e: any) {
+          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${e?.message || e}`);
+        }
+      }
+      return created;
+    },
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["stock-balance"] });
+      reset();
+      toast({ title: "تم إنشاء التسوية وترحيلها" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
   const postMut = useMutation({
     mutationFn: inventoryApi.postAdjustment,

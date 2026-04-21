@@ -71,8 +71,24 @@ export default function StockTransfer() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["stock-transfers"] });
   const createMut = useMutation({
-    mutationFn: (d: any) => inventoryApi.createTransfer(d),
-    onSuccess: () => { invalidate(); reset(); toast({ title: "تم إنشاء أمر التحويل" }); },
+    mutationFn: async (d: any) => {
+      const created: any = await inventoryApi.createTransfer(d);
+      if (created?.id && (created.status ?? "draft") === "draft") {
+        try {
+          return await inventoryApi.postTransfer(created.id);
+        } catch (e: any) {
+          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${e?.message || e}`);
+        }
+      }
+      return created;
+    },
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["stock-balance"] });
+      reset();
+      toast({ title: "تم إنشاء أمر التحويل وترحيله" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
   const postMut = useMutation({
     mutationFn: (id: number) => inventoryApi.postTransfer(id),
