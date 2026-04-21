@@ -168,7 +168,8 @@ export default function JournalEntryForm() {
           }))
         : [newLine(), newLine()]
     );
-    setActiveTab("header");
+    const tabParam = new URLSearchParams(window.location.search).get("tab");
+    setActiveTab(tabParam === "lines" ? "lines" : "header");
   }, [existing]);
 
   const totalDebit  = lines.reduce((s, l) => s + (parseFloat(l.debit)  || 0), 0);

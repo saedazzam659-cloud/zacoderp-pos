@@ -259,7 +259,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                       <tr
                         key={entry.id}
                         className="hover:bg-muted/20 transition-colors cursor-pointer"
-                        onDoubleClick={() => navigate(`/accounting/journals/${entry.id}`)}
+                        onDoubleClick={() => navigate(`/accounting/journals/${entry.id}?tab=lines`)}
                         title="انقر مرتين لعرض سطور القيد"
                       >
                         <td className="px-4 py-3 font-mono text-xs font-semibold text-primary">
