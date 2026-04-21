@@ -36,7 +36,8 @@ router.post("/bulk-import", async (req, res) => {
       return String(a.code ?? "").localeCompare(String(b.code ?? ""));
     });
 
-    const validTypes = new Set(["asset", "liability", "equity", "revenue", "expense"]);
+    const validTypes      = new Set(["asset", "liability", "equity", "revenue", "expense"]);
+    const validDirections = new Set(["", "balance_sheet", "income_statement"]);
 
     const performImport = async (tx: any) => {
       if (mode === "replace") {
@@ -63,11 +64,18 @@ router.post("/bulk-import", async (req, res) => {
           const parentId   = parentCode ? (codeToId[parentCode] ?? null) : null;
           if (parentCode && !parentId) errors.push(`${code}: لم يُعثر على الحساب الأب (${parentCode})`);
 
+          const reportDirection = String(a.reportDirection ?? "").trim();
+          if (!validDirections.has(reportDirection)) {
+            errors.push(`${code}: قيمة توجيه الحساب غير صحيحة (${reportDirection}) — يجب أن تكون balance_sheet أو income_statement`);
+          }
+          const finalDirection = validDirections.has(reportDirection) && reportDirection !== "" ? reportDirection : null;
+
           if (codeToId[code]) {
             await tx.update(accountsTable).set({
               nameAr, nameEn: a.nameEn || null,
               accountType: accountType as any,
               parentId, level: a.level ?? (parentCode ? 2 : 1),
+              reportDirection: finalDirection,
               isPosting: typeof a.isPosting === "boolean" ? a.isPosting : true,
               isActive:  typeof a.isActive  === "boolean" ? a.isActive  : true,
               notes: a.notes || null, updatedAt: new Date(),
@@ -78,6 +86,7 @@ router.post("/bulk-import", async (req, res) => {
               companyId: cid, code, nameAr, nameEn: a.nameEn || null,
               accountType: accountType as any,
               parentId, level: a.level ?? (parentCode ? 2 : 1),
+              reportDirection: finalDirection,
               isPosting: typeof a.isPosting === "boolean" ? a.isPosting : true,
               isActive:  typeof a.isActive  === "boolean" ? a.isActive  : true,
               notes: a.notes || null,

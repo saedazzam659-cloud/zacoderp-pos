@@ -11,16 +11,34 @@ import { COA_TEMPLATES, TEMPLATE_LABELS, type CoaRow } from "@/lib/coaTemplates"
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const COLUMN_HEADERS = [
-  { key: "code",        ar: "كود الحساب" },
-  { key: "nameAr",      ar: "اسم الحساب (عربي)" },
-  { key: "nameEn",      ar: "اسم الحساب (إنجليزي)" },
-  { key: "accountType", ar: "نوع الحساب (asset/liability/equity/revenue/expense)" },
-  { key: "parentCode",  ar: "كود الحساب الأب" },
-  { key: "level",       ar: "المستوى" },
-  { key: "isPosting",   ar: "حساب قيد (true/false)" },
-  { key: "isActive",    ar: "نشط (true/false)" },
-  { key: "notes",       ar: "ملاحظات" },
+  { key: "code",            ar: "كود الحساب" },
+  { key: "nameAr",          ar: "اسم الحساب (عربي)" },
+  { key: "nameEn",          ar: "اسم الحساب (إنجليزي)" },
+  { key: "accountType",     ar: "نوع الحساب (asset/liability/equity/revenue/expense)" },
+  { key: "parentCode",      ar: "كود الحساب الأب" },
+  { key: "level",           ar: "المستوى" },
+  { key: "isPosting",       ar: "حساب قيد (true/false)" },
+  { key: "isActive",        ar: "نشط (true/false)" },
+  { key: "reportDirection", ar: "توجيه الحساب (balance_sheet/income_statement)" },
+  { key: "notes",           ar: "ملاحظات" },
 ];
+
+// Map Arabic-friendly direction values to canonical codes
+const DIRECTION_MAP: Record<string, string> = {
+  "balance_sheet":     "balance_sheet",
+  "income_statement":  "income_statement",
+  "مركز مالي":         "balance_sheet",
+  "ميزانية":           "balance_sheet",
+  "الميزانية":         "balance_sheet",
+  "قائمة دخل":         "income_statement",
+  "قائمة الدخل":       "income_statement",
+  "دخل":               "income_statement",
+};
+function normalizeDirection(v: any): string {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return "";
+  return DIRECTION_MAP[s] || DIRECTION_MAP[String(v).trim()] || "";
+}
 
 function downloadTemplate(kind: keyof typeof COA_TEMPLATES) {
   const rows = COA_TEMPLATES[kind];
@@ -35,11 +53,12 @@ function downloadTemplate(kind: keyof typeof COA_TEMPLATES) {
       r.level ?? "",
       r.isPosting === false ? "false" : "true",
       r.isActive  === false ? "false" : "true",
+      r.reportDirection || "",
       r.notes || "",
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 12 }, { wch: 38 }, { wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 24 }];
+  ws["!cols"] = [{ wch: 12 }, { wch: 38 }, { wch: 32 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 24 }];
   if (ws["!ref"]) {
     ws["!rows"] = [{ hpx: 28 }];
   }
@@ -85,11 +104,15 @@ const HEADER_MAP: Record<string, string> = {
   "حساب قيد": "isPosting",
   "نشط (true/false)": "isActive",
   "نشط": "isActive",
+  "توجيه الحساب (balance_sheet/income_statement)": "reportDirection",
+  "توجيه الحساب": "reportDirection",
+  "التوجيه": "reportDirection",
   "ملاحظات": "notes",
   // English fallbacks
   "code": "code", "nameAr": "nameAr", "nameEn": "nameEn",
   "accountType": "accountType", "parentCode": "parentCode",
-  "level": "level", "isPosting": "isPosting", "isActive": "isActive", "notes": "notes",
+  "level": "level", "isPosting": "isPosting", "isActive": "isActive",
+  "reportDirection": "reportDirection", "notes": "notes",
 };
 
 function parseBool(v: any): boolean {
@@ -122,6 +145,7 @@ function parseFile(file: File): Promise<CoaRow[]> {
           out.nameEn      = String(out.nameEn ?? "").trim() || undefined;
           out.accountType = String(out.accountType ?? "").trim().toLowerCase();
           out.parentCode  = String(out.parentCode ?? "").trim() || undefined;
+          out.reportDirection = normalizeDirection(out.reportDirection) || undefined;
           out.notes       = String(out.notes ?? "").trim() || undefined;
           return out as CoaRow;
         }).filter(r => r.code && r.nameAr);
@@ -347,6 +371,7 @@ export default function AccountsImportPanel() {
                   <th className="px-2 py-1.5 text-right font-medium">الاسم</th>
                   <th className="px-2 py-1.5 text-right font-medium">النوع</th>
                   <th className="px-2 py-1.5 text-right font-medium">الأب</th>
+                  <th className="px-2 py-1.5 text-right font-medium">التوجيه</th>
                   <th className="px-2 py-1.5 text-center font-medium">قيد</th>
                 </tr>
               </thead>
@@ -357,6 +382,10 @@ export default function AccountsImportPanel() {
                     <td className="px-2 py-1.5">{r.nameAr}</td>
                     <td className="px-2 py-1.5">{r.accountType}</td>
                     <td className="px-2 py-1.5 font-mono text-muted-foreground">{r.parentCode || "—"}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">
+                      {r.reportDirection === "balance_sheet" ? "مركز مالي" :
+                       r.reportDirection === "income_statement" ? "قائمة دخل" : "تلقائي"}
+                    </td>
                     <td className="px-2 py-1.5 text-center">{r.isPosting === false ? "—" : "✓"}</td>
                   </tr>
                 ))}

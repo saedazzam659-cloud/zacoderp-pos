@@ -11,6 +11,8 @@
 
 export type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
 
+export type ReportDirection = "" | "balance_sheet" | "income_statement";
+
 export interface CoaRow {
   code: string;
   nameAr: string;
@@ -20,6 +22,7 @@ export interface CoaRow {
   level?: number;
   isPosting?: boolean;
   isActive?: boolean;
+  reportDirection?: ReportDirection;
   notes?: string;
 }
 
