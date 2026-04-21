@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,8 @@ const EMPTY = {
   docNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
   paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
+  discountAmount: "0",
+  inventoryAccountId: "", taxAccountId: "", discountAccountId: "",
 };
 
 export default function PurchaseReturns() {
@@ -252,6 +255,10 @@ export default function PurchaseReturns() {
           currencyCode:  inv.currencyCode  ?? defaultCurrency?.code ?? "",
           exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
+          discountAmount: "0",
+          inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
+          taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : "",
+          discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : "",
         });
 
         // map invoice lines → return lines
@@ -353,6 +360,10 @@ export default function PurchaseReturns() {
       supplierId: form.supplierId || null,
       invoiceId:  form.invoiceId  || null,
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
+      inventoryAccountId: form.inventoryAccountId ? Number(form.inventoryAccountId) : null,
+      taxAccountId:       form.taxAccountId       ? Number(form.taxAccountId)       : null,
+      discountAccountId:  form.discountAccountId  ? Number(form.discountAccountId)  : null,
+      discountAmount: Number(form.discountAmount || 0).toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -463,8 +474,40 @@ export default function PurchaseReturns() {
                   </SelectContent>
                 </Select>
               </Field>
+              <Field label="خصم مكتسب">
+                <Input type="number" step="0.01" min="0" value={form.discountAmount}
+                  onChange={e => setForm((p: any) => ({ ...p, discountAmount: e.target.value }))} />
+              </Field>
               <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
+
+            {/* ── Accounting / حسابات الترحيل ──────────────────────── */}
+            <div className="rounded-lg border bg-blue-50/40 p-3 space-y-2 mt-3">
+              <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">حساب المخزون <span className="text-destructive">*</span></Label>
+                  <AccountCombobox value={form.inventoryAccountId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, inventoryAccountId: v }))}
+                    placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
+                  <AccountCombobox value={form.taxAccountId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
+                    placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">حساب الخصم المكتسب</Label>
+                  <AccountCombobox value={form.discountAccountId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
+                    placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
+              </div>
+            </div>
 
             {/* Payment link panel: credit (supplier) or cash (cash box) */}
             {form.paymentType === "credit" ? (

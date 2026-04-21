@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
@@ -83,6 +84,11 @@ export default function PurchaseInvoiceForm() {
   const [distMethod,   setDistMethod]   = useState("value");
   const [notes,        setNotes]        = useState("");
   const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
+
+  // Accounting accounts (used to build the journal entry on post)
+  const [inventoryAccountId, setInventoryAccountId] = useState("");
+  const [taxAccountId,       setTaxAccountId]       = useState("");
+  const [discountAccountId,  setDiscountAccountId]  = useState("");
 
   // ── Lookups ─────────────────────────────────────────────
   const { data: suppliers = [] } = useQuery<any[]>({
@@ -210,6 +216,9 @@ export default function PurchaseInvoiceForm() {
     setLcId(existing.lcId ? String(existing.lcId) : "");
     setDistMethod(existing.distributionMethod ?? "value");
     setNotes(existing.notes ?? "");
+    setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
+    setTaxAccountId(existing.taxAccountId ? String(existing.taxAccountId) : "");
+    setDiscountAccountId(existing.discountAccountId ? String(existing.discountAccountId) : "");
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       _id: crypto.randomUUID(),
       itemId:      l.itemId      ? String(l.itemId)      : "",
@@ -351,6 +360,9 @@ export default function PurchaseInvoiceForm() {
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
       currencyCode,
       exchangeRate, lcId: lcId || null, distributionMethod: distMethod,
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: "0", totalExpensesLoaded: totalExpLoaded.toFixed(2),
       totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
@@ -645,6 +657,31 @@ export default function PurchaseInvoiceForm() {
                     </Button>
                   </div>
                 )}
+              </div>
+
+              {/* ── Accounting / حسابات الترحيل ──────────────────────── */}
+              <div className="rounded-lg border bg-blue-50/40 p-3 space-y-2">
+                <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">حساب المخزون <span className="text-destructive">*</span></Label>
+                    <AccountCombobox value={inventoryAccountId} onValueChange={setInventoryAccountId}
+                      placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
+                    <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
+                      placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">حساب الخصم المكتسب</Label>
+                    <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
+                      placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
+                  </div>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
+                </div>
               </div>
 
               <div className="space-y-1.5">

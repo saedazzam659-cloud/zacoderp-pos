@@ -5,11 +5,74 @@ import {
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
+  cashBoxesTable, journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
+
+// ─── Journal entry helper ────────────────────────────────────────────────────
+type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
+
+async function createJournalEntry(opts: {
+  companyId: number;
+  branchId?: number | null;
+  date: string;
+  description: string;
+  docNumber?: string | null;
+  entryType?: string;
+  exchangeRate?: string | null;
+  lines: JLine[];
+}): Promise<number> {
+  // Filter out lines with zero amount or no account
+  const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
+  if (cleanLines.length < 2) throw new Error("القيد المحاسبي يحتاج إلى طرفين على الأقل");
+
+  const totalDebit  = cleanLines.reduce((s, l) => s + (l.debit  ?? 0), 0);
+  const totalCredit = cleanLines.reduce((s, l) => s + (l.credit ?? 0), 0);
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    throw new Error(`القيد غير متوازن: مدين ${totalDebit.toFixed(2)} ≠ دائن ${totalCredit.toFixed(2)}`);
+  }
+
+  const [entry] = await db.insert(journalEntriesTable).values({
+    companyId:    opts.companyId,
+    branchId:     opts.branchId ?? null,
+    docNumber:    opts.docNumber ?? null,
+    entryDate:    opts.date,
+    currency:     "SAR",
+    exchangeRate: opts.exchangeRate ?? "1",
+    description:  opts.description,
+    entryType:    opts.entryType ?? "general",
+    status:       "posted",
+  }).returning();
+
+  await db.insert(journalEntryLinesTable).values(
+    cleanLines.map((l, i) => ({
+      entryId:     entry.id,
+      accountId:   l.accountId!,
+      debit:       String((l.debit  ?? 0).toFixed(2)),
+      credit:      String((l.credit ?? 0).toFixed(2)),
+      description: l.description ?? opts.description,
+      sortOrder:   i,
+    }))
+  );
+  return entry.id;
+}
+
+// Resolve cash-box account
+async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undefined): Promise<number | null> {
+  if (!cashBoxId) return null;
+  const [cb] = await db.select().from(cashBoxesTable)
+    .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
+  return cb?.accountId ?? null;
+}
+async function getSupplierAccountId(cid: number, supplierId: number | null | undefined): Promise<number | null> {
+  if (!supplierId) return null;
+  const [s] = await db.select().from(suppliersTable)
+    .where(and(eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid)));
+  return s?.accountId ?? null;
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -204,7 +267,8 @@ router.post("/purchase-invoices", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
-            totalAmount, notes, lines } = req.body;
+            totalAmount, notes, lines,
+            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
@@ -223,6 +287,9 @@ router.post("/purchase-invoices", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalExpensesLoaded: String(totalExpensesLoaded || "0"),
       totalAmount: String(totalAmount || "0"),
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -256,7 +323,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
-            totalAmount, notes, lines } = req.body;
+            totalAmount, notes, lines,
+            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
@@ -274,6 +342,9 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalExpensesLoaded: String(totalExpensesLoaded || "0"),
       totalAmount: String(totalAmount || "0"),
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -345,27 +416,51 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       });
     }
 
+    // ── Create journal entry (قيد محاسبي) ──────────────────────────
+    // Dr Inventory  = landed cost (goods + loaded LC expenses - discount, i.e. totalAmount - vat + discount)
+    // Dr VAT Input  = vatAmount
+    // Cr Supplier/Cash   = totalAmount
+    // Cr Discount Earned = discountAmount
+    // This formula balances even when LC expenses are loaded onto the invoice.
+    const vatAmount      = Number(inv.vatAmount      || 0);
+    const discountAmount = Number(inv.discountAmount || 0);
+    const totalAmount    = Number(inv.totalAmount    || 0);
+    const inventoryDebit = totalAmount - vatAmount + discountAmount;
+
+    const counterpartyAccountId = inv.paymentType === "cash"
+      ? await getCashBoxAccountId(cid, inv.cashBoxId)
+      : await getSupplierAccountId(cid, inv.supplierId);
+
+    const missing: string[] = [];
+    if (!inv.inventoryAccountId) missing.push("حساب المخزون");
+    if (vatAmount > 0 && !inv.taxAccountId) missing.push("حساب الضرائب");
+    if (discountAmount > 0 && !inv.discountAccountId) missing.push("حساب الخصم المكتسب");
+    if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    if (missing.length) {
+      throw new Error(`يجب تحديد الحسابات التالية على الفاتورة قبل الترحيل: ${missing.join("، ")}`);
+    }
+
+    const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
+    const journalId = await createJournalEntry({
+      companyId:    cid,
+      branchId:     inv.branchId,
+      date:         inv.invoiceDate,
+      docNumber:    inv.docNumber,
+      description:  desc,
+      entryType:    "purchase_invoice",
+      exchangeRate: inv.exchangeRate,
+      lines: [
+        { accountId: inv.inventoryAccountId, debit:  inventoryDebit, description: "قيمة البضاعة (شاملة المصاريف المحملة)" },
+        { accountId: inv.taxAccountId,       debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
+        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : "مستحقات المورد" },
+        { accountId: inv.discountAccountId,  credit: discountAmount, description: "خصم مكتسب" },
+      ],
+    });
+
     const [updated] = await db.update(purchaseInvoicesTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
-
-    if (inv.paymentType === "cash" && inv.cashBoxId) {
-      await createPostedPaymentVoucher({
-        companyId: cid,
-        branchId: inv.branchId,
-        date: inv.invoiceDate,
-        cashBoxId: inv.cashBoxId,
-        paymentType: "cash",
-        entityType: "supplier",
-        entityId: inv.supplierId,
-        amount: inv.totalAmount,
-        exchangeRate: inv.exchangeRate,
-        refType: "purchase_invoice",
-        refNumber: inv.docNumber || String(inv.id),
-        description: `صرف نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
-      });
-    }
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -412,7 +507,8 @@ router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
-            currencyCode, exchangeRate, totalAmount, vatAmount, notes, lines } = req.body;
+            currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines,
+            inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
@@ -428,6 +524,10 @@ router.post("/purchase-returns", async (req, res) => {
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: String(totalAmount || "0"),
       vatAmount: String(vatAmount || "0"),
+      discountAmount: String(discountAmount || "0"),
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -488,27 +588,50 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       });
     }
 
+    // ── Create journal entry (قيد محاسبي) — reverse of purchase invoice ──
+    // Dr Supplier/Cash    = totalAmount  (we get the money/credit back)
+    // Dr Discount Earned  = discountAmount (reverse the discount)
+    // Cr Inventory        = subtotal     (goods leaving stock)
+    // Cr VAT Input        = vatAmount    (reverse the input VAT)
+    const totalAmount    = Number(ret.totalAmount    || 0);
+    const vatAmount      = Number(ret.vatAmount      || 0);
+    const discountAmount = Number((ret as any).discountAmount || 0);
+    const subtotal       = totalAmount - vatAmount + discountAmount;
+
+    const counterpartyAccountId = ret.paymentType === "cash"
+      ? await getCashBoxAccountId(cid, ret.cashBoxId)
+      : await getSupplierAccountId(cid, ret.supplierId);
+
+    const missing: string[] = [];
+    if (!(ret as any).inventoryAccountId) missing.push("حساب المخزون");
+    if (vatAmount > 0 && !(ret as any).taxAccountId) missing.push("حساب الضرائب");
+    if (discountAmount > 0 && !(ret as any).discountAccountId) missing.push("حساب الخصم المكتسب");
+    if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    if (missing.length) {
+      throw new Error(`يجب تحديد الحسابات التالية على المرتجع قبل الترحيل: ${missing.join("، ")}`);
+    }
+
+    const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
+    const journalId = await createJournalEntry({
+      companyId:    cid,
+      branchId:     ret.branchId,
+      date:         ret.returnDate,
+      docNumber:    ret.docNumber,
+      description:  desc,
+      entryType:    "purchase_return",
+      exchangeRate: ret.exchangeRate,
+      lines: [
+        { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : "تخفيض رصيد المورد" },
+        { accountId: (ret as any).discountAccountId,  debit:  discountAmount, description: "إلغاء خصم مكتسب" },
+        { accountId: (ret as any).inventoryAccountId, credit: subtotal,       description: "ارتجاع البضاعة" },
+        { accountId: (ret as any).taxAccountId,       credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },
+      ],
+    });
+
     const [updated] = await db.update(purchaseReturnsTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(purchaseReturnsTable.id, id))
       .returning();
-
-    if (ret.paymentType === "cash" && ret.cashBoxId) {
-      await createPostedReceiptVoucher({
-        companyId: cid,
-        branchId: ret.branchId,
-        date: ret.returnDate,
-        cashBoxId: ret.cashBoxId,
-        paymentType: "cash",
-        entityType: "supplier",
-        entityId: ret.supplierId,
-        amount: ret.totalAmount,
-        exchangeRate: ret.exchangeRate,
-        refType: "purchase_return",
-        refNumber: ret.docNumber || String(ret.id),
-        description: `استرداد نقدي لمرتجع المشتريات رقم ${ret.docNumber || ret.id}`,
-      });
-    }
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
