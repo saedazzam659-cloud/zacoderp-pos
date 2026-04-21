@@ -90,6 +90,28 @@ export default function PurchaseInvoiceForm() {
   const [taxAccountId,       setTaxAccountId]       = useState("");
   const [discountAccountId,  setDiscountAccountId]  = useState("");
 
+  const acctPrefsKey = `purchase-invoice-accts:${cid ?? "all"}`;
+  useEffect(() => {
+    if (!isNew) return;
+    try {
+      const raw = localStorage.getItem(acctPrefsKey);
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (p.inventoryAccountId && !inventoryAccountId) setInventoryAccountId(String(p.inventoryAccountId));
+      if (p.taxAccountId       && !taxAccountId)       setTaxAccountId(String(p.taxAccountId));
+      if (p.discountAccountId  && !discountAccountId)  setDiscountAccountId(String(p.discountAccountId));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, cid]);
+
+  useEffect(() => {
+    if (!inventoryAccountId && !taxAccountId && !discountAccountId) return;
+    try {
+      localStorage.setItem(acctPrefsKey, JSON.stringify({ inventoryAccountId, taxAccountId, discountAccountId }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inventoryAccountId, taxAccountId, discountAccountId]);
+
   // ── Lookups ─────────────────────────────────────────────
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],

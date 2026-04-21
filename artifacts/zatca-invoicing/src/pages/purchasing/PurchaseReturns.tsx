@@ -267,8 +267,31 @@ export default function PurchaseReturns() {
     }
   }
 
+  const acctPrefsKey = `purchase-return-accts:${cid ?? "all"}`;
+  function loadAcctDefaults() {
+    try {
+      const raw = localStorage.getItem(acctPrefsKey);
+      if (!raw) return {};
+      const p = JSON.parse(raw);
+      return {
+        inventoryAccountId: p.inventoryAccountId ? String(p.inventoryAccountId) : "",
+        taxAccountId:       p.taxAccountId       ? String(p.taxAccountId)       : "",
+        discountAccountId:  p.discountAccountId  ? String(p.discountAccountId)  : "",
+      };
+    } catch { return {}; }
+  }
+
+  useEffect(() => {
+    const { inventoryAccountId, taxAccountId, discountAccountId } = form;
+    if (!inventoryAccountId && !taxAccountId && !discountAccountId) return;
+    try {
+      localStorage.setItem(acctPrefsKey, JSON.stringify({ inventoryAccountId, taxAccountId, discountAccountId }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.inventoryAccountId, form.taxAccountId, form.discountAccountId]);
+
   function reset() {
-    setForm({ ...EMPTY });
+    setForm({ ...EMPTY, ...loadAcctDefaults() });
     setLines([newLine()]);
     setEditingId(null);
     setShowForm(false);
