@@ -5,12 +5,12 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import {
-  Wallet, Plus, Pencil, Trash2, Save, X, AlertTriangle,
-  TrendingUp, TrendingDown, Search, CheckCircle2, XCircle,
+  Wallet, Plus, Pencil, Trash2, AlertTriangle,
+  TrendingUp, Search, CheckCircle2, XCircle,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -115,48 +115,41 @@ export default function CashBoxes() {
       </div>
 
       {panel && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Wallet className="h-5 w-5 text-primary" />
-              {editing ? "تعديل الخزنة" : "إضافة خزنة جديدة"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
-          </div>
-          <div className="p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label className="text-sm font-medium">الكود *</Label><Input placeholder="C001" {...f("code")} /></div>
-              <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم العربي *</Label><Input placeholder="الخزنة الرئيسية" {...f("nameAr")} /></div>
-            </div>
-            <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم الإنجليزي</Label><Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} /></div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">العملة</Label>
-              <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
+        <FormPanel
+          icon={Wallet}
+          title={editing ? "تعديل الخزنة" : "إضافة خزنة جديدة"}
+          subtitle="أدخل بيانات الخزنة وحدّد الحد الأدنى والأقصى للرصيد"
+          onClose={() => setPanel(false)}
+          onSave={() => saveMut.mutate()}
+          saving={saveMut.isPending}
+          saveDisabled={!form.nameAr || !form.code}
+        >
+          <FormGrid>
+            <Field label="الكود" required><Input placeholder="C001" {...f("code")} /></Field>
+            <Field label="الاسم العربي" required><Input placeholder="الخزنة الرئيسية" {...f("nameAr")} /></Field>
+            <Field label="الاسم الإنجليزي" className="md:col-span-2">
+              <Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} />
+            </Field>
+            <Field label="العملة">
+              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
                 <option value="">— اختر العملة —</option>
                 {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
               </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium">الحساب (شجرة الحسابات)</Label>
+            </Field>
+            <Field label="الحساب (شجرة الحسابات)">
               <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+            </Field>
+            <Field label="الحد الأدنى"><Input type="number" placeholder="0" {...f("minBalance")} /></Field>
+            <Field label="الحد الأقصى"><Input type="number" placeholder="—" {...f("maxBalance")} /></Field>
+            <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="..." {...f("notes")} /></Field>
+            <div className="md:col-span-2">
+              <label className="flex items-center gap-2 cursor-pointer w-fit">
+                <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
+                <span className="text-sm">الخزنة نشطة</span>
+              </label>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label className="text-sm font-medium">الحد الأدنى</Label><Input type="number" placeholder="0" {...f("minBalance")} /></div>
-              <div className="space-y-1.5"><Label className="text-sm font-medium">الحد الأقصى</Label><Input type="number" placeholder="—" {...f("maxBalance")} /></div>
-            </div>
-            <div className="space-y-1.5"><Label className="text-sm font-medium">ملاحظات</Label><Input placeholder="..." {...f("notes")} /></div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
-              <span className="text-sm">الخزنة نشطة</span>
-            </label>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
-              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.nameAr || !form.code}>
-                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
-              </Button>
-            </div>
-          </div>
-        </div>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="rounded-xl border bg-card overflow-hidden">

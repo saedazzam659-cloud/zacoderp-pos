@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { ArrowDownCircle, Plus, Pencil, Trash2, Save, X, Search, CheckCircle2, Clock, Send } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -127,83 +128,67 @@ export default function ReceiptVouchers() {
       </div>
 
       {panel && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <ArrowDownCircle className="h-5 w-5 text-green-600" />
-              {editing ? "تعديل سند القبض" : "سند قبض جديد"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
-          </div>
-          <div className="p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">التاريخ *</label><Input type="date" {...f("date")} /></div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">وسيلة الدفع</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>
-                  <option value="cash">نقداً</option>
-                  <option value="bank">بنك</option>
-                </select>
-              </div>
-            </div>
+        <FormPanel
+          icon={ArrowDownCircle}
+          title={editing ? "تعديل سند القبض" : "سند قبض جديد"}
+          subtitle="بيانات سند القبض ووسيلة الدفع والجهة المستفيدة"
+          width="4xl"
+          onClose={() => setPanel(false)}
+          onSave={() => saveMut.mutate()}
+          saving={saveMut.isPending}
+          saveDisabled={!form.amount || !form.date}
+        >
+          <FormGrid>
+            <Field label="التاريخ" required><Input type="date" {...f("date")} /></Field>
+            <Field label="وسيلة الدفع">
+              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>
+                <option value="cash">نقداً</option>
+                <option value="bank">بنك</option>
+              </select>
+            </Field>
             {form.paymentType === "cash" ? (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">الخزنة</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.cashBoxId} onChange={e => setForm(p => ({ ...p, cashBoxId: e.target.value }))}>
+              <Field label="الخزنة" className="md:col-span-2">
+                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.cashBoxId} onChange={e => setForm(p => ({ ...p, cashBoxId: e.target.value }))}>
                   <option value="">— اختر الخزنة —</option>
                   {(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
                 </select>
-              </div>
+              </Field>
             ) : (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">الحساب البنكي</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.bankAccountId} onChange={e => setForm(p => ({ ...p, bankAccountId: e.target.value }))}>
+              <Field label="الحساب البنكي" className="md:col-span-2">
+                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.bankAccountId} onChange={e => setForm(p => ({ ...p, bankAccountId: e.target.value }))}>
                   <option value="">— اختر الحساب البنكي —</option>
                   {(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
                 </select>
-              </div>
+              </Field>
             )}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">نوع الجهة</label>
-              <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.entityType} onChange={e => setForm(p => ({ ...p, entityType: e.target.value, entityId: "", entityName: "" }))}>
+            <Field label="نوع الجهة">
+              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.entityType} onChange={e => setForm(p => ({ ...p, entityType: e.target.value, entityId: "", entityName: "" }))}>
                 <option value="customer">عميل</option>
                 <option value="supplier">مورد</option>
                 <option value="other">أخرى</option>
               </select>
-            </div>
+            </Field>
             {form.entityType === "other" ? (
-              <div className="space-y-1.5"><label className="text-sm font-medium">اسم الجهة</label><Input placeholder="..." {...f("entityName")} /></div>
+              <Field label="اسم الجهة"><Input placeholder="..." {...f("entityName")} /></Field>
             ) : (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">{form.entityType === "customer" ? "العميل" : "المورد"}</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.entityId} onChange={e => { const found = (entityList as any[]).find((x: any) => String(x.id) === e.target.value); setForm(p => ({ ...p, entityId: e.target.value, entityName: found?.nameAr || "" })); }}>
+              <Field label={form.entityType === "customer" ? "العميل" : "المورد"}>
+                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.entityId} onChange={e => { const found = (entityList as any[]).find((x: any) => String(x.id) === e.target.value); setForm(p => ({ ...p, entityId: e.target.value, entityName: found?.nameAr || "" })); }}>
                   <option value="">— اختر —</option>
                   {(entityList as any[]).map((e: any) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
                 </select>
-              </div>
+              </Field>
             )}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">الحساب المقابل</label>
+            <Field label="الحساب المقابل" className="md:col-span-2">
               <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" grouped={false} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">المبلغ *</label><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">سعر الصرف</label><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">نوع المرجع</label><Input placeholder="فاتورة / عقد..." {...f("refType")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">رقم المرجع</label><Input placeholder="INV-0001" dir="ltr" className="text-left" {...f("refNumber")} /></div>
-            </div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">البيان</label><Input placeholder="وصف المعاملة..." {...f("description")} /></div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">ملاحظات</label><Input placeholder="..." {...f("notes")} /></div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
-              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.amount || !form.date}>
-                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
-              </Button>
-            </div>
-          </div>
-        </div>
+            </Field>
+            <Field label="المبلغ" required><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></Field>
+            <Field label="سعر الصرف"><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
+            <Field label="نوع المرجع"><Input placeholder="فاتورة / عقد..." {...f("refType")} /></Field>
+            <Field label="رقم المرجع"><Input placeholder="INV-0001" dir="ltr" className="text-left" {...f("refNumber")} /></Field>
+            <Field label="البيان" className="md:col-span-2"><Input placeholder="وصف المعاملة..." {...f("description")} /></Field>
+            <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="..." {...f("notes")} /></Field>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="rounded-xl border bg-card overflow-hidden">

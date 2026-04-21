@@ -16,6 +16,7 @@ import {
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
   AlertTriangle, BookMarked,
 } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -305,87 +306,76 @@ export default function Items() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Package className="h-5 w-5 text-primary" />
-              {editId ? "تعديل صنف" : "صنف جديد"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5">
-            <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
-              <TabsList className="w-full h-9 mb-5">
-                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />التسعير والتحكم</TabsTrigger>
-                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
-              </TabsList>
-              <TabsContent value="basic" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5"><Label>كود الصنف *</Label><Input placeholder="ITM-001" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required /></div>
-                  <div className="space-y-1.5"><Label>الاسم بالعربي *</Label><Input placeholder="اسم الصنف" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required /></div>
-                  <div className="space-y-1.5"><Label>الاسم بالإنجليزي</Label><Input placeholder="Item Name" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></div>
-                  <div className="space-y-1.5"><Label>باركود</Label><Input placeholder="1234567890" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></div>
-                  <div className="space-y-1.5"><Label>نوع الصنف</Label>
-                    <SearchCombobox items={[{ value: "stock", label: "مخزني" }, { value: "service", label: "خدمي" }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder="نوع الصنف" />
-                  </div>
-                  <div className="space-y-1.5"><Label>المجموعة</Label>
-                    <SearchCombobox items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder="— اختر مجموعة —" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>وحدة القياس الأساسية</Label>
-                    <SearchCombobox items={[{ value: "", label: "— بدون وحدة —" }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder="— اختر وحدة —" />
-                    <p className="text-[10px] text-muted-foreground">وحدات التسعير المتعددة تُضاف بعد حفظ الصنف</p>
-                  </div>
-                  <div className="space-y-1.5"><Label>الحالة</Label>
-                    <SearchCombobox items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder="الحالة" />
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="pricing" className="mt-0">
-                <div className="space-y-5">
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">التسعير الافتراضي</p>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5"><Label>سعر التكلفة</Label><Input type="number" step="any" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></div>
-                      <div className="space-y-1.5"><Label>سعر البيع</Label><Input type="number" step="any" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></div>
-                      <div className="space-y-1.5"><Label>نسبة الضريبة %</Label><Input type="number" step="any" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></div>
-                      <div className="space-y-1.5"><Label>طريقة احتساب التكلفة</Label>
-                        <SearchCombobox items={[{ value: "weighted_avg", label: "متوسط مرجح" }, { value: "last_cost", label: "آخر سعر" }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder="طريقة التكلفة" />
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">بيانات التحكم</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5"><Label>حد الطلب</Label><Input type="number" step="any" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></div>
-                      <div className="space-y-1.5"><Label>الحد الأقصى للمخزون</Label><Input type="number" step="any" placeholder="اختياري" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></div>
-                      <div className="space-y-1.5"><Label>ملاحظات / وصف</Label><Input placeholder="وصف الصنف" value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></div>
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="accounts" className="mt-0">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>حساب التكلفة</Label>
-                    <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder="— اختر حساب التكلفة —" filterTypes={["expense", "asset"]} grouped={false} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>حساب الإيراد</Label>
-                    <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder="— اختر حساب الإيراد —" filterTypes={["revenue"]} grouped={false} />
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-            <div className="flex gap-2 pt-4 mt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الصنف"}
-              </Button>
-            </div>
-          </form>
-        </div>
+        <FormPanel
+          icon={Package}
+          title={editId ? "تعديل صنف" : "صنف جديد"}
+          subtitle="البيانات الأساسية، التسعير، والربط المحاسبي للصنف"
+          width="4xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة الصنف"}
+        >
+          <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
+            <TabsList className="w-full h-9 mb-5">
+              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
+              <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />التسعير والتحكم</TabsTrigger>
+              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
+            </TabsList>
+            <TabsContent value="basic" className="mt-0">
+              <FormGrid>
+                <Field label="كود الصنف" required><Input placeholder="ITM-001" dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
+                <Field label="الاسم بالعربي" required><Input placeholder="اسم الصنف" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
+                <Field label="الاسم بالإنجليزي"><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
+                <Field label="باركود"><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
+                <Field label="نوع الصنف">
+                  <SearchCombobox items={[{ value: "stock", label: "مخزني" }, { value: "service", label: "خدمي" }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder="نوع الصنف" />
+                </Field>
+                <Field label="المجموعة">
+                  <SearchCombobox items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder="— اختر مجموعة —" />
+                </Field>
+                <Field label="وحدة القياس الأساسية" hint="وحدات التسعير المتعددة تُضاف بعد حفظ الصنف">
+                  <SearchCombobox items={[{ value: "", label: "— بدون وحدة —" }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder="— اختر وحدة —" />
+                </Field>
+                <Field label="الحالة">
+                  <SearchCombobox items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder="الحالة" />
+                </Field>
+              </FormGrid>
+            </TabsContent>
+            <TabsContent value="pricing" className="mt-0 space-y-6">
+              <div>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">التسعير الافتراضي</p>
+                <FormGrid>
+                  <Field label="سعر التكلفة"><Input type="number" step="any" dir="ltr" className="text-left" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></Field>
+                  <Field label="سعر البيع"><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
+                  <Field label="نسبة الضريبة %"><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
+                  <Field label="طريقة احتساب التكلفة">
+                    <SearchCombobox items={[{ value: "weighted_avg", label: "متوسط مرجح" }, { value: "last_cost", label: "آخر سعر" }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder="طريقة التكلفة" />
+                  </Field>
+                </FormGrid>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">بيانات التحكم</p>
+                <FormGrid>
+                  <Field label="حد الطلب"><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
+                  <Field label="الحد الأقصى للمخزون"><Input type="number" step="any" placeholder="اختياري" dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
+                  <Field label="ملاحظات / وصف" className="md:col-span-2"><Input placeholder="وصف الصنف" value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
+                </FormGrid>
+              </div>
+            </TabsContent>
+            <TabsContent value="accounts" className="mt-0">
+              <FormGrid>
+                <Field label="حساب التكلفة">
+                  <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder="— اختر حساب التكلفة —" filterTypes={["expense", "asset"]} grouped={false} />
+                </Field>
+                <Field label="حساب الإيراد">
+                  <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder="— اختر حساب الإيراد —" filterTypes={["revenue"]} grouped={false} />
+                </Field>
+              </FormGrid>
+            </TabsContent>
+          </Tabs>
+        </FormPanel>
       )}
 
       {/* Filters */}

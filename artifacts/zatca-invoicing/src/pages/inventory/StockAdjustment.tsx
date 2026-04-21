@@ -11,6 +11,7 @@ import {
   Plus, Trash2, SlidersHorizontal, Search, X, Send,
   ChevronDown, ChevronUp, Zap,
 } from "lucide-react";
+import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -222,75 +223,37 @@ export default function StockAdjustment() {
 
       {/* Form */}
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <SlidersHorizontal className="h-5 w-5 text-primary" />تسوية مخزنية جديدة
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            {/* ── معلومات الحركة ────────────────────────────── */}
-            <div>
-              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">معلومات الحركة</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
-                  <Label>رقم التسوية</Label>
-                  <Input
-                    placeholder="ADJ-001 (تلقائي)"
-                    value={form.adjustmentNumber}
-                    onChange={e => setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>التاريخ *</Label>
-                  <Input
-                    type="date"
-                    value={form.adjustmentDate}
-                    onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))}
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>المخزن *</Label>
-                  <SearchCombobox
-                    items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                    value={form.warehouseId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
-                    placeholder="— اختر مخزن —"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>سبب التسوية</Label>
-                  <SearchCombobox
-                    items={REASONS.map(r => ({ value: r, label: r }))}
-                    value={form.reason}
-                    onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
-                    placeholder="— اختر السبب —"
-                  />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
-                  <Label>ملاحظات</Label>
-                  <Input
-                    placeholder="ملاحظات اختيارية"
-                    value={form.notes}
-                    onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </div>
+        <FormPanel
+          icon={SlidersHorizontal}
+          title="تسوية مخزنية جديدة"
+          subtitle="إضافة أو خصم كميات الأصناف من المخزن مع ربط محاسبي اختياري"
+          width="6xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending}
+          saveDisabled={!form.warehouseId || !form.adjustmentDate}
+          saveLabel="حفظ التسوية"
+        >
+          <div className="space-y-5">
+            <FormSection title="معلومات الحركة">
+              <FormGrid cols={2}>
+                <Field label="رقم التسوية"><Input placeholder="ADJ-001 (تلقائي)" dir="ltr" className="text-left" value={form.adjustmentNumber} onChange={e => setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value }))} /></Field>
+                <Field label="التاريخ" required><Input type="date" value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} /></Field>
+                <Field label="المخزن" required>
+                  <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder="— اختر مخزن —" />
+                </Field>
+                <Field label="سبب التسوية">
+                  <SearchCombobox items={REASONS.map(r => ({ value: r, label: r }))} value={form.reason} onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))} placeholder="— اختر السبب —" />
+                </Field>
+                <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              </FormGrid>
+            </FormSection>
 
-            {/* ── الربط المحاسبي ─────────────────────────────── */}
             <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
               <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
               <div className="max-w-xs">
-                <Label>الحساب المحاسبي</Label>
-                <AccountCombobox
-                  value={form.accountId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
-                  placeholder="— اختر الحساب —"
-                  grouped={false}
-                />
+                <Label className="text-xs font-medium text-foreground/80">الحساب المحاسبي</Label>
+                <AccountCombobox value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="— اختر الحساب —" grouped={false} />
               </div>
             </div>
 
@@ -311,7 +274,7 @@ export default function StockAdjustment() {
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الكمية (+ زيادة / - نقص)</th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">
                         <span className="flex items-center gap-1">
-                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500" title="يُملأ تلقائياً" />
+                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500"><title>يُملأ تلقائياً</title></Zap>
                         </span>
                       </th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground">ملاحظة</th>
@@ -360,7 +323,8 @@ export default function StockAdjustment() {
                             <Input
                               type="number"
                               step="any"
-                              className="h-8 text-xs"
+                              dir="ltr"
+                              className="h-8 text-xs text-left"
                               value={line.qty}
                               onChange={e => updateLine(i, "qty", e.target.value)}
                               placeholder="+100 أو -50"
@@ -380,8 +344,9 @@ export default function StockAdjustment() {
                                 type="number"
                                 step="any"
                                 min="0"
+                                dir="ltr"
                                 className={cn(
-                                  "h-8 text-xs",
+                                  "h-8 text-xs text-left",
                                   autoFilled && "border-amber-300 bg-amber-50/60"
                                 )}
                                 value={line.costPrice}
@@ -430,13 +395,8 @@ export default function StockAdjustment() {
                 اختيار الصنف يملأ الوحدة والتكلفة تلقائياً — يمكن تعديل التكلفة يدوياً
               </p>
             </div>
-
-            <div className="flex gap-2 justify-end pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1.5" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1.5" disabled={createMut.isPending}><Send className="h-4 w-4" />حفظ التسوية</Button>
-            </div>
-          </form>
-        </div>
+          </div>
+        </FormPanel>
       )}
 
       {/* Search */}

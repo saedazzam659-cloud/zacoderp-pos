@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ArrowLeftRight, Plus, Pencil, Trash2, Save, X, Search, CheckCircle2, Clock, Send, Wallet, Landmark } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { ArrowLeftRight, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Wallet, Landmark } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -104,64 +105,58 @@ export default function CashTransfers() {
       </div>
 
       {panel && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <ArrowLeftRight className="h-5 w-5 text-violet-600" />
-              {editing ? "تعديل التحويل" : "تحويل جديد"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
-          </div>
-          <div className="p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">التاريخ *</label><Input type="date" {...f("date")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">نوع التحويل</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.transferType} onChange={e => setForm(p => ({ ...p, transferType: e.target.value, fromCashBoxId: "", fromBankId: "", toCashBoxId: "", toBankId: "" }))}>
-                  <option value="cash_to_cash">خزنة إلى خزنة</option>
-                  <option value="cash_to_bank">خزنة إلى بنك</option>
-                  <option value="bank_to_cash">بنك إلى خزنة</option>
-                  <option value="bank_to_bank">بنك إلى بنك</option>
-                </select>
+        <FormPanel
+          icon={ArrowLeftRight}
+          title={editing ? "تعديل التحويل" : "تحويل جديد"}
+          subtitle="حدّد نوع التحويل والمصدر والوجهة والمبلغ"
+          width="4xl"
+          onClose={() => setPanel(false)}
+          onSave={() => saveMut.mutate()}
+          saving={saveMut.isPending}
+          saveDisabled={!form.amount || !form.date}
+        >
+          <FormGrid>
+            <Field label="التاريخ" required><Input type="date" {...f("date")} /></Field>
+            <Field label="نوع التحويل">
+              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.transferType} onChange={e => setForm(p => ({ ...p, transferType: e.target.value, fromCashBoxId: "", fromBankId: "", toCashBoxId: "", toBankId: "" }))}>
+                <option value="cash_to_cash">خزنة إلى خزنة</option>
+                <option value="cash_to_bank">خزنة إلى بنك</option>
+                <option value="bank_to_cash">بنك إلى خزنة</option>
+                <option value="bank_to_bank">بنك إلى بنك</option>
+              </select>
+            </Field>
+            <div className="md:col-span-2 grid md:grid-cols-2 gap-4">
+              <div className="rounded-lg border p-4 space-y-2 bg-muted/10">
+                <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">{fromIsCash ? <Wallet className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}من ({fromIsCash ? "خزنة" : "بنك"})</p>
+                {fromIsCash ? (
+                  <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.fromCashBoxId} onChange={e => setForm(p => ({ ...p, fromCashBoxId: e.target.value }))}>
+                    <option value="">— اختر الخزنة —</option>{(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                  </select>
+                ) : (
+                  <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.fromBankId} onChange={e => setForm(p => ({ ...p, fromBankId: e.target.value }))}>
+                    <option value="">— اختر البنك —</option>{(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
+                  </select>
+                )}
+              </div>
+              <div className="rounded-lg border p-4 space-y-2 bg-muted/10">
+                <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">{toIsCash ? <Wallet className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}إلى ({toIsCash ? "خزنة" : "بنك"})</p>
+                {toIsCash ? (
+                  <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.toCashBoxId} onChange={e => setForm(p => ({ ...p, toCashBoxId: e.target.value }))}>
+                    <option value="">— اختر الخزنة —</option>{(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                  </select>
+                ) : (
+                  <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.toBankId} onChange={e => setForm(p => ({ ...p, toBankId: e.target.value }))}>
+                    <option value="">— اختر البنك —</option>{(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
+                  </select>
+                )}
               </div>
             </div>
-            <div className="rounded-lg border p-4 space-y-3 bg-muted/10">
-              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">{fromIsCash ? <Wallet className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}من ({fromIsCash ? "خزنة" : "بنك"})</p>
-              {fromIsCash ? (
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.fromCashBoxId} onChange={e => setForm(p => ({ ...p, fromCashBoxId: e.target.value }))}>
-                  <option value="">— اختر الخزنة —</option>{(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </select>
-              ) : (
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.fromBankId} onChange={e => setForm(p => ({ ...p, fromBankId: e.target.value }))}>
-                  <option value="">— اختر البنك —</option>{(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
-                </select>
-              )}
-            </div>
-            <div className="rounded-lg border p-4 space-y-3 bg-muted/10">
-              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">{toIsCash ? <Wallet className="h-3.5 w-3.5" /> : <Landmark className="h-3.5 w-3.5" />}إلى ({toIsCash ? "خزنة" : "بنك"})</p>
-              {toIsCash ? (
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.toCashBoxId} onChange={e => setForm(p => ({ ...p, toCashBoxId: e.target.value }))}>
-                  <option value="">— اختر الخزنة —</option>{(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </select>
-              ) : (
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.toBankId} onChange={e => setForm(p => ({ ...p, toBankId: e.target.value }))}>
-                  <option value="">— اختر البنك —</option>{(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.nameAr}</option>)}
-                </select>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">المبلغ *</label><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">سعر الصرف</label><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></div>
-            </div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">البيان</label><Input placeholder="سبب التحويل..." {...f("description")} /></div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">ملاحظات</label><Input placeholder="..." {...f("notes")} /></div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
-              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.amount || !form.date}>
-                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
-              </Button>
-            </div>
-          </div>
-        </div>
+            <Field label="المبلغ" required><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></Field>
+            <Field label="سعر الصرف"><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
+            <Field label="البيان" className="md:col-span-2"><Input placeholder="سبب التحويل..." {...f("description")} /></Field>
+            <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="..." {...f("notes")} /></Field>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="rounded-xl border bg-card overflow-hidden">

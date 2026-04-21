@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import {
-  Plus, Pencil, Trash2, Building2, Search, Save, X,
+  Plus, Pencil, Trash2, Building2, Search, X,
   MapPin, Phone, Star, CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -109,98 +110,90 @@ export default function Branches() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-primary" />
+        <FormPanel
+          icon={Building2}
+          title={
+            <span className="flex items-center gap-2">
               {editId ? "تعديل فرع" : "إضافة فرع جديد"}
               {form.regionId && (
-                <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 flex items-center gap-1">
+                <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 flex items-center gap-1">
                   <MapPin className="h-3 w-3" />{regionMap[Number(form.regionId)]?.nameAr ?? "منطقة"}
                 </span>
               )}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="w-full h-9 mb-4">
-                <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
-                <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />التواصل</TabsTrigger>
-              </TabsList>
+            </span>
+          }
+          subtitle="بيانات الفرع التشغيلية ومعلومات التواصل"
+          width="4xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة الفرع"}
+        >
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="w-full h-9 mb-5">
+              <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
+              <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />التواصل</TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="basic" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>كود الفرع <span className="text-destructive">*</span></Label>
-                  <Input placeholder="BR-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-                  <Input placeholder="الفرع الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالإنجليزي</Label>
-                  <Input placeholder="Main Branch" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>المنطقة</Label>
+            <TabsContent value="basic" className="mt-0">
+              <FormGrid>
+                <Field label="كود الفرع" required>
+                  <Input placeholder="BR-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+                </Field>
+                <Field label="الاسم بالعربي" required>
+                  <Input placeholder="الفرع الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+                </Field>
+                <Field label="الاسم بالإنجليزي" className="md:col-span-2">
+                  <Input placeholder="Main Branch" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </Field>
+                <Field label="المنطقة">
                   <SearchCombobox
                     items={[{ value: "", label: "— بدون منطقة —" }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr, labelEn: r.nameEn }))]}
                     value={form.regionId}
                     onValueChange={v => setForm((p: any) => ({ ...p, regionId: v }))}
                     placeholder="— اختر المنطقة —"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الحالة</Label>
+                </Field>
+                <Field label="الحالة">
                   <SearchCombobox
                     items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]}
                     value={form.status}
                     onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}
                     placeholder="الحالة"
                   />
-                </div>
-                <div className="flex items-center gap-3 pt-1">
+                </Field>
+                <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
                   <Switch checked={form.isMain} onCheckedChange={v => setForm((p: any) => ({ ...p, isMain: v }))} id="is-main" />
                   <div>
-                    <Label htmlFor="is-main" className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" />الفرع الرئيسي</Label>
+                    <Label htmlFor="is-main" className="flex items-center gap-1 text-sm"><Star className="h-3.5 w-3.5 text-amber-500" />الفرع الرئيسي</Label>
                     <p className="text-[10px] text-muted-foreground">يُلغي الرئيسي من بقية الفروع تلقائياً</p>
                   </div>
                 </div>
-              </TabsContent>
+              </FormGrid>
+            </TabsContent>
 
-              <TabsContent value="contact" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>المدينة</Label>
+            <TabsContent value="contact" className="mt-0">
+              <FormGrid>
+                <Field label="المدينة">
                   <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>رقم الهاتف</Label>
-                  <Input placeholder="0512345678" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>البريد الإلكتروني</Label>
-                  <Input type="email" placeholder="branch@company.com" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>العنوان التفصيلي</Label>
+                </Field>
+                <Field label="رقم الهاتف">
+                  <Input placeholder="0512345678" dir="ltr" className="text-left" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
+                </Field>
+                <Field label="البريد الإلكتروني" className="md:col-span-2">
+                  <Input type="email" placeholder="branch@company.com" dir="ltr" className="text-left" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
+                </Field>
+                <Field label="العنوان التفصيلي" className="md:col-span-2">
                   <Input placeholder="شارع الملك عبدالعزيز، حي العليا" value={form.address} onChange={e => setForm((p: any) => ({ ...p, address: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>ملاحظات</Label>
+                </Field>
+                <Field label="ملاحظات" className="md:col-span-2">
                   <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الفرع"}
-              </Button>
-            </div>
-          </form>
-        </div>
+                </Field>
+              </FormGrid>
+            </TabsContent>
+          </Tabs>
+        </FormPanel>
       )}
 
       <div className="flex gap-3">

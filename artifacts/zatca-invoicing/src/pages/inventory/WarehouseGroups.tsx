@@ -4,10 +4,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Layers, Search, Save, X } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Plus, Pencil, Trash2, Layers, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Group = { id: number; code: string; nameAr: string; nameEn?: string };
@@ -60,35 +60,28 @@ export default function WarehouseGroups() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Layers className="h-5 w-5 text-primary" />
-              {editId ? "تعديل مجموعة مخازن" : "إضافة مجموعة جديدة"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <div className="space-y-1.5">
-              <Label>كود المجموعة <span className="text-destructive">*</span></Label>
-              <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-              <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Main Group" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
+        <FormPanel
+          icon={Layers}
+          title={editId ? "تعديل مجموعة مخازن" : "إضافة مجموعة جديدة"}
+          subtitle="جمّع المخازن المتشابهة في فئة واحدة"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة"}
+        >
+          <FormGrid>
+            <Field label="كود المجموعة" required>
+              <Input placeholder="GRP-01" value={form.code ?? ""} onChange={e => setForm(p => ({ ...p, code: e.target.value }))} />
+            </Field>
+            <Field label="الاسم بالعربي" required>
+              <Input placeholder="مجموعة رئيسية" value={form.nameAr ?? ""} onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))} />
+            </Field>
+            <Field label="الاسم بالإنجليزي" className="md:col-span-2">
+              <Input placeholder="Main Group" dir="ltr" className="text-left" value={form.nameEn ?? ""} onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))} />
+            </Field>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="relative">

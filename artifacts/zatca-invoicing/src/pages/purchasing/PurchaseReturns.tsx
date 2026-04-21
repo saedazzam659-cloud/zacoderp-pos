@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -318,86 +319,51 @@ export default function PurchaseReturns() {
 
       {/* ── Form ────────────────────────────────────────── */}
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <div>
-              <h2 className="font-semibold flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" />مرتجع مشتريات جديد</h2>
-              {form.invoiceId && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  مستند من فاتورة رقم{" "}
-                  <span className="font-mono text-orange-600">
-                    {invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}
-                  </span>
-                  {" — يمكنك تعديل الكميات قبل الحفظ"}
-                </p>
-              )}
-            </div>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            {/* Header fields */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-sm">رقم المرتجع</Label>
-                <Input placeholder="تلقائي" value={form.docNumber}
-                  onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">التاريخ *</Label>
-                <Input type="date" value={form.returnDate}
-                  onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">المورد</Label>
-                <SearchCombobox items={supplierItems} value={form.supplierId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">فاتورة المشتريات</Label>
-                <SearchCombobox items={invoiceItems} value={form.invoiceId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder="رقم الفاتورة..." />
-              </div>
-            </div>
-
-            {/* Currency + exchange rate */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-sm">العملة</Label>
+        <FormPanel
+          icon={RotateCcw}
+          title="مرتجع مشتريات جديد"
+          subtitle={form.invoiceId
+            ? <>مستند من فاتورة رقم <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> — يمكنك تعديل الكميات قبل الحفظ</>
+            : "إرجاع أصناف من فاتورة مشتريات وتقليل المخزون"}
+          width="6xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={saveMut.isPending}
+          saveDisabled={!form.returnDate}
+          saveLabel="حفظ المرتجع"
+        >
+          <div className="space-y-5">
+            <FormGrid>
+              <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
+              <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
+              <Field label="المورد"><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." /></Field>
+              <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder="رقم الفاتورة..." /></Field>
+              <Field label="العملة">
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="العملة..." /></SelectTrigger>
                     <SelectContent>
                       {currencies.map((c: any) => (
-                        <SelectItem key={c.id} value={c.code}>
-                          {c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}
-                        </SelectItem>
+                        <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <Input placeholder="SAR" value={form.currencyCode}
-                    onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
+                  <Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
                 )}
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm flex items-center justify-between">
+              </Field>
+              <Field
+                label={<span className="flex items-center justify-between w-full">
                   <span>سعر الصرف</span>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
-                    <span className="text-[10px] text-muted-foreground font-normal">
-                      = {Number(form.exchangeRate) > 0 ? (1 / Number(form.exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code}
-                    </span>
+                    <span className="text-[10px] text-muted-foreground font-normal">= {Number(form.exchangeRate) > 0 ? (1 / Number(form.exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code}</span>
                   )}
-                </Label>
-                <Input type="text" inputMode="decimal" dir="ltr"
-                  value={form.exchangeRate}
-                  onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
-              </div>
-              <div className="space-y-1.5 lg:col-span-2">
-                <Label className="text-sm">ملاحظات</Label>
-                <Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-              </div>
-            </div>
+                </span>}
+              >
+                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
+              </Field>
+              <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+            </FormGrid>
 
             {/* Lines */}
             <div className="space-y-3">
@@ -521,12 +487,8 @@ export default function PurchaseReturns() {
               </div>
             </div>
 
-            <div className="flex gap-2 justify-end pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1.5" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1.5" disabled={saveMut.isPending}><Send className="h-4 w-4" />حفظ المرتجع</Button>
-            </div>
-          </form>
-        </div>
+          </div>
+        </FormPanel>
       )}
 
       {/* ── List ─────────────────────────────────────────── */}

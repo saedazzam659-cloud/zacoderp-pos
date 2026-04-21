@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Warehouse, Search, Save, X, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
+import { Plus, Pencil, Trash2, Warehouse, Search, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
+import { FormPanel } from "@/components/FormPanel";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -75,34 +76,29 @@ export default function Warehouses() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Warehouse className="h-5 w-5 text-primary" />
-              {editId ? "تعديل مخزن" : "إضافة مخزن جديد"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="w-full h-9 mb-4">
-                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1"><Warehouse  className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
-                <TabsTrigger value="location" className="flex-1 text-xs gap-1"><MapPin     className="h-3.5 w-3.5" />الموقع</TabsTrigger>
-                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1"><BookMarked className="h-3.5 w-3.5" />المحاسبة</TabsTrigger>
-              </TabsList>
+        <FormPanel
+          icon={Warehouse}
+          title={editId ? "تعديل مخزن" : "إضافة مخزن جديد"}
+          subtitle="بيانات المخزن وإعدادات الموقع والربط المحاسبي"
+          width="4xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة"}
+        >
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="w-full h-9 mb-4">
+              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1"><Warehouse  className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
+              <TabsTrigger value="location" className="flex-1 text-xs gap-1"><MapPin     className="h-3.5 w-3.5" />الموقع</TabsTrigger>
+              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1"><BookMarked className="h-3.5 w-3.5" />المحاسبة</TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="basic" className="mt-0 space-y-4">
+            <TabsContent value="basic" className="mt-0">
+              <div className="grid md:grid-cols-2 gap-x-4 gap-y-4">
                 <div className="space-y-1.5">
                   <Label>كود المخزن <span className="text-destructive">*</span></Label>
-                  <Input placeholder="WH-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-                  <Input placeholder="المخزن الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالإنجليزي</Label>
-                  <Input placeholder="Main Warehouse" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                  <Input placeholder="WH-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>مجموعة المخزن</Label>
@@ -113,9 +109,19 @@ export default function Warehouses() {
                     placeholder="— اختر مجموعة —"
                   />
                 </div>
-              </TabsContent>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+                  <Input placeholder="المخزن الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالإنجليزي</Label>
+                  <Input placeholder="Main Warehouse" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </div>
+              </div>
+            </TabsContent>
 
-              <TabsContent value="location" className="mt-0 space-y-4">
+            <TabsContent value="location" className="mt-0">
+              <div className="grid md:grid-cols-2 gap-x-4 gap-y-4">
                 <div className="space-y-1.5">
                   <Label>المدينة</Label>
                   <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
@@ -124,41 +130,34 @@ export default function Warehouses() {
                   <Label>المنطقة</Label>
                   <Input placeholder="منطقة الرياض" value={form.region} onChange={e => setForm((p: any) => ({ ...p, region: e.target.value }))} />
                 </div>
-                <div className="flex items-center gap-3 pt-1">
+                <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
                   <Switch checked={form.allowNegative} onCheckedChange={v => setForm((p: any) => ({ ...p, allowNegative: v }))} id="allow-neg" />
-                  <Label htmlFor="allow-neg">السماح بالسحب على المكشوف</Label>
+                  <Label htmlFor="allow-neg" className="text-sm cursor-pointer">السماح بالسحب على المكشوف</Label>
                 </div>
                 {form.allowNegative && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 md:col-span-2">
                     <Label>حد السحب (اختياري)</Label>
-                    <Input type="number" placeholder="0.00" value={form.negativeLimit} onChange={e => setForm((p: any) => ({ ...p, negativeLimit: e.target.value }))} />
+                    <Input type="number" placeholder="0.00" dir="ltr" className="text-left" value={form.negativeLimit} onChange={e => setForm((p: any) => ({ ...p, negativeLimit: e.target.value }))} />
                   </div>
                 )}
-              </TabsContent>
+              </div>
+            </TabsContent>
 
-              <TabsContent value="accounts" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>حساب المخزون</Label>
-                  <AccountCombobox
-                    value={form.accountId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
-                    placeholder="— اختر حساب المخزون —"
-                    filterTypes={["asset"]}
-                    grouped={false}
-                  />
-                  <p className="text-[10px] text-muted-foreground">الحساب المحاسبي الذي يُمثّل رصيد هذا المخزن في دفتر الأستاذ</p>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
+            <TabsContent value="accounts" className="mt-0">
+              <div className="space-y-1.5">
+                <Label>حساب المخزون</Label>
+                <AccountCombobox
+                  value={form.accountId}
+                  onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
+                  placeholder="— اختر حساب المخزون —"
+                  filterTypes={["asset"]}
+                  grouped={false}
+                />
+                <p className="text-[10px] text-muted-foreground">الحساب المحاسبي الذي يُمثّل رصيد هذا المخزن في دفتر الأستاذ</p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </FormPanel>
       )}
 
       <div className="relative">

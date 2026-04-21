@@ -4,10 +4,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Ruler, Search, Save, X, Info, ArrowRight } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight } from "lucide-react";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", conversionFactor: "1" };
 
@@ -119,40 +119,31 @@ export default function Units() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Ruler className="h-5 w-5 text-primary" />
-              {editId ? "تعديل وحدة قياس" : "إضافة وحدة جديدة"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <div className="space-y-1.5">
-              <Label>كود الوحدة <span className="text-destructive">*</span></Label>
-              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} required className="font-mono" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Piece" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>معامل التحويل الافتراضي</Label>
+        <FormPanel
+          icon={Ruler}
+          title={editId ? "تعديل وحدة قياس" : "إضافة وحدة جديدة"}
+          subtitle="عرّف الوحدة الأساسية لاستخدامها في الأصناف"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة"}
+        >
+          <FormGrid>
+            <Field label="كود الوحدة" required>
+              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} className="font-mono" />
+            </Field>
+            <Field label="الاسم بالعربي" required>
+              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+            </Field>
+            <Field label="الاسم بالإنجليزي">
+              <Input placeholder="Piece" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </Field>
+            <Field label="معامل التحويل الافتراضي" hint="مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف">
               <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
-              <p className="text-[10px] text-muted-foreground">مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف</p>
-            </div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
+            </Field>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="relative">

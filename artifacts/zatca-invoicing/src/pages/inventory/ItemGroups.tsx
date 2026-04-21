@@ -4,10 +4,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Tag, Search, Save, X, BookMarked } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Plus, Pencil, Trash2, Tag, Search, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -72,39 +72,39 @@ export default function ItemGroups() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Tag className="h-5 w-5 text-primary" />
-              {editId ? "تعديل مجموعة أصناف" : "إضافة مجموعة جديدة"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="w-full h-9 mb-4">
-                <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Tag        className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
-              </TabsList>
+        <FormPanel
+          icon={Tag}
+          title={editId ? "تعديل مجموعة أصناف" : "إضافة مجموعة جديدة"}
+          subtitle="تصنيف الأصناف وربطها بالحسابات المحاسبية الافتراضية"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة"}
+        >
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="w-full h-9 mb-5">
+              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Tag        className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
+              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="basic" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>كود المجموعة <span className="text-destructive">*</span></Label>
-                  <Input placeholder="GRP-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-                  <Input placeholder="إلكترونيات" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالإنجليزي</Label>
-                  <Input placeholder="Electronics" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-                </div>
-              </TabsContent>
+            <TabsContent value="basic" className="mt-0">
+              <FormGrid>
+                <Field label="كود المجموعة" required>
+                  <Input placeholder="GRP-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+                </Field>
+                <Field label="الاسم بالعربي" required>
+                  <Input placeholder="إلكترونيات" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+                </Field>
+                <Field label="الاسم بالإنجليزي" className="md:col-span-2">
+                  <Input placeholder="Electronics" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </Field>
+              </FormGrid>
+            </TabsContent>
 
-              <TabsContent value="accounts" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>حساب التكلفة الافتراضي</Label>
+            <TabsContent value="accounts" className="mt-0">
+              <FormGrid>
+                <Field label="حساب التكلفة الافتراضي" hint="يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب">
                   <AccountCombobox
                     value={form.costAccountId}
                     onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))}
@@ -112,10 +112,8 @@ export default function ItemGroups() {
                     filterTypes={["expense", "asset"]}
                     grouped={false}
                   />
-                  <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>حساب الإيراد الافتراضي</Label>
+                </Field>
+                <Field label="حساب الإيراد الافتراضي" hint="يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب">
                   <AccountCombobox
                     value={form.revenueAccountId}
                     onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))}
@@ -123,19 +121,11 @@ export default function ItemGroups() {
                     filterTypes={["revenue"]}
                     grouped={false}
                   />
-                  <p className="text-[10px] text-muted-foreground">يُورَث لكل صنف ينتمي لهذه المجموعة إذا لم يُحدَّد له حساب</p>
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </div>
-          </form>
-        </div>
+                </Field>
+              </FormGrid>
+            </TabsContent>
+          </Tabs>
+        </FormPanel>
       )}
 
       <div className="relative">

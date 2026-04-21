@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { Plus, Trash2, ClipboardList, Search, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 
@@ -91,45 +92,32 @@ export default function StockCounting() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <ClipboardList className="h-5 w-5 text-primary" />
-              ورقة جرد جديدة
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <div className="space-y-1.5">
-              <Label>رقم الجرد</Label>
-              <Input placeholder="CNT-001 (تلقائي)" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>التاريخ <span className="text-destructive">*</span></Label>
-              <Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>المخزن <span className="text-destructive">*</span></Label>
+        <FormPanel
+          icon={ClipboardList}
+          title="ورقة جرد جديدة"
+          subtitle="سيتم تحميل أرصدة المخزن الحالية لإدخال الكميات الفعلية"
+          width="4xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending}
+          saveDisabled={!form.warehouseId || !form.countDate}
+          saveLabel="إنشاء ورقة الجرد"
+        >
+          <FormGrid>
+            <Field label="رقم الجرد"><Input placeholder="CNT-001 (تلقائي)" dir="ltr" className="text-left" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} /></Field>
+            <Field label="التاريخ" required><Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} /></Field>
+            <Field label="المخزن" required className="md:col-span-2">
               <SearchCombobox
                 items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
                 value={form.warehouseId}
                 onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
                 placeholder="— اختر مخزن —"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>ملاحظات</Label>
-              <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <p className="text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending}>
-                <Save className="h-4 w-4" />إنشاء ورقة الجرد
-              </Button>
-            </div>
-          </form>
-        </div>
+            </Field>
+            <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+            <p className="md:col-span-2 text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="relative">

@@ -9,7 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
-import { Plus, Pencil, Trash2, BookOpen, Search, Save, X, ChevronLeft } from "lucide-react";
+import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -188,47 +189,36 @@ export default function ChartOfAccounts() {
       </div>
 
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-primary" />
-              {editId ? "تعديل حساب" : "إضافة حساب جديد"}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-4">
-            <div className="space-y-1.5">
-              <Label>كود الحساب <span className="text-destructive">*</span></Label>
-              <Input placeholder="1101" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>اسم الحساب (عربي) <span className="text-destructive">*</span></Label>
-              <Input placeholder="الصندوق" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>اسم الحساب (إنجليزي)</Label>
-              <Input placeholder="Cash" dir="ltr" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>نوع الحساب <span className="text-destructive">*</span></Label>
+        <FormPanel
+          icon={BookOpen}
+          title={editId ? "تعديل حساب" : "إضافة حساب جديد"}
+          subtitle="عرّف الحساب وحدّد نوعه وموقعه في الشجرة المحاسبية"
+          width="4xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending || updateMut.isPending}
+          saveDisabled={!form.code || !form.nameAr || !form.accountType}
+          saveLabel={editId ? "حفظ التعديل" : "إضافة الحساب"}
+        >
+          <FormGrid>
+            <Field label="كود الحساب" required>
+              <Input placeholder="1101" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
+            </Field>
+            <Field label="نوع الحساب" required>
               <SearchCombobox
                 items={ACCOUNT_TYPES.map(t => ({ value: t.value, label: t.label, badge: t.label, badgeClass: t.badgeClass }))}
                 value={form.accountType}
                 onValueChange={v => setForm((p: any) => ({ ...p, accountType: v, reportDirection: p.reportDirection || "" }))}
                 placeholder="نوع الحساب"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>توجيه الحساب في التقارير</Label>
-              <SearchCombobox
-                items={REPORT_DIRECTIONS.map(d => ({ value: d.value, label: d.label }))}
-                value={form.reportDirection ?? ""}
-                onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
-                placeholder={`تلقائي: ${DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? "مركز مالي" : "قائمة دخل"}`}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الحساب الرئيسي</Label>
+            </Field>
+            <Field label="اسم الحساب (عربي)" required>
+              <Input placeholder="الصندوق" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
+            </Field>
+            <Field label="اسم الحساب (إنجليزي)">
+              <Input placeholder="Cash" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </Field>
+            <Field label="الحساب الرئيسي">
               <SearchCombobox
                 items={parentItems}
                 value={form.parentId}
@@ -236,33 +226,33 @@ export default function ChartOfAccounts() {
                 placeholder="— بدون رئيسي —"
                 searchPlaceholder="ابحث..."
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label>المستوى</Label>
+            </Field>
+            <Field label="المستوى">
               <Input type="number" min="1" max="10" value={form.level} onChange={e => setForm((p: any) => ({ ...p, level: Number(e.target.value) }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>ملاحظات</Label>
+            </Field>
+            <Field label="توجيه الحساب في التقارير" className="md:col-span-2">
+              <SearchCombobox
+                items={REPORT_DIRECTIONS.map(d => ({ value: d.value, label: d.label }))}
+                value={form.reportDirection ?? ""}
+                onValueChange={v => setForm((p: any) => ({ ...p, reportDirection: v }))}
+                placeholder={`تلقائي: ${DEFAULT_DIRECTION[form.accountType] === "balance_sheet" ? "مركز مالي" : "قائمة دخل"}`}
+              />
+            </Field>
+            <Field label="ملاحظات" className="md:col-span-2">
               <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <div className="space-y-3 pt-1">
+            </Field>
+            <div className="md:col-span-2 flex items-center gap-6 rounded-lg border bg-muted/30 px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <Switch id="is-posting" checked={form.isPosting} onCheckedChange={v => setForm((p: any) => ({ ...p, isPosting: v }))} />
-                <Label htmlFor="is-posting" className="cursor-pointer">حساب قيد (يقبل حركات)</Label>
+                <Label htmlFor="is-posting" className="cursor-pointer text-sm">حساب قيد (يقبل حركات)</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Switch id="is-active" checked={form.isActive} onCheckedChange={v => setForm((p: any) => ({ ...p, isActive: v }))} />
-                <Label htmlFor="is-active" className="cursor-pointer">نشط</Label>
+                <Label htmlFor="is-active" className="cursor-pointer text-sm">نشط</Label>
               </div>
             </div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الحساب"}
-              </Button>
-            </div>
-          </form>
-        </div>
+          </FormGrid>
+        </FormPanel>
       )}
 
       <div className="relative">

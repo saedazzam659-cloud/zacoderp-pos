@@ -6,11 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
-  Pencil, Trash2, Save, X, TrendingUp, TrendingDown, Minus,
+  Pencil, Trash2, TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
-import { Label } from "@/components/ui/label";
+import { FormPanel } from "@/components/FormPanel";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -222,48 +222,41 @@ export default function Suppliers() {
       </div>
 
       {editSup && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">{editSup?.nameAr?.[0] ?? "م"}</div>
-              <div><p className="font-semibold">{editSup?.nameAr}</p><p className="text-xs text-muted-foreground font-normal">تعديل بيانات المورد</p></div>
-            </h2>
-            <Button variant="ghost" size="icon" onClick={() => setEditSup(null)}><X className="h-4 w-4" /></Button>
-          </div>
-          <div className="p-5 space-y-6">
+        <FormPanel
+          icon={Truck}
+          title={editSup?.nameAr ?? "تعديل المورد"}
+          subtitle="تعديل بيانات الهوية التجارية والعنوان الوطني للمورد"
+          width="4xl"
+          onClose={() => setEditSup(null)}
+          onSave={() => updateMutation.mutate(editForm)}
+          saving={updateMutation.isPending}
+          saveDisabled={!editForm.nameAr.trim()}
+          saveLabel="حفظ التعديلات"
+        >
+          <div className="space-y-6">
             <div className="space-y-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />بيانات الهوية التجارية</p>
-              <Field label="اسم المورد (عربي) *" name="nameAr" placeholder="شركة التوريدات الوطنية" />
-              <Field label="الاسم (إنجليزي)" name="nameEn" placeholder="National Supply Co." dir="ltr" />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                <div className="md:col-span-2"><Field label="اسم المورد (عربي) *" name="nameAr" placeholder="شركة التوريدات الوطنية" /></div>
+                <div className="md:col-span-2"><Field label="الاسم (إنجليزي)" name="nameEn" placeholder="National Supply Co." dir="ltr" /></div>
                 <Field label="الرقم الضريبي" name="vatNumber" placeholder="310000000000003" dir="ltr" />
                 <Field label="السجل التجاري" name="crNumber" placeholder="1010000001" dir="ltr" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
                 <Field label="البريد الإلكتروني" name="email" placeholder="info@supplier.com" dir="ltr" />
                 <Field label="الهاتف" name="phone" placeholder="0500000000" dir="ltr" />
               </div>
             </div>
             <div className="space-y-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><MapPin className="h-3.5 w-3.5" />العنوان الوطني</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                 <Field label="اسم الشارع" name="street" placeholder="شارع الملك فهد" />
                 <Field label="رقم المبنى" name="buildingNumber" placeholder="1234" dir="ltr" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
                 <Field label="الحي / المنطقة" name="district" placeholder="حي العليا" />
                 <Field label="المدينة" name="city" placeholder="الرياض" />
+                <Field label="الرمز البريدي" name="postalCode" placeholder="12345" dir="ltr" />
               </div>
-              <Field label="الرمز البريدي" name="postalCode" placeholder="12345" dir="ltr" />
-            </div>
-            <div className="flex gap-2 pt-4 border-t">
-              <Button variant="outline" className="gap-1" onClick={() => setEditSup(null)}><X className="h-4 w-4" />إلغاء</Button>
-              <Button className="gap-1 flex-1" onClick={() => updateMutation.mutate(editForm)} disabled={updateMutation.isPending || !editForm.nameAr.trim()}>
-                <Save className="h-4 w-4" />{updateMutation.isPending ? "جاري الحفظ..." : "حفظ التعديلات"}
-              </Button>
             </div>
           </div>
-        </div>
+        </FormPanel>
       )}
 
       {/* Stats */}

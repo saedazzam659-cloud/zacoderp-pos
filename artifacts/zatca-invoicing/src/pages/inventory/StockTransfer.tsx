@@ -11,6 +11,7 @@ import {
   Plus, Trash2, ArrowRightLeft, Search, X,
   CheckCircle2, Send, ChevronDown, ChevronUp, Zap,
 } from "lucide-react";
+import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -228,75 +229,37 @@ export default function StockTransfer() {
 
       {/* Form */}
       {showForm && (
-        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
-            <h2 className="font-semibold flex items-center gap-2">
-              <ArrowRightLeft className="h-5 w-5 text-primary" />أمر تحويل جديد
-            </h2>
-            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
-          </div>
-          <form onSubmit={handleSubmit} className="p-5 space-y-5">
-            {/* ── معلومات الحركة ────────────────────────────── */}
-            <div>
-              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">معلومات الحركة</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
-                  <Label>رقم الحركة</Label>
-                  <Input
-                    placeholder="TRF-001 (تلقائي)"
-                    value={form.transferNumber}
-                    onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>التاريخ *</Label>
-                  <Input
-                    type="date"
-                    value={form.transferDate}
-                    onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))}
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>من مخزن *</Label>
-                  <SearchCombobox
-                    items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                    value={form.fromWarehouseId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))}
-                    placeholder="— اختر مخزن المصدر —"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>إلى مخزن *</Label>
-                  <SearchCombobox
-                    items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
-                    value={form.toWarehouseId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))}
-                    placeholder="— اختر مخزن الوجهة —"
-                  />
-                </div>
-                <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
-                  <Label>ملاحظات</Label>
-                  <Input
-                    placeholder="ملاحظات اختيارية"
-                    value={form.notes}
-                    onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </div>
+        <FormPanel
+          icon={ArrowRightLeft}
+          title="أمر تحويل جديد"
+          subtitle="نقل أصناف بين مخزنين مع تحديد الكميات وأسعار التكلفة"
+          width="6xl"
+          onClose={reset}
+          onSave={() => handleSubmit({ preventDefault() {} } as any)}
+          saving={createMut.isPending}
+          saveDisabled={!form.fromWarehouseId || !form.toWarehouseId || !form.transferDate}
+          saveLabel="حفظ كمسودة"
+        >
+          <div className="space-y-5">
+            <FormSection title="معلومات الحركة">
+              <FormGrid cols={2}>
+                <Field label="رقم الحركة"><Input placeholder="TRF-001 (تلقائي)" dir="ltr" className="text-left" value={form.transferNumber} onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))} /></Field>
+                <Field label="التاريخ" required><Input type="date" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} /></Field>
+                <Field label="من مخزن" required>
+                  <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder="— اختر مخزن المصدر —" />
+                </Field>
+                <Field label="إلى مخزن" required>
+                  <SearchCombobox items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.toWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))} placeholder="— اختر مخزن الوجهة —" />
+                </Field>
+                <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              </FormGrid>
+            </FormSection>
 
-            {/* ── الربط المحاسبي ─────────────────────────────── */}
             <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
               <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
               <div className="max-w-xs">
-                <Label>الحساب المحاسبي</Label>
-                <AccountCombobox
-                  value={form.accountId}
-                  onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))}
-                  placeholder="— اختر الحساب —"
-                  grouped={false}
-                />
+                <Label className="text-xs font-medium text-foreground/80">الحساب المحاسبي</Label>
+                <AccountCombobox value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="— اختر الحساب —" grouped={false} />
               </div>
             </div>
 
@@ -317,7 +280,7 @@ export default function StockTransfer() {
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">الكمية</th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">
                         <span className="flex items-center gap-1">
-                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500" title="يُملأ تلقائياً" />
+                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500"><title>يُملأ تلقائياً</title></Zap>
                         </span>
                       </th>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الإجمالي</th>
@@ -366,7 +329,8 @@ export default function StockTransfer() {
                               type="number"
                               step="any"
                               min="0.001"
-                              className="h-8 text-xs"
+                              dir="ltr"
+                              className="h-8 text-xs text-left"
                               value={line.qty}
                               onChange={e => updateLine(i, "qty", e.target.value)}
                             />
@@ -379,8 +343,9 @@ export default function StockTransfer() {
                                 type="number"
                                 step="any"
                                 min="0"
+                                dir="ltr"
                                 className={cn(
-                                  "h-8 text-xs",
+                                  "h-8 text-xs text-left",
                                   autoFilled && "border-amber-300 bg-amber-50/60"
                                 )}
                                 value={line.costPrice}
@@ -433,13 +398,8 @@ export default function StockTransfer() {
                 عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
               </p>
             </div>
-
-            <div className="flex gap-2 justify-end pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1.5" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1.5" disabled={createMut.isPending}><Send className="h-4 w-4" />حفظ كمسودة</Button>
-            </div>
-          </form>
-        </div>
+          </div>
+        </FormPanel>
       )}
 
       {/* Search */}
