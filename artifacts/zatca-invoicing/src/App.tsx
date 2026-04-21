@@ -76,6 +76,15 @@ import SalesByItem          from "@/pages/sales/reports/SalesByItem";
 import SalesByPeriod        from "@/pages/sales/reports/SalesByPeriod";
 import TopCustomers         from "@/pages/sales/reports/TopCustomers";
 import SalesReturnsReport   from "@/pages/sales/reports/SalesReturnsReport";
+import PurchaseReportsHub      from "@/pages/purchasing/reports/PurchaseReportsHub";
+import SupplierStatement       from "@/pages/purchasing/reports/SupplierStatement";
+import SupplierBalances        from "@/pages/purchasing/reports/SupplierBalances";
+import SupplierAgingReport     from "@/pages/purchasing/reports/SupplierAgingReport";
+import PurchasesBySupplier     from "@/pages/purchasing/reports/PurchasesBySupplier";
+import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem";
+import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
+import TopSuppliers            from "@/pages/purchasing/reports/TopSuppliers";
+import PurchaseReturnsReport   from "@/pages/purchasing/reports/PurchaseReturnsReport";
 // Sales
 import SalesInvoices        from "@/pages/sales/SalesInvoices";
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
@@ -227,6 +236,15 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/sales/reports/top-customers"      component={TopCustomers} />}
             {!isSuperAdmin && <Route path="/sales/reports/returns"            component={SalesReturnsReport} />}
             {!isSuperAdmin && <Route path="/sales/reports"                    component={SalesReportsHub} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/supplier-statement"   component={SupplierStatement} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/supplier-balances"    component={SupplierBalances} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/aging"                component={SupplierAgingReport} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-supplier" component={PurchasesBySupplier} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-item"    component={PurchasesByItem} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-period"  component={PurchasesByPeriod} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/top-suppliers"        component={TopSuppliers} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports/returns"              component={PurchaseReturnsReport} />}
+            {!isSuperAdmin && <Route path="/purchasing/reports"                      component={PurchaseReportsHub} />}
             {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
 
             {/* Cash & Banks */}

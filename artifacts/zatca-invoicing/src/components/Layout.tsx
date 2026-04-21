@@ -177,7 +177,7 @@ function PurchasingNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
-  const isOnPurchasing = location.startsWith("/purchasing") || location.startsWith("/suppliers");
+  const isOnPurchasing = ((location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
   return (
     <div>
       <button
@@ -292,6 +292,58 @@ function SalesReportsNavGroup({
           <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={salesReportsHeader} location={location} onClick={onNavigate} indent />
           {salesReportsSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PurchasingReportsNavGroup ────────────────────────────────────────────────
+const purchasingReportsSubNav = [
+  { name: "كشف حساب مورد",              href: "/purchasing/reports/supplier-statement",   icon: FileText },
+  { name: "أرصدة الموردين",              href: "/purchasing/reports/supplier-balances",    icon: FileText },
+  { name: "أعمار الذمم الدائنة",         href: "/purchasing/reports/aging",                icon: FileText },
+  { name: "المشتريات حسب المورد",        href: "/purchasing/reports/purchases-by-supplier", icon: FileText },
+  { name: "المشتريات حسب الصنف",         href: "/purchasing/reports/purchases-by-item",    icon: FileText },
+  { name: "المشتريات اليومية / الشهرية", href: "/purchasing/reports/purchases-by-period",  icon: FileText },
+  { name: "أكبر الموردين",               href: "/purchasing/reports/top-suppliers",        icon: FileText },
+  { name: "مرتجعات المشتريات",           href: "/purchasing/reports/returns",              icon: FileText },
+];
+const purchasingReportsHeader = { name: "كل التقارير", href: "/purchasing/reports", icon: BarChart2 };
+
+function PurchasingReportsNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnReports = location.startsWith("/purchasing/reports");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnReports && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <BarChart2 className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">تقارير الموردين والمشتريات</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <NavItem item={purchasingReportsHeader} location={location} onClick={onNavigate} indent />
+          {purchasingReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -514,6 +566,8 @@ function SidebarInner({
   onReportsToggle,
   purchasingOpen,
   onPurchasingToggle,
+  purchasingReportsOpen,
+  onPurchasingReportsToggle,
   salesOpen,
   onSalesToggle,
   salesReportsOpen,
@@ -539,6 +593,8 @@ function SidebarInner({
   onReportsToggle: () => void;
   purchasingOpen: boolean;
   onPurchasingToggle: () => void;
+  purchasingReportsOpen: boolean;
+  onPurchasingReportsToggle: () => void;
   salesOpen: boolean;
   onSalesToggle: () => void;
   salesReportsOpen: boolean;
@@ -668,6 +724,15 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={purchasingOpen}
                 onToggle={onPurchasingToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
+              <PurchasingReportsNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={purchasingReportsOpen}
+                onToggle={onPurchasingReportsToggle}
               />
             </div>
 
@@ -991,7 +1056,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/reports"));
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
-  const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
+  const [purchasingOpen, setPurchasingOpen]   = useState(() => (location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
+  const [purchasingReportsOpen, setPurchasingReportsOpen] = useState(() => location.startsWith("/purchasing/reports"));
   const [salesOpen,      setSalesOpen]        = useState(() => (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers"));
   const [salesReportsOpen, setSalesReportsOpen] = useState(() => location.startsWith("/sales/reports"));
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
@@ -1005,6 +1071,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleInvReportsToggle = () => setInvReportsOpen(v => !v);
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
+  const handlePurchasingReportsToggle = () => setPurchasingReportsOpen(v => !v);
   const handleSalesToggle      = () => setSalesOpen(v => !v);
   const handleSalesReportsToggle = () => setSalesReportsOpen(v => !v);
   const handleCashToggle       = () => setCashOpen(v => !v);
@@ -1026,6 +1093,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onReportsToggle: handleReportsToggle,
     purchasingOpen,
     onPurchasingToggle: handlePurchasingToggle,
+    purchasingReportsOpen,
+    onPurchasingReportsToggle: handlePurchasingReportsToggle,
     salesOpen,
     onSalesToggle: handleSalesToggle,
     salesReportsOpen,
