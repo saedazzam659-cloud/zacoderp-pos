@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, ClipboardList, Search, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
+import { Plus, Trash2, ClipboardList, Search, Send, ChevronDown, ChevronUp, Save, Sparkles } from "lucide-react";
+import * as XLSX from "xlsx";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
@@ -32,6 +33,9 @@ export default function StockCounting() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editedLines, setEditedLines] = useState<Record<number, string>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [aiUploading, setAiUploading] = useState(false);
+  const [aiReport, setAiReport] = useState<{ matched: number; unmatched: string[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: counts = [], isLoading } = useQuery({ queryKey: ["stock-counts", cid], queryFn: () => inventoryApi.getCounts(cid) });
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
@@ -47,6 +51,68 @@ export default function StockCounting() {
     e.preventDefault();
     if (!form.warehouseId) return;
     createMut.mutate({ ...form, warehouseId: Number(form.warehouseId) });
+  }
+
+  async function handleAiUpload(file: File) {
+    if (!countDetail?.items?.length) {
+      toast({ title: "افتح ورقة الجرد أولاً", variant: "destructive" });
+      return;
+    }
+    setAiUploading(true);
+    setAiReport(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      if (!rows.length) throw new Error("الملف فارغ");
+
+      const token = localStorage.getItem("token");
+      const API = (import.meta as any).env?.VITE_API_URL || "";
+      const res = await fetch(`${API}/api/ai/parse-stock-count`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rows }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "فشل التحليل");
+
+      const aiItems: { code?: string; name?: string; barcode?: string; qty: number }[] = data.items || [];
+      const norm = (s: any) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+      const updates: Record<number, string> = {};
+      const unmatched: string[] = [];
+
+      for (const ai of aiItems) {
+        const aiCode = norm(ai.code);
+        const aiName = norm(ai.name);
+        const aiBar  = norm(ai.barcode);
+        const found = countDetail.items.find((it: any) => {
+          const c = norm(it.item?.code);
+          const n = norm(it.item?.nameAr);
+          const ne = norm(it.item?.nameEn);
+          const b = norm(it.item?.barcode);
+          if (aiCode && c && aiCode === c) return true;
+          if (aiBar  && b && aiBar  === b) return true;
+          if (aiName && n && (n === aiName || n.includes(aiName) || aiName.includes(n))) return true;
+          if (aiName && ne && (ne === aiName || ne.includes(aiName) || aiName.includes(ne))) return true;
+          return false;
+        });
+        if (found) {
+          updates[found.id] = String(ai.qty ?? 0);
+        } else {
+          unmatched.push(`${ai.code || ""} ${ai.name || ""}`.trim() || "(صف بدون تعريف)");
+        }
+      }
+
+      setEditedLines(p => ({ ...p, ...updates }));
+      setAiReport({ matched: Object.keys(updates).length, unmatched });
+      toast({ title: `✓ تم استخراج ${Object.keys(updates).length} صنف من الملف` });
+    } catch (e: any) {
+      toast({ title: e.message || "فشل تحليل الملف", variant: "destructive" });
+    } finally {
+      setAiUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   async function saveActualQty(countId: number) {
@@ -172,13 +238,31 @@ export default function StockCounting() {
                       {expandedId === cnt.id && (
                         <tr key={`exp-${cnt.id}`} className="bg-muted/5">
                           <td colSpan={6} className="px-4 py-4">
-                            <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                               <h3 className="text-xs font-semibold">تفاصيل الجرد</h3>
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 flex-wrap">
                                 {cnt.status === "draft" && (
-                                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => saveActualQty(cnt.id)} disabled={savingId === cnt.id}>
-                                    <Save className="h-3 w-3" />{savingId === cnt.id ? "جاري الحفظ..." : "حفظ الكميات الفعلية"}
-                                  </Button>
+                                  <>
+                                    <input
+                                      ref={fileInputRef}
+                                      type="file"
+                                      accept=".xlsx,.xls,.csv"
+                                      className="hidden"
+                                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAiUpload(f); }}
+                                    />
+                                    <Button
+                                      size="sm" variant="outline"
+                                      className="h-7 text-xs gap-1 text-purple-700 border-purple-200 hover:bg-purple-50"
+                                      onClick={() => fileInputRef.current?.click()}
+                                      disabled={aiUploading}
+                                    >
+                                      <Sparkles className="h-3 w-3" />
+                                      {aiUploading ? "جاري التحليل..." : "رفع Excel (AI)"}
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => saveActualQty(cnt.id)} disabled={savingId === cnt.id}>
+                                      <Save className="h-3 w-3" />{savingId === cnt.id ? "جاري الحفظ..." : "حفظ الكميات الفعلية"}
+                                    </Button>
+                                  </>
                                 )}
                                 <ExportButtons
                                   rows={countExportRows}
