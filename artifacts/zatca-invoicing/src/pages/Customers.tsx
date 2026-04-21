@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Plus, Users, Search, Phone, Mail, MapPin,
-  BadgeCheck, Building2, UserCheck, FileText, ChevronLeft,
+  BadgeCheck, Building2, UserCheck, FileText, ChevronLeft, Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -379,6 +379,11 @@ export default function Customers() {
                         <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1">
                           <Link href={`/invoices/new?customerId=${customer.id}`}>
                             <FileText className="h-3 w-3" />فاتورة
+                          </Link>
+                        </Button>
+                        <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50">
+                          <Link href={`/customers/${customer.id}`}>
+                            <Pencil className="h-3 w-3" />تعديل
                           </Link>
                         </Button>
                         <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs text-muted-foreground">

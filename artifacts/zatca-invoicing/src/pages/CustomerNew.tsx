@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { useCreateCustomer, useListCompanies } from "@workspace/api-client-react";
+import { useCreateCustomer, useListCompanies, useGetCustomer, useUpdateCustomer } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,11 +42,18 @@ type FormValues = z.infer<typeof customerSchema>;
 
 export default function CustomerNew() {
   const [, setLocation] = useLocation();
+  const [matchEdit, paramsEdit] = useRoute("/customers/:id");
+  const editingId = matchEdit && paramsEdit?.id && paramsEdit.id !== "new" ? Number(paramsEdit.id) : null;
+  const isEditMode = !!editingId;
   const { toast }       = useToast();
   const queryClient     = useQueryClient();
   const createCustomer  = useCreateCustomer();
+  const updateCustomer  = useUpdateCustomer();
   const [activeTab, setActiveTab] = useState("basic");
   const { user } = useAuth();
+  const { data: existingCustomer } = useGetCustomer(editingId as any, {
+    query: { enabled: isEditMode } as any,
+  });
 
   const isSuperAdmin   = user?.role === "superadmin";
   const userCompanyId  = user?.companyId;
@@ -78,6 +85,29 @@ export default function CustomerNew() {
     if (!isSuperAdmin && userCompanyId) form.setValue("companyId", userCompanyId);
   }, [userCompanyId, isSuperAdmin]);
 
+  // Prefill form when editing
+  useEffect(() => {
+    if (!isEditMode || !existingCustomer) return;
+    const c: any = existingCustomer;
+    form.reset({
+      companyId:      c.companyId ?? userCompanyId,
+      customerType:   (c.customerType as any) ?? "b2b",
+      nameAr:         c.nameAr ?? "",
+      nameEn:         c.nameEn ?? "",
+      vatNumber:      c.vatNumber ?? "",
+      crNumber:       c.crNumber ?? "",
+      email:          c.email ?? "",
+      phone:          c.phone ?? "",
+      city:           c.city ?? "",
+      district:       c.district ?? "",
+      street:         c.street ?? "",
+      buildingNumber: c.buildingNumber ?? "",
+      postalCode:     c.postalCode ?? "",
+      country:        c.country ?? "SA",
+    });
+    if (c.accountId) setCustAccountId(String(c.accountId));
+  }, [isEditMode, existingCustomer]);
+
   const customerType = form.watch("customerType");
   const isB2B        = customerType === "b2b";
   const vatValue     = form.watch("vatNumber") ?? "";
@@ -93,7 +123,24 @@ export default function CustomerNew() {
   const onSubmit = (values: FormValues) => {
     if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
     const { customerType: _ct, ...rest } = values;
-    createCustomer.mutate({ data: { ...rest, accountId: custAccountId ? Number(custAccountId) : null } as any }, {
+    const payload = { ...rest, accountId: custAccountId ? Number(custAccountId) : null } as any;
+    if (isEditMode && editingId) {
+      updateCustomer.mutate({ id: editingId, data: payload }, {
+        onSuccess: () => {
+          toast({ title: "✓ تم حفظ التعديلات", description: "تم تحديث بيانات العميل." });
+          queryClient.invalidateQueries({ queryKey: ["customers"] });
+          queryClient.invalidateQueries({ queryKey: [`/api/customers/${editingId}`] });
+          setLocation("/customers");
+        },
+        onError: () => toast({
+          title: "حدث خطأ",
+          description: "لم نتمكن من تحديث العميل.",
+          variant: "destructive",
+        }),
+      });
+      return;
+    }
+    createCustomer.mutate({ data: payload }, {
       onSuccess: () => {
         toast({ title: "✓ تمت الإضافة بنجاح", description: "تمت إضافة العميل إلى النظام." });
         queryClient.invalidateQueries({ queryKey: ["customers"] });
@@ -124,7 +171,7 @@ export default function CustomerNew() {
           <Link href="/customers"><ArrowRight className="h-5 w-5" /></Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold">إضافة عميل جديد</h1>
+          <h1 className="text-2xl font-bold">{isEditMode ? "تعديل بيانات العميل" : "إضافة عميل جديد"}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">أدخل بيانات العميل الذي ستصدر له الفواتير</p>
         </div>
       </div>
@@ -520,9 +567,11 @@ export default function CustomerNew() {
                       <Button type="button" variant="outline" asChild>
                         <Link href="/customers">إلغاء</Link>
                       </Button>
-                      <Button type="submit" className="gap-2 min-w-[140px]" disabled={createCustomer.isPending}>
+                      <Button type="submit" className="gap-2 min-w-[140px]" disabled={createCustomer.isPending || updateCustomer.isPending}>
                         <Save className="h-4 w-4" />
-                        {createCustomer.isPending ? "جاري الحفظ..." : "حفظ العميل"}
+                        {(createCustomer.isPending || updateCustomer.isPending)
+                          ? "جاري الحفظ..."
+                          : (isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
                       </Button>
                     </div>
                   </div>

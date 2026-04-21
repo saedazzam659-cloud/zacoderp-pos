@@ -172,6 +172,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/invoices/:id" component={InvoiceDetails} />}
             {!isSuperAdmin && <Route path="/customers" component={Customers} />}
             {!isSuperAdmin && <Route path="/customers/new" component={CustomerNew} />}
+            {!isSuperAdmin && <Route path="/customers/:id" component={CustomerNew} />}
             {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
             {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
