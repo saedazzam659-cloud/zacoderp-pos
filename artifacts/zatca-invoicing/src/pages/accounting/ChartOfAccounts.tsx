@@ -269,6 +269,7 @@ export default function ChartOfAccounts() {
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground">اسم الحساب</th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">الاسم (EN)</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-28">النوع</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-32 hidden md:table-cell">توجيه التقرير</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20 hidden sm:table-cell">المستوى</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20 hidden sm:table-cell">قيد</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20">الحالة</th>
