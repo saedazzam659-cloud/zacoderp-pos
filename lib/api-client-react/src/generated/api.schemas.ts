@@ -98,6 +98,7 @@ export interface Customer {
   buildingNumber?: string;
   postalCode?: string;
   country?: string;
+  accountId?: number | null;
   createdAt?: string;
 }
 
@@ -115,6 +116,7 @@ export interface CreateCustomerBody {
   buildingNumber?: string;
   postalCode?: string;
   country?: string;
+  accountId?: number | null;
 }
 
 export interface InvoiceLineItem {

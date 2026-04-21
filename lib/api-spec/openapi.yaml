@@ -587,6 +587,9 @@ components:
         country:
           type: string
           default: "SA"
+        accountId:
+          type: integer
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -624,6 +627,9 @@ components:
           type: string
         country:
           type: string
+        accountId:
+          type: integer
+          nullable: true
       required:
         - companyId
         - nameAr

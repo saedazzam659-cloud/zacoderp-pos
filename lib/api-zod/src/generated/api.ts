@@ -217,6 +217,7 @@ export const ListCustomersResponseItem = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(listCustomersResponseCountryDefault),
+  accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
 export const ListCustomersResponse = zod.array(ListCustomersResponseItem);
@@ -238,6 +239,7 @@ export const CreateCustomerBody = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().optional(),
+  accountId: zod.number().nullish(),
 });
 
 /**
@@ -264,6 +266,7 @@ export const GetCustomerResponse = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(getCustomerResponseCountryDefault),
+  accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
 
@@ -288,6 +291,7 @@ export const UpdateCustomerBody = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().optional(),
+  accountId: zod.number().nullish(),
 });
 
 export const updateCustomerResponseCountryDefault = `SA`;
@@ -307,6 +311,7 @@ export const UpdateCustomerResponse = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(updateCustomerResponseCountryDefault),
+  accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
 
@@ -420,6 +425,7 @@ export const ListInvoicesResponseItem = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(listInvoicesResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
@@ -443,27 +449,15 @@ export const CreateInvoiceBody = zod.object({
   supplyDate: zod.coerce.date().optional(),
   dueDate: zod.coerce.date().optional(),
   currency: zod.string().default(createInvoiceBodyCurrencyDefault),
-  paymentMethod: zod.string().optional(),
   notes: zod.string().optional(),
-  buyerName: zod.string().optional(),
-  buyerVatNumber: zod.string().optional(),
-  buyerCrNumber: zod.string().optional(),
-  buyerStreet: zod.string().optional(),
-  buyerBuildingNumber: zod.string().optional(),
-  buyerDistrict: zod.string().optional(),
-  buyerCity: zod.string().optional(),
-  buyerPostalCode: zod.string().optional(),
-  buyerCountry: zod.string().optional(),
   lineItems: zod.array(
     zod.object({
       description: zod.string(),
       quantity: zod.number(),
-      unitCode: zod.string().optional(),
       unitPrice: zod.number(),
       discountAmount: zod
         .number()
         .default(createInvoiceBodyLineItemsItemDiscountAmountDefault),
-      taxCategory: zod.string().optional(),
       vatRate: zod
         .number()
         .default(createInvoiceBodyLineItemsItemVatRateDefault),
@@ -572,6 +566,7 @@ export const GetInvoiceResponse = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(getInvoiceResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
@@ -598,27 +593,15 @@ export const UpdateInvoiceBody = zod.object({
   supplyDate: zod.coerce.date().optional(),
   dueDate: zod.coerce.date().optional(),
   currency: zod.string().default(updateInvoiceBodyCurrencyDefault),
-  paymentMethod: zod.string().optional(),
   notes: zod.string().optional(),
-  buyerName: zod.string().optional(),
-  buyerVatNumber: zod.string().optional(),
-  buyerCrNumber: zod.string().optional(),
-  buyerStreet: zod.string().optional(),
-  buyerBuildingNumber: zod.string().optional(),
-  buyerDistrict: zod.string().optional(),
-  buyerCity: zod.string().optional(),
-  buyerPostalCode: zod.string().optional(),
-  buyerCountry: zod.string().optional(),
   lineItems: zod.array(
     zod.object({
       description: zod.string(),
       quantity: zod.number(),
-      unitCode: zod.string().optional(),
       unitPrice: zod.number(),
       discountAmount: zod
         .number()
         .default(updateInvoiceBodyLineItemsItemDiscountAmountDefault),
-      taxCategory: zod.string().optional(),
       vatRate: zod
         .number()
         .default(updateInvoiceBodyLineItemsItemVatRateDefault),
@@ -722,6 +705,7 @@ export const UpdateInvoiceResponse = zod.object({
       country: zod
         .string()
         .default(updateInvoiceResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
@@ -837,6 +821,7 @@ export const IssueInvoiceResponse = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(issueInvoiceResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
@@ -947,6 +932,7 @@ export const CancelInvoiceResponse = zod.object({
       country: zod
         .string()
         .default(cancelInvoiceResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
@@ -1082,6 +1068,7 @@ export const GetRecentInvoicesResponseItem = zod.object({
       country: zod
         .string()
         .default(getRecentInvoicesResponseCustomerCountryDefault),
+      accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
     .optional(),
