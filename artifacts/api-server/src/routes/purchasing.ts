@@ -387,13 +387,18 @@ router.get("/purchase-returns/:id", async (req, res) => {
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, supplierId, invoiceId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, notes, lines } = req.body;
+    const { docNumber, returnDate, supplierId, invoiceId, paymentType, cashBoxId,
+            currencyCode, exchangeRate, totalAmount, vatAmount, notes, lines } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
+    if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     const [ret] = await db.insert(purchaseReturnsTable).values({
       companyId: cid, docNumber: docNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: String(totalAmount || "0"),

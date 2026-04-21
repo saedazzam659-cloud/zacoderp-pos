@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
@@ -40,6 +40,7 @@ function newLine(): ReturnLine {
 
 const EMPTY = {
   docNumber: "", returnDate: today(), supplierId: "", invoiceId: "",
+  paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
 };
 
@@ -106,6 +107,25 @@ export default function PurchaseReturns() {
     queryKey: ["warehouses", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
     enabled: !!user,
+  });
+
+  // ── Supplier balances (for credit settlement) ────────────
+  const { data: supplierBalances = [] } = useQuery<any[]>({
+    queryKey: ["supplier-balances", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/suppliers/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && form.paymentType === "credit",
+  });
+
+  // ── Cash boxes + balances (for cash refund) ──────────────
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && form.paymentType === "cash",
+  });
+  const { data: cashBoxBalances = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes-bal", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && form.paymentType === "cash",
   });
 
   // ── Currency helpers ─────────────────────────────────────
@@ -206,6 +226,8 @@ export default function PurchaseReturns() {
           returnDate: today(),
           supplierId: inv.supplierId ? String(inv.supplierId) : "",
           invoiceId:  String(inv.id),
+          paymentType: inv.paymentType ?? "credit",
+          cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
           currencyCode:  inv.currencyCode  ?? defaultCurrency?.code ?? "",
           exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
@@ -278,6 +300,7 @@ export default function PurchaseReturns() {
       ...form,
       supplierId: form.supplierId || null,
       invoiceId:  form.invoiceId  || null,
+      cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -362,8 +385,136 @@ export default function PurchaseReturns() {
               >
                 <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
               </Field>
+              <Field label="نوع التسوية" required>
+                <Select
+                  value={form.paymentType}
+                  onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v, cashBoxId: v === "credit" ? "" : p.cashBoxId }))}
+                >
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="credit">
+                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />على الحساب (تخفيض ذمّة المورد)</span>
+                    </SelectItem>
+                    <SelectItem value="cash">
+                      <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />نقدي (استرداد للخزنة)</span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
               <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
+
+            {/* Payment link panel: credit (supplier) or cash (cash box) */}
+            {form.paymentType === "credit" ? (
+              (() => {
+                const sup = suppliers.find((s: any) => String(s.id) === form.supplierId);
+                const balRow = (supplierBalances as any[]).find((b: any) => b.supplierId === Number(form.supplierId));
+                const currentBal = balRow ? Number(balRow.balance) : 0;
+                const refund = totalAmount;
+                const newBal = currentBal - refund;
+                return (
+                  <div className={cn(
+                    "rounded-lg border p-3 flex items-start gap-3",
+                    !form.supplierId ? "bg-amber-50 border-amber-200 text-amber-800" :
+                    "bg-blue-50 border-blue-200 text-blue-800"
+                  )}>
+                    <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
+                    {!form.supplierId ? (
+                      <div className="text-xs">
+                        <p className="font-semibold">تسوية على الحساب — اختر المورد لتخفيض رصيده</p>
+                        <p className="opacity-80 mt-0.5">سيتم تقليل الذمّة الدائنة للمورد بقيمة المرتجع.</p>
+                      </div>
+                    ) : (
+                      <div className="text-xs flex-1">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                          <span className="font-semibold">المورد: <strong>{sup?.nameAr ?? "—"}</strong></span>
+                          <span className="flex items-center gap-1">
+                            <TrendingUp className="h-3 w-3" />
+                            الرصيد الحالي: <strong className="font-mono">{fmt(currentBal)}</strong> {form.currencyCode}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <TrendingDown className="h-3 w-3" />
+                            − قيمة المرتجع: <strong className="font-mono">{fmt(refund)}</strong>
+                          </span>
+                          <span className="flex items-center gap-1 border-r pr-3 mr-1">
+                            الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
+                            {newBal < 0 && <span className="text-emerald-700 mr-1">(المورد مدين لنا)</span>}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
+            ) : (
+              (() => {
+                const balMap: Record<number, number> = Object.fromEntries(
+                  (cashBoxBalances as any[]).map((b: any) => [b.cashBoxId, Number(b.balance)])
+                );
+                const activeBoxes = (cashBoxes as any[]).filter((b: any) => b.isActive);
+                const cashBoxItems = [
+                  { value: "", label: "— اختر الخزنة —" },
+                  ...activeBoxes.map((b: any) => ({
+                    value: String(b.id),
+                    label: `${b.nameAr} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
+                  })),
+                ];
+                const selBox = activeBoxes.find((b: any) => String(b.id) === form.cashBoxId);
+                const boxBal = selBox ? (balMap[selBox.id] ?? 0) : 0;
+                const newBal = boxBal + totalAmount;
+                const maxBal = selBox?.maxBalance ? Number(selBox.maxBalance) : 0;
+                const overMax = maxBal > 0 && newBal > maxBal;
+                return (
+                  <div className="space-y-2">
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <Field label="الخزنة" required>
+                        <SearchCombobox items={cashBoxItems} value={form.cashBoxId} onValueChange={v => setForm((p: any) => ({ ...p, cashBoxId: v }))} placeholder="اختر الخزنة..." />
+                      </Field>
+                    </div>
+                    <div className={cn(
+                      "rounded-lg border p-3 flex items-start gap-3",
+                      !form.cashBoxId ? "bg-amber-50 border-amber-200 text-amber-800" :
+                      overMax ? "bg-red-50 border-red-200 text-red-800" :
+                      "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    )}>
+                      <Wallet className="h-4 w-4 mt-0.5 shrink-0" />
+                      {!form.cashBoxId ? (
+                        <div className="text-xs">
+                          <p className="font-semibold">استرداد نقدي — اختر الخزنة لإيداع المبلغ المُسترد</p>
+                          <p className="opacity-80 mt-0.5">عند ترحيل المرتجع سيتم إضافة قيمته إلى رصيد الخزنة.</p>
+                        </div>
+                      ) : (
+                        <div className="text-xs flex-1">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <span className="font-semibold">الخزنة: <strong>{selBox?.nameAr}</strong></span>
+                            <span className="flex items-center gap-1">
+                              <TrendingUp className="h-3 w-3" />
+                              الرصيد: <strong className="font-mono">{fmt(boxBal)}</strong>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              + المُسترد: <strong className="font-mono">{fmt(totalAmount)}</strong>
+                            </span>
+                            <span className="flex items-center gap-1 border-r pr-3 mr-1">
+                              الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
+                            </span>
+                          </div>
+                          {overMax && (
+                            <p className="mt-1.5 text-[11px] font-semibold">
+                              ⚠ الرصيد سيتجاوز الحد الأقصى للخزنة ({fmt(maxBal)}) بمقدار {fmt(newBal - maxBal)}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {activeBoxes.length === 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        لا توجد خزن نشطة. يرجى إضافة خزنة من <strong>النقد والبنوك ← الخزن</strong>.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()
+            )}
 
             {/* Lines */}
             <div className="space-y-3">

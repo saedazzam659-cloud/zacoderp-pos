@@ -114,6 +114,8 @@ export const purchaseReturnsTable = pgTable("purchase_returns", {
   returnDate:    text("return_date").notNull(),
   supplierId:    integer("supplier_id").references(() => suppliersTable.id),
   invoiceId:     integer("invoice_id").references(() => purchaseInvoicesTable.id),
+  paymentType:   text("payment_type").notNull().default("credit"),
+  cashBoxId:     integer("cash_box_id"),
   currencyCode:  text("currency_code").notNull().default("SAR"),
   exchangeRate:  numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   totalAmount:   numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
