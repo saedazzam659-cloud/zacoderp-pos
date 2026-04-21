@@ -30,9 +30,7 @@ const superAdminNav = [
   { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
   { name: "الشركات",            href: "/companies",                 icon: Building2 },
 ];
-const companyBusinessNav = [
-  { name: "العملاء", href: "/customers", icon: Users, permKey: "customers" },
-];
+const companyBusinessNav: { name: string; href: string; icon: any; permKey?: string }[] = [];
 const dashboardSubNav = [
   { name: "المناطق الجغرافية", href: "/org/regions",          icon: MapPin     },
   { name: "الفروع",            href: "/org/branches",         icon: BranchIcon },
@@ -60,9 +58,12 @@ const salesSubNav = [
   { name: "مرتجعات المبيعات",    href: "/sales/returns",      icon: RotateCcw       },
   { name: "تحصيل العملاء",        href: "/sales/settlements",  icon: ArrowDownCircle },
 ];
-const companySystemNav = [
-  { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked, permKey: "always" },
-  { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen,   permKey: "always" },
+const companySystemNav: { name: string; href: string; icon: any; permKey?: string }[] = [];
+
+// ─── Accounting Sub Nav ───────────────────────────────────────────────────────
+const accountingSubNav = [
+  { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked },
+  { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen   },
 ];
 const reportsSubNav = [
   { name: "كشف حساب",               href: "/accounting/reports/account-statement", icon: FileText    },
@@ -364,6 +365,37 @@ function DashboardNavGroup({
   );
 }
 
+// ─── AccountingNavGroup ───────────────────────────────────────────────────────
+function AccountingNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const isOnSub = accountingSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <button onClick={onToggle} className={cn(
+        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        isOnSub && !open
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}>
+        <BookMarked className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">الحسابات العامة</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {accountingSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -383,6 +415,8 @@ function SidebarInner({
   onSalesToggle,
   cashOpen,
   onCashToggle,
+  accountingOpen,
+  onAccountingToggle,
   onNavigate,
   onLogout,
 }: {
@@ -402,11 +436,13 @@ function SidebarInner({
   onSalesToggle: () => void;
   cashOpen: boolean;
   onCashToggle: () => void;
+  accountingOpen: boolean;
+  onAccountingToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
-  const filteredBusiness = companyBusinessNav.filter(i => menuPerms[i.permKey] !== false);
-  const filteredSystem   = companySystemNav.filter(i => menuPerms[i.permKey] !== false);
+  const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
+  const filteredSystem   = companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
 
   const planColor =
     user?.subscription?.plan === "starter"      ? "text-blue-700 bg-blue-50 border-blue-200" :
@@ -477,87 +513,75 @@ function SidebarInner({
               </div>
             )}
 
-            {filteredBusiness.length > 0 && (
-              <div>
-                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">الأعمال</p>
-                <div className="space-y-0.5">
-                  {filteredBusiness.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المبيعات</p>
-              <div className="space-y-0.5">
-                <SalesNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={salesOpen}
-                  onToggle={onSalesToggle}
-                />
-              </div>
-            </div>
-
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المشتريات</p>
-              <div className="space-y-0.5">
-                <PurchasingNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={purchasingOpen}
-                  onToggle={onPurchasingToggle}
-                />
-              </div>
-            </div>
-
             {menuPerms.inventory !== false && (
-              <div>
-                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المخزون</p>
-                <div className="space-y-0.5">
-                  <InventoryNavGroup
-                    location={location}
-                    onNavigate={onNavigate}
-                    open={inventoryOpen}
-                    onToggle={onInventoryToggle}
-                  />
-                </div>
+              <div className="space-y-0.5">
+                <InventoryNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={inventoryOpen}
+                  onToggle={onInventoryToggle}
+                />
               </div>
             )}
 
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">التقارير</p>
-              <div className="space-y-0.5">
-                <ReportsNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={reportsOpen}
-                  onToggle={onReportsToggle}
-                />
-              </div>
+            <div className="space-y-0.5">
+              <SalesNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={salesOpen}
+                onToggle={onSalesToggle}
+              />
             </div>
 
-            <div>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">إدارة النقد والبنوك</p>
-              <div className="space-y-0.5">
-                <CashNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={cashOpen}
-                  onToggle={onCashToggle}
-                />
-              </div>
+            <div className="space-y-0.5">
+              <PurchasingNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={purchasingOpen}
+                onToggle={onPurchasingToggle}
+              />
             </div>
+
+            <div className="space-y-0.5">
+              <CashNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={cashOpen}
+                onToggle={onCashToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
+              <AccountingNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={accountingOpen}
+                onToggle={onAccountingToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
+              <ReportsNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={reportsOpen}
+                onToggle={onReportsToggle}
+              />
+            </div>
+
+            {filteredBusiness.length > 0 && (
+              <div className="space-y-0.5">
+                {filteredBusiness.map(item => (
+                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
+                ))}
+              </div>
+            )}
 
             {filteredSystem.length > 0 && (
-              <div>
-                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">النظام</p>
-                <div className="space-y-0.5">
-                  {filteredSystem.map(item => (
-                    <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
-                  ))}
-                </div>
+              <div className="space-y-0.5">
+                {filteredSystem.map(item => (
+                  <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
+                ))}
               </div>
             )}
           </>
@@ -840,6 +864,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
   const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
+  const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -850,6 +875,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
   const handleSalesToggle      = () => setSalesOpen(v => !v);
   const handleCashToggle       = () => setCashOpen(v => !v);
+  const handleAccountingToggle = () => setAccountingOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -869,6 +895,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onSalesToggle: handleSalesToggle,
     cashOpen,
     onCashToggle: handleCashToggle,
+    accountingOpen,
+    onAccountingToggle: handleAccountingToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };
