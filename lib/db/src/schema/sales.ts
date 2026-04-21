@@ -27,6 +27,13 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
   status:         salesInvoiceStatusEnum("status").notNull().default("draft"),
   notes:          text("notes"),
+  // Accounts used to build the journal entry on posting
+  cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),
+  inventoryAccountId: integer("inventory_account_id").references(() => accountsTable.id),
+  salesAccountId:     integer("sales_account_id").references(() => accountsTable.id),
+  taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
+  discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
+  journalEntryId:     integer("journal_entry_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });
@@ -67,6 +74,12 @@ export const salesReturnsTable = pgTable("sales_returns", {
   vatAmount:    numeric("vat_amount",   { precision: 15, scale: 2 }).notNull().default("0"),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
+  cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),
+  inventoryAccountId: integer("inventory_account_id").references(() => accountsTable.id),
+  salesAccountId:     integer("sales_account_id").references(() => accountsTable.id),
+  taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
+  discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
+  journalEntryId:     integer("journal_entry_id"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });

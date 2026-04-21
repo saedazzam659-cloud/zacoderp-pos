@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,7 @@ export default function SalesReturns() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -171,6 +173,16 @@ export default function SalesReturns() {
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
     onSuccess: () => { invalidate(); toast({ title: "✓ تم ترحيل المرتجع وإرجاع المخزون" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const unpostMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/sales/sales-returns/${id}/unpost`, { method: "PATCH", headers });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+      return res.json();
+    },
+    onSuccess: () => { invalidate(); toast({ title: "✓ تم فك ترحيل المرتجع" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -523,7 +535,7 @@ export default function SalesReturns() {
           : (
           <table className="w-full text-sm">
             <thead><tr className="bg-muted/50 border-b">
-              {["رقم المرتجع","التاريخ","العميل","الفاتورة","الإجمالي","الضريبة","العملة","الحالة","إجراءات"].map(h =>
+              {["رقم المرتجع","التاريخ","العميل","الفاتورة","الإجمالي","الضريبة","العملة","القيد","الحالة","إجراءات"].map(h =>
                 <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>)}
             </tr></thead>
             <tbody>
@@ -539,6 +551,14 @@ export default function SalesReturns() {
                     <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
                     <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
                     <td className="px-3 py-2.5">{r.currencyCode}</td>
+                    <td className="px-3 py-2.5">
+                      {r.journalEntryId ? (
+                        <button onClick={() => navigate(`/accounting/journals/${r.journalEntryId}`)}
+                          className="font-mono text-xs text-blue-600 hover:underline">
+                          JE-{r.journalEntryId}
+                        </button>
+                      ) : <span className="text-muted-foreground text-xs">—</span>}
+                    </td>
                     <td className="px-3 py-2.5"><span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span></td>
                     <td className="px-3 py-2.5">
                       <div className="flex gap-1">
@@ -546,6 +566,13 @@ export default function SalesReturns() {
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
                             onClick={() => { if (confirm("ترحيل المرتجع؟ سيتم زيادة رصيد المخزون.")) postMut.mutate(r.id); }}>
                             <CheckCircle2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {r.status === "posted" && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                            title="فك الترحيل (إلغاء القيد وخصم المخزون مرة أخرى)"
+                            onClick={() => { if (confirm("فك ترحيل المرتجع؟ سيتم حذف القيد المحاسبي وعكس حركة المخزون.")) unpostMut.mutate(r.id); }}>
+                            <Undo2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
                         {r.status === "draft" && (

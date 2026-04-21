@@ -23,7 +23,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Path**: `artifacts/zatca-invoicing/`
 - **Preview**: `/` (root)
 - **Purpose**: Saudi ZATCA e-invoicing system — multi-company, Arabic/English RTL UI
-- **Features**: Company management, customer management, invoices (standard/simplified), QR code generation (TLV Annex B), ZATCA compliance, monthly stats dashboard, inventory module, accounting (journal entries, chart of accounts, currencies), accounting reports (trial balance, balance sheet, income statement, account statement), **Purchasing & Suppliers module** (supplier groups, letters of credit + LC expenses, purchase invoices with LC expense distribution, purchase returns, supplier settlements)
+- **Features**: Company management, customer management, invoices (standard/simplified), QR code generation (TLV Annex B), ZATCA compliance, monthly stats dashboard, inventory module, accounting (journal entries, chart of accounts, currencies), accounting reports (trial balance, balance sheet, income statement, account statement), **Purchasing & Suppliers module** (supplier groups, letters of credit + LC expenses, purchase invoices with LC expense distribution, purchase returns, supplier settlements), **Sales module with auto journal entries on posting** (Dr Customer/Cash, Dr Discount-Allowed, Dr COGS / Cr Sales Revenue, Cr VAT Output, Cr Inventory — reversed for sales returns; auto-generated JEs are locked from manual edits and can be unposted فك الترحيل to delete the JE and reverse stock movements)
 - **ZATCA Integration**:
   - CSR generation: ECDSA secp256k1 via openssl, ZATCA-specific OIDs (2.16.840.1.114028.10.1.11-15)
   - Compliance API: POST /api/companies/:id/compliance (OTP → CSID)

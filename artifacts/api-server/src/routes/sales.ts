@@ -4,12 +4,64 @@ import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
   salesQuotationsTable, salesQuotationLinesTable,
-  customerSettlementsTable, stockBalanceTable,
+  customerSettlementsTable, stockBalanceTable, stockLedgerTable,
+  customersTable, cashBoxesTable,
+  journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
+
+// ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
+type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
+async function createJournalEntry(opts: {
+  companyId: number;
+  branchId?: number | null;
+  date: string;
+  description: string;
+  docNumber?: string | null;
+  entryType?: string;
+  exchangeRate?: string | null;
+  lines: JLine[];
+}): Promise<number> {
+  const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
+  if (cleanLines.length < 2) throw new Error("القيد المحاسبي يحتاج إلى طرفين على الأقل");
+  const totalDebit  = cleanLines.reduce((s, l) => s + (l.debit  ?? 0), 0);
+  const totalCredit = cleanLines.reduce((s, l) => s + (l.credit ?? 0), 0);
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    throw new Error(`القيد غير متوازن: مدين ${totalDebit.toFixed(2)} ≠ دائن ${totalCredit.toFixed(2)}`);
+  }
+  const [entry] = await db.insert(journalEntriesTable).values({
+    companyId: opts.companyId, branchId: opts.branchId ?? null,
+    docNumber: opts.docNumber ?? null, entryDate: opts.date,
+    currency: "SAR", exchangeRate: opts.exchangeRate ?? "1",
+    description: opts.description, entryType: opts.entryType ?? "general",
+    status: "posted",
+  }).returning();
+  await db.insert(journalEntryLinesTable).values(
+    cleanLines.map((l, i) => ({
+      entryId: entry.id, accountId: l.accountId!,
+      debit: String((l.debit ?? 0).toFixed(2)),
+      credit: String((l.credit ?? 0).toFixed(2)),
+      description: l.description ?? opts.description, sortOrder: i,
+    }))
+  );
+  return entry.id;
+}
+
+async function getCustomerAccountId(cid: number, customerId: number | null | undefined): Promise<number | null> {
+  if (!customerId) return null;
+  const [c] = await db.select().from(customersTable)
+    .where(and(eq(customersTable.id, customerId), eq(customersTable.companyId, cid)));
+  return c?.accountId ?? null;
+}
+async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undefined): Promise<number | null> {
+  if (!cashBoxId) return null;
+  const [cb] = await db.select().from(cashBoxesTable)
+    .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
+  return cb?.accountId ?? null;
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -84,7 +136,8 @@ router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, notes, lines,
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
@@ -100,6 +153,11 @@ router.post("/sales-invoices", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
       status: "draft", notes: notes || null,
+      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
     }).returning();
     if (lines?.length) {
       await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid)));
@@ -113,7 +171,8 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, notes, lines,
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     const [inv] = await db.update(salesInvoicesTable).set({
@@ -128,6 +187,11 @@ router.put("/sales-invoices/:id", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
       notes: notes || null, updatedAt: new Date(),
+      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (lines !== undefined) {
@@ -168,12 +232,14 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       }
     }
 
-    // Decrease stock for each stockable line (in base units)
+    // Decrease stock for each stockable line (in base units) + accumulate COGS
+    let totalCogs = 0;
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
       const qty     = Number(line.qty) * factor;
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+      totalCogs += qty * avgCost;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -193,8 +259,61 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       });
     }
 
+    // ── Build journal entry ──
+    // Dr Customer/Cash (= total = subtotal − discount + vat)
+    // Dr Sales Discount (if any)
+    // Dr COGS  (computed from avg cost × qty)
+    //   Cr Sales Revenue (= subtotal, gross before discount)
+    //   Cr VAT Output    (= vatAmount)
+    //   Cr Inventory     (= total cost — credit reduces inventory asset)
+    if (!inv.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
+    if (!inv.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
+    if (!inv.inventoryAccountId) { res.status(400).json({ error: "اختر حساب المخزون قبل الترحيل" }); return; }
+
+    const subtotalAmt = Number(inv.subtotal || 0);
+    const vatAmt      = Number(inv.vatAmount || 0);
+    const discountAmt = Number(inv.discountAmount || 0);
+    const totalAmt    = Number(inv.totalAmount || 0);
+
+    const partyAccountId = inv.paymentType === "cash"
+      ? await getCashBoxAccountId(cid, inv.cashBoxId)
+      : await getCustomerAccountId(cid, inv.customerId);
+    if (!partyAccountId) {
+      res.status(400).json({ error: inv.paymentType === "cash"
+        ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+        : "العميل لا يحتوي على حساب محاسبي مرتبط (حساب الذمم المدينة)" });
+      return;
+    }
+
+    if (discountAmt > 0 && !inv.discountAccountId) {
+      res.status(400).json({ error: "اختر حساب الخصم المسموح به (يوجد خصم على الفاتورة)" }); return;
+    }
+    if (vatAmt > 0 && !inv.taxAccountId) {
+      res.status(400).json({ error: "اختر حساب ضريبة القيمة المضافة (مخرجات)" }); return;
+    }
+
+    const journalId = await createJournalEntry({
+      companyId: cid,
+      branchId: inv.branchId,
+      date: inv.invoiceDate,
+      docNumber: inv.docNumber,
+      entryType: "sales_invoice",
+      exchangeRate: inv.exchangeRate,
+      description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
+      lines: [
+        // Debits
+        { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : "ذمم العميل" },
+        { accountId: inv.discountAccountId, debit: discountAmt, description: "خصم مسموح به" },
+        { accountId: inv.cogsAccountId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
+        // Credits
+        { accountId: inv.salesAccountId,     credit: subtotalAmt, description: "إيراد المبيعات" },
+        { accountId: inv.taxAccountId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
+        { accountId: inv.inventoryAccountId, credit: totalCogs,   description: "إنقاص المخزون" },
+      ],
+    });
+
     const [updated] = await db.update(salesInvoicesTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(salesInvoicesTable.id, id))
       .returning();
 
@@ -214,6 +333,64 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         description: `قبض نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
       });
     }
+
+    res.json(updated);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
+router.patch("/sales-invoices/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [inv] = await db.select().from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+
+    // Reverse stock movements (sales reduced stock; unpost adds back)
+    const ledger = await db.select().from(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "sales_invoice"),
+        eq(stockLedgerTable.refId, id),
+      ));
+    for (const row of ledger) {
+      const qty = Number(row.qty); // negative for sale; subtracting it adds back
+      const [bal] = await db.select().from(stockBalanceTable)
+        .where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, row.itemId),
+          eq(stockBalanceTable.warehouseId, row.warehouseId),
+        ));
+      if (bal) {
+        await db.update(stockBalanceTable)
+          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .where(eq(stockBalanceTable.id, bal.id));
+      }
+    }
+    await db.delete(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "sales_invoice"),
+        eq(stockLedgerTable.refId, id),
+      ));
+
+    if (inv.journalEntryId) {
+      await db.update(journalEntryLinesTable)
+        .set({ debit: "0", credit: "0" })
+        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+      await db.delete(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+      await db.delete(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, inv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+    }
+
+    const [updated] = await db.update(salesInvoicesTable)
+      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+      .where(eq(salesInvoicesTable.id, id))
+      .returning();
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -260,7 +437,8 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, notes, lines } = req.body;
+            totalAmount, vatAmount, notes, lines,
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
@@ -276,6 +454,11 @@ router.post("/sales-returns", async (req, res) => {
       totalAmount: String(totalAmount || "0"),
       vatAmount: String(vatAmount || "0"),
       status: "draft", notes: notes || null,
+      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
     }).returning();
     if (lines?.length) {
       await db.insert(salesReturnLinesTable).values(
@@ -311,6 +494,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
     // Increase stock for each stockable return line (items coming back into inventory, in base units)
+    let totalCogs = 0;
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
@@ -319,6 +503,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
       const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
+      totalCogs += qty * costUnit;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -338,8 +523,65 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       });
     }
 
+    // ── Build reversed journal entry ──
+    // (Reverse of sales-invoice JE: customer becomes credit, sales/vat become debit, inventory becomes debit, COGS becomes credit)
+    // If account FKs are missing on the return but a source invoice is linked, inherit them from the invoice.
+    if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.inventoryAccountId || !ret.taxAccountId)) {
+      const [srcInv] = await db.select().from(salesInvoicesTable)
+        .where(and(eq(salesInvoicesTable.id, ret.invoiceId), eq(salesInvoicesTable.companyId, cid)));
+      if (srcInv) {
+        const patch: any = {};
+        if (!ret.salesAccountId     && srcInv.salesAccountId)     { patch.salesAccountId     = srcInv.salesAccountId;     ret.salesAccountId     = srcInv.salesAccountId; }
+        if (!ret.cogsAccountId      && srcInv.cogsAccountId)      { patch.cogsAccountId      = srcInv.cogsAccountId;      ret.cogsAccountId      = srcInv.cogsAccountId; }
+        if (!ret.inventoryAccountId && srcInv.inventoryAccountId) { patch.inventoryAccountId = srcInv.inventoryAccountId; ret.inventoryAccountId = srcInv.inventoryAccountId; }
+        if (!ret.taxAccountId       && srcInv.taxAccountId)       { patch.taxAccountId       = srcInv.taxAccountId;       ret.taxAccountId       = srcInv.taxAccountId; }
+        if (Object.keys(patch).length) {
+          await db.update(salesReturnsTable).set(patch).where(eq(salesReturnsTable.id, id));
+        }
+      }
+    }
+    if (!ret.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
+    if (!ret.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
+    if (!ret.inventoryAccountId) { res.status(400).json({ error: "اختر حساب المخزون قبل الترحيل" }); return; }
+
+    const totalAmt    = Number(ret.totalAmount || 0);
+    const vatAmt      = Number(ret.vatAmount || 0);
+    const subtotalAmt = totalAmt - vatAmt; // returns table has no separate subtotal field
+
+    const partyAccountId = ret.paymentType === "cash"
+      ? await getCashBoxAccountId(cid, ret.cashBoxId)
+      : await getCustomerAccountId(cid, ret.customerId);
+    if (!partyAccountId) {
+      res.status(400).json({ error: ret.paymentType === "cash"
+        ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+        : "العميل لا يحتوي على حساب محاسبي مرتبط" });
+      return;
+    }
+    if (vatAmt > 0 && !ret.taxAccountId) {
+      res.status(400).json({ error: "اختر حساب ضريبة القيمة المضافة (مخرجات)" }); return;
+    }
+
+    const journalId = await createJournalEntry({
+      companyId: cid,
+      branchId: ret.branchId,
+      date: ret.returnDate,
+      docNumber: ret.docNumber,
+      entryType: "sales_return",
+      exchangeRate: ret.exchangeRate,
+      description: `قيد مرتجع مبيعات رقم ${ret.docNumber || ret.id}`,
+      lines: [
+        // Debits (reversed)
+        { accountId: ret.salesAccountId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
+        { accountId: ret.taxAccountId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
+        { accountId: ret.inventoryAccountId, debit: totalCogs,   description: "زيادة المخزون (مرتجع)" },
+        // Credits (reversed)
+        { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : "تخفيض ذمم العميل" },
+        { accountId: ret.cogsAccountId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
+      ],
+    });
+
     const [updated] = await db.update(salesReturnsTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
       .where(eq(salesReturnsTable.id, id))
       .returning();
 
@@ -359,6 +601,63 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         description: `رد نقدي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
       });
     }
+
+    res.json(updated);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── UNPOST sales return (فك الترحيل) ───────────────────────────────────────
+router.patch("/sales-returns/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [ret] = await db.select().from(salesReturnsTable)
+      .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
+    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+
+    const ledger = await db.select().from(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "sales_return"),
+        eq(stockLedgerTable.refId, id),
+      ));
+    for (const row of ledger) {
+      const qty = Number(row.qty); // positive on return; subtracting removes the addition
+      const [bal] = await db.select().from(stockBalanceTable)
+        .where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, row.itemId),
+          eq(stockBalanceTable.warehouseId, row.warehouseId),
+        ));
+      if (bal) {
+        await db.update(stockBalanceTable)
+          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .where(eq(stockBalanceTable.id, bal.id));
+      }
+    }
+    await db.delete(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "sales_return"),
+        eq(stockLedgerTable.refId, id),
+      ));
+
+    if (ret.journalEntryId) {
+      await db.update(journalEntryLinesTable)
+        .set({ debit: "0", credit: "0" })
+        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+      await db.delete(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+      await db.delete(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+    }
+
+    const [updated] = await db.update(salesReturnsTable)
+      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+      .where(eq(salesReturnsTable.id, id))
+      .returning();
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

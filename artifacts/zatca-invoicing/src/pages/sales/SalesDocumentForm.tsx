@@ -10,9 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered } from "lucide-react";
+import { ArrowRight, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -88,6 +89,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
   const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
+
+  // Accounts used to build journal entry on posting (invoices only)
+  const [cogsAccountId,      setCogsAccountId]      = useState("");
+  const [inventoryAccountId, setInventoryAccountId] = useState("");
+  const [salesAccountId,     setSalesAccountId]     = useState("");
+  const [taxAccountId,       setTaxAccountId]       = useState("");
+  const [discountAccountId,  setDiscountAccountId]  = useState("");
 
   // Lookups
   const { data: customers = [] } = useQuery<any[]>({
@@ -181,6 +189,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
+    if (isInvoice) {
+      setCogsAccountId(existing.cogsAccountId ? String(existing.cogsAccountId) : "");
+      setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
+      setSalesAccountId(existing.salesAccountId ? String(existing.salesAccountId) : "");
+      setTaxAccountId(existing.taxAccountId ? String(existing.taxAccountId) : "");
+      setDiscountAccountId(existing.discountAccountId ? String(existing.discountAccountId) : "");
+    }
     setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
       _id: crypto.randomUUID(),
       itemId:      l.itemId      ? String(l.itemId)      : "",
@@ -314,6 +329,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.branchId = branchId || null;
+      base.cogsAccountId      = cogsAccountId      ? Number(cogsAccountId)      : null;
+      base.inventoryAccountId = inventoryAccountId ? Number(inventoryAccountId) : null;
+      base.salesAccountId     = salesAccountId     ? Number(salesAccountId)     : null;
+      base.taxAccountId       = taxAccountId       ? Number(taxAccountId)       : null;
+      base.discountAccountId  = discountAccountId  ? Number(discountAccountId)  : null;
     } else {
       base.quotationDate = docDate;
       base.validUntil = validUntil || null;
@@ -458,6 +478,45 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
               </div>
+
+              {isInvoice && (
+                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-3 space-y-3">
+                  <div className="flex items-center gap-2 text-blue-900">
+                    <Calculator className="h-4 w-4" />
+                    <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل)</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">حساب إيراد المبيعات <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
+                        placeholder="اختر حساب الإيراد..." filterTypes={["revenue"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">حساب تكلفة البضاعة المباعة <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
+                        placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">حساب المخزون <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={inventoryAccountId} onValueChange={setInventoryAccountId}
+                        placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">حساب ضريبة المخرجات (VAT)</Label>
+                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
+                        placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">حساب الخصم المسموح به</Label>
+                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
+                        placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-blue-900/70">
+                    مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label className="text-xs">ملاحظات</Label>
