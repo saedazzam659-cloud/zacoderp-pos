@@ -8,9 +8,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Wallet, Plus, Pencil, Trash2, AlertTriangle,
-  TrendingUp, Search, CheckCircle2, XCircle,
+  TrendingUp, Search, CheckCircle2, XCircle, Info, SlidersHorizontal,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -29,6 +30,8 @@ export default function CashBoxes() {
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
   const [acctId,  setAcctId]  = useState("");
   const [delRow,  setDelRow]  = useState<any>(null);
+  const [tab,     setTab]     = useState<"basic" | "limits">("basic");
+  const [errors,  setErrors]  = useState<Record<string, string>>({});
 
   const { data: boxes = [], isLoading } = useQuery({
     queryKey: ["cash-boxes", cid],
@@ -49,12 +52,33 @@ export default function CashBoxes() {
   const balMap: Record<number, number> = Object.fromEntries((balances as any[]).map((b: any) => [b.cashBoxId, b.balance]));
   const filtered = (boxes as any[]).filter((b: any) => b.nameAr?.includes(search) || b.code?.includes(search));
 
-  function openAdd()  { setEditing(null); setForm(EMPTY); setAcctId(""); setPanel(true); }
+  function openAdd()  { setEditing(null); setForm(EMPTY); setAcctId(""); setErrors({}); setTab("basic"); setPanel(true); }
   function openEdit(r: any) {
     setEditing(r);
     setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", accountId: "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
     setAcctId(r.accountId ? String(r.accountId) : "");
+    setErrors({});
+    setTab("basic");
     setPanel(true);
+  }
+
+  function validate(): boolean {
+    const e: Record<string, string> = {};
+    if (!form.code.trim())   e.code   = "الكود مطلوب";
+    else if (form.code.trim().length > 20) e.code = "الكود طويل جداً (20 حرف كحد أقصى)";
+    if (!form.nameAr.trim()) e.nameAr = "الاسم العربي مطلوب";
+    else if (form.nameAr.trim().length < 2) e.nameAr = "الاسم العربي قصير جداً";
+    if (form.minBalance && isNaN(Number(form.minBalance))) e.minBalance = "قيمة غير صالحة";
+    else if (form.minBalance && Number(form.minBalance) < 0) e.minBalance = "لا يمكن أن يكون سالباً";
+    if (form.maxBalance && isNaN(Number(form.maxBalance))) e.maxBalance = "قيمة غير صالحة";
+    else if (form.maxBalance && Number(form.maxBalance) < 0) e.maxBalance = "لا يمكن أن يكون سالباً";
+    if (form.minBalance && form.maxBalance && Number(form.maxBalance) > 0 && Number(form.minBalance) > Number(form.maxBalance)) {
+      e.maxBalance = "الحد الأقصى يجب أن يكون أكبر من الأدنى";
+    }
+    setErrors(e);
+    if (e.code || e.nameAr) setTab("basic");
+    else if (e.minBalance || e.maxBalance) setTab("limits");
+    return Object.keys(e).length === 0;
   }
 
   const saveMut = useMutation({
@@ -83,8 +107,15 @@ export default function CashBoxes() {
   });
 
   function f(name: keyof typeof EMPTY) {
-    return { value: form[name] as string, onChange: (e: any) => setForm(p => ({ ...p, [name]: e.target.value })) };
+    return {
+      value: form[name] as string,
+      onChange: (e: any) => {
+        setForm(p => ({ ...p, [name]: e.target.value }));
+        if (errors[name as string]) setErrors(p => { const n = { ...p }; delete n[name as string]; return n; });
+      },
+    };
   }
+  const errCls = "border-destructive focus-visible:ring-destructive/40";
 
   const totalBalance = Object.values(balMap).reduce((a, b) => a + b, 0);
 
@@ -120,35 +151,70 @@ export default function CashBoxes() {
           title={editing ? "تعديل الخزنة" : "إضافة خزنة جديدة"}
           subtitle="أدخل بيانات الخزنة وحدّد الحد الأدنى والأقصى للرصيد"
           onClose={() => setPanel(false)}
-          onSave={() => saveMut.mutate()}
+          onSave={() => { if (validate()) saveMut.mutate(); }}
           saving={saveMut.isPending}
-          saveDisabled={!form.nameAr || !form.code}
         >
-          <FormGrid>
-            <Field label="الكود" required><Input placeholder="C001" {...f("code")} /></Field>
-            <Field label="الاسم العربي" required><Input placeholder="الخزنة الرئيسية" {...f("nameAr")} /></Field>
-            <Field label="الاسم الإنجليزي" className="md:col-span-2">
-              <Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} />
-            </Field>
-            <Field label="العملة">
-              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
-                <option value="">— اختر العملة —</option>
-                {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
-              </select>
-            </Field>
-            <Field label="الحساب (شجرة الحسابات)">
-              <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
-            </Field>
-            <Field label="الحد الأدنى"><Input type="number" placeholder="0" {...f("minBalance")} /></Field>
-            <Field label="الحد الأقصى"><Input type="number" placeholder="—" {...f("maxBalance")} /></Field>
-            <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="..." {...f("notes")} /></Field>
-            <div className="md:col-span-2">
-              <label className="flex items-center gap-2 cursor-pointer w-fit">
-                <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
-                <span className="text-sm">الخزنة نشطة</span>
-              </label>
-            </div>
-          </FormGrid>
+          <Tabs value={tab} onValueChange={v => setTab(v as "basic" | "limits")} dir="rtl">
+            <TabsList className="grid grid-cols-2 w-full max-w-md mr-auto mb-5">
+              <TabsTrigger value="basic" className="gap-1.5">
+                <Info className="h-3.5 w-3.5" />
+                البيانات الأساسية
+                {(errors.code || errors.nameAr) && <span className="h-1.5 w-1.5 rounded-full bg-destructive" />}
+              </TabsTrigger>
+              <TabsTrigger value="limits" className="gap-1.5">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                الحدود والإعدادات
+                {(errors.minBalance || errors.maxBalance) && <span className="h-1.5 w-1.5 rounded-full bg-destructive" />}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="basic" className="mt-0">
+              <FormGrid>
+                <Field label="الكود" required hint={errors.code && <span className="text-destructive">{errors.code}</span>}>
+                  <Input placeholder="C001" className={errors.code ? errCls : ""} {...f("code")} />
+                </Field>
+                <Field label="الاسم العربي" required hint={errors.nameAr && <span className="text-destructive">{errors.nameAr}</span>}>
+                  <Input placeholder="الخزنة الرئيسية" className={errors.nameAr ? errCls : ""} {...f("nameAr")} />
+                </Field>
+                <Field label="الاسم الإنجليزي" className="md:col-span-2">
+                  <Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} />
+                </Field>
+                <Field label="العملة">
+                  <select
+                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    value={form.currencyId}
+                    onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}
+                  >
+                    <option value="">— اختر العملة —</option>
+                    {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
+                  </select>
+                </Field>
+                <Field label="الحساب (شجرة الحسابات)">
+                  <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                </Field>
+              </FormGrid>
+            </TabsContent>
+
+            <TabsContent value="limits" className="mt-0">
+              <FormGrid>
+                <Field label="الحد الأدنى" hint={errors.minBalance && <span className="text-destructive">{errors.minBalance}</span>}>
+                  <Input type="number" placeholder="0" className={errors.minBalance ? errCls : ""} {...f("minBalance")} />
+                </Field>
+                <Field label="الحد الأقصى" hint={errors.maxBalance && <span className="text-destructive">{errors.maxBalance}</span>}>
+                  <Input type="number" placeholder="—" className={errors.maxBalance ? errCls : ""} {...f("maxBalance")} />
+                </Field>
+                <Field label="ملاحظات" className="md:col-span-2">
+                  <Input placeholder="..." {...f("notes")} />
+                </Field>
+                <div className="md:col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
+                    <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
+                    <span className="text-sm">الخزنة نشطة</span>
+                  </label>
+                </div>
+              </FormGrid>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
