@@ -169,7 +169,12 @@ export default function JournalEntries() {
                   {filtered.map((entry: any) => {
                     const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
                     return (
-                      <tr key={entry.id} className="hover:bg-muted/20 transition-colors">
+                      <tr
+                        key={entry.id}
+                        className="hover:bg-muted/20 transition-colors cursor-pointer"
+                        onDoubleClick={() => navigate(`/accounting/journals/${entry.id}`)}
+                        title="انقر مرتين لعرض سطور القيد"
+                      >
                         <td className="px-4 py-3 font-mono text-xs font-semibold text-primary">
                           {entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`}
                         </td>
