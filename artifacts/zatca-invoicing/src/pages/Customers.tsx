@@ -1,4 +1,5 @@
 import { useListCustomers } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Plus, Users, Search, Phone, Mail, MapPin,
@@ -10,6 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ExportButtons from "@/components/ExportButtons";
+
+const API = import.meta.env.VITE_API_URL || "";
 
 const CUSTOMER_EXPORT_COLS = [
   { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
@@ -32,11 +35,26 @@ const TABS = [
 export default function Customers() {
   const [search, setSearch]       = useState("");
   const [activeTab, setActiveTab] = useState("all");
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
+  const cid = user?.role === "superadmin" ? undefined : user?.companyId;
 
   const { data: customers = [], isLoading } = useListCustomers(undefined, {
     query: { queryKey: ["customers", user?.companyId] },
   }) as any;
+
+  const { data: balances = [] } = useQuery<any[]>({
+    queryKey: ["customer-balances", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/customers/balances?companyId=${cid}` : `${API}/api/customers/balances`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return r.json();
+    },
+    enabled: !!user && !!token,
+  });
+  const balMap: Record<number, number> = Object.fromEntries(
+    (balances as any[]).map((b: any) => [b.customerId, b.balance])
+  );
 
   const withVat = (customers as any[]).filter(c => c.vatNumber).length;
   const individuals = (customers as any[]).length - withVat;
@@ -213,6 +231,7 @@ export default function Customers() {
                 <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">المدينة</th>
                 <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">التواصل</th>
                 <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">النوع</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">الرصيد</th>
                 <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">إجراء</th>
               </tr>
             </thead>
@@ -220,7 +239,7 @@ export default function Customers() {
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 6 }).map((_, j) => (
+                    {Array.from({ length: 7 }).map((_, j) => (
                       <td key={j} className="px-5 py-3.5">
                         <Skeleton className="h-4 w-full max-w-32" />
                       </td>
@@ -229,7 +248,7 @@ export default function Customers() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-20 text-center">
+                  <td colSpan={7} className="py-20 text-center">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
                       <div className="h-14 w-14 rounded-full bg-muted/60 flex items-center justify-center">
                         <Users className="h-7 w-7 opacity-40" />
@@ -326,6 +345,32 @@ export default function Customers() {
                           <UserCheck className="h-3 w-3" />فرد B2C
                         </span>
                       )}
+                    </td>
+
+                    {/* Balance */}
+                    <td className="px-5 py-3">
+                      {(() => {
+                        const bal = balMap[customer.id] ?? 0;
+                        const abs = Math.abs(bal);
+                        const fmt = abs.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        if (Math.abs(bal) < 0.005) {
+                          return <span className="text-xs text-muted-foreground/60">متوازن</span>;
+                        }
+                        if (bal > 0) {
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="font-semibold tabular-nums text-rose-700">{fmt}</span>
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">مدين</span>
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="font-semibold tabular-nums text-emerald-700">{fmt}</span>
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">دائن</span>
+                          </span>
+                        );
+                      })()}
                     </td>
 
                     {/* Actions */}

@@ -1,12 +1,66 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable } from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
+
+// Customer balances: + posted credit sales invoices, − posted sales returns,
+// − posted receipt vouchers (cash collected). Positive ⇒ مدين (owes us), Negative ⇒ دائن.
+router.get("/balances", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    if (!companyId) { res.json([]); return; }
+
+    const invs = await db
+      .select({
+        customerId: salesInvoicesTable.customerId,
+        total: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+      })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.companyId, companyId),
+        eq(salesInvoicesTable.status, "posted"),
+        eq(salesInvoicesTable.paymentType, "credit"),
+      ))
+      .groupBy(salesInvoicesTable.customerId);
+
+    const rets = await db
+      .select({
+        customerId: salesReturnsTable.customerId,
+        total: sql<string>`COALESCE(SUM(${salesReturnsTable.totalAmount}), 0)`,
+      })
+      .from(salesReturnsTable)
+      .where(and(
+        eq(salesReturnsTable.companyId, companyId),
+        eq(salesReturnsTable.status, "posted"),
+      ))
+      .groupBy(salesReturnsTable.customerId);
+
+    const recvs = await db
+      .select({
+        customerId: receiptVouchersTable.entityId,
+        total: sql<string>`COALESCE(SUM(${receiptVouchersTable.amount}), 0)`,
+      })
+      .from(receiptVouchersTable)
+      .where(and(
+        eq(receiptVouchersTable.companyId, companyId),
+        eq(receiptVouchersTable.status, "posted"),
+        eq(receiptVouchersTable.entityType, "customer"),
+      ))
+      .groupBy(receiptVouchersTable.entityId);
+
+    const map: Record<number, number> = {};
+    for (const r of invs)  if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) + Number(r.total);
+    for (const r of rets)  if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) - Number(r.total);
+    for (const r of recvs) if (r.customerId) map[r.customerId] = (map[r.customerId] ?? 0) - Number(r.total);
+
+    res.json(Object.entries(map).map(([id, balance]) => ({ customerId: Number(id), balance })));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 router.get("/", async (req, res) => {
   const params = ListCustomersQueryParams.safeParse(req.query);
