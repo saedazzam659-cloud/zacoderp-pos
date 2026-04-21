@@ -1,243 +1,336 @@
 import React from "react";
-import { 
-  useGetDashboardSummary, 
+import {
+  useGetDashboardSummary,
   useGetRecentInvoices,
-  useGetMonthlyStats 
+  useGetMonthlyStats,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, CheckCircle2, XCircle, FileWarning, TrendingUp, ShieldCheck } from "lucide-react";
+import {
+  FileText, CheckCircle2, XCircle, FileWarning, TrendingUp, ShieldCheck,
+  Plus, Users, Truck, Package, Wallet, BookOpen, ArrowUpRight, Receipt,
+} from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { arSA } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
+import { cn } from "@/lib/utils";
+
+// ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
+type Tone = "primary" | "success" | "warning" | "danger" | "info";
+const toneStyles: Record<Tone, { bar: string; iconBg: string; iconFg: string }> = {
+  primary: { bar: "bg-primary",       iconBg: "bg-primary/10",       iconFg: "text-primary"       },
+  success: { bar: "bg-emerald-500",   iconBg: "bg-emerald-50",       iconFg: "text-emerald-600"   },
+  warning: { bar: "bg-amber-500",     iconBg: "bg-amber-50",         iconFg: "text-amber-600"     },
+  danger:  { bar: "bg-rose-500",      iconBg: "bg-rose-50",          iconFg: "text-rose-600"      },
+  info:    { bar: "bg-sky-500",       iconBg: "bg-sky-50",           iconFg: "text-sky-600"       },
+};
+
+function KpiTile({
+  label, value, icon: Icon, tone, hint, href,
+}: {
+  label: string;
+  value: React.ReactNode;
+  icon: React.ElementType;
+  tone: Tone;
+  hint?: string;
+  href?: string;
+}) {
+  const t = toneStyles[tone];
+  const body = (
+    <div className="group relative overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+      <div className={cn("absolute inset-y-0 right-0 w-1", t.bar)} />
+      <div className="p-5 pr-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted-foreground tracking-wide">{label}</p>
+            <p className="mt-2 text-2xl font-bold text-foreground tabular-nums truncate">{value}</p>
+            {hint && <p className="text-[11px] text-muted-foreground mt-1.5">{hint}</p>}
+          </div>
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", t.iconBg)}>
+            <Icon className={cn("h-5 w-5", t.iconFg)} />
+          </div>
+        </div>
+        {href && (
+          <div className="mt-3 flex items-center text-[11px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+            عرض التفاصيل <ArrowUpRight className="h-3 w-3 mr-1" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+  return href ? <Link href={href} className="block">{body}</Link> : body;
+}
+
+// ─── Quick Action Tile ────────────────────────────────────────────────────────
+function QuickAction({
+  href, icon: Icon, label, color,
+}: {
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  color: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex flex-col items-center justify-center gap-2 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-md transition-all"
+    >
+      <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-110", color)}>
+        <Icon className="h-5 w-5 text-white" />
+      </div>
+      <span className="text-xs font-medium text-foreground text-center leading-tight">{label}</span>
+    </Link>
+  );
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
   const companyId = user?.companyId;
 
   const { data: summary, isLoading: loadingSummary } = useGetDashboardSummary(undefined, {
-    query: { queryKey: ["dashboard-summary", companyId] }
+    query: { queryKey: ["dashboard-summary", companyId] },
   });
 
-  // Use own company's ZATCA registration status from auth context (no separate API call)
   const ownCompany = user?.company;
   const isNotRegistered = ownCompany && !ownCompany.zatcaPcsid;
 
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
-    query: { queryKey: ["recent-invoices", companyId] }
+    query: { queryKey: ["recent-invoices", companyId] },
   });
 
   const { data: monthlyStats, isLoading: loadingStats } = useGetMonthlyStats(undefined, {
-    query: { queryKey: ["monthly-stats", companyId] }
+    query: { queryKey: ["monthly-stats", companyId] },
   });
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('ar-SA', { style: 'currency', currency: 'SAR' }).format(amount);
-  };
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR" }).format(amount);
 
-  const chartData = monthlyStats?.map(stat => ({
-    name: stat.month,
-    الإيرادات: stat.revenue,
-    الضريبة: stat.vatAmount,
-    الفواتير: stat.invoiceCount
-  })) || [];
+  const chartData =
+    monthlyStats?.map(stat => ({
+      name: stat.month,
+      الإيرادات: stat.revenue,
+      الضريبة: stat.vatAmount,
+      الفواتير: stat.invoiceCount,
+    })) || [];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">لوحة التحكم</h1>
-        <p className="text-muted-foreground mt-1">نظرة عامة على أداء نظام الفوترة الإلكترونية</p>
+      {/* Page header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">لوحة التحكم</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">نظرة عامة على أداء نظام الفوترة الإلكترونية</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-1.5">
+            <Link href="/invoices"><FileText className="h-4 w-4" />الفواتير</Link>
+          </Button>
+          <Button asChild size="sm" className="gap-1.5">
+            <Link href="/invoices/new"><Plus className="h-4 w-4" />فاتورة جديدة</Link>
+          </Button>
+        </div>
       </div>
 
-      {/* ZATCA onboarding banner — only shown on Dashboard, only for own company */}
+      {/* ZATCA onboarding banner */}
       {isNotRegistered && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
             <ShieldCheck className="h-5 w-5 text-amber-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-amber-800 text-sm">
-              لم تكتمل عملية الربط مع هيئة الزكاة والدخل
-            </p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              يجب ربط شركتك بمنظومة فاتورة قبل إصدار فواتير رسمية
-            </p>
+            <p className="font-semibold text-amber-800 text-sm">لم تكتمل عملية الربط مع هيئة الزكاة والدخل</p>
+            <p className="text-xs text-amber-700 mt-0.5">يجب ربط شركتك بمنظومة فاتورة قبل إصدار فواتير رسمية</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button asChild size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
-              <Link href="/zatca">
-                <ShieldCheck className="h-4 w-4" />
-                ربط الشركة الآن
-              </Link>
+              <Link href="/zatca"><ShieldCheck className="h-4 w-4" />ربط الشركة الآن</Link>
             </Button>
           </div>
         </div>
       )}
 
+      {/* KPI tiles */}
       {loadingSummary ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-4 w-4" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-20" />
-              </CardContent>
-            </Card>
+          {[1, 2, 3, 4].map(i => (
+            <div key={i} className="rounded-xl border bg-card p-5">
+              <Skeleton className="h-4 w-24 mb-3" />
+              <Skeleton className="h-8 w-20" />
+            </div>
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">إجمالي الإيرادات</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(summary?.totalRevenue || 0)}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                إجمالي الضريبة: {formatCurrency(summary?.totalVat || 0)}
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">الفواتير المصدرة</CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary?.issuedCount || 0}</div>
-              <p className="text-xs text-muted-foreground mt-1">فاتورة معتمدة من هيئة الزكاة</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">مسودات</CardTitle>
-              <FileWarning className="h-4 w-4 text-yellow-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary?.draftCount || 0}</div>
-              <p className="text-xs text-muted-foreground mt-1">بانتظار الإصدار</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">الفواتير الملغاة</CardTitle>
-              <XCircle className="h-4 w-4 text-destructive" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary?.cancelledCount || 0}</div>
-              <p className="text-xs text-muted-foreground mt-1">تم إلغاؤها أو إرجاعها</p>
-            </CardContent>
-          </Card>
+          <KpiTile
+            label="إجمالي الإيرادات"
+            value={formatCurrency(summary?.totalRevenue || 0)}
+            icon={TrendingUp}
+            tone="primary"
+            hint={`إجمالي الضريبة: ${formatCurrency(summary?.totalVat || 0)}`}
+          />
+          <KpiTile
+            label="الفواتير المصدرة"
+            value={summary?.issuedCount || 0}
+            icon={CheckCircle2}
+            tone="success"
+            hint="فواتير معتمدة من هيئة الزكاة"
+            href="/invoices"
+          />
+          <KpiTile
+            label="مسودات"
+            value={summary?.draftCount || 0}
+            icon={FileWarning}
+            tone="warning"
+            hint="بانتظار الإصدار"
+            href="/invoices"
+          />
+          <KpiTile
+            label="الفواتير الملغاة"
+            value={summary?.cancelledCount || 0}
+            icon={XCircle}
+            tone="danger"
+            hint="تم إلغاؤها أو إرجاعها"
+          />
         </div>
       )}
 
-      {/* Monthly Stats Chart */}
-      <Card className="col-span-1">
-        <CardHeader>
-          <CardTitle>إحصائيات الإيرادات الشهرية</CardTitle>
-          <CardDescription>ملخص الإيرادات والضرائب لآخر 12 شهراً</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loadingStats ? (
-            <Skeleton className="h-[300px] w-full" />
-          ) : (
-            <div className="h-[300px] w-full" dir="ltr">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartData}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis 
-                    stroke="hsl(var(--muted-foreground))" 
-                    fontSize={12} 
-                    tickLine={false} 
-                    axisLine={false}
-                    tickFormatter={(value) => `${value / 1000}k`}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: 'hsl(var(--muted)/0.5)' }}
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderRadius: '8px', border: '1px solid hsl(var(--border))' }}
-                  />
-                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                  <Bar dataKey="الإيرادات" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  <Bar dataKey="الضريبة" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent Invoices Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>أحدث الفواتير</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="relative w-full overflow-auto">
-            <table className="w-full caption-bottom text-sm">
-              <thead className="[&_tr]:border-b">
-                <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                  <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">رقم الفاتورة</th>
-                  <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">التاريخ</th>
-                  <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">العميل</th>
-                  <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">المبلغ</th>
-                  <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">الحالة</th>
-                </tr>
-              </thead>
-              <tbody className="[&_tr:last-child]:border-0">
-                {loadingRecent ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i} className="border-b transition-colors">
-                      <td className="p-4"><Skeleton className="h-4 w-20" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-32" /></td>
-                      <td className="p-4"><Skeleton className="h-4 w-24" /></td>
-                      <td className="p-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
-                    </tr>
-                  ))
-                ) : recentInvoices?.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                      لا توجد فواتير حديثة
-                    </td>
-                  </tr>
-                ) : (
-                  recentInvoices?.map((invoice) => (
-                    <tr key={invoice.id} className="border-b transition-colors hover:bg-muted/50">
-                      <td className="p-4 font-medium">{invoice.invoiceNumber}</td>
-                      <td className="p-4">{format(new Date(invoice.issueDate), 'PP', { locale: arSA })}</td>
-                      <td className="p-4">{invoice.customer?.nameAr || 'عميل نقدي'}</td>
-                      <td className="p-4 font-medium">{formatCurrency(invoice.grandTotal)}</td>
-                      <td className="p-4">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                          invoice.status === 'issued' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-                          invoice.status === 'draft' ? 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200' :
-                          'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                        }`}>
-                          {invoice.status === 'issued' ? 'مصدرة' : invoice.status === 'draft' ? 'مسودة' : 'ملغاة'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+      {/* Quick actions launchpad */}
+      <div className="rounded-xl border bg-card shadow-sm">
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <div>
+            <h3 className="text-sm font-bold text-foreground">إجراءات سريعة</h3>
+            <p className="text-[11px] text-muted-foreground">اختر عملية للبدء بها مباشرة</p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4">
+          <QuickAction href="/invoices/new"     icon={Receipt}   label="فاتورة جديدة"     color="bg-primary" />
+          <QuickAction href="/customers/new"    icon={Users}     label="عميل جديد"        color="bg-sky-500" />
+          <QuickAction href="/suppliers/new"    icon={Truck}     label="مورد جديد"        color="bg-indigo-500" />
+          <QuickAction href="/inventory/items"  icon={Package}   label="إضافة صنف"        color="bg-emerald-500" />
+          <QuickAction href="/cash/receipt-vouchers" icon={Wallet}    label="سند قبض"     color="bg-amber-500" />
+          <QuickAction href="/accounting/accounts"   icon={BookOpen}  label="شجرة الحسابات" color="bg-rose-500" />
+        </div>
+      </div>
+
+      {/* Two-column: Chart + Recent invoices */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Monthly Stats Chart */}
+        <Card className="xl:col-span-2">
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle className="text-base">إحصائيات الإيرادات الشهرية</CardTitle>
+                <CardDescription className="text-xs">ملخص الإيرادات والضرائب لآخر 12 شهراً</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {loadingStats ? (
+              <Skeleton className="h-[280px] w-full" />
+            ) : (
+              <div className="h-[280px] w-full" dir="ltr">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={value => `${value / 1000}k`}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "hsl(var(--muted)/0.5)" }}
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        borderRadius: "8px",
+                        border: "1px solid hsl(var(--border))",
+                        fontSize: "12px",
+                      }}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: "16px", fontSize: "12px" }} />
+                    <Bar dataKey="الإيرادات" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                    <Bar dataKey="الضريبة" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Recent invoices side panel */}
+        <Card className="xl:col-span-1">
+          <CardHeader className="pb-3 flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">أحدث الفواتير</CardTitle>
+              <CardDescription className="text-xs">آخر العمليات المسجلة</CardDescription>
+            </div>
+            <Button asChild variant="ghost" size="sm" className="h-7 text-xs gap-1">
+              <Link href="/invoices">عرض الكل <ArrowUpRight className="h-3 w-3" /></Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="px-0 pb-2">
+            <div className="divide-y">
+              {loadingRecent ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="px-5 py-3 flex items-center gap-3">
+                    <Skeleton className="h-9 w-9 rounded-lg" />
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-3.5 w-20" />
+                      <Skeleton className="h-3 w-32" />
+                    </div>
+                  </div>
+                ))
+              ) : !recentInvoices || recentInvoices.length === 0 ? (
+                <div className="p-6 text-center text-sm text-muted-foreground">لا توجد فواتير حديثة</div>
+              ) : (
+                recentInvoices.slice(0, 5).map(invoice => {
+                  const statusStyle =
+                    invoice.status === "issued"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : invoice.status === "draft"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-rose-50 text-rose-700 border-rose-200";
+                  const statusText =
+                    invoice.status === "issued" ? "مصدرة" : invoice.status === "draft" ? "مسودة" : "ملغاة";
+                  return (
+                    <Link
+                      key={invoice.id}
+                      href={`/invoices/${invoice.id}`}
+                      className="flex items-center gap-3 px-5 py-3 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <FileText className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-semibold truncate">{invoice.invoiceNumber}</p>
+                          <span className={cn("text-[10px] font-medium border px-1.5 py-0.5 rounded-full shrink-0", statusStyle)}>
+                            {statusText}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <p className="text-xs text-muted-foreground truncate">
+                            {invoice.customer?.nameAr || "عميل نقدي"}
+                          </p>
+                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(invoice.grandTotal)}</p>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                          {format(new Date(invoice.issueDate), "PP", { locale: arSA })}
+                        </p>
+                      </div>
+                    </Link>
+                  );
+                })
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
@@ -8,7 +8,9 @@ import {
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
+  Search, Home, HelpCircle, Plus, ChevronLeft,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
@@ -551,6 +553,210 @@ function SidebarInner({
   );
 }
 
+// ─── Breadcrumb Resolver ──────────────────────────────────────────────────────
+// Build a complete map of href → { label, parent } from all nav definitions
+type CrumbInfo = { label: string; parent?: string };
+const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
+  const map: Record<string, CrumbInfo> = {
+    "/":                              { label: "لوحة التحكم" },
+    "/companies":                     { label: "الشركات" },
+    "/customers":                     { label: "العملاء" },
+    "/customers/new":                 { label: "عميل جديد",       parent: "/customers" },
+    "/suppliers/new":                 { label: "مورد جديد",       parent: "/suppliers" },
+    "/invoices/new":                  { label: "فاتورة جديدة",    parent: "/invoices" },
+    "/settings":                      { label: "الإعدادات" },
+    "/admin/requests":                { label: "طلبات التسجيل" },
+    "/admin/subscriptions":           { label: "إدارة الاشتراكات" },
+    "/admin/plans":                   { label: "إعدادات الباقات" },
+    "/admin/menu-permissions":        { label: "صلاحيات القوائم" },
+    // Section roots (parents for sub items)
+    "/inventory":                     { label: "المخزون" },
+    "/cash":                          { label: "النقد والبنوك" },
+    "/purchasing":                    { label: "الموردون والمشتريات" },
+    "/accounting":                    { label: "المحاسبة" },
+    "/accounting/reports":            { label: "التقارير المحاسبية", parent: "/accounting" },
+    "/org":                           { label: "إعدادات الشركة" },
+  };
+  const all = [
+    ...dashboardSubNav,
+    ...purchasingSubNav.map(i => ({ ...i, parent: "/purchasing" })),
+    ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
+    ...reportsSubNav.map(i => ({ ...i, parent: "/accounting/reports" })),
+    ...cashSubNav.map(i => ({ ...i, parent: "/cash" })),
+    inventoryHeader,
+    ...inventorySubNav.map(i => ({ ...i, parent: "/inventory" })),
+    ...companyBusinessNav,
+  ];
+  for (const item of all) {
+    map[item.href] = {
+      label: item.name,
+      parent: (item as any).parent,
+    };
+  }
+  return map;
+})();
+
+function getBreadcrumbs(location: string): { label: string; href?: string }[] {
+  // Try exact match first, then progressively trim segments
+  const tryPaths: string[] = [];
+  if (location === "/") return [{ label: "لوحة التحكم" }];
+  let current: string | undefined = location;
+  // Find longest matching prefix in ROUTE_MAP
+  while (current && current !== "/") {
+    if (ROUTE_MAP[current]) { tryPaths.unshift(current); break; }
+    const idx = current.lastIndexOf("/");
+    current = idx > 0 ? current.slice(0, idx) : "/";
+  }
+  // Walk up via parent chain
+  const chain: string[] = [];
+  let cursor: string | undefined = tryPaths[0];
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    chain.unshift(cursor);
+    cursor = ROUTE_MAP[cursor]?.parent;
+  }
+  const crumbs: { label: string; href?: string }[] = [{ label: "الرئيسية", href: "/" }];
+  for (let i = 0; i < chain.length; i++) {
+    const path = chain[i];
+    const info = ROUTE_MAP[path];
+    if (!info) continue;
+    crumbs.push({
+      label: info.label,
+      href: i === chain.length - 1 ? undefined : path,
+    });
+  }
+  // If nothing matched, fall back to a generic crumb
+  if (crumbs.length === 1) crumbs.push({ label: "صفحة" });
+  return crumbs;
+}
+
+// ─── TopBar (Odoo-style header) ───────────────────────────────────────────────
+function TopBar({
+  location, user, isSuperAdmin, onMobileMenu, onLogout,
+}: {
+  location: string;
+  user: any;
+  isSuperAdmin: boolean;
+  onMobileMenu: () => void;
+  onLogout: () => void;
+}) {
+  const crumbs = useMemo(() => getBreadcrumbs(location), [location]);
+  const currentLabel = crumbs[crumbs.length - 1]?.label ?? "";
+
+  return (
+    <header className="sticky top-0 z-10 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      {/* Row 1: search + actions */}
+      <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
+        <Button
+          variant="ghost" size="icon" className="md:hidden -mr-2"
+          onClick={onMobileMenu}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        {/* Search */}
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="search"
+            placeholder="بحث سريع..."
+            className="h-9 pr-9 pl-3 bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input"
+          />
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Right cluster */}
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title="المساعدة">
+            <HelpCircle className="h-[18px] w-[18px]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground relative" title="الإشعارات">
+            <Bell className="h-[18px] w-[18px]" />
+            <span className="absolute top-1.5 left-2 h-1.5 w-1.5 rounded-full bg-primary" />
+          </Button>
+          <div className="h-5 w-px bg-border mx-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-accent transition-colors">
+                <Avatar className="h-7 w-7">
+                  <AvatarFallback className={cn(
+                    "text-[11px] font-bold",
+                    isSuperAdmin ? "bg-purple-100 text-purple-700" : "bg-primary text-primary-foreground"
+                  )}>
+                    {user?.username?.[0]?.toUpperCase() ?? "م"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="hidden lg:block text-right">
+                  <p className="text-xs font-medium leading-tight">{user?.username ?? "مستخدم"}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير" : "مستخدم"}
+                  </p>
+                </div>
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden lg:block" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel className="font-normal">
+                <div>
+                  <p className="text-sm font-medium">{user?.username}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير الشركة" : "مستخدم"}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild className="gap-2 cursor-pointer">
+                <Link href="/settings">
+                  <Settings className="h-4 w-4" />إعدادات الحساب
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
+                <LogOut className="h-4 w-4" />تسجيل الخروج
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Row 2: breadcrumb + page title */}
+      <div className="flex items-center gap-3 px-4 sm:px-6 py-2.5 border-t border-border/60 bg-muted/20">
+        <nav className="flex items-center gap-1.5 text-xs flex-1 min-w-0 overflow-hidden">
+          {crumbs.map((c, i) => {
+            const isLast = i === crumbs.length - 1;
+            return (
+              <React.Fragment key={`${c.label}-${i}`}>
+                {i > 0 && <ChevronLeft className="h-3 w-3 text-muted-foreground/50 shrink-0" />}
+                {c.href && !isLast ? (
+                  <Link
+                    href={c.href}
+                    className="text-muted-foreground hover:text-foreground transition-colors truncate"
+                  >
+                    {i === 0 ? <Home className="h-3.5 w-3.5 inline -mt-0.5" /> : c.label}
+                  </Link>
+                ) : (
+                  <span className={cn(
+                    "truncate",
+                    isLast ? "font-semibold text-foreground" : "text-muted-foreground"
+                  )}>
+                    {i === 0 && !isLast ? <Home className="h-3.5 w-3.5 inline -mt-0.5" /> : c.label}
+                  </span>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </nav>
+        <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-md bg-card border border-border/60 text-muted-foreground shrink-0">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          متصل
+        </span>
+      </div>
+    </header>
+  );
+}
+
 // ─── Main Layout ───────────────────────────────────────────────────────────────
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -613,25 +819,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-col md:mr-64">
-        <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-4 border-b bg-background/95 backdrop-blur px-4 sm:px-6">
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)}>
-            <Menu className="h-5 w-5" />
-          </Button>
-          <div className="flex flex-1 items-center justify-end gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8"><Bell className="h-4 w-4" /></Button>
-            <div className="h-5 w-px bg-border mx-1" />
-            <Button
-              variant="ghost" size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-              onClick={logout}
-              title="تسجيل الخروج"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </header>
-        <main className="flex-1 p-4 sm:p-6 md:p-8">{children}</main>
+      <div className="flex flex-col md:mr-64 min-h-screen">
+        <TopBar
+          location={location}
+          user={user}
+          isSuperAdmin={isSuperAdmin}
+          onMobileMenu={() => setMobileOpen(true)}
+          onLogout={logout}
+        />
+        <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
     </div>
   );
