@@ -201,14 +201,18 @@ router.get("/purchase-invoices/:id", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, supplierId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.insert(purchaseInvoicesTable).values({
       companyId: cid, docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
-      paymentType: paymentType || "credit",
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       lcId: lcId ? Number(lcId) : null,
@@ -247,13 +251,17 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, supplierId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines } = req.body;
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.update(purchaseInvoicesTable).set({
       docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
-      paymentType: paymentType || "credit",
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       lcId: lcId ? Number(lcId) : null,
