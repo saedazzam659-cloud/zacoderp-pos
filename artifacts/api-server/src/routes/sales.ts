@@ -9,6 +9,7 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
+import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -81,14 +82,17 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
 router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
-      paymentType: paymentType || "credit",
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
@@ -107,13 +111,16 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
-      paymentType: paymentType || "credit",
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
@@ -187,6 +194,24 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       .set({ status: "posted", updatedAt: new Date() })
       .where(eq(salesInvoicesTable.id, id))
       .returning();
+
+    if (inv.paymentType === "cash" && inv.cashBoxId) {
+      await createPostedReceiptVoucher({
+        companyId: cid,
+        branchId: inv.branchId,
+        date: inv.invoiceDate,
+        cashBoxId: inv.cashBoxId,
+        paymentType: "cash",
+        entityType: "customer",
+        entityId: inv.customerId,
+        amount: inv.totalAmount,
+        exchangeRate: inv.exchangeRate,
+        refType: "sales_invoice",
+        refNumber: inv.docNumber || String(inv.id),
+        description: `قبض نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
+      });
+    }
+
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -231,14 +256,18 @@ router.get("/sales-returns/:id", async (req, res) => {
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, customerId, branchId, invoiceId, currencyCode, exchangeRate,
+    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
             totalAmount, vatAmount, notes, lines } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
     const [ret] = await db.insert(salesReturnsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, returnDate,
       customerId: customerId ? Number(customerId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: String(totalAmount || "0"),
@@ -307,6 +336,24 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       .set({ status: "posted", updatedAt: new Date() })
       .where(eq(salesReturnsTable.id, id))
       .returning();
+
+    if (ret.paymentType === "cash" && ret.cashBoxId) {
+      await createPostedPaymentVoucher({
+        companyId: cid,
+        branchId: ret.branchId,
+        date: ret.returnDate,
+        cashBoxId: ret.cashBoxId,
+        paymentType: "cash",
+        entityType: "customer",
+        entityId: ret.customerId,
+        amount: ret.totalAmount,
+        exchangeRate: ret.exchangeRate,
+        refType: "sales_return",
+        refNumber: ret.docNumber || String(ret.id),
+        description: `رد نقدي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
+      });
+    }
+
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

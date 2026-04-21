@@ -38,6 +38,7 @@ function newLine(): ReturnLine {
 
 const EMPTY = {
   docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
+  paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
 };
 
@@ -109,6 +110,11 @@ export default function SalesReturns() {
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
@@ -267,6 +273,8 @@ export default function SalesReturns() {
       customerId: form.customerId || null,
       branchId:   form.branchId   || null,
       invoiceId:  form.invoiceId  || null,
+      paymentType: form.paymentType || "credit",
+      cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -337,6 +345,27 @@ export default function SalesReturns() {
                 )}
               </Field>
               <Field label="سعر الصرف"><Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
+              <Field label="نوع الدفع">
+                <Select value={form.paymentType} onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v }))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="credit">آجل (على الحساب)</SelectItem>
+                    <SelectItem value="cash">نقدي (رد للعميل)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {form.paymentType === "cash" && (
+                <Field label="الخزنة" required>
+                  <Select value={form.cashBoxId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, cashBoxId: v }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الخزنة..." /></SelectTrigger>
+                    <SelectContent>
+                      {(cashBoxes as any[]).map((b: any) => (
+                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
               <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 

@@ -82,6 +82,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [customerId,setCustomerId]      = useState("");
   const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
+  const [cashBoxId, setCashBoxId]       = useState("");
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
@@ -121,6 +122,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: cashBoxes = [] } = useQuery<any[]>({
+    queryKey: ["cash-boxes", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
@@ -170,6 +176,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCustomerId(existing.customerId ? String(existing.customerId) : "");
     if (isInvoice) setBranchId(existing.branchId ? String(existing.branchId) : "");
     if (isInvoice) setPaymentType(existing.paymentType ?? "credit");
+    if (isInvoice) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
@@ -250,6 +257,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isInvoice) {
       base.invoiceDate = docDate;
       base.paymentType = paymentType;
+      base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.branchId = branchId || null;
     } else {
       base.quotationDate = docDate;
@@ -357,6 +365,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectContent>
                         <SelectItem value="credit">آجل</SelectItem>
                         <SelectItem value="cash">نقدي</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {isInvoice && paymentType === "cash" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">الخزنة *</Label>
+                    <Select value={cashBoxId || undefined} onValueChange={setCashBoxId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الخزنة..." /></SelectTrigger>
+                      <SelectContent>
+                        {(cashBoxes as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

@@ -9,6 +9,7 @@ import {
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
+import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -345,6 +346,24 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .set({ status: "posted", updatedAt: new Date() })
       .where(eq(purchaseInvoicesTable.id, id))
       .returning();
+
+    if (inv.paymentType === "cash" && inv.cashBoxId) {
+      await createPostedPaymentVoucher({
+        companyId: cid,
+        branchId: inv.branchId,
+        date: inv.invoiceDate,
+        cashBoxId: inv.cashBoxId,
+        paymentType: "cash",
+        entityType: "supplier",
+        entityId: inv.supplierId,
+        amount: inv.totalAmount,
+        exchangeRate: inv.exchangeRate,
+        refType: "purchase_invoice",
+        refNumber: inv.docNumber || String(inv.id),
+        description: `صرف نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
+      });
+    }
+
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -468,6 +487,24 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       .set({ status: "posted", updatedAt: new Date() })
       .where(eq(purchaseReturnsTable.id, id))
       .returning();
+
+    if (ret.paymentType === "cash" && ret.cashBoxId) {
+      await createPostedReceiptVoucher({
+        companyId: cid,
+        branchId: ret.branchId,
+        date: ret.returnDate,
+        cashBoxId: ret.cashBoxId,
+        paymentType: "cash",
+        entityType: "supplier",
+        entityId: ret.supplierId,
+        amount: ret.totalAmount,
+        exchangeRate: ret.exchangeRate,
+        refType: "purchase_return",
+        refNumber: ret.docNumber || String(ret.id),
+        description: `استرداد نقدي لمرتجع المشتريات رقم ${ret.docNumber || ret.id}`,
+      });
+    }
+
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
