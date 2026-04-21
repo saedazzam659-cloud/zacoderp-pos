@@ -11,6 +11,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
 import { FormPanel } from "@/components/FormPanel";
+import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -41,6 +42,7 @@ const EMPTY_FORM = {
   nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
   email: "", phone: "", city: "", district: "",
   street: "", buildingNumber: "", postalCode: "", country: "SA",
+  accountId: "" as string,
 };
 
 export default function Suppliers() {
@@ -115,6 +117,7 @@ export default function Suppliers() {
       buildingNumber: sup.buildingNumber ?? "",
       postalCode:     sup.postalCode     ?? "",
       country:        sup.country        ?? "SA",
+      accountId:      sup.accountId      ? String(sup.accountId) : "",
     });
   }
 
@@ -253,6 +256,20 @@ export default function Suppliers() {
                 <Field label="الحي / المنطقة" name="district" placeholder="حي العليا" />
                 <Field label="المدينة" name="city" placeholder="الرياض" />
                 <Field label="الرمز البريدي" name="postalCode" placeholder="12345" dir="ltr" />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">الربط المحاسبي</p>
+              <div className="max-w-sm space-y-1.5">
+                <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
+                <AccountCombobox
+                  value={editForm.accountId}
+                  onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
+                  placeholder="— اختر حساب الدائنين —"
+                  filterTypes={["liability"]}
+                  grouped={false}
+                />
+                <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ (يستخدم عند ترحيل الفواتير والمرتجعات).</p>
               </div>
             </div>
           </div>

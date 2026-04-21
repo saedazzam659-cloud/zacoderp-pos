@@ -90,6 +90,7 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber ?? null,
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
+    accountId: data.accountId ? Number(data.accountId) : null,
   }).returning();
   res.status(201).json(supplier);
 });
@@ -123,6 +124,7 @@ router.put("/:id", async (req, res) => {
     buildingNumber: data.buildingNumber ?? null,
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
+    accountId: data.accountId ? Number(data.accountId) : null,
   }).where(eq(suppliersTable.id, id)).returning();
   if (!supplier) { res.status(404).json({ error: "المورد غير موجود" }); return; }
   res.json(supplier);
