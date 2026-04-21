@@ -79,17 +79,17 @@ router.get("/warehouses", async (req, res) => {
 
 router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit } = req.body;
+  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, accountId } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
-  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null }).returning();
+  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: accountId ? Number(accountId) : null }).returning();
   res.status(201).json(row);
 });
 
 router.put("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, isActive } = req.body;
-  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
+  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, isActive, accountId } = req.body;
+  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });
