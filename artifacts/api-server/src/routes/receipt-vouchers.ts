@@ -1,11 +1,67 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { receiptVouchersTable } from "@workspace/db";
+import {
+  receiptVouchersTable,
+  cashBoxesTable, bankAccountsTable,
+  customersTable, suppliersTable,
+  journalEntriesTable, journalEntryLinesTable,
+} from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
+
+// Build & insert a balanced journal entry for a receipt voucher
+async function buildReceiptJournal(cid: number, v: any): Promise<number> {
+  const amount = parseFloat(v.amount || "0");
+  if (amount <= 0) throw new Error("المبلغ يجب أن يكون أكبر من صفر");
+
+  // DR side: cash/bank account that received the money
+  let drAccountId: number | null = null;
+  let drLabel = "";
+  if (v.paymentType === "bank" && v.bankAccountId) {
+    const [b] = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.id, v.bankAccountId));
+    drAccountId = b?.accountId ?? null;
+    drLabel = `بنك ${b?.nameAr ?? ""}`.trim();
+  } else if (v.cashBoxId) {
+    const [c] = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.id, v.cashBoxId));
+    drAccountId = c?.accountId ?? null;
+    drLabel = `صندوق ${c?.nameAr ?? ""}`.trim();
+  }
+  if (!drAccountId) throw new Error("الصندوق/البنك لا يحتوي على حساب محاسبي مرتبط");
+
+  // CR side: voucher.accountId override OR customer/supplier/employee account
+  let crAccountId: number | null = v.accountId ?? null;
+  let crLabel = "";
+  if (!crAccountId) {
+    if (v.entityType === "customer" && v.entityId) {
+      const [c] = await db.select().from(customersTable).where(and(eq(customersTable.id, v.entityId), eq(customersTable.companyId, cid)));
+      crAccountId = c?.accountId ?? null;
+      crLabel = `عميل ${c?.nameAr ?? ""}`.trim();
+    } else if (v.entityType === "supplier" && v.entityId) {
+      const [s] = await db.select().from(suppliersTable).where(and(eq(suppliersTable.id, v.entityId), eq(suppliersTable.companyId, cid)));
+      crAccountId = s?.accountId ?? null;
+      crLabel = `مورّد ${s?.nameAr ?? ""}`.trim();
+    }
+  } else {
+    crLabel = v.entityName || "حساب الطرف الآخر";
+  }
+  if (!crAccountId) throw new Error("لا يوجد حساب محاسبي للطرف الآخر — اختر حساباً أو اربط الطرف بحساب");
+
+  const desc = `سند قبض ${v.code}${v.description ? " - " + v.description : ""}`;
+  const [entry] = await db.insert(journalEntriesTable).values({
+    companyId: cid, branchId: v.branchId ?? null,
+    docNumber: v.code, entryDate: v.date,
+    currency: "SAR", exchangeRate: String(v.exchangeRate ?? "1"),
+    description: desc, entryType: "receipt", status: "posted",
+  }).returning();
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: entry.id, accountId: drAccountId, debit: amount.toFixed(2), credit: "0.00", description: drLabel || desc, sortOrder: 0 },
+    { entryId: entry.id, accountId: crAccountId, debit: "0.00", credit: amount.toFixed(2), description: crLabel || desc, sortOrder: 1 },
+  ]);
+  return entry.id;
+}
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
@@ -94,8 +150,27 @@ router.post("/:id/post", async (req, res) => {
   if (!existing.amount || parseFloat(existing.amount) <= 0) {
     res.status(400).json({ error: "المبلغ يجب أن يكون أكبر من صفر" }); return;
   }
+  try {
+    const journalId = await buildReceiptJournal(existing.companyId, existing);
+    const [row] = await db.update(receiptVouchersTable)
+      .set({ status: "posted", journalEntryId: journalId })
+      .where(eq(receiptVouchersTable.id, id)).returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message || "تعذّر إنشاء القيد المحاسبي" });
+  }
+});
+
+router.post("/:id/unpost", async (req, res) => {
+  const id = parseInt(req.params.id);
+  const [existing] = await db.select().from(receiptVouchersTable).where(eq(receiptVouchersTable.id, id));
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
+  if (existing.journalEntryId) {
+    await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, existing.journalEntryId));
+  }
   const [row] = await db.update(receiptVouchersTable)
-    .set({ status: "posted" })
+    .set({ status: "draft", journalEntryId: null })
     .where(eq(receiptVouchersTable.id, id)).returning();
   res.json(row);
 });
