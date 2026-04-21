@@ -11,7 +11,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Pencil, Trash2, BookOpen, ArrowUpDown, Calendar, CheckCircle2, FileText } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, BookOpen, ArrowUpDown, Calendar, CheckCircle2, FileText, Printer, FileSpreadsheet, FileDown } from "lucide-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const ENTRY_TYPES: Record<string, string> = {
   general:     "قيد عام",
@@ -59,6 +62,47 @@ export default function JournalEntries() {
   const totalDebit  = entries.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
   const totalCredit = entries.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
 
+  const buildRows = () => filtered.map((e: any) => ({
+    "رقم المستند": e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
+    "التاريخ":   e.entryDate ?? "",
+    "النوع":     ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
+    "البيان":    e.description ?? "",
+    "المدين":    Number(e.totalDebit  ?? 0).toFixed(2),
+    "الدائن":    Number(e.totalCredit ?? 0).toFixed(2),
+    "الحالة":    (STATUS_MAP[e.status] ?? STATUS_MAP.posted).label,
+  }));
+
+  const handleExportExcel = () => {
+    const rows = buildRows();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "القيود المحاسبية");
+    XLSX.writeFile(wb, `journal-entries-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const rows = buildRows();
+    const head = [Object.keys(rows[0] ?? { "رقم المستند": "", "التاريخ": "", "النوع": "", "البيان": "", "المدين": "", "الدائن": "", "الحالة": "" })];
+    const body = rows.map(r => Object.values(r));
+    doc.setFontSize(14);
+    doc.text("Journal Entries / القيود المحاسبية", doc.internal.pageSize.getWidth() / 2, 30, { align: "center" });
+    doc.setFontSize(9);
+    doc.text(`Date: ${new Date().toLocaleDateString()}    Total Debit: ${totalDebit.toFixed(2)}    Total Credit: ${totalCredit.toFixed(2)}`,
+      doc.internal.pageSize.getWidth() / 2, 48, { align: "center" });
+    autoTable(doc, {
+      head, body,
+      startY: 60,
+      styles: { fontSize: 8, cellPadding: 4, halign: "right" },
+      headStyles: { fillColor: [40, 80, 140], textColor: 255, halign: "center" },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+    });
+    doc.save(`journal-entries-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const handlePrint = () => window.print();
+
   return (
     <div className="p-6 space-y-5" dir="rtl">
       {/* Header */}
@@ -72,10 +116,21 @@ export default function JournalEntries() {
             <p className="text-xs text-muted-foreground">إدارة قيود اليومية والتسويات</p>
           </div>
         </div>
-        <Button onClick={() => navigate("/accounting/journals/new")} className="gap-2">
-          <Plus className="h-4 w-4" />
-          قيد جديد
-        </Button>
+        <div className="flex items-center gap-2 print:hidden">
+          <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
+            <Printer className="h-4 w-4" /> طباعة
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportExcel} className="gap-1.5 text-green-700 border-green-200 hover:bg-green-50">
+            <FileSpreadsheet className="h-4 w-4" /> Excel
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50">
+            <FileDown className="h-4 w-4" /> PDF
+          </Button>
+          <Button onClick={() => navigate("/accounting/journals/new")} className="gap-2">
+            <Plus className="h-4 w-4" />
+            قيد جديد
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
