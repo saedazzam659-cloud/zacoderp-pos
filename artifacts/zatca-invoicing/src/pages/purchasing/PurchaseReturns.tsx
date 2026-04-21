@@ -202,6 +202,15 @@ export default function PurchaseReturns() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const unpostMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/unpost`, { method: "PATCH", headers });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: () => { invalidate(); toast({ title: "✓ تم فك ترحيل المرتجع وعكس حركة المخزون" }); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   const deleteMut = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}`, { method: "DELETE", headers });
