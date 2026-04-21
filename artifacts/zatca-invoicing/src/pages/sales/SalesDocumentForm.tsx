@@ -97,6 +97,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [taxAccountId,       setTaxAccountId]       = useState("");
   const [discountAccountId,  setDiscountAccountId]  = useState("");
 
+  // Persist last-used accounts per company so new invoices auto-fill them
+  const acctPrefsKey = `sales-invoice-accts:${cid ?? "all"}`;
+  useEffect(() => {
+    if (!isNew || !isInvoice) return;
+    try {
+      const raw = localStorage.getItem(acctPrefsKey);
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (p.salesAccountId    && !salesAccountId)    setSalesAccountId(String(p.salesAccountId));
+      if (p.cogsAccountId     && !cogsAccountId)     setCogsAccountId(String(p.cogsAccountId));
+      if (p.inventoryAccountId&& !inventoryAccountId)setInventoryAccountId(String(p.inventoryAccountId));
+      if (p.taxAccountId      && !taxAccountId)      setTaxAccountId(String(p.taxAccountId));
+      if (p.discountAccountId && !discountAccountId) setDiscountAccountId(String(p.discountAccountId));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, isInvoice, cid]);
+
+  useEffect(() => {
+    if (!isInvoice) return;
+    if (!salesAccountId && !cogsAccountId && !inventoryAccountId && !taxAccountId && !discountAccountId) return;
+    try {
+      localStorage.setItem(acctPrefsKey, JSON.stringify({
+        salesAccountId, cogsAccountId, inventoryAccountId, taxAccountId, discountAccountId,
+      }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salesAccountId, cogsAccountId, inventoryAccountId, taxAccountId, discountAccountId]);
+
   // Lookups
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ["customers", cid],

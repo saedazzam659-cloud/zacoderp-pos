@@ -198,8 +198,35 @@ export default function SalesReturns() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  const acctPrefsKey = `sales-return-accts:${cid ?? "all"}`;
+  function loadAcctDefaults() {
+    try {
+      const raw = localStorage.getItem(acctPrefsKey);
+      if (!raw) return {};
+      const p = JSON.parse(raw);
+      return {
+        salesAccountId:     p.salesAccountId     ? String(p.salesAccountId)     : "",
+        cogsAccountId:      p.cogsAccountId      ? String(p.cogsAccountId)      : "",
+        inventoryAccountId: p.inventoryAccountId ? String(p.inventoryAccountId) : "",
+        taxAccountId:       p.taxAccountId       ? String(p.taxAccountId)       : "",
+        discountAccountId:  p.discountAccountId  ? String(p.discountAccountId)  : "",
+      };
+    } catch { return {}; }
+  }
+
+  useEffect(() => {
+    const { salesAccountId, cogsAccountId, inventoryAccountId, taxAccountId, discountAccountId } = form;
+    if (!salesAccountId && !cogsAccountId && !inventoryAccountId && !taxAccountId && !discountAccountId) return;
+    try {
+      localStorage.setItem(acctPrefsKey, JSON.stringify({
+        salesAccountId, cogsAccountId, inventoryAccountId, taxAccountId, discountAccountId,
+      }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.salesAccountId, form.cogsAccountId, form.inventoryAccountId, form.taxAccountId, form.discountAccountId]);
+
   function reset() {
-    setForm({ ...EMPTY });
+    setForm({ ...EMPTY, ...loadAcctDefaults() });
     setLines([newLine()]);
     setShowForm(false);
     const url = new URL(window.location.href);
