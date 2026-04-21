@@ -63,7 +63,14 @@ export default function ReceiptVouchers() {
   );
   const totalAmount = (vouchers as any[]).filter((v: any) => v.status === "posted").reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
-  function openAdd()  { setEditing(null); setForm({ ...EMPTY, date: today() }); setAcctId(""); setPanel(true); }
+  const ACCT_KEY = `rv:lastAccountId:${cid}`;
+  function openAdd()  {
+    const last = typeof window !== "undefined" ? localStorage.getItem(ACCT_KEY) || "" : "";
+    setEditing(null);
+    setForm({ ...EMPTY, date: today() });
+    setAcctId(last);
+    setPanel(true);
+  }
   function openEdit(r: any) {
     setEditing(r);
     setForm({ date: r.date, paymentType: r.paymentType || "cash", cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "", bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "", entityType: r.entityType || "customer", entityId: r.entityId ? String(r.entityId) : "", entityName: r.entityName ?? "", accountId: "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", refType: r.refType ?? "", refNumber: r.refNumber ?? "", description: r.description ?? "", notes: r.notes ?? "" });
@@ -89,7 +96,7 @@ export default function ReceiptVouchers() {
       }
       return j;
     },
-    onSuccess: () => { toast({ title: editing ? "تم التحديث والترحيل" : "تم إنشاء السند وترحيله" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setPanel(false); },
+    onSuccess: () => { try { if (acctId) localStorage.setItem(ACCT_KEY, acctId); } catch {} toast({ title: editing ? "تم التحديث والترحيل" : "تم إنشاء السند وترحيله" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setPanel(false); },
     onError: (e: any) => toast({ title: e.message || "حدث خطأ", variant: "destructive" }),
   });
 
