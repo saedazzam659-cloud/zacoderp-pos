@@ -85,6 +85,7 @@ export const inventoryApi = {
   // Ledger & Balance
   getLedger:  (params: Record<string, string>) => get<any[]>(`/stock-ledger?${new URLSearchParams(params)}`),
   getBalance: (params: Record<string, string>) => get<any[]>(`/stock-balance?${new URLSearchParams(params)}`),
+  getLastMovements: (cid?: number) => get<{ itemId: number; lastDate: string }[]>(`/last-movements${cid ? `?companyId=${cid}` : ""}`),
   // Dashboard
   getDashboard: (cid?: number) => get<any>(`/dashboard${cid ? `?companyId=${cid}` : ""}`),
 };

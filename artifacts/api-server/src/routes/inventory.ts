@@ -619,6 +619,23 @@ router.get("/stock-balance", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// LAST MOVEMENT PER ITEM (for slow-moving items report)
+// ═══════════════════════════════════════════════════════════════════
+router.get("/last-movements", async (req, res) => {
+  const cid = getCompanyId(req);
+  if (!cid) { res.json([]); return; }
+  const rows = await db
+    .select({
+      itemId:   stockLedgerTable.itemId,
+      lastDate: sql<string>`max(${stockLedgerTable.txDate})`,
+    })
+    .from(stockLedgerTable)
+    .where(eq(stockLedgerTable.companyId, cid))
+    .groupBy(stockLedgerTable.itemId);
+  res.json(rows);
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // INVENTORY DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
 router.get("/dashboard", async (req, res) => {

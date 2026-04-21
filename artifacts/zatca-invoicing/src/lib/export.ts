@@ -46,6 +46,7 @@ export function exportToPDF(
   filename: string,
   title: string,
   subtitle?: string,
+  autoPrint: boolean = true,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -164,9 +165,7 @@ export function exportToPDF(
     </div>
   </div>
   <script>
-    window.onload = function() {
-      setTimeout(function() { window.print(); }, 600);
-    };
+    ${autoPrint ? `window.onload = function() { setTimeout(function() { window.print(); }, 600); };` : ""}
   </script>
 </body>
 </html>`;

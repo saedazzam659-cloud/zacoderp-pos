@@ -90,8 +90,17 @@ const inventorySubNav = [
   { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft    },
   { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal },
   { name: "الجرد المخزني",       href: "/inventory/counts",           icon: ClipboardList     },
-  { name: "دفتر الحركة",         href: "/inventory/ledger",           icon: BookOpen          },
-  { name: "رصيد المخزون",        href: "/inventory/balance",          icon: BarChart2         },
+];
+
+// ─── Inventory Reports Sub Nav ─────────────────────────────────────────────────
+const inventoryReportsHeader = { name: "كل التقارير", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
+const inventoryReportsSubNav = [
+  { name: "رصيد المخزون",            href: "/inventory/reports/stock-balance", icon: BarChart2     },
+  { name: "دفتر حركة المخزون",        href: "/inventory/reports/stock-ledger",  icon: BookOpen      },
+  { name: "كارت الصنف",               href: "/inventory/reports/item-card",     icon: ClipboardList },
+  { name: "الأصناف منخفضة المخزون",   href: "/inventory/reports/low-stock",     icon: SlidersHorizontal },
+  { name: "تقييم المخزون حسب المخزن", href: "/inventory/reports/valuation",     icon: Wallet        },
+  { name: "الأصناف الراكدة",          href: "/inventory/reports/slow-moving",   icon: Layers        },
 ];
 
 // ─── CashNavGroup ──────────────────────────────────────────────────────────────
@@ -248,7 +257,7 @@ function InventoryNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
-  const isOnInventory = location.startsWith("/inventory");
+  const isOnInventory = location.startsWith("/inventory") && !location.startsWith("/inventory/reports");
   return (
     <div>
       {/* Toggle button */}
@@ -275,6 +284,46 @@ function InventoryNavGroup({
           <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryHeader} location={location} onClick={onNavigate} indent />
           {inventorySubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── InventoryReportsNavGroup ─────────────────────────────────────────────────
+function InventoryReportsNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnReports = location.startsWith("/inventory/reports");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnReports && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <BarChart2 className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">تقارير المخازن</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <NavItem item={inventoryReportsHeader} location={location} onClick={onNavigate} indent />
+          {inventoryReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -407,6 +456,8 @@ function SidebarInner({
   onDashboardToggle,
   inventoryOpen,
   onInventoryToggle,
+  invReportsOpen,
+  onInvReportsToggle,
   reportsOpen,
   onReportsToggle,
   purchasingOpen,
@@ -428,6 +479,8 @@ function SidebarInner({
   onDashboardToggle: () => void;
   inventoryOpen: boolean;
   onInventoryToggle: () => void;
+  invReportsOpen: boolean;
+  onInvReportsToggle: () => void;
   reportsOpen: boolean;
   onReportsToggle: () => void;
   purchasingOpen: boolean;
@@ -520,6 +573,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={inventoryOpen}
                   onToggle={onInventoryToggle}
+                />
+              </div>
+            )}
+
+            {menuPerms.inventory !== false && (
+              <div className="space-y-0.5">
+                <InventoryReportsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={invReportsOpen}
+                  onToggle={onInvReportsToggle}
                 />
               </div>
             )}
@@ -859,7 +923,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     location === "/" ||
     ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
   );
-  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
+  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/reports"));
+  const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
   const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
@@ -871,6 +936,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const handleDashboardToggle  = () => setDashboardOpen(v => !v);
   const handleInventoryToggle  = () => setInventoryOpen(v => !v);
+  const handleInvReportsToggle = () => setInvReportsOpen(v => !v);
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
   const handleSalesToggle      = () => setSalesOpen(v => !v);
@@ -887,6 +953,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onDashboardToggle: handleDashboardToggle,
     inventoryOpen,
     onInventoryToggle: handleInventoryToggle,
+    invReportsOpen,
+    onInvReportsToggle: handleInvReportsToggle,
     reportsOpen,
     onReportsToggle: handleReportsToggle,
     purchasingOpen,

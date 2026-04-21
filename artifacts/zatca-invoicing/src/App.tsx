@@ -41,6 +41,12 @@ import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
 import StockLedger from "@/pages/inventory/StockLedger";
 import StockBalance from "@/pages/inventory/StockBalance";
+// Inventory Reports
+import InventoryReportsHub  from "@/pages/inventory/reports/InventoryReportsHub";
+import ItemCard              from "@/pages/inventory/reports/ItemCard";
+import LowStockReport        from "@/pages/inventory/reports/LowStockReport";
+import ValuationByWarehouse  from "@/pages/inventory/reports/ValuationByWarehouse";
+import SlowMovingItems       from "@/pages/inventory/reports/SlowMovingItems";
 // Accounting
 import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
 import Regions  from "@/pages/org/Regions";
@@ -159,6 +165,14 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/inventory/counts/new" component={StockCounting} />}
             {!isSuperAdmin && <Route path="/inventory/ledger" component={StockLedger} />}
             {!isSuperAdmin && <Route path="/inventory/balance" component={StockBalance} />}
+            {/* Inventory Reports */}
+            {!isSuperAdmin && <Route path="/inventory/reports"                  component={InventoryReportsHub} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/stock-balance"    component={StockBalance} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/stock-ledger"     component={StockLedger} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/item-card"        component={ItemCard} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/low-stock"        component={LowStockReport} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/valuation"        component={ValuationByWarehouse} />}
+            {!isSuperAdmin && <Route path="/inventory/reports/slow-moving"      component={SlowMovingItems} />}
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}

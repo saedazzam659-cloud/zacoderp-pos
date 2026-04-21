@@ -5,7 +5,7 @@ import {
   DropdownMenuItem, DropdownMenuTrigger,
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2 } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 interface ExportButtonsProps {
@@ -23,13 +23,17 @@ export default function ExportButtons({
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
 
-  async function handleExport(type: "excel" | "pdf") {
+  async function handleExport(type: "excel" | "pdf" | "print") {
     setBusy(true);
     try {
       if (type === "excel") {
         exportToExcel(rows, columns, filename);
+      } else if (type === "pdf") {
+        // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
+        exportToPDF(rows, columns, filename, title, subtitle, false);
       } else {
-        exportToPDF(rows, columns, filename, title, subtitle);
+        // Print: open the formatted HTML and trigger window.print() automatically
+        exportToPDF(rows, columns, filename, title, subtitle, true);
       }
     } finally {
       setBusy(false);
@@ -64,6 +68,10 @@ export default function ExportButtons({
         <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("pdf")}>
           <FileText className="h-4 w-4 text-red-500" />
           <span>PDF (.pdf)</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={() => handleExport("print")}>
+          <Printer className="h-4 w-4 text-blue-600" />
+          <span>طباعة</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
