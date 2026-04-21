@@ -107,7 +107,7 @@ const inventoryReportsSubNav = [
 function CashNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
-  const isOnCash = location.startsWith("/cash");
+  const isOnCash = location.startsWith("/cash") && !location.startsWith("/cash/reports");
   return (
     <div>
       <button onClick={onToggle} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isOnCash && !open ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
@@ -119,6 +119,53 @@ function CashNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           {cashSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CashReportsNavGroup ──────────────────────────────────────────────────────
+const cashReportsSubNav = [
+  { name: "أرصدة الخزائن",        href: "/cash/reports/cash-balances",      icon: FileText },
+  { name: "أرصدة البنوك",         href: "/cash/reports/bank-balances",      icon: FileText },
+  { name: "كشف حساب خزينة",       href: "/cash/reports/cash-box-statement", icon: FileText },
+  { name: "كشف حساب بنكي",        href: "/cash/reports/bank-statement",     icon: FileText },
+  { name: "الحركة اليومية للنقدية", href: "/cash/reports/daily-summary",     icon: FileText },
+  { name: "تقرير سندات القبض",    href: "/cash/reports/receipts",           icon: FileText },
+  { name: "تقرير سندات الصرف",    href: "/cash/reports/payments",           icon: FileText },
+  { name: "تقرير التحويلات",      href: "/cash/reports/transfers",          icon: FileText },
+];
+const cashReportsHeader = { name: "كل التقارير", href: "/cash/reports", icon: BarChart2 };
+
+function CashReportsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const isOnReports = location.startsWith("/cash/reports");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnReports && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <BarChart2 className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">تقارير النقد والبنوك</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <NavItem item={cashReportsHeader} location={location} onClick={onNavigate} indent />
+          {cashReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -574,6 +621,8 @@ function SidebarInner({
   onSalesReportsToggle,
   cashOpen,
   onCashToggle,
+  cashReportsOpen,
+  onCashReportsToggle,
   accountingOpen,
   onAccountingToggle,
   onNavigate,
@@ -601,6 +650,8 @@ function SidebarInner({
   onSalesReportsToggle: () => void;
   cashOpen: boolean;
   onCashToggle: () => void;
+  cashReportsOpen: boolean;
+  onCashReportsToggle: () => void;
   accountingOpen: boolean;
   onAccountingToggle: () => void;
   onNavigate: () => void;
@@ -746,6 +797,15 @@ function SidebarInner({
             </div>
 
             <div className="space-y-0.5">
+              <CashReportsNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={cashReportsOpen}
+                onToggle={onCashReportsToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
               <AccountingNavGroup
                 location={location}
                 onNavigate={onNavigate}
@@ -855,6 +915,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     // Section roots (parents for sub items)
     "/inventory":                     { label: "المخزون" },
     "/cash":                          { label: "النقد والبنوك" },
+    "/cash/reports":                  { label: "تقارير النقد والبنوك", parent: "/cash" },
     "/purchasing":                    { label: "الموردون والمشتريات" },
     "/sales":                         { label: "العملاء والمبيعات" },
     "/sales/invoices/new":            { label: "فاتورة مبيعات جديدة", parent: "/sales/invoices" },
@@ -870,6 +931,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
     ...reportsSubNav.map(i => ({ ...i, parent: "/accounting/reports" })),
     ...cashSubNav.map(i => ({ ...i, parent: "/cash" })),
+    ...cashReportsSubNav.map(i => ({ ...i, parent: "/cash/reports" })),
     inventoryHeader,
     ...inventorySubNav.map(i => ({ ...i, parent: "/inventory" })),
     ...companyBusinessNav,
@@ -1060,7 +1122,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [purchasingReportsOpen, setPurchasingReportsOpen] = useState(() => location.startsWith("/purchasing/reports"));
   const [salesOpen,      setSalesOpen]        = useState(() => (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers"));
   const [salesReportsOpen, setSalesReportsOpen] = useState(() => location.startsWith("/sales/reports"));
-  const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
+  const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash") && !location.startsWith("/cash/reports"));
+  const [cashReportsOpen, setCashReportsOpen] = useState(() => location.startsWith("/cash/reports"));
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
 
   const isSuperAdmin = user?.role === "superadmin";
@@ -1075,6 +1138,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleSalesToggle      = () => setSalesOpen(v => !v);
   const handleSalesReportsToggle = () => setSalesReportsOpen(v => !v);
   const handleCashToggle       = () => setCashOpen(v => !v);
+  const handleCashReportsToggle = () => setCashReportsOpen(v => !v);
   const handleAccountingToggle = () => setAccountingOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
@@ -1101,6 +1165,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onSalesReportsToggle: handleSalesReportsToggle,
     cashOpen,
     onCashToggle: handleCashToggle,
+    cashReportsOpen,
+    onCashReportsToggle: handleCashReportsToggle,
     accountingOpen,
     onAccountingToggle: handleAccountingToggle,
     onNavigate: closeMobile,

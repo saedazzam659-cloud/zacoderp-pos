@@ -25,6 +25,7 @@ import bankAccountsRouter from "./bank-accounts";
 import receiptVouchersRouter from "./receipt-vouchers";
 import paymentVouchersRouter from "./payment-vouchers";
 import cashTransfersRouter from "./cash-transfers";
+import cashAnalyticsRouter from "./cash-analytics";
 
 const router: IRouter = Router();
 
@@ -52,6 +53,7 @@ router.use("/bank-accounts",      bankAccountsRouter);
 router.use("/receipt-vouchers",   receiptVouchersRouter);
 router.use("/payment-vouchers",   paymentVouchersRouter);
 router.use("/cash-transfers",     cashTransfersRouter);
+router.use("/cash-analytics",     cashAnalyticsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

@@ -85,6 +85,16 @@ import PurchasesByItem         from "@/pages/purchasing/reports/PurchasesByItem"
 import PurchasesByPeriod       from "@/pages/purchasing/reports/PurchasesByPeriod";
 import TopSuppliers            from "@/pages/purchasing/reports/TopSuppliers";
 import PurchaseReturnsReport   from "@/pages/purchasing/reports/PurchaseReturnsReport";
+
+import CashReportsHub          from "@/pages/cash/reports/CashReportsHub";
+import CashBalances            from "@/pages/cash/reports/CashBalances";
+import BankBalances            from "@/pages/cash/reports/BankBalances";
+import CashBoxStatement        from "@/pages/cash/reports/CashBoxStatement";
+import BankAccountStatement    from "@/pages/cash/reports/BankAccountStatement";
+import CashFlowReport          from "@/pages/cash/reports/CashFlowReport";
+import ReceiptVouchersReport   from "@/pages/cash/reports/ReceiptVouchersReport";
+import PaymentVouchersReport   from "@/pages/cash/reports/PaymentVouchersReport";
+import TransfersReport         from "@/pages/cash/reports/TransfersReport";
 // Sales
 import SalesInvoices        from "@/pages/sales/SalesInvoices";
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
@@ -245,6 +255,16 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/purchasing/reports/top-suppliers"        component={TopSuppliers} />}
             {!isSuperAdmin && <Route path="/purchasing/reports/returns"              component={PurchaseReturnsReport} />}
             {!isSuperAdmin && <Route path="/purchasing/reports"                      component={PurchaseReportsHub} />}
+
+            {!isSuperAdmin && <Route path="/cash/reports/cash-balances"      component={CashBalances} />}
+            {!isSuperAdmin && <Route path="/cash/reports/bank-balances"      component={BankBalances} />}
+            {!isSuperAdmin && <Route path="/cash/reports/cash-box-statement" component={CashBoxStatement} />}
+            {!isSuperAdmin && <Route path="/cash/reports/bank-statement"     component={BankAccountStatement} />}
+            {!isSuperAdmin && <Route path="/cash/reports/daily-summary"      component={CashFlowReport} />}
+            {!isSuperAdmin && <Route path="/cash/reports/receipts"           component={ReceiptVouchersReport} />}
+            {!isSuperAdmin && <Route path="/cash/reports/payments"           component={PaymentVouchersReport} />}
+            {!isSuperAdmin && <Route path="/cash/reports/transfers"          component={TransfersReport} />}
+            {!isSuperAdmin && <Route path="/cash/reports"                    component={CashReportsHub} />}
             {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
 
             {/* Cash & Banks */}
