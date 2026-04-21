@@ -5,7 +5,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { ArrowUpCircle, Plus, Pencil, Trash2, Save, X, Search, CheckCircle2, Clock, Send } from "lucide-react";
@@ -89,54 +88,20 @@ export default function PaymentVouchers() {
         ))}
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <p className="text-sm font-medium">قائمة سندات الصرف</p>
-          <div className="relative"><Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input className="pr-9 h-8 w-56 text-sm" placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} /></div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b bg-muted/20 text-xs text-muted-foreground">
-              <th className="h-9 px-4 text-right font-medium">الكود / التاريخ</th>
-              <th className="h-9 px-4 text-right font-medium">البيان</th>
-              <th className="h-9 px-4 text-right font-medium hidden md:table-cell">الجهة</th>
-              <th className="h-9 px-4 text-right font-medium hidden md:table-cell">وسيلة الدفع</th>
-              <th className="h-9 px-4 text-right font-medium">المبلغ</th>
-              <th className="h-9 px-4 text-center font-medium">الحالة</th>
-              <th className="h-9 px-4 text-center font-medium w-28">إجراء</th>
-            </tr></thead>
-            <tbody>
-              {isLoading ? Array.from({ length: 4 }).map((_, i) => (<tr key={i} className="border-b"><td colSpan={7} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>))
-              : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-14 text-center text-muted-foreground">
-                  <ArrowUpCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">{search ? "لا توجد نتائج" : "لا توجد سندات صرف بعد"}</p>
-                  {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند صرف جديد</Button>}
-                </td></tr>
-              ) : filtered.map((row: any) => (
-                <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3"><p className="font-mono text-xs font-medium">{row.code}</p><p className="text-xs text-muted-foreground">{row.date}</p></td>
-                  <td className="px-4 py-3 max-w-48"><p className="text-sm truncate">{row.description || "—"}</p>{row.refNumber && <p className="text-xs text-muted-foreground">مرجع: {row.refNumber}</p>}</td>
-                  <td className="px-4 py-3 hidden md:table-cell"><span className="text-xs bg-muted px-2 py-0.5 rounded-full">{ENTITY_LABELS[row.entityType] || "—"}</span>{row.entityName && <p className="text-xs text-muted-foreground mt-0.5">{row.entityName}</p>}</td>
-                  <td className="px-4 py-3 hidden md:table-cell"><span className={`text-xs px-2 py-0.5 rounded-full ${row.paymentType === "cash" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>{row.paymentType === "cash" ? "نقداً" : "بنك"}</span></td>
-                  <td className="px-4 py-3 font-medium text-red-600">{parseFloat(row.amount || "0").toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}</td>
-                  <td className="px-4 py-3 text-center">{row.status === "posted" ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full"><CheckCircle2 className="h-3 w-3" />مرحّل</span> : <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"><Clock className="h-3 w-3" />مسودة</span>}</td>
-                  <td className="px-4 py-3 text-center"><div className="flex justify-center gap-1">{row.status === "draft" && <><button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button><button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button><button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button></>}</div></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!isLoading && filtered.length > 0 && <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">عدد النتائج: <strong>{filtered.length}</strong></div>}
-      </div>
-
-      <Sheet open={panel} onOpenChange={v => { if (!v) setPanel(false); }}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5"><SheetTitle className="flex items-center gap-2"><ArrowUpCircle className="h-5 w-5 text-red-500" />{editing ? "تعديل سند الصرف" : "سند صرف جديد"}</SheetTitle></SheetHeader>
-          <div className="space-y-4 pb-6">
+      {panel && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <ArrowUpCircle className="h-5 w-5 text-red-500" />
+              {editing ? "تعديل سند الصرف" : "سند صرف جديد"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="p-5 space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5"><label className="text-sm font-medium">التاريخ *</label><Input type="date" {...f("date")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">وسيلة الدفع</label>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">وسيلة الدفع</label>
                 <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>
                   <option value="cash">نقداً</option><option value="bank">بنك</option>
                 </select>
@@ -180,13 +145,57 @@ export default function PaymentVouchers() {
             </div>
             <div className="space-y-1.5"><label className="text-sm font-medium">البيان</label><Input placeholder="وصف المعاملة..." {...f("description")} /></div>
             <div className="space-y-1.5"><label className="text-sm font-medium">ملاحظات</label><Input placeholder="..." {...f("notes")} /></div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
+              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.amount || !form.date}>
+                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
+              </Button>
+            </div>
           </div>
-          <SheetFooter className="border-t pt-4 flex flex-row gap-2 justify-end">
-            <Button variant="outline" onClick={() => setPanel(false)}><X className="h-4 w-4 ml-1" />إلغاء</Button>
-            <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.amount || !form.date}><Save className="h-4 w-4 ml-1" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}</Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+        </div>
+      )}
+
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <p className="text-sm font-medium">قائمة سندات الصرف</p>
+          <div className="relative"><Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" /><Input className="pr-9 h-8 w-56 text-sm" placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b bg-muted/20 text-xs text-muted-foreground">
+              <th className="h-9 px-4 text-right font-medium">الكود / التاريخ</th>
+              <th className="h-9 px-4 text-right font-medium">البيان</th>
+              <th className="h-9 px-4 text-right font-medium hidden md:table-cell">الجهة</th>
+              <th className="h-9 px-4 text-right font-medium hidden md:table-cell">وسيلة الدفع</th>
+              <th className="h-9 px-4 text-right font-medium">المبلغ</th>
+              <th className="h-9 px-4 text-center font-medium">الحالة</th>
+              <th className="h-9 px-4 text-center font-medium w-28">إجراء</th>
+            </tr></thead>
+            <tbody>
+              {isLoading ? Array.from({ length: 4 }).map((_, i) => (<tr key={i} className="border-b"><td colSpan={7} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>))
+              : filtered.length === 0 ? (
+                <tr><td colSpan={7} className="py-14 text-center text-muted-foreground">
+                  <ArrowUpCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">{search ? "لا توجد نتائج" : "لا توجد سندات صرف بعد"}</p>
+                  {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند صرف جديد</Button>}
+                </td></tr>
+              ) : filtered.map((row: any) => (
+                <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
+                  <td className="px-4 py-3"><p className="font-mono text-xs font-medium">{row.code}</p><p className="text-xs text-muted-foreground">{row.date}</p></td>
+                  <td className="px-4 py-3 max-w-48"><p className="text-sm truncate">{row.description || "—"}</p>{row.refNumber && <p className="text-xs text-muted-foreground">مرجع: {row.refNumber}</p>}</td>
+                  <td className="px-4 py-3 hidden md:table-cell"><span className="text-xs bg-muted px-2 py-0.5 rounded-full">{ENTITY_LABELS[row.entityType] || "—"}</span>{row.entityName && <p className="text-xs text-muted-foreground mt-0.5">{row.entityName}</p>}</td>
+                  <td className="px-4 py-3 hidden md:table-cell"><span className={`text-xs px-2 py-0.5 rounded-full ${row.paymentType === "cash" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>{row.paymentType === "cash" ? "نقداً" : "بنك"}</span></td>
+                  <td className="px-4 py-3 font-medium text-red-600">{parseFloat(row.amount || "0").toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-center">{row.status === "posted" ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full"><CheckCircle2 className="h-3 w-3" />مرحّل</span> : <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"><Clock className="h-3 w-3" />مسودة</span>}</td>
+                  <td className="px-4 py-3 text-center"><div className="flex justify-center gap-1">{row.status === "draft" && <><button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button><button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button><button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button></>}</div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!isLoading && filtered.length > 0 && <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">عدد النتائج: <strong>{filtered.length}</strong></div>}
+      </div>
+
 
       <AlertDialog open={!!postRow} onOpenChange={v => { if (!v) setPostRow(null); }}>
         <AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2"><Send className="h-5 w-5 text-green-600" />ترحيل سند الصرف</AlertDialogTitle><AlertDialogDescription>هل تريد ترحيل <strong>{postRow?.code}</strong> بمبلغ <strong>{parseFloat(postRow?.amount || "0").toLocaleString("ar-SA-u-nu-latn")}</strong>؟ لا يمكن التعديل بعد الترحيل.</AlertDialogDescription></AlertDialogHeader>

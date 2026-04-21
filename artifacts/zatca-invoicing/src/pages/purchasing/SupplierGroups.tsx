@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Plus, Pencil, Trash2, Users, Save, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +84,50 @@ export default function SupplierGroups() {
         </Button>
       </div>
 
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              {editId ? "تعديل مجموعة مورد" : "مجموعة جديدة"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label>الكود <span className="text-destructive">*</span></Label>
+              <Input placeholder="SG001" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم العربي <span className="text-destructive">*</span></Label>
+              <Input placeholder="موردو المواد الخام" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم الإنجليزي</Label>
+              <Input placeholder="Raw Material Suppliers" dir="ltr" value={form.nameEn ?? ""} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>نسبة الخصم المكتسب (%)</Label>
+              <Input type="text" inputMode="decimal" placeholder="0.00" value={form.discountPercent} onChange={e => setForm((p: any) => ({ ...p, discountPercent: e.target.value.replace(/[^0-9.]/g, "") }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>ملاحظات</Label>
+              <Input placeholder="اختياري" value={form.notes ?? ""} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Switch checked={form.isActive} onCheckedChange={v => setForm((p: any) => ({ ...p, isActive: v }))} id="sg-active" />
+              <Label htmlFor="sg-active">نشط</Label>
+            </div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة المجموعة"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? (
           <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل...</div>
@@ -134,48 +177,6 @@ export default function SupplierGroups() {
         )}
       </div>
 
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              {editId ? "تعديل مجموعة مورد" : "مجموعة جديدة"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>الكود <span className="text-destructive">*</span></Label>
-              <Input placeholder="SG001" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم العربي <span className="text-destructive">*</span></Label>
-              <Input placeholder="موردو المواد الخام" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم الإنجليزي</Label>
-              <Input placeholder="Raw Material Suppliers" dir="ltr" value={form.nameEn ?? ""} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>نسبة الخصم المكتسب (%)</Label>
-              <Input type="text" inputMode="decimal" placeholder="0.00" value={form.discountPercent} onChange={e => setForm((p: any) => ({ ...p, discountPercent: e.target.value.replace(/[^0-9.]/g, "") }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>ملاحظات</Label>
-              <Input placeholder="اختياري" value={form.notes ?? ""} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <Switch checked={form.isActive} onCheckedChange={v => setForm((p: any) => ({ ...p, isActive: v }))} id="sg-active" />
-              <Label htmlFor="sg-active">نشط</Label>
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة المجموعة"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Trash2, Banknote, Save, X, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -103,6 +102,40 @@ export default function SupplierSettlement() {
         </Button>
       </div>
 
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Banknote className="h-5 w-5 text-primary" />تسوية جديدة
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5"><Label>رقم المستند</Label><Input placeholder="تلقائي" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></div>
+              <div className="space-y-1.5"><Label>التاريخ <span className="text-destructive">*</span></Label><Input type="date" value={form.settlementDate} onChange={e => setForm((p: any) => ({ ...p, settlementDate: e.target.value }))} required /></div>
+            </div>
+            <div className="space-y-1.5"><Label>المورد <span className="text-destructive">*</span></Label><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." /></div>
+            <div className="space-y-1.5"><Label>طريقة الدفع</Label>
+              <Select value={form.paymentMethod} onValueChange={v => setForm((p: any) => ({ ...p, paymentMethod: v }))}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="bank">تحويل بنكي</SelectItem><SelectItem value="cash">نقدي</SelectItem><SelectItem value="check">شيك</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5"><Label>حساب البنك / الخزنة</Label><SearchCombobox items={accountItems} value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="اختر الحساب..." /></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5"><Label>المبلغ <span className="text-destructive">*</span></Label><Input type="text" inputMode="decimal" placeholder="0.00" value={form.amount} onChange={e => setForm((p: any) => ({ ...p, amount: e.target.value.replace(/[^0-9.]/g, "") }))} required /></div>
+              <div className="space-y-1.5"><Label>العملة</Label><Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} /></div>
+            </div>
+            <div className="space-y-1.5"><Label>ملاحظات</Label><Textarea className="resize-none text-sm" rows={2} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={saveMut.isPending}><Save className="h-4 w-4" />حفظ التسوية</Button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <p className="text-xs text-muted-foreground mb-1">إجمالي التسويات</p>
@@ -167,68 +200,6 @@ export default function SupplierSettlement() {
         )}
       </div>
 
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <Banknote className="h-5 w-5 text-primary" />
-              تسوية جديدة
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>رقم المستند</Label>
-                <Input placeholder="تلقائي" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>التاريخ <span className="text-destructive">*</span></Label>
-                <Input type="date" value={form.settlementDate} onChange={e => setForm((p: any) => ({ ...p, settlementDate: e.target.value }))} required />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>المورد <span className="text-destructive">*</span></Label>
-              <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." />
-            </div>
-            <div className="space-y-1.5">
-              <Label>طريقة الدفع</Label>
-              <Select value={form.paymentMethod} onValueChange={v => setForm((p: any) => ({ ...p, paymentMethod: v }))}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bank">تحويل بنكي</SelectItem>
-                  <SelectItem value="cash">نقدي</SelectItem>
-                  <SelectItem value="check">شيك</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>حساب البنك / الخزنة</Label>
-              <SearchCombobox items={accountItems} value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="اختر الحساب..." />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>المبلغ <span className="text-destructive">*</span></Label>
-                <Input type="text" inputMode="decimal" placeholder="0.00" value={form.amount}
-                  onChange={e => setForm((p: any) => ({ ...p, amount: e.target.value.replace(/[^0-9.]/g, "") }))} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label>العملة</Label>
-                <Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>ملاحظات</Label>
-              <Textarea className="resize-none text-sm" rows={2} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={saveMut.isPending}>
-                <Save className="h-4 w-4" />حفظ التسوية
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

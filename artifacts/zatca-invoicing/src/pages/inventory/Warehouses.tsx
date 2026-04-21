@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Warehouse, Search, Save, X, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
@@ -75,62 +74,16 @@ export default function Warehouses() {
         </Button>
       </div>
 
-      <div className="relative">
-        <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
-      </div>
-
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b">
-            <tr>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الكود</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الاسم</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المجموعة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">المدينة</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-24">مكشوف</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">إجراءات</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {isLoading
-              ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
-              : filtered.length === 0
-              ? <tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground"><Warehouse className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد مخازن</td></tr>
-              : filtered.map((w: any) => (
-                  <tr key={w.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium">{w.nameAr}</p>
-                      {w.nameEn && <p className="text-xs text-muted-foreground">{w.nameEn}</p>}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{w.group?.nameAr ?? "—"}</td>
-                    <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{w.city ?? "—"}</td>
-                    <td className="px-4 py-3 text-center">
-                      {w.allowNegative ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" /> : <XCircle className="h-4 w-4 text-muted-foreground/30 mx-auto" />}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}><Pencil className="h-3.5 w-3.5" /></Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف المخزن؟")) deleteMut.mutate(w.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-          </tbody>
-        </table>
-        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} مخزن</div>}
-      </div>
-
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
               <Warehouse className="h-5 w-5 text-primary" />
               {editId ? "تعديل مخزن" : "إضافة مخزن جديد"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-5">
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="w-full h-9 mb-4">
                 <TabsTrigger value="basic"    className="flex-1 text-xs gap-1"><Warehouse  className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
@@ -198,15 +151,62 @@ export default function Warehouses() {
               </TabsContent>
             </Tabs>
 
-            <SheetFooter className="flex gap-2 pt-4 border-t">
+            <div className="flex gap-2 pt-4 border-t">
               <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
               <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
                 <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
               </Button>
-            </SheetFooter>
+            </div>
           </form>
-        </SheetContent>
-      </Sheet>
+        </div>
+      )}
+
+      <div className="relative">
+        <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 border-b">
+            <tr>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الكود</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الاسم</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المجموعة</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">المدينة</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-24">مكشوف</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {isLoading
+              ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
+              : filtered.length === 0
+              ? <tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground"><Warehouse className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد مخازن</td></tr>
+              : filtered.map((w: any) => (
+                  <tr key={w.id} className="hover:bg-muted/30">
+                    <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium">{w.nameAr}</p>
+                      {w.nameEn && <p className="text-xs text-muted-foreground">{w.nameEn}</p>}
+                    </td>
+                    <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{w.group?.nameAr ?? "—"}</td>
+                    <td className="px-4 py-3 hidden md:table-cell text-muted-foreground text-xs">{w.city ?? "—"}</td>
+                    <td className="px-4 py-3 text-center">
+                      {w.allowNegative ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" /> : <XCircle className="h-4 w-4 text-muted-foreground/30 mx-auto" />}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(w)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف المخزن؟")) deleteMut.mutate(w.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} مخزن</div>}
+      </div>
     </div>
   );
 }

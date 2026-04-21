@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Pencil, Trash2, CreditCard, Save, X, FileText, ListOrdered } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -129,6 +128,68 @@ export default function LetterOfCredit() {
         </Button>
       </div>
 
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-primary" />
+              {editId ? "تعديل الاعتماد" : "اعتماد مستندي جديد"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
+            <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+              <TabsList className="w-full h-9 mb-4">
+                <TabsTrigger value="info" className="flex-1 text-xs gap-1.5"><FileText className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
+                <TabsTrigger value="expenses" className="flex-1 text-xs gap-1.5"><ListOrdered className="h-3.5 w-3.5" />المصاريف ({expenses.length})</TabsTrigger>
+              </TabsList>
+              <TabsContent value="info" className="mt-0 space-y-4">
+                <div className="space-y-1.5"><Label>رقم الاعتماد <span className="text-destructive">*</span></Label><Input placeholder="LC-2025-001" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} required /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5"><Label>التاريخ <span className="text-destructive">*</span></Label><Input type="date" value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} required /></div>
+                  <div className="space-y-1.5"><Label>العملة</Label><Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} /></div>
+                </div>
+                <div className="space-y-1.5"><Label>المورد</Label><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." /></div>
+                <div className="space-y-1.5"><Label>البنك</Label><Input placeholder="اسم البنك" value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></div>
+                <div className="space-y-1.5"><Label>قيمة الاعتماد <span className="text-destructive">*</span></Label><Input type="text" inputMode="decimal" placeholder="0.00" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} required /></div>
+                <div className="space-y-1.5"><Label>ملاحظات</Label><Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></div>
+              </TabsContent>
+              <TabsContent value="expenses" className="mt-0 space-y-3">
+                {expenses.map((exp, idx) => (
+                  <div key={exp._id ?? idx} className="space-y-2 p-3 rounded-lg border bg-muted/20">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1"><Label className="text-xs">نوع المصروف</Label><Input className="h-8 text-xs" placeholder="شحن / جمارك..." value={exp.expenseType} onChange={e => updateExpense(idx, "expenseType", e.target.value)} /></div>
+                      <div className="space-y-1"><Label className="text-xs">العملة</Label><Input className="h-8 text-xs" placeholder="SAR" value={exp.currencyCode} onChange={e => updateExpense(idx, "currencyCode", e.target.value)} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 items-end">
+                      <div className="space-y-1"><Label className="text-xs">الحساب</Label><SearchCombobox items={accountItems} value={String(exp.accountId ?? "")} onValueChange={v => updateExpense(idx, "accountId", v)} placeholder="الحساب..." /></div>
+                      <div className="space-y-1"><Label className="text-xs">القيمة</Label>
+                        <div className="flex gap-2">
+                          <Input className="h-8 text-xs" type="text" inputMode="decimal" placeholder="0.00" value={exp.amount} onChange={e => updateExpense(idx, "amount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => removeExpense(idx)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" size="sm" className="gap-2 w-full" onClick={addExpense}><Plus className="h-4 w-4" />إضافة مصروف</Button>
+                {expenses.length > 0 && (
+                  <div className="rounded-xl border bg-muted/40 p-4 grid grid-cols-3 gap-4 text-sm text-center">
+                    <div><span className="text-muted-foreground block text-xs mb-1">قيمة الاعتماد</span><span className="font-bold font-mono">{fmt(form.totalAmount)}</span></div>
+                    <div><span className="text-muted-foreground block text-xs mb-1">إجمالي المصاريف</span><span className="font-bold font-mono text-amber-700">{fmt(totalExpenses)}</span></div>
+                    <div><span className="text-muted-foreground block text-xs mb-1">المتبقي</span><span className={cn("font-bold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span></div>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={saveMut.isPending}><Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إنشاء الاعتماد"}</Button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? (
           <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل...</div>
@@ -178,120 +239,6 @@ export default function LetterOfCredit() {
         )}
       </div>
 
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-primary" />
-              {editId ? "تعديل الاعتماد" : "اعتماد مستندي جديد"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
-              <TabsList className="w-full h-9 mb-4">
-                <TabsTrigger value="info"     className="flex-1 text-xs gap-1.5"><FileText     className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-                <TabsTrigger value="expenses" className="flex-1 text-xs gap-1.5"><ListOrdered className="h-3.5 w-3.5" />المصاريف ({expenses.length})</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="info" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>رقم الاعتماد <span className="text-destructive">*</span></Label>
-                  <Input placeholder="LC-2025-001" value={form.lcNumber} onChange={e => setForm((p: any) => ({ ...p, lcNumber: e.target.value }))} required />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>التاريخ <span className="text-destructive">*</span></Label>
-                    <Input type="date" value={form.lcDate} onChange={e => setForm((p: any) => ({ ...p, lcDate: e.target.value }))} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>العملة</Label>
-                    <Input placeholder="SAR" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>المورد</Label>
-                  <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>البنك</Label>
-                  <Input placeholder="اسم البنك" value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>قيمة الاعتماد <span className="text-destructive">*</span></Label>
-                  <Input type="text" inputMode="decimal" placeholder="0.00" value={form.totalAmount}
-                    onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>ملاحظات</Label>
-                  <Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-                </div>
-              </TabsContent>
-
-              <TabsContent value="expenses" className="mt-0 space-y-3">
-                {expenses.map((exp, idx) => (
-                  <div key={exp._id ?? idx} className="space-y-2 p-3 rounded-lg border bg-muted/20">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs">نوع المصروف</Label>
-                        <Input className="h-8 text-xs" placeholder="شحن / جمارك..." value={exp.expenseType}
-                          onChange={e => updateExpense(idx, "expenseType", e.target.value)} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">العملة</Label>
-                        <Input className="h-8 text-xs" placeholder="SAR" value={exp.currencyCode}
-                          onChange={e => updateExpense(idx, "currencyCode", e.target.value)} />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 items-end">
-                      <div className="space-y-1">
-                        <Label className="text-xs">الحساب</Label>
-                        <SearchCombobox items={accountItems} value={String(exp.accountId ?? "")}
-                          onValueChange={v => updateExpense(idx, "accountId", v)} placeholder="الحساب..." />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">القيمة</Label>
-                        <div className="flex gap-2">
-                          <Input className="h-8 text-xs" type="text" inputMode="decimal" placeholder="0.00" value={exp.amount}
-                            onChange={e => updateExpense(idx, "amount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => removeExpense(idx)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <Button type="button" variant="outline" size="sm" className="gap-2 w-full" onClick={addExpense}>
-                  <Plus className="h-4 w-4" />إضافة مصروف
-                </Button>
-                {expenses.length > 0 && (
-                  <div className="rounded-xl border bg-muted/40 p-4 grid grid-cols-3 gap-4 text-sm text-center">
-                    <div>
-                      <span className="text-muted-foreground block text-xs mb-1">قيمة الاعتماد</span>
-                      <span className="font-bold font-mono">{fmt(form.totalAmount)}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground block text-xs mb-1">إجمالي المصاريف</span>
-                      <span className="font-bold font-mono text-amber-700">{fmt(totalExpenses)}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground block text-xs mb-1">المتبقي</span>
-                      <span className={cn("font-bold font-mono", remaining >= 0 ? "text-green-700" : "text-destructive")}>{fmt(remaining)}</span>
-                    </div>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={saveMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إنشاء الاعتماد"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

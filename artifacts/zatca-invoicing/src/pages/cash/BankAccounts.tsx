@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Landmark, Plus, Pencil, Trash2, Save, X, Search, CheckCircle2, XCircle, TrendingUp, CreditCard } from "lucide-react";
@@ -105,6 +105,63 @@ export default function BankAccounts() {
         ))}
       </div>
 
+      {panel && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Landmark className="h-5 w-5 text-primary" />
+              {editing ? "تعديل الحساب البنكي" : "إضافة حساب بنكي"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground border-b pb-2 flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />بيانات الحساب</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5"><Label className="text-sm font-medium">الكود *</Label><Input placeholder="B001" {...f("code")} /></div>
+                <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم العربي *</Label><Input placeholder="بنك الرياض" {...f("nameAr")} /></div>
+              </div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم الإنجليزي</Label><Input placeholder="Riyadh Bank" dir="ltr" className="text-left" {...f("nameEn")} /></div>
+            </div>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground border-b pb-2">بيانات البنك</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5"><Label className="text-sm font-medium">اسم البنك</Label><Input placeholder="بنك الرياض" {...f("bankName")} /></div>
+                <div className="space-y-1.5"><Label className="text-sm font-medium">Bank Name</Label><Input placeholder="Riyadh Bank" dir="ltr" className="text-left" {...f("bankNameEn")} /></div>
+              </div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">رقم الحساب</Label><Input placeholder="0000000000" dir="ltr" className="text-left font-mono" {...f("accountNumber")} /></div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">رقم IBAN</Label><Input placeholder="SA0000000000000000000000" dir="ltr" className="text-left font-mono" {...f("iban")} /></div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">SWIFT Code</Label><Input placeholder="RIBLSARI" dir="ltr" className="text-left font-mono" {...f("swiftCode")} /></div>
+            </div>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground border-b pb-2">الربط المحاسبي</p>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">العملة</Label>
+                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
+                  <option value="">— اختر العملة —</option>
+                  {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">الحساب (شجرة الحسابات)</Label>
+                <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+              </div>
+            </div>
+            <div className="space-y-1.5"><Label className="text-sm font-medium">ملاحظات</Label><Input placeholder="..." {...f("notes")} /></div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
+              <span className="text-sm">الحساب نشط</span>
+            </label>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
+              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.nameAr || !form.code}>
+                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <p className="text-sm font-medium">قائمة الحسابات البنكية</p>
@@ -183,58 +240,6 @@ export default function BankAccounts() {
         )}
       </div>
 
-      <Sheet open={panel} onOpenChange={v => { if (!v) setPanel(false); }}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2"><Landmark className="h-5 w-5 text-primary" />{editing ? "تعديل الحساب البنكي" : "إضافة حساب بنكي"}</SheetTitle>
-          </SheetHeader>
-          <div className="space-y-4 pb-6">
-            <div className="space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground border-b pb-2 flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />بيانات الحساب</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5"><label className="text-sm font-medium">الكود *</label><Input placeholder="B001" {...f("code")} /></div>
-                <div className="space-y-1.5"><label className="text-sm font-medium">الاسم العربي *</label><Input placeholder="بنك الرياض" {...f("nameAr")} /></div>
-              </div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">الاسم الإنجليزي</label><Input placeholder="Riyadh Bank" dir="ltr" className="text-left" {...f("nameEn")} /></div>
-            </div>
-            <div className="space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground border-b pb-2">بيانات البنك</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5"><label className="text-sm font-medium">اسم البنك</label><Input placeholder="بنك الرياض" {...f("bankName")} /></div>
-                <div className="space-y-1.5"><label className="text-sm font-medium">Bank Name</label><Input placeholder="Riyadh Bank" dir="ltr" className="text-left" {...f("bankNameEn")} /></div>
-              </div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">رقم الحساب</label><Input placeholder="0000000000" dir="ltr" className="text-left font-mono" {...f("accountNumber")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">رقم IBAN</label><Input placeholder="SA0000000000000000000000" dir="ltr" className="text-left font-mono" {...f("iban")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">SWIFT Code</label><Input placeholder="RIBLSARI" dir="ltr" className="text-left font-mono" {...f("swiftCode")} /></div>
-            </div>
-            <div className="space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground border-b pb-2">الربط المحاسبي</p>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">العملة</label>
-                <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
-                  <option value="">— اختر العملة —</option>
-                  {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">الحساب (شجرة الحسابات)</label>
-                <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
-              </div>
-            </div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">ملاحظات</label><Input placeholder="..." {...f("notes")} /></div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
-              <span className="text-sm">الحساب نشط</span>
-            </label>
-          </div>
-          <SheetFooter className="border-t pt-4 flex flex-row gap-2 justify-end">
-            <Button variant="outline" onClick={() => setPanel(false)}><X className="h-4 w-4 ml-1" />إلغاء</Button>
-            <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.nameAr || !form.code}>
-              <Save className="h-4 w-4 ml-1" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
 
       <AlertDialog open={!!delRow} onOpenChange={v => { if (!v) setDelRow(null); }}>
         <AlertDialogContent dir="rtl">

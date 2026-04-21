@@ -11,7 +11,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -152,6 +151,108 @@ export default function Currencies() {
           </Card>
         ))}
       </div>
+
+      {showCurForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-primary" />
+              {curEditId ? "تعديل العملة" : "إضافة عملة جديدة"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={resetCur}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={submitCur} className="p-5 space-y-4">
+            {!curEditId && (
+              <div>
+                <p className="text-[11px] font-medium text-muted-foreground mb-2">عملات شائعة — انقر للملء السريع:</p>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {COMMON_CURRENCIES.map(c => {
+                    const exists = currencies.some((x: any) => x.code === c.code);
+                    return (
+                      <button key={c.code} type="button" onClick={() => fillFromCommon(c)} disabled={exists}
+                        className={cn("text-[11px] px-2 py-1 rounded border font-mono font-bold transition-colors",
+                          exists ? "opacity-40 cursor-not-allowed bg-muted text-muted-foreground border-border"
+                                 : "bg-background hover:bg-primary/10 hover:border-primary text-primary border-border"
+                        )}>
+                        {c.code}
+                      </button>
+                    );
+                  })}
+                </div>
+                <Separator />
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>الكود <span className="text-destructive">*</span></Label><Input value={curForm.code} onChange={e => setCurForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} placeholder="SAR" className="font-mono" maxLength={5} /></div>
+              <div className="space-y-1.5"><Label>الرمز</Label><Input value={curForm.symbol} onChange={e => setCurForm((p: any) => ({ ...p, symbol: e.target.value }))} placeholder="ر.س" maxLength={5} /></div>
+            </div>
+            <div className="space-y-1.5"><Label>الاسم العربي <span className="text-destructive">*</span></Label><Input value={curForm.nameAr} onChange={e => setCurForm((p: any) => ({ ...p, nameAr: e.target.value }))} placeholder="ريال سعودي" /></div>
+            <div className="space-y-1.5"><Label>الاسم الإنجليزي</Label><Input value={curForm.nameEn} onChange={e => setCurForm((p: any) => ({ ...p, nameEn: e.target.value }))} placeholder="Saudi Riyal" /></div>
+            <div className="flex items-center gap-6 pt-1">
+              <div className="flex items-center gap-2">
+                <Switch id="isDefault" checked={curForm.isDefault} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isDefault: v }))} />
+                <Label htmlFor="isDefault" className="flex items-center gap-1 cursor-pointer"><Star className="h-3 w-3 text-yellow-500" />افتراضية</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="isActive" checked={curForm.isActive} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isActive: v }))} />
+                <Label htmlFor="isActive" className="flex items-center gap-1 cursor-pointer"><CheckCircle2 className="h-3 w-3 text-green-500" />نشطة</Label>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={resetCur}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createCur.isPending || updateCur.isPending}><Save className="h-4 w-4" />{curEditId ? "تعديل" : "إضافة"}</Button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showRateForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5 text-primary" />
+              {rateEditId ? "تعديل معامل التحويل" : "إضافة معامل تحويل"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={resetRate}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={submitRate} className="p-5 space-y-4">
+            <div className="space-y-1.5"><Label>من العملة <span className="text-destructive">*</span></Label>
+              <Select value={rateForm.fromCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, fromCurrencyId: v === "__none" ? "" : v }))}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">— اختر العملة —</SelectItem>
+                  {currencies.filter((c: any) => c.isActive).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-center text-muted-foreground"><ArrowRightLeft className="h-5 w-5" /></div>
+            <div className="space-y-1.5"><Label>إلى العملة <span className="text-destructive">*</span></Label>
+              <Select value={rateForm.toCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, toCurrencyId: v === "__none" ? "" : v }))}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">— اختر العملة —</SelectItem>
+                  {currencies.filter((c: any) => c.isActive && String(c.id) !== rateForm.fromCurrencyId).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            {rateForm.fromCurrencyId && rateForm.toCurrencyId && rateForm.rate && (
+              <div className="rounded-lg border bg-primary/5 border-primary/20 px-4 py-3 text-sm text-center font-medium">
+                {(() => { const from = currencies.find((c: any) => String(c.id) === rateForm.fromCurrencyId); const to = currencies.find((c: any) => String(c.id) === rateForm.toCurrencyId); return `1 ${from?.code ?? ""} = ${Number(rateForm.rate).toFixed(4)} ${to?.code ?? ""}`; })()}
+              </div>
+            )}
+            <div className="space-y-1.5"><Label>معامل التحويل <span className="text-destructive">*</span></Label>
+              <Input type="text" inputMode="decimal" value={rateForm.rate} onChange={e => { const v = e.target.value.replace(/[^0-9.]/g, ""); const parts = v.split("."); const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v; setRateForm((p: any) => ({ ...p, rate: clean })); }} placeholder="3.7500" className="h-9 text-sm font-mono text-left" />
+            </div>
+            <div className="space-y-1.5"><Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />تاريخ التطبيق <span className="text-destructive">*</span></Label>
+              <Input type="date" value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
+            </div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={resetRate}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createRate.isPending || updateRate.isPending}><Save className="h-4 w-4" />{rateEditId ? "تعديل" : "إضافة"}</Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
         <Card className="border-2">
@@ -313,148 +414,6 @@ export default function Currencies() {
         </Card>
       </Tabs>
 
-      {/* ── Sheet: Currency Form ─────────────────────────── */}
-      <Sheet open={showCurForm} onOpenChange={v => { if (!v) resetCur(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-primary" />
-              {curEditId ? "تعديل العملة" : "إضافة عملة جديدة"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={submitCur} className="space-y-4">
-            {!curEditId && (
-              <div>
-                <p className="text-[11px] font-medium text-muted-foreground mb-2">عملات شائعة — انقر للملء السريع:</p>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {COMMON_CURRENCIES.map(c => {
-                    const exists = currencies.some((x: any) => x.code === c.code);
-                    return (
-                      <button key={c.code} type="button" onClick={() => fillFromCommon(c)} disabled={exists}
-                        className={cn("text-[11px] px-2 py-1 rounded border font-mono font-bold transition-colors",
-                          exists ? "opacity-40 cursor-not-allowed bg-muted text-muted-foreground border-border"
-                                 : "bg-background hover:bg-primary/10 hover:border-primary text-primary border-border"
-                        )}>
-                        {c.code}
-                      </button>
-                    );
-                  })}
-                </div>
-                <Separator />
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>الكود <span className="text-destructive">*</span></Label>
-                <Input value={curForm.code} onChange={e => setCurForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} placeholder="SAR" className="font-mono" maxLength={5} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>الرمز</Label>
-                <Input value={curForm.symbol} onChange={e => setCurForm((p: any) => ({ ...p, symbol: e.target.value }))} placeholder="ر.س" maxLength={5} />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم العربي <span className="text-destructive">*</span></Label>
-              <Input value={curForm.nameAr} onChange={e => setCurForm((p: any) => ({ ...p, nameAr: e.target.value }))} placeholder="ريال سعودي" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم الإنجليزي</Label>
-              <Input value={curForm.nameEn} onChange={e => setCurForm((p: any) => ({ ...p, nameEn: e.target.value }))} placeholder="Saudi Riyal" />
-            </div>
-            <div className="flex items-center gap-6 pt-1">
-              <div className="flex items-center gap-2">
-                <Switch id="isDefault" checked={curForm.isDefault} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isDefault: v }))} />
-                <Label htmlFor="isDefault" className="flex items-center gap-1 cursor-pointer"><Star className="h-3 w-3 text-yellow-500" />افتراضية</Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch id="isActive" checked={curForm.isActive} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isActive: v }))} />
-                <Label htmlFor="isActive" className="flex items-center gap-1 cursor-pointer"><CheckCircle2 className="h-3 w-3 text-green-500" />نشطة</Label>
-              </div>
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={resetCur}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createCur.isPending || updateCur.isPending}>
-                <Save className="h-4 w-4" />{curEditId ? "تعديل" : "إضافة"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
-
-      {/* ── Sheet: Rate Form ────────────────────────────── */}
-      <Sheet open={showRateForm} onOpenChange={v => { if (!v) resetRate(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <ArrowRightLeft className="h-5 w-5 text-primary" />
-              {rateEditId ? "تعديل معامل التحويل" : "إضافة معامل تحويل"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={submitRate} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>من العملة <span className="text-destructive">*</span></Label>
-              <Select value={rateForm.fromCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, fromCurrencyId: v === "__none" ? "" : v }))}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">— اختر العملة —</SelectItem>
-                  {currencies.filter((c: any) => c.isActive).map((c: any) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      <span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-center text-muted-foreground">
-              <ArrowRightLeft className="h-5 w-5" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>إلى العملة <span className="text-destructive">*</span></Label>
-              <Select value={rateForm.toCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, toCurrencyId: v === "__none" ? "" : v }))}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none">— اختر العملة —</SelectItem>
-                  {currencies.filter((c: any) => c.isActive && String(c.id) !== rateForm.fromCurrencyId).map((c: any) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      <span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {rateForm.fromCurrencyId && rateForm.toCurrencyId && rateForm.rate && (
-              <div className="rounded-lg border bg-primary/5 border-primary/20 px-4 py-3 text-sm text-center font-medium">
-                {(() => {
-                  const from = currencies.find((c: any) => String(c.id) === rateForm.fromCurrencyId);
-                  const to   = currencies.find((c: any) => String(c.id) === rateForm.toCurrencyId);
-                  return `1 ${from?.code ?? ""} = ${Number(rateForm.rate).toFixed(4)} ${to?.code ?? ""}`;
-                })()}
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <Label>معامل التحويل <span className="text-destructive">*</span></Label>
-              <Input type="text" inputMode="decimal" value={rateForm.rate}
-                onChange={e => {
-                  const v = e.target.value.replace(/[^0-9.]/g, "");
-                  const parts = v.split(".");
-                  const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v;
-                  setRateForm((p: any) => ({ ...p, rate: clean }));
-                }}
-                placeholder="3.7500" className="h-9 text-sm font-mono text-left" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />تاريخ التطبيق <span className="text-destructive">*</span></Label>
-              <Input type="date" value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={resetRate}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createRate.isPending || updateRate.isPending}>
-                <Save className="h-4 w-4" />{rateEditId ? "تعديل" : "إضافة"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
 
       {/* AlertDialogs for delete confirmation */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, Building2, Search, Save, X,
@@ -109,6 +108,101 @@ export default function Branches() {
         </div>
       </div>
 
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              {editId ? "تعديل فرع" : "إضافة فرع جديد"}
+              {form.regionId && (
+                <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 flex items-center gap-1">
+                  <MapPin className="h-3 w-3" />{regionMap[Number(form.regionId)]?.nameAr ?? "منطقة"}
+                </span>
+              )}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="w-full h-9 mb-4">
+                <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
+                <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />التواصل</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="basic" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>كود الفرع <span className="text-destructive">*</span></Label>
+                  <Input placeholder="BR-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+                  <Input placeholder="الفرع الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الاسم بالإنجليزي</Label>
+                  <Input placeholder="Main Branch" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>المنطقة</Label>
+                  <SearchCombobox
+                    items={[{ value: "", label: "— بدون منطقة —" }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr, labelEn: r.nameEn }))]}
+                    value={form.regionId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, regionId: v }))}
+                    placeholder="— اختر المنطقة —"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>الحالة</Label>
+                  <SearchCombobox
+                    items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]}
+                    value={form.status}
+                    onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}
+                    placeholder="الحالة"
+                  />
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <Switch checked={form.isMain} onCheckedChange={v => setForm((p: any) => ({ ...p, isMain: v }))} id="is-main" />
+                  <div>
+                    <Label htmlFor="is-main" className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" />الفرع الرئيسي</Label>
+                    <p className="text-[10px] text-muted-foreground">يُلغي الرئيسي من بقية الفروع تلقائياً</p>
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="contact" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>المدينة</Label>
+                  <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>رقم الهاتف</Label>
+                  <Input placeholder="0512345678" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>البريد الإلكتروني</Label>
+                  <Input type="email" placeholder="branch@company.com" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>العنوان التفصيلي</Label>
+                  <Input placeholder="شارع الملك عبدالعزيز، حي العليا" value={form.address} onChange={e => setForm((p: any) => ({ ...p, address: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>ملاحظات</Label>
+                  <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الفرع"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -206,100 +300,6 @@ export default function Branches() {
           </div>
         )}
       </div>
-
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-primary" />
-              {editId ? "تعديل فرع" : "إضافة فرع جديد"}
-              {form.regionId && (
-                <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 flex items-center gap-1">
-                  <MapPin className="h-3 w-3" />{regionMap[Number(form.regionId)]?.nameAr ?? "منطقة"}
-                </span>
-              )}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="w-full h-9 mb-4">
-                <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
-                <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />التواصل</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="basic" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>كود الفرع <span className="text-destructive">*</span></Label>
-                  <Input placeholder="BR-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-                  <Input placeholder="الفرع الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الاسم بالإنجليزي</Label>
-                  <Input placeholder="Main Branch" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>المنطقة</Label>
-                  <SearchCombobox
-                    items={[{ value: "", label: "— بدون منطقة —" }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr, labelEn: r.nameEn }))]}
-                    value={form.regionId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, regionId: v }))}
-                    placeholder="— اختر المنطقة —"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>الحالة</Label>
-                  <SearchCombobox
-                    items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]}
-                    value={form.status}
-                    onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}
-                    placeholder="الحالة"
-                  />
-                </div>
-                <div className="flex items-center gap-3 pt-1">
-                  <Switch checked={form.isMain} onCheckedChange={v => setForm((p: any) => ({ ...p, isMain: v }))} id="is-main" />
-                  <div>
-                    <Label htmlFor="is-main" className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500" />الفرع الرئيسي</Label>
-                    <p className="text-[10px] text-muted-foreground">يُلغي الرئيسي من بقية الفروع تلقائياً</p>
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="contact" className="mt-0 space-y-4">
-                <div className="space-y-1.5">
-                  <Label>المدينة</Label>
-                  <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>رقم الهاتف</Label>
-                  <Input placeholder="0512345678" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>البريد الإلكتروني</Label>
-                  <Input type="email" placeholder="branch@company.com" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>العنوان التفصيلي</Label>
-                  <Input placeholder="شارع الملك عبدالعزيز، حي العليا" value={form.address} onChange={e => setForm((p: any) => ({ ...p, address: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>ملاحظات</Label>
-                  <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-                </div>
-              </TabsContent>
-            </Tabs>
-
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة الفرع"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

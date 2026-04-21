@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, MapPin, Search, Save, X,
@@ -109,6 +108,42 @@ export default function Regions() {
           </div>
         ))}
       </div>
+
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              {editId ? "تعديل منطقة" : "إضافة منطقة جديدة"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label>كود المنطقة <span className="text-destructive">*</span></Label>
+              <Input placeholder="RGN-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+              <Input placeholder="منطقة الرياض" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالإنجليزي</Label>
+              <Input placeholder="Riyadh Region" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>ملاحظات</Label>
+              <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+            </div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة المنطقة"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -221,41 +256,6 @@ export default function Regions() {
       {!isLoading && filtered.length > 0 && (
         <p className="text-xs text-muted-foreground text-center">{filtered.length} منطقة — {(allBranches as any[]).length} فرع</p>
       )}
-
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-primary" />
-              {editId ? "تعديل منطقة" : "إضافة منطقة جديدة"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>كود المنطقة <span className="text-destructive">*</span></Label>
-              <Input placeholder="RGN-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-              <Input placeholder="منطقة الرياض" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Riyadh Region" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>ملاحظات</Label>
-              <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة المنطقة"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

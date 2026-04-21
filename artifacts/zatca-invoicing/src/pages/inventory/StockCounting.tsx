@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, ClipboardList, Search, X, Send, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+
 import { useFmt } from "@/hooks/use-fmt";
 import ExportButtons from "@/components/ExportButtons";
 
@@ -90,15 +90,16 @@ export default function StockCounting() {
         </Button>
       </div>
 
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
               <ClipboardList className="h-5 w-5 text-primary" />
               ورقة جرد جديدة
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
             <div className="space-y-1.5">
               <Label>رقم الجرد</Label>
               <Input placeholder="CNT-001 (تلقائي)" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} />
@@ -121,15 +122,15 @@ export default function StockCounting() {
               <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
             </div>
             <p className="text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">سيتم تحميل جميع أرصدة المخزن الحالية تلقائياً لإدخال الكميات الفعلية</p>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
+            <div className="flex gap-2 pt-4 border-t">
               <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
               <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending}>
                 <Save className="h-4 w-4" />إنشاء ورقة الجرد
               </Button>
-            </SheetFooter>
+            </div>
           </form>
-        </SheetContent>
-      </Sheet>
+        </div>
+      )}
 
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import {
@@ -114,6 +114,51 @@ export default function CashBoxes() {
         ))}
       </div>
 
+      {panel && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-primary" />
+              {editing ? "تعديل الخزنة" : "إضافة خزنة جديدة"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={() => setPanel(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label className="text-sm font-medium">الكود *</Label><Input placeholder="C001" {...f("code")} /></div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم العربي *</Label><Input placeholder="الخزنة الرئيسية" {...f("nameAr")} /></div>
+            </div>
+            <div className="space-y-1.5"><Label className="text-sm font-medium">الاسم الإنجليزي</Label><Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} /></div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">العملة</Label>
+              <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
+                <option value="">— اختر العملة —</option>
+                {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">الحساب (شجرة الحسابات)</Label>
+              <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label className="text-sm font-medium">الحد الأدنى</Label><Input type="number" placeholder="0" {...f("minBalance")} /></div>
+              <div className="space-y-1.5"><Label className="text-sm font-medium">الحد الأقصى</Label><Input type="number" placeholder="—" {...f("maxBalance")} /></div>
+            </div>
+            <div className="space-y-1.5"><Label className="text-sm font-medium">ملاحظات</Label><Input placeholder="..." {...f("notes")} /></div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
+              <span className="text-sm">الخزنة نشطة</span>
+            </label>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button variant="outline" className="gap-1" onClick={() => setPanel(false)}><X className="h-4 w-4" />إلغاء</Button>
+              <Button className="gap-1 flex-1" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.nameAr || !form.code}>
+                <Save className="h-4 w-4" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <p className="text-sm font-medium">قائمة الخزن</p>
@@ -199,50 +244,6 @@ export default function CashBoxes() {
         )}
       </div>
 
-      {/* Sheet */}
-      <Sheet open={panel} onOpenChange={v => { if (!v) setPanel(false); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <Wallet className="h-5 w-5 text-primary" />
-              {editing ? "تعديل الخزنة" : "إضافة خزنة جديدة"}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="space-y-4 pb-6">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">الكود *</label><Input placeholder="C001" {...f("code")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">الاسم العربي *</label><Input placeholder="الخزنة الرئيسية" {...f("nameAr")} /></div>
-            </div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">الاسم الإنجليزي</label><Input placeholder="Main Cash Box" dir="ltr" className="text-left" {...f("nameEn")} /></div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">العملة</label>
-              <select className="w-full h-9 border rounded-md px-3 text-sm bg-background" value={form.currencyId} onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}>
-                <option value="">— اختر العملة —</option>
-                {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {c.nameAr}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">الحساب (شجرة الحسابات)</label>
-              <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><label className="text-sm font-medium">الحد الأدنى</label><Input type="number" placeholder="0" {...f("minBalance")} /></div>
-              <div className="space-y-1.5"><label className="text-sm font-medium">الحد الأقصى</label><Input type="number" placeholder="—" {...f("maxBalance")} /></div>
-            </div>
-            <div className="space-y-1.5"><label className="text-sm font-medium">ملاحظات</label><Input placeholder="..." {...f("notes")} /></div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={form.isActive} onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))} className="rounded" />
-              <span className="text-sm">الخزنة نشطة</span>
-            </label>
-          </div>
-          <SheetFooter className="border-t pt-4 flex flex-row gap-2 justify-end">
-            <Button variant="outline" onClick={() => setPanel(false)}><X className="h-4 w-4 ml-1" />إلغاء</Button>
-            <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !form.nameAr || !form.code}>
-              <Save className="h-4 w-4 ml-1" />{saveMut.isPending ? "جاري الحفظ..." : "حفظ"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
 
       {/* Delete Confirm */}
       <AlertDialog open={!!delRow} onOpenChange={v => { if (!v) setDelRow(null); }}>

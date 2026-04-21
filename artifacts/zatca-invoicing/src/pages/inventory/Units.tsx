@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Ruler, Search, Save, X, Info, ArrowRight } from "lucide-react";
 
@@ -119,6 +118,43 @@ export default function Units() {
         </div>
       </div>
 
+      {showForm && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Ruler className="h-5 w-5 text-primary" />
+              {editId ? "تعديل وحدة قياس" : "إضافة وحدة جديدة"}
+            </h2>
+            <Button variant="ghost" size="icon" onClick={reset}><X className="h-4 w-4" /></Button>
+          </div>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label>كود الوحدة <span className="text-destructive">*</span></Label>
+              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} required className="font-mono" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
+              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>الاسم بالإنجليزي</Label>
+              <Input placeholder="Piece" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>معامل التحويل الافتراضي</Label>
+              <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
+              <p className="text-[10px] text-muted-foreground">مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف</p>
+            </div>
+            <div className="flex gap-2 pt-4 border-t">
+              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
+              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
+                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+
       <div className="relative">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input className="pr-9" placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -172,42 +208,6 @@ export default function Units() {
           </div>
         )}
       </div>
-
-      <Sheet open={showForm} onOpenChange={v => { if (!v) reset(); }}>
-        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto" dir="rtl">
-          <SheetHeader className="border-b pb-4 mb-5">
-            <SheetTitle className="flex items-center gap-2">
-              <Ruler className="h-5 w-5 text-primary" />
-              {editId ? "تعديل وحدة قياس" : "إضافة وحدة جديدة"}
-            </SheetTitle>
-          </SheetHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>كود الوحدة <span className="text-destructive">*</span></Label>
-              <Input placeholder="PCS" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} required className="font-mono" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالعربي <span className="text-destructive">*</span></Label>
-              <Input placeholder="قطعة" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>الاسم بالإنجليزي</Label>
-              <Input placeholder="Piece" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>معامل التحويل الافتراضي</Label>
-              <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
-              <p className="text-[10px] text-muted-foreground">مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف</p>
-            </div>
-            <SheetFooter className="flex gap-2 pt-4 border-t">
-              <Button type="button" variant="outline" className="gap-1" onClick={reset}><X className="h-4 w-4" />إلغاء</Button>
-              <Button type="submit" className="gap-1 flex-1" disabled={createMut.isPending || updateMut.isPending}>
-                <Save className="h-4 w-4" />{editId ? "حفظ التعديل" : "إضافة"}
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }
