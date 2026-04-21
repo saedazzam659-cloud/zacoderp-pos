@@ -13,8 +13,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Search, Pencil, Trash2, BookOpen, ArrowUpDown, Calendar, CheckCircle2, FileText, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 const ENTRY_TYPES: Record<string, string> = {
   general:     "قيد عام",
@@ -81,27 +79,61 @@ export default function JournalEntries() {
     XLSX.writeFile(wb, `journal-entries-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  const handleExportPDF = () => {
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const escapeHtml = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+
+  const buildPrintHtml = () => {
     const rows = buildRows();
-    const head = [Object.keys(rows[0] ?? { "رقم المستند": "", "التاريخ": "", "النوع": "", "البيان": "", "المدين": "", "الدائن": "", "الحالة": "" })];
-    const body = rows.map(r => Object.values(r));
-    doc.setFontSize(14);
-    doc.text("Journal Entries / القيود المحاسبية", doc.internal.pageSize.getWidth() / 2, 30, { align: "center" });
-    doc.setFontSize(9);
-    doc.text(`Date: ${new Date().toLocaleDateString()}    Total Debit: ${totalDebit.toFixed(2)}    Total Credit: ${totalCredit.toFixed(2)}`,
-      doc.internal.pageSize.getWidth() / 2, 48, { align: "center" });
-    autoTable(doc, {
-      head, body,
-      startY: 60,
-      styles: { fontSize: 8, cellPadding: 4, halign: "right" },
-      headStyles: { fillColor: [40, 80, 140], textColor: 255, halign: "center" },
-      alternateRowStyles: { fillColor: [245, 247, 250] },
-    });
-    doc.save(`journal-entries-${new Date().toISOString().slice(0, 10)}.pdf`);
+    const cols = Object.keys(rows[0] ?? { "رقم المستند": "", "التاريخ": "", "النوع": "", "البيان": "", "المدين": "", "الدائن": "", "الحالة": "" });
+    const today = new Date().toLocaleDateString("ar-SA");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>القيود المحاسبية</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
+.h { text-align:center; margin-bottom:8px; }
+.h h1 { margin:0 0 4px; font-size:18px; }
+.h .meta { font-size:11px; color:#555; }
+.totals { display:flex; gap:16px; justify-content:center; margin:8px 0 12px; font-size:12px; }
+.totals span b { color:#1e3a8a; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:right; }
+tbody tr:nth-child(even) td { background:#f5f7fb; }
+.num { font-family: "Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
+<div class="h">
+  <h1>القيود المحاسبية</h1>
+  <div class="meta">تاريخ التقرير: ${today} — عدد القيود: ${rows.length}</div>
+</div>
+<div class="totals">
+  <span>إجمالي المدين: <b>${totalDebit.toFixed(2)}</b></span>
+  <span>إجمالي الدائن: <b>${totalCredit.toFixed(2)}</b></span>
+</div>
+<table>
+  <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+  <tbody>
+    ${rows.map(r => `<tr>${cols.map(c => {
+      const isNum = c === "المدين" || c === "الدائن";
+      return `<td class="${isNum ? "num" : ""}">${escapeHtml((r as any)[c])}</td>`;
+    }).join("")}</tr>`).join("")}
+  </tbody>
+</table>
+<script>setTimeout(()=>window.print(),300);</script>
+</body></html>`;
   };
 
-  const handlePrint = () => window.print();
+  const openPrintWindow = (html: string) => {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) return;
+    w.document.open(); w.document.write(html); w.document.close();
+  };
+
+  const handleExportPDF = () => openPrintWindow(buildPrintHtml());
+  const handlePrint    = () => openPrintWindow(buildPrintHtml());
 
   return (
     <div className="p-6 space-y-5" dir="rtl">

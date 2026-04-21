@@ -16,8 +16,9 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
-  FileText, ListOrdered,
+  FileText, ListOrdered, Printer, FileSpreadsheet, FileDown,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 
 const ENTRY_TYPES = [
   { value: "general",      label: "قيد عام" },
@@ -131,6 +132,21 @@ export default function JournalEntryForm() {
     enabled:  !!editId,
   });
 
+  const { data: accountsList = [] } = useQuery<any[]>({
+    queryKey: ["accounts-flat", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/accounts?companyId=${cid}` : `${API}/api/accounts`;
+      const res = await fetch(url, { headers: authHeaders });
+      return res.json();
+    },
+    enabled: !!user,
+  });
+  const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
+  const acctLabel = (id: any) => {
+    const a = acctMap.get(Number(id));
+    return a ? `${a.code} — ${a.nameAr || a.nameEn || ""}` : "—";
+  };
+
   useEffect(() => {
     if (!existing) return;
     setDocNumber(existing.docNumber ?? "");
@@ -212,6 +228,121 @@ export default function JournalEntryForm() {
     });
   }
 
+  const escapeHtml = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+
+  const printableLines = lines.filter(l => l.accountId);
+  const docLabel = existing?.docNumber ?? (editId ? `QYD-${String(editId).padStart(4, "0")}` : "—");
+  const typeLabel = ENTRY_TYPES.find(t => t.value === entryType)?.label ?? entryType;
+  const branchLabel = branches.find((b: any) => String(b.id) === String(branchId))?.nameAr ?? "—";
+
+  const handleExportEntryExcel = () => {
+    const headerRows = [
+      ["رقم القيد", docLabel],
+      ["التاريخ",   entryDate],
+      ["النوع",     typeLabel],
+      ["العملة",    `${currency} (سعر الصرف ${exchangeRate})`],
+      ["الفرع",     branchLabel],
+      ["البيان",    description || "—"],
+      [],
+    ];
+    const lineHeader = ["#", "كود الحساب", "اسم الحساب", "مركز التكلفة", "مدين", "دائن", "البيان"];
+    const lineRows = printableLines.map((l, i) => {
+      const a = acctMap.get(Number(l.accountId));
+      return [
+        i + 1,
+        a?.code ?? "",
+        a?.nameAr || a?.nameEn || "",
+        l.costCenter || "",
+        Number(l.debit  || 0).toFixed(2),
+        Number(l.credit || 0).toFixed(2),
+        l.description || "",
+      ];
+    });
+    const totalsRow = ["", "", "", "الإجمالي", totalDebit.toFixed(2), totalCredit.toFixed(2), isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`];
+    const aoa = [...headerRows, lineHeader, ...lineRows, totalsRow];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 28 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `قيد ${docLabel}`);
+    XLSX.writeFile(wb, `journal-entry-${docLabel}.xlsx`);
+  };
+
+  const buildEntryPrintHtml = () => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const lineRowsHtml = printableLines.map((l, i) => {
+      const a = acctMap.get(Number(l.accountId));
+      return `<tr>
+        <td class="c">${i + 1}</td>
+        <td class="num">${escapeHtml(a?.code ?? "")}</td>
+        <td>${escapeHtml(a?.nameAr || a?.nameEn || "—")}</td>
+        <td>${escapeHtml(l.costCenter || "—")}</td>
+        <td class="num">${Number(l.debit  || 0).toFixed(2)}</td>
+        <td class="num">${Number(l.credit || 0).toFixed(2)}</td>
+        <td>${escapeHtml(l.description || "—")}</td>
+      </tr>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>قيد ${escapeHtml(docLabel)}</title>
+<style>
+@page { size: A4; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
+.head { text-align:center; border-bottom: 2px solid #1e3a8a; padding-bottom:10px; margin-bottom:12px; }
+.head h1 { margin:0 0 4px; font-size:20px; color:#1e3a8a; }
+.head .meta { font-size:11px; color:#555; }
+.info { display:grid; grid-template-columns: repeat(3, 1fr); gap:6px 14px; font-size:12px; margin-bottom:14px; padding:10px; border:1px solid #e5e7eb; border-radius:6px; background:#fafbfd; }
+.info .lbl { color:#6b7280; font-size:10px; }
+.info .val { font-weight:600; }
+.desc { font-size:12px; padding:8px 10px; border:1px dashed #cbd5e1; border-radius:6px; margin-bottom:12px; }
+.desc .lbl { color:#6b7280; font-size:10px; display:block; margin-bottom:2px; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:6px 8px; border:1px solid #d1d5db; text-align:right; vertical-align: middle; }
+tbody tr:nth-child(even) td { background:#f5f7fb; }
+.c { text-align:center; }
+.num { font-family:"Consolas",monospace; }
+tfoot td { background:#eef2ff; font-weight:700; padding:8px; border:1px solid #1e3a8a; }
+.balanced { color:#15803d; }
+.unbalanced { color:#b91c1c; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
+<div class="head">
+  <h1>قيد محاسبي — ${escapeHtml(docLabel)}</h1>
+  <div class="meta">طُبع في ${today}</div>
+</div>
+<div class="info">
+  <div><div class="lbl">رقم القيد</div><div class="val">${escapeHtml(docLabel)}</div></div>
+  <div><div class="lbl">التاريخ</div><div class="val">${escapeHtml(entryDate)}</div></div>
+  <div><div class="lbl">النوع</div><div class="val">${escapeHtml(typeLabel)}</div></div>
+  <div><div class="lbl">العملة</div><div class="val">${escapeHtml(currency)} (سعر الصرف ${escapeHtml(exchangeRate)})</div></div>
+  <div><div class="lbl">الفرع</div><div class="val">${escapeHtml(branchLabel)}</div></div>
+  <div><div class="lbl">عدد السطور</div><div class="val">${printableLines.length}</div></div>
+</div>
+${description ? `<div class="desc"><span class="lbl">البيان العام</span>${escapeHtml(description)}</div>` : ""}
+<table>
+  <thead><tr>
+    <th class="c">#</th><th>كود الحساب</th><th>اسم الحساب</th><th>مركز التكلفة</th><th>مدين</th><th>دائن</th><th>البيان</th>
+  </tr></thead>
+  <tbody>${lineRowsHtml}</tbody>
+  <tfoot><tr>
+    <td colspan="4" class="c">الإجمالي</td>
+    <td class="num">${totalDebit.toFixed(2)}</td>
+    <td class="num">${totalCredit.toFixed(2)}</td>
+    <td class="${isBalanced ? "balanced" : "unbalanced"}">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</td>
+  </tr></tfoot>
+</table>
+<script>setTimeout(()=>window.print(),300);</script>
+</body></html>`;
+  };
+
+  const openEntryPrintWindow = () => {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) return;
+    w.document.open(); w.document.write(buildEntryPrintHtml()); w.document.close();
+  };
+
   if (!isNew && loadingEdit) {
     return <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">جارٍ التحميل...</div>;
   }
@@ -236,6 +367,22 @@ export default function JournalEntryForm() {
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {!isNew && (
+            <>
+              <Button variant="outline" size="sm" onClick={openEntryPrintWindow} className="gap-1.5 print:hidden">
+                <Printer className="h-4 w-4" /> طباعة
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExportEntryExcel} className="gap-1.5 text-green-700 border-green-200 hover:bg-green-50 print:hidden">
+                <FileSpreadsheet className="h-4 w-4" /> Excel
+              </Button>
+              <Button variant="outline" size="sm" onClick={openEntryPrintWindow} className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50 print:hidden">
+                <FileDown className="h-4 w-4" /> PDF
+              </Button>
+            </>
+          )}
         </div>
 
         {/* Balance indicator in header */}
