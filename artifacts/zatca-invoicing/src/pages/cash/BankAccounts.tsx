@@ -182,7 +182,7 @@ export default function BankAccounts() {
               ) : filtered.map((row: any) => {
                 const bal = balMap[row.id] ?? 0;
                 return (
-                  <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
+                  <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title="انقر مرتين للتعديل">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="h-7 w-7 rounded-lg bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center"><CreditCard className="h-4 w-4" /></div>

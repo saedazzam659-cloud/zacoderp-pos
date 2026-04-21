@@ -194,7 +194,7 @@ export default function PaymentVouchers() {
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند صرف جديد</Button>}
                 </td></tr>
               ) : filtered.map((row: any) => (
-                <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
+                <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title="انقر مرتين للتعديل">
                   <td className="px-4 py-3"><p className="font-mono text-xs font-medium">{row.code}</p><p className="text-xs text-muted-foreground">{row.date}</p></td>
                   <td className="px-4 py-3 max-w-48"><p className="text-sm truncate">{row.description || "—"}</p>{row.refNumber && <p className="text-xs text-muted-foreground">مرجع: {row.refNumber}</p>}</td>
                   <td className="px-4 py-3 hidden md:table-cell"><span className="text-xs bg-muted px-2 py-0.5 rounded-full">{ENTITY_LABELS[row.entityType] || "—"}</span>{row.entityName && <p className="text-xs text-muted-foreground mt-0.5">{row.entityName}</p>}</td>

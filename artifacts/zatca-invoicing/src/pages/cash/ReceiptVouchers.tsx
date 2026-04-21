@@ -244,7 +244,7 @@ export default function ReceiptVouchers() {
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند قبض جديد</Button>}
                 </td></tr>
               ) : filtered.map((row: any) => (
-                <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
+                <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title="انقر مرتين للتعديل">
                   <td className="px-4 py-3">
                     <p className="font-mono text-xs font-medium">{row.code}</p>
                     <p className="text-xs text-muted-foreground">{row.date}</p>

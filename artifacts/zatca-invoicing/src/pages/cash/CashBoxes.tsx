@@ -256,7 +256,7 @@ export default function CashBoxes() {
                 const max = parseFloat(row.maxBalance ?? "0");
                 const high = max > 0 && bal > max;
                 return (
-                  <tr key={row.id} className="border-b hover:bg-muted/20 transition-colors">
+                  <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title="انقر مرتين للتعديل">
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.code}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
