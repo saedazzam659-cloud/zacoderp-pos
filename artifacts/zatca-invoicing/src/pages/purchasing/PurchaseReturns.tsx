@@ -763,7 +763,7 @@ export default function PurchaseReturns() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 border-b">
-                {["رقم المرتجع","التاريخ","المورد","العملة","الضريبة","الإجمالي","الحالة","إجراءات"].map(h => (
+                {["رقم المرتجع","التاريخ","المورد","العملة","الضريبة","الإجمالي","الحالة","رقم القيد","إجراءات"].map(h => (
                   <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>
                 ))}
               </tr>
@@ -785,6 +785,19 @@ export default function PurchaseReturns() {
                     )}>
                       {r.status === "posted" ? "مرحّل" : "مسودة"}
                     </span>
+                  </td>
+                  <td className="px-3 py-2.5 font-mono text-xs">
+                    {r.journalEntryId ? (
+                      <button
+                        type="button"
+                        className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
+                        title="عرض القيد المحاسبي"
+                        onClick={() => { window.location.href = `/accounting/journals/${r.journalEntryId}`; }}>
+                        JE-{r.journalEntryId}
+                      </button>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
