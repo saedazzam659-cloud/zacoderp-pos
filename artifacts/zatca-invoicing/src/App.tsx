@@ -66,6 +66,16 @@ import PurchaseInvoices     from "@/pages/purchasing/PurchaseInvoices";
 import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
 import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
+// Sales Reports
+import SalesReportsHub      from "@/pages/sales/reports/SalesReportsHub";
+import CustomerStatement    from "@/pages/sales/reports/CustomerStatement";
+import CustomerBalances     from "@/pages/sales/reports/CustomerBalances";
+import AgingReport          from "@/pages/sales/reports/AgingReport";
+import SalesByCustomer      from "@/pages/sales/reports/SalesByCustomer";
+import SalesByItem          from "@/pages/sales/reports/SalesByItem";
+import SalesByPeriod        from "@/pages/sales/reports/SalesByPeriod";
+import TopCustomers         from "@/pages/sales/reports/TopCustomers";
+import SalesReturnsReport   from "@/pages/sales/reports/SalesReturnsReport";
 // Sales
 import SalesInvoices        from "@/pages/sales/SalesInvoices";
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
@@ -206,6 +216,17 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/sales/quotations/:id"    component={SalesQuotationForm} />}
             {!isSuperAdmin && <Route path="/sales/quotations"        component={SalesQuotations} />}
             {!isSuperAdmin && <Route path="/sales/returns"           component={SalesReturns} />}
+
+            {/* Customers & Sales Reports */}
+            {!isSuperAdmin && <Route path="/sales/reports/customer-statement" component={CustomerStatement} />}
+            {!isSuperAdmin && <Route path="/sales/reports/customer-balances"  component={CustomerBalances} />}
+            {!isSuperAdmin && <Route path="/sales/reports/aging"              component={AgingReport} />}
+            {!isSuperAdmin && <Route path="/sales/reports/sales-by-customer"  component={SalesByCustomer} />}
+            {!isSuperAdmin && <Route path="/sales/reports/sales-by-item"      component={SalesByItem} />}
+            {!isSuperAdmin && <Route path="/sales/reports/sales-by-period"    component={SalesByPeriod} />}
+            {!isSuperAdmin && <Route path="/sales/reports/top-customers"      component={TopCustomers} />}
+            {!isSuperAdmin && <Route path="/sales/reports/returns"            component={SalesReturnsReport} />}
+            {!isSuperAdmin && <Route path="/sales/reports"                    component={SalesReportsHub} />}
             {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
 
             {/* Cash & Banks */}

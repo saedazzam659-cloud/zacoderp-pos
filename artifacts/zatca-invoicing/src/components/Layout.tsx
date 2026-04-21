@@ -217,7 +217,7 @@ function SalesNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
-  const isOnSales = location.startsWith("/sales") || location.startsWith("/customers");
+  const isOnSales = (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers");
   return (
     <div>
       <button
@@ -240,6 +240,58 @@ function SalesNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           {salesSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SalesReportsNavGroup ─────────────────────────────────────────────────────
+const salesReportsSubNav = [
+  { name: "كشف حساب عميل",            href: "/sales/reports/customer-statement", icon: FileText  },
+  { name: "أرصدة العملاء",            href: "/sales/reports/customer-balances",  icon: FileText  },
+  { name: "تحليل أعمار الديون",       href: "/sales/reports/aging",              icon: FileText  },
+  { name: "المبيعات حسب العميل",       href: "/sales/reports/sales-by-customer",  icon: FileText  },
+  { name: "المبيعات حسب الصنف",        href: "/sales/reports/sales-by-item",      icon: FileText  },
+  { name: "المبيعات اليومية / الشهرية", href: "/sales/reports/sales-by-period",    icon: FileText  },
+  { name: "أفضل العملاء",              href: "/sales/reports/top-customers",      icon: FileText  },
+  { name: "مرتجعات المبيعات",          href: "/sales/reports/returns",            icon: FileText  },
+];
+const salesReportsHeader = { name: "كل التقارير", href: "/sales/reports", icon: BarChart2 };
+
+function SalesReportsNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnReports = location.startsWith("/sales/reports");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnReports && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <BarChart2 className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">تقارير العملاء والمبيعات</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <NavItem item={salesReportsHeader} location={location} onClick={onNavigate} indent />
+          {salesReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -464,6 +516,8 @@ function SidebarInner({
   onPurchasingToggle,
   salesOpen,
   onSalesToggle,
+  salesReportsOpen,
+  onSalesReportsToggle,
   cashOpen,
   onCashToggle,
   accountingOpen,
@@ -487,6 +541,8 @@ function SidebarInner({
   onPurchasingToggle: () => void;
   salesOpen: boolean;
   onSalesToggle: () => void;
+  salesReportsOpen: boolean;
+  onSalesReportsToggle: () => void;
   cashOpen: boolean;
   onCashToggle: () => void;
   accountingOpen: boolean;
@@ -594,6 +650,15 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={salesOpen}
                 onToggle={onSalesToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
+              <SalesReportsNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={salesReportsOpen}
+                onToggle={onSalesReportsToggle}
               />
             </div>
 
@@ -927,7 +992,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
-  const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
+  const [salesOpen,      setSalesOpen]        = useState(() => (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers"));
+  const [salesReportsOpen, setSalesReportsOpen] = useState(() => location.startsWith("/sales/reports"));
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
 
@@ -940,6 +1006,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
   const handleSalesToggle      = () => setSalesOpen(v => !v);
+  const handleSalesReportsToggle = () => setSalesReportsOpen(v => !v);
   const handleCashToggle       = () => setCashOpen(v => !v);
   const handleAccountingToggle = () => setAccountingOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
@@ -961,6 +1028,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onPurchasingToggle: handlePurchasingToggle,
     salesOpen,
     onSalesToggle: handleSalesToggle,
+    salesReportsOpen,
+    onSalesReportsToggle: handleSalesReportsToggle,
     cashOpen,
     onCashToggle: handleCashToggle,
     accountingOpen,
