@@ -60,6 +60,13 @@ import PurchaseInvoices     from "@/pages/purchasing/PurchaseInvoices";
 import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
 import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
+// Sales
+import SalesInvoices        from "@/pages/sales/SalesInvoices";
+import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
+import SalesQuotations      from "@/pages/sales/SalesQuotations";
+import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";
+import SalesReturns         from "@/pages/sales/SalesReturns";
+import CustomerSettlement   from "@/pages/sales/CustomerSettlement";
 
 import CashBoxes        from "@/pages/cash/CashBoxes";
 import BankAccounts     from "@/pages/cash/BankAccounts";
@@ -176,6 +183,16 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/purchasing/invoices"        component={PurchaseInvoices} />}
             {!isSuperAdmin && <Route path="/purchasing/returns"         component={PurchaseReturns} />}
             {!isSuperAdmin && <Route path="/purchasing/settlements"     component={SupplierSettlement} />}
+
+            {/* Sales routes */}
+            {!isSuperAdmin && <Route path="/sales/invoices/new"      component={SalesInvoiceForm} />}
+            {!isSuperAdmin && <Route path="/sales/invoices/:id"      component={SalesInvoiceForm} />}
+            {!isSuperAdmin && <Route path="/sales/invoices"          component={SalesInvoices} />}
+            {!isSuperAdmin && <Route path="/sales/quotations/new"    component={SalesQuotationForm} />}
+            {!isSuperAdmin && <Route path="/sales/quotations/:id"    component={SalesQuotationForm} />}
+            {!isSuperAdmin && <Route path="/sales/quotations"        component={SalesQuotations} />}
+            {!isSuperAdmin && <Route path="/sales/returns"           component={SalesReturns} />}
+            {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
 
             {/* Cash & Banks */}
             {!isSuperAdmin && <Route path="/cash/boxes"            component={CashBoxes}       />}

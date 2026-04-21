@@ -1,0 +1,502 @@
+import { useState, useEffect } from "react";
+import { useRoute, useLocation } from "wouter";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SearchCombobox } from "@/components/ui/search-combobox";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { ArrowRight, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered } from "lucide-react";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
+const today = () => new Date().toISOString().slice(0, 10);
+
+interface DocLine {
+  _id: string;
+  itemId: string;
+  itemName: string;
+  itemCode: string;
+  unitId: string;
+  unit: string;
+  warehouseId: string;
+  qty: string;
+  unitPrice: string;
+  discount: string;
+  vatRate: string;
+  lineTotal: string;
+  notes: string;
+}
+
+function newLine(): DocLine {
+  return {
+    _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
+    unitId: "", unit: "", warehouseId: "",
+    qty: "1", unitPrice: "0", discount: "0", vatRate: "15",
+    lineTotal: "0", notes: "",
+  };
+}
+
+function calcLine(l: DocLine) {
+  const qty = Number(l.qty) || 0;
+  const price = Number(l.unitPrice) || 0;
+  const disc = Number(l.discount) || 0;
+  const subtotal = qty * price * (1 - disc / 100);
+  const vat = subtotal * ((Number(l.vatRate) || 0) / 100);
+  return { lineTotal: subtotal + vat, subtotal };
+}
+
+export interface SalesDocumentFormProps {
+  mode: "invoice" | "quotation";
+}
+
+export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
+  const isInvoice = mode === "invoice";
+  const basePath  = isInvoice ? "/sales/invoices"   : "/sales/quotations";
+  const apiPath   = isInvoice ? "sales-invoices"    : "sales-quotations";
+  const queryKey  = isInvoice ? "sales-invoice"     : "sales-quotation";
+
+  const { user, token } = useAuth() as any;
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [, navigate] = useLocation();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const authH   = { Authorization: `Bearer ${token}` };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const [matchNew]            = useRoute(`${basePath}/new`);
+  const [matchEdit, params]   = useRoute(`${basePath}/:id`);
+  const isNew  = !!matchNew;
+  const editId = matchEdit ? Number((params as any).id) : null;
+
+  const [activeTab, setActiveTab]       = useState("header");
+  const [docNumber, setDocNumber]       = useState("");
+  const [docDate,   setDocDate]         = useState(today());
+  const [validUntil,setValidUntil]      = useState("");
+  const [customerId,setCustomerId]      = useState("");
+  const [paymentType,setPaymentType]    = useState("credit");
+  const [currencyCode,setCurrencyCode]  = useState("");
+  const [exchangeRate,setExchangeRate]  = useState("1");
+  const [notes,     setNotes]           = useState("");
+  const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
+
+  // Lookups
+  const { data: customers = [] } = useQuery<any[]>({
+    queryKey: ["customers", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: exchangeRates = [] } = useQuery<any[]>({
+    queryKey: ["exchange-rates", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/currencies/rates?companyId=${cid}` : `${API}/api/currencies/rates`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: inventoryItems = [] } = useQuery<any[]>({
+    queryKey: ["inventory-items", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/items?companyId=${cid}` : `${API}/api/inventory/items`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: units = [] } = useQuery<any[]>({
+    queryKey: ["units", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const { data: warehouses = [] } = useQuery<any[]>({
+    queryKey: ["warehouses", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
+
+  function getLatestRate(selectedCode: string): string {
+    if (!currencies.length) return "1";
+    const selected = currencies.find((c: any) => c.code === selectedCode);
+    const base = defaultCurrency;
+    if (!selected || !base || selected.id === base.id) return "1";
+    const rate = exchangeRates
+      .filter((r: any) =>
+        (r.fromCurrencyId === selected.id && r.toCurrencyId === base.id) ||
+        (r.fromCurrencyId === base.id     && r.toCurrencyId === selected.id))
+      .sort((a: any, b: any) => b.effectiveDate.localeCompare(a.effectiveDate))[0];
+    if (!rate) return "1";
+    if (rate.fromCurrencyId === selected.id) return String(rate.rate);
+    return String((1 / Number(rate.rate)).toFixed(6));
+  }
+  function handleCurrencyChange(code: string) { setCurrencyCode(code); setExchangeRate(getLatestRate(code)); }
+
+  useEffect(() => {
+    if (!isNew || !defaultCurrency || currencyCode) return;
+    setCurrencyCode(defaultCurrency.code);
+  }, [isNew, defaultCurrency?.code]);
+
+  // Load existing
+  const { data: existing, isLoading: loadingEdit } = useQuery({
+    queryKey: [queryKey, editId],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales/${apiPath}/${editId}?companyId=${cid}`, { headers: authH });
+      return r.json();
+    },
+    enabled: !!editId,
+  });
+
+  useEffect(() => {
+    if (!existing) return;
+    setDocNumber(existing.docNumber ?? "");
+    setDocDate((isInvoice ? existing.invoiceDate : existing.quotationDate) ?? today());
+    if (!isInvoice) setValidUntil(existing.validUntil ?? "");
+    setCustomerId(existing.customerId ? String(existing.customerId) : "");
+    if (isInvoice) setPaymentType(existing.paymentType ?? "credit");
+    setCurrencyCode(existing.currencyCode ?? "SAR");
+    setExchangeRate(String(existing.exchangeRate ?? "1"));
+    setNotes(existing.notes ?? "");
+    setLines(existing.lines?.length ? existing.lines.map((l: any) => ({
+      _id: crypto.randomUUID(),
+      itemId:      l.itemId      ? String(l.itemId)      : "",
+      itemName:    l.itemName    ?? "",
+      itemCode:    l.itemCode    ?? "",
+      unitId:      l.unitId      ? String(l.unitId)      : "",
+      unit:        l.unit        ?? "",
+      warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+      qty:         String(l.qty),
+      unitPrice:   String(l.unitPrice),
+      discount:    String(l.discount ?? "0"),
+      vatRate:     String(l.vatRate ?? "15"),
+      lineTotal:   String(l.lineTotal),
+      notes:       l.notes ?? "",
+    })) : [newLine()]);
+  }, [existing]);
+
+  function updateLine(id: string, field: keyof DocLine, value: string) {
+    setLines(prev => prev.map(l => {
+      if (l._id !== id) return l;
+      const updated = { ...l, [field]: value };
+      const { lineTotal } = calcLine(updated);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
+
+  function selectItem(lineId: string, itemId: string) {
+    const item = inventoryItems.find((i: any) => String(i.id) === itemId);
+    if (!item) { updateLine(lineId, "itemId", ""); return; }
+    setLines(prev => prev.map(l => {
+      if (l._id !== lineId) return l;
+      const unit = units.find((u: any) => u.id === item.unitId);
+      const updated: DocLine = {
+        ...l,
+        itemId:    String(item.id),
+        itemName:  item.nameAr ?? "",
+        itemCode:  item.code   ?? "",
+        unitId:    item.unitId ? String(item.unitId) : "",
+        unit:      unit?.nameAr ?? "",
+        unitPrice: String(item.sellPrice ?? item.price ?? "0"),
+        vatRate:   String(item.vatRate   ?? "15"),
+      };
+      const { lineTotal } = calcLine(updated);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
+
+  const subtotal    = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
+  const vatAmount   = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
+  const totalAmount = subtotal + vatAmount;
+
+  const saveMut = useMutation({
+    mutationFn: async (data: any) => {
+      const url = editId ? `${API}/api/sales/${apiPath}/${editId}` : `${API}/api/sales/${apiPath}`;
+      const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
+      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : "sales-quotations"] });
+      toast({ title: isNew ? (isInvoice ? "✓ تم إنشاء الفاتورة" : "✓ تم إنشاء العرض") : "✓ تم الحفظ" });
+      navigate(basePath);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  function handleSave() {
+    const base: any = {
+      companyId: cid, docNumber: docNumber || null,
+      customerId: customerId || null, currencyCode, exchangeRate,
+      subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
+      discountAmount: "0", totalAmount: totalAmount.toFixed(2),
+      notes: notes || null,
+      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+    };
+    if (isInvoice) {
+      base.invoiceDate = docDate;
+      base.paymentType = paymentType;
+    } else {
+      base.quotationDate = docDate;
+      base.validUntil = validUntil || null;
+    }
+    saveMut.mutate(base);
+  }
+
+  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
+
+  const customerComboItems = [
+    { value: "", label: "— بدون عميل —" },
+    ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
+  ];
+  const itemComboItems = [
+    { value: "", label: "— اختر صنف —" },
+    ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr })),
+  ];
+  const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+
+  const Icon  = isInvoice ? ShoppingBag : FileSignature;
+  const title = isNew
+    ? (isInvoice ? "فاتورة مبيعات جديدة" : "عرض سعر جديد")
+    : (isInvoice ? `تعديل الفاتورة #${editId}` : `تعديل عرض السعر #${editId}`);
+  const subtitle = isInvoice
+    ? "إنشاء فاتورة مبيعات — عند الترحيل يُخصم رصيد المخزون تلقائياً"
+    : "إنشاء عرض سعر للعميل — لا يؤثر على المخزون";
+
+  return (
+    <div className="space-y-5 max-w-6xl mx-auto" dir="rtl">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{title}</h1>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {activeTab === "header"
+                  ? "أدخل بيانات المستند الرأسية"
+                  : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount)}`}
+              </p>
+              <TabsList className="h-8 bg-background border gap-1">
+                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+                </TabsTrigger>
+                <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemName).length})
+                </TabsTrigger>
+              </TabsList>
+            </div>
+          </CardHeader>
+
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{isInvoice ? "رقم الفاتورة" : "رقم العرض"}</Label>
+                  <Input className="h-9 text-sm" placeholder="تلقائي" dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">التاريخ *</Label>
+                  <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
+                </div>
+                {!isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">صالح حتى</Label>
+                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">العميل</Label>
+                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder="العميل..." />
+                </div>
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">نوع الدفع</Label>
+                    <Select value={paymentType} onValueChange={setPaymentType}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="credit">آجل</SelectItem>
+                        <SelectItem value="cash">نقدي</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">العملة</Label>
+                  {currencies.length > 0 ? (
+                    <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent>
+                        {currencies.map((c: any) => (
+                          <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input className="h-9 text-sm" dir="ltr" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">سعر الصرف</Label>
+                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">ملاحظات</Label>
+                <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+            </CardContent>
+          </TabsContent>
+
+          <TabsContent value="lines" className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-3">
+              <div className="space-y-3">
+                {lines.map(l => (
+                  <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                    {/* Row 1 */}
+                    <div className="grid gap-2" style={{ gridTemplateColumns: "3fr 1.2fr 1fr 1fr 0.8fr 0.8fr auto" }}>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الصنف</p>
+                        {inventoryItems.length > 0 ? (
+                          <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." />
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                            onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الوحدة</p>
+                        {units.length > 0 ? (
+                          <Select value={l.unitId || undefined} onValueChange={v => {
+                            const u = units.find((u: any) => String(u.id) === v);
+                            setLines(prev => prev.map(x => x._id === l._id ? { ...x, unitId: v, unit: u?.nameAr ?? "" } : x));
+                          }}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectContent>
+                              {unitItems.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">الكمية</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
+                          onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">سعر البيع</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                          onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">خصم%</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
+                          onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">ضريبة%</p>
+                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                          onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      </div>
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
+                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    {/* Row 2 */}
+                    <div className="grid gap-2" style={{ gridTemplateColumns: isInvoice ? "1.8fr 1.2fr 2fr 1fr auto" : "1.2fr 3fr 1fr auto" }}>
+                      {isInvoice && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                            المستودع
+                            {!l.warehouseId && l.itemId && (
+                              <span className="text-amber-600 text-[9px]">⚠ مطلوب لخصم المخزون</span>
+                            )}
+                          </p>
+                          {warehouses.length > 0 ? (
+                            <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                              <SelectTrigger className={cn("h-7 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                                <SelectValue placeholder="اختر مستودع..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {warehouses.map((w: any) => (
+                                  <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input className="h-7 text-xs" placeholder="—" readOnly />
+                          )}
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">كود الصنف</p>
+                        <Input className="h-7 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">ملاحظات</p>
+                        <Input className="h-7 text-xs" value={l.notes}
+                          onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground font-semibold text-primary">الإجمالي</p>
+                        <Input className="h-7 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      </div>
+                      <div />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
+                <Plus className="h-4 w-4" />إضافة صنف
+              </Button>
+
+              <div className="mt-5 flex justify-end">
+                <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
+                  <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <div className="flex justify-between font-bold border-t pt-2 text-base">
+                    <span>الإجمالي</span><span className="font-mono text-primary">{fmt(totalAmount)}</span>
+                  </div>
+                  {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
+                    <p className="text-[10px] text-muted-foreground border-t pt-1">
+                      المكافئ بـ {defaultCurrency?.code ?? "SAR"}: {fmt(totalAmount / Number(exchangeRate))}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </TabsContent>
+        </Card>
+      </Tabs>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => navigate(basePath)}>إلغاء</Button>
+        <Button onClick={handleSave} disabled={saveMut.isPending}>
+          {saveMut.isPending ? "جاري الحفظ..." : isNew ? (isInvoice ? "حفظ الفاتورة" : "حفظ العرض") : "حفظ التعديل"}
+        </Button>
+      </div>
+    </div>
+  );
+}

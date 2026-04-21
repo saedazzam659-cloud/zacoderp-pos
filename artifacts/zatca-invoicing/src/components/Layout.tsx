@@ -9,6 +9,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, Plus, ChevronLeft,
+  ShoppingBag, FileSignature,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,14 @@ const purchasingSubNav = [
   { name: "فواتير المشتريات",        href: "/purchasing/invoices",        icon: ShoppingCart },
   { name: "مرتجعات المشتريات",      href: "/purchasing/returns",         icon: RotateCcw    },
   { name: "تسوية الموردين",          href: "/purchasing/settlements",     icon: Banknote     },
+];
+// ─── Sales Sub Nav ─────────────────────────────────────────────────────────────
+const salesSubNav = [
+  { name: "العملاء",              href: "/customers",          icon: Users           },
+  { name: "عروض الأسعار",         href: "/sales/quotations",   icon: FileSignature   },
+  { name: "فواتير المبيعات",      href: "/sales/invoices",     icon: ShoppingBag     },
+  { name: "مرتجعات المبيعات",    href: "/sales/returns",      icon: RotateCcw       },
+  { name: "تحصيل العملاء",        href: "/sales/settlements",  icon: ArrowDownCircle },
 ];
 const companySystemNav = [
   { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked, permKey: "always" },
@@ -181,6 +190,46 @@ function PurchasingNavGroup({
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
           {purchasingSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SalesNavGroup ─────────────────────────────────────────────────────────────
+function SalesNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const isOnSales = location.startsWith("/sales") || location.startsWith("/customers");
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className={cn(
+          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          isOnSales && !open
+            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <ShoppingBag className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">العملاء والمبيعات</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        }
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          {salesSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
@@ -330,6 +379,8 @@ function SidebarInner({
   onReportsToggle,
   purchasingOpen,
   onPurchasingToggle,
+  salesOpen,
+  onSalesToggle,
   cashOpen,
   onCashToggle,
   onNavigate,
@@ -347,6 +398,8 @@ function SidebarInner({
   onReportsToggle: () => void;
   purchasingOpen: boolean;
   onPurchasingToggle: () => void;
+  salesOpen: boolean;
+  onSalesToggle: () => void;
   cashOpen: boolean;
   onCashToggle: () => void;
   onNavigate: () => void;
@@ -434,6 +487,18 @@ function SidebarInner({
                 </div>
               </div>
             )}
+
+            <div>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المبيعات</p>
+              <div className="space-y-0.5">
+                <SalesNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={salesOpen}
+                  onToggle={onSalesToggle}
+                />
+              </div>
+            </div>
 
             <div>
               <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">المشتريات</p>
@@ -573,6 +638,9 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/inventory":                     { label: "المخزون" },
     "/cash":                          { label: "النقد والبنوك" },
     "/purchasing":                    { label: "الموردون والمشتريات" },
+    "/sales":                         { label: "العملاء والمبيعات" },
+    "/sales/invoices/new":            { label: "فاتورة مبيعات جديدة", parent: "/sales/invoices" },
+    "/sales/quotations/new":          { label: "عرض سعر جديد",        parent: "/sales/quotations" },
     "/accounting":                    { label: "المحاسبة" },
     "/accounting/reports":            { label: "التقارير المحاسبية", parent: "/accounting" },
     "/org":                           { label: "إعدادات الشركة" },
@@ -580,6 +648,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
   const all = [
     ...dashboardSubNav,
     ...purchasingSubNav.map(i => ({ ...i, parent: "/purchasing" })),
+    ...salesSubNav.map(i => ({ ...i, parent: "/sales" })),
     ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
     ...reportsSubNav.map(i => ({ ...i, parent: "/accounting/reports" })),
     ...cashSubNav.map(i => ({ ...i, parent: "/cash" })),
@@ -769,6 +838,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
+  const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
 
   const isSuperAdmin = user?.role === "superadmin";
@@ -778,6 +848,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleInventoryToggle  = () => setInventoryOpen(v => !v);
   const handleReportsToggle    = () => setReportsOpen(v => !v);
   const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
+  const handleSalesToggle      = () => setSalesOpen(v => !v);
   const handleCashToggle       = () => setCashOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
@@ -794,6 +865,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onReportsToggle: handleReportsToggle,
     purchasingOpen,
     onPurchasingToggle: handlePurchasingToggle,
+    salesOpen,
+    onSalesToggle: handleSalesToggle,
     cashOpen,
     onCashToggle: handleCashToggle,
     onNavigate: closeMobile,
