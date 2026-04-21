@@ -170,10 +170,32 @@ export default function CustomerNew() {
         <Button asChild variant="ghost" size="icon">
           <Link href="/customers"><ArrowRight className="h-5 w-5" /></Link>
         </Button>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold">{isEditMode ? "تعديل بيانات العميل" : "إضافة عميل جديد"}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">أدخل بيانات العميل الذي ستصدر له الفواتير</p>
         </div>
+        <Button
+          type="button"
+          className="gap-2 min-w-[140px]"
+          disabled={createCustomer.isPending || updateCustomer.isPending}
+          onClick={form.handleSubmit(onSubmit, (errors) => {
+            const firstTab =
+              (errors.nameAr || errors.companyId) ? "basic" :
+              (errors.vatNumber || errors.crNumber) ? "tax" : "address";
+            setActiveTab(firstTab);
+            const firstMsg = Object.values(errors)[0]?.message as string | undefined;
+            toast({
+              title: "تحقّق من الحقول المطلوبة",
+              description: firstMsg ?? "يوجد حقل غير صحيح — راجع التبويبات.",
+              variant: "destructive",
+            });
+          })}
+        >
+          <Save className="h-4 w-4" />
+          {(createCustomer.isPending || updateCustomer.isPending)
+            ? "جاري الحفظ..."
+            : (isEditMode ? "حفظ التعديلات" : "حفظ العميل")}
+        </Button>
       </div>
 
       {/* Type notices */}
