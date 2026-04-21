@@ -700,4 +700,143 @@ async function upsertBalance(companyId: number, itemId: number, warehouseId: num
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// BULK IMPORT — Items
+// Body: { items: [{ code, nameAr, nameEn?, barcode?, groupCode?, unitCode?, itemType?, costPrice?, salePrice?, vatRate?, reorderLevel?, maxLevel?, description? }, ...] }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/import/items", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
+
+  const groups = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  const units  = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
+  const existing = await db.select({ id: itemsTable.id, code: itemsTable.code }).from(itemsTable).where(eq(itemsTable.companyId, cid));
+  const groupByCode = new Map(groups.map((g: any) => [String(g.code).trim().toLowerCase(), g.id]));
+  const unitByCode  = new Map(units.map((u: any)  => [String(u.code).trim().toLowerCase(), u.id]));
+  const itemByCode  = new Map(existing.map((it: any) => [String(it.code).trim().toLowerCase(), it.id]));
+
+  let created = 0, updated = 0;
+  const errors: { row: number; error: string }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const code   = String(r.code ?? "").trim();
+      const nameAr = String(r.nameAr ?? r.name ?? "").trim();
+      if (!code || !nameAr) { errors.push({ row: i + 2, error: "الكود واسم الصنف العربي مطلوبان" }); continue; }
+
+      const groupId = r.groupCode ? groupByCode.get(String(r.groupCode).trim().toLowerCase()) ?? null : null;
+      const unitId  = r.unitCode  ? unitByCode.get(String(r.unitCode).trim().toLowerCase())   ?? null : null;
+      const values = {
+        companyId: cid, code, nameAr,
+        nameEn:       r.nameEn       != null && r.nameEn   !== "" ? String(r.nameEn)   : null,
+        barcode:      r.barcode      != null && r.barcode  !== "" ? String(r.barcode)  : null,
+        itemType:     (r.itemType === "service" ? "service" : "stock") as any,
+        groupId, unitId,
+        costPrice:    String(Number(r.costPrice    ?? 0) || 0),
+        salePrice:    String(Number(r.salePrice    ?? 0) || 0),
+        vatRate:      String(Number(r.vatRate      ?? 15) || 0),
+        reorderLevel: String(Number(r.reorderLevel ?? 0) || 0),
+        maxLevel:     r.maxLevel != null && r.maxLevel !== "" ? String(Number(r.maxLevel) || 0) : null,
+        description:  r.description != null && r.description !== "" ? String(r.description) : null,
+      };
+
+      const existingId = itemByCode.get(code.toLowerCase());
+      if (existingId) {
+        const { companyId, ...upd } = values as any;
+        await db.update(itemsTable).set({ ...upd, updatedAt: new Date() })
+          .where(and(eq(itemsTable.id, existingId), eq(itemsTable.companyId, cid)));
+        updated++;
+      } else {
+        const [ins] = await db.insert(itemsTable).values(values).returning({ id: itemsTable.id });
+        if (ins?.id) itemByCode.set(code.toLowerCase(), ins.id);
+        created++;
+      }
+    } catch (e: any) {
+      errors.push({ row: i + 2, error: e?.message || "خطأ غير معروف" });
+    }
+  }
+
+  res.json({ created, updated, errors, total: rows.length });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// BULK IMPORT — Opening Balances
+// Body: { date?, balances: [{ itemCode, warehouseCode, qty, costPrice }] }
+// Sets balance directly (replaces) and writes a stock_ledger entry of type "opening"
+// ═══════════════════════════════════════════════════════════════════
+router.post("/import/opening-balances", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const rows: any[] = Array.isArray(req.body?.balances) ? req.body.balances : [];
+  const txDate = String(req.body?.date || new Date().toISOString().slice(0, 10));
+  if (!rows.length) { res.status(400).json({ error: "لا توجد بيانات" }); return; }
+
+  const items = await db.select({ id: itemsTable.id, code: itemsTable.code }).from(itemsTable).where(eq(itemsTable.companyId, cid));
+  const wh    = await db.select({ id: warehousesTable.id, code: warehousesTable.code }).from(warehousesTable).where(eq(warehousesTable.companyId, cid));
+  const itemByCode = new Map(items.map((i: any) => [String(i.code).trim().toLowerCase(), i.id]));
+  const whByCode   = new Map(wh.map((w: any)   => [String(w.code).trim().toLowerCase(), w.id]));
+
+  let applied = 0;
+  const errors: { row: number; error: string }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    try {
+      const itemCode = String(r.itemCode ?? "").trim().toLowerCase();
+      const whCode   = String(r.warehouseCode ?? "").trim().toLowerCase();
+      const qty      = Number(r.qty ?? 0);
+      const cost     = Number(r.costPrice ?? 0);
+      if (!itemCode || !whCode) { errors.push({ row: i + 2, error: "كود الصنف وكود المخزن مطلوبان" }); continue; }
+      if (!isFinite(qty)) { errors.push({ row: i + 2, error: "الكمية غير صحيحة" }); continue; }
+      const itemId = itemByCode.get(itemCode);
+      const whId   = whByCode.get(whCode);
+      if (!itemId) { errors.push({ row: i + 2, error: `صنف غير موجود: ${r.itemCode}` }); continue; }
+      if (!whId)   { errors.push({ row: i + 2, error: `مخزن غير موجود: ${r.warehouseCode}` }); continue; }
+
+      await db.transaction(async (tx) => {
+        const [bal] = await tx.select().from(stockBalanceTable).where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, itemId),
+          eq(stockBalanceTable.warehouseId, whId),
+        ));
+        const oldQty = Number(bal?.qty ?? 0);
+        const delta  = qty - oldQty;
+        if (bal) {
+          await tx.update(stockBalanceTable)
+            .set({ qty: String(qty), avgCost: String(cost), updatedAt: new Date() })
+            .where(eq(stockBalanceTable.id, bal.id));
+        } else {
+          await tx.insert(stockBalanceTable).values({
+            companyId: cid, itemId, warehouseId: whId,
+            qty: String(qty), avgCost: String(cost),
+          });
+        }
+        // Idempotency: remove prior opening_balance ledger entries for same item/warehouse
+        // before inserting the new snapshot, so re-importing doesn't pollute the ledger.
+        await tx.delete(stockLedgerTable).where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.itemId, itemId),
+          eq(stockLedgerTable.warehouseId, whId),
+          eq(stockLedgerTable.refType, "opening_balance"),
+        ));
+        // Ledger row uses delta (movement) so reports stay consistent with balance math.
+        await tx.insert(stockLedgerTable).values({
+          companyId: cid, itemId, warehouseId: whId, txDate,
+          txType: "opening" as any,
+          qty: String(delta), costPrice: String(cost),
+          totalCost: String(delta * cost), balanceQty: String(qty),
+          refId: 0, refType: "opening_balance",
+          notes: "رصيد افتتاحي مستورد",
+        });
+      });
+      applied++;
+    } catch (e: any) {
+      errors.push({ row: i + 2, error: e?.message || "خطأ غير معروف" });
+    }
+  }
+
+  res.json({ applied, errors, total: rows.length });
+});
+
 export default router;

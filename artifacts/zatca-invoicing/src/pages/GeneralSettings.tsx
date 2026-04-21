@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
-  Hash, Building2, Loader2
+  Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import * as XLSX from "xlsx";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -96,6 +97,93 @@ export default function GeneralSettings() {
   const isDirty =
     logo !== (user?.company?.logo ?? null) ||
     decimals !== (user?.company?.decimalPlaces ?? 2);
+
+  // ─── Bulk Import (Items + Opening Balances) ─────────────────────────────
+  const itemsFileRef    = useRef<HTMLInputElement>(null);
+  const balancesFileRef = useRef<HTMLInputElement>(null);
+  const [itemsImporting,    setItemsImporting]    = useState(false);
+  const [balancesImporting, setBalancesImporting] = useState(false);
+  const [itemsReport,    setItemsReport]    = useState<{ created: number; updated: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+  const [balancesReport, setBalancesReport] = useState<{ applied: number; total: number; errors: { row: number; error: string }[] } | null>(null);
+
+  function downloadItemsTemplate() {
+    const headers = ["code","nameAr","nameEn","barcode","groupCode","unitCode","itemType","costPrice","salePrice","vatRate","reorderLevel","maxLevel","description"];
+    const example = [
+      ["ITM-001","حليب طازج 1 لتر","Fresh Milk 1L","6281234567890","DAIRY","PCS","stock",4.50,6.00,15,20,500,"حليب بقري طازج"],
+      ["ITM-002","خبز توست أبيض","White Toast Bread","6281234567891","BAKERY","PCS","stock",3.20,5.00,15,30,200,""],
+      ["SRV-001","رسوم توصيل","Delivery Fee","","SERVICES","SRV","service",0,15,15,0,"",""],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
+    ws["!cols"] = headers.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Items");
+    XLSX.writeFile(wb, "items_template.xlsx");
+  }
+
+  function downloadBalancesTemplate() {
+    const headers = ["itemCode","warehouseCode","qty","costPrice"];
+    const example = [
+      ["ITM-001","WH-MAIN",100,4.50],
+      ["ITM-002","WH-MAIN",50,3.20],
+      ["ITM-001","WH-SUB",25,4.50],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
+    ws["!cols"] = headers.map(() => ({ wch: 18 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "OpeningBalances");
+    XLSX.writeFile(wb, "opening_balances_template.xlsx");
+  }
+
+  async function parseExcelToObjects(file: File): Promise<any[]> {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, { defval: "" });
+  }
+
+  async function handleItemsUpload(file: File) {
+    setItemsImporting(true);
+    setItemsReport(null);
+    try {
+      const items = await parseExcelToObjects(file);
+      if (!items.length) throw new Error("الملف فارغ أو لا يحتوي على بيانات");
+      const cid = user?.company?.id ?? user?.companyId;
+      const res = await fetch(`${API}/api/inventory/import/items?companyId=${cid}`, {
+        method: "POST", headers, body: JSON.stringify({ items }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "فشل الاستيراد");
+      setItemsReport(j);
+      toast({ title: `تم: ${j.created} مُنشأ، ${j.updated} مُحدَّث${j.errors?.length ? ` — ${j.errors.length} خطأ` : ""}` });
+      qc.invalidateQueries({ queryKey: ["items"] });
+    } catch (e: any) {
+      toast({ title: e.message || "فشل الاستيراد", variant: "destructive" });
+    } finally {
+      setItemsImporting(false);
+    }
+  }
+
+  async function handleBalancesUpload(file: File) {
+    setBalancesImporting(true);
+    setBalancesReport(null);
+    try {
+      const balances = await parseExcelToObjects(file);
+      if (!balances.length) throw new Error("الملف فارغ أو لا يحتوي على بيانات");
+      const cid = user?.company?.id ?? user?.companyId;
+      const res = await fetch(`${API}/api/inventory/import/opening-balances?companyId=${cid}`, {
+        method: "POST", headers, body: JSON.stringify({ balances }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "فشل الاستيراد");
+      setBalancesReport(j);
+      toast({ title: `تم تطبيق ${j.applied} رصيد افتتاحي${j.errors?.length ? ` — ${j.errors.length} خطأ` : ""}` });
+      qc.invalidateQueries({ queryKey: ["stock-balance"] });
+    } catch (e: any) {
+      toast({ title: e.message || "فشل الاستيراد", variant: "destructive" });
+    } finally {
+      setBalancesImporting(false);
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-2xl" dir="rtl">
@@ -231,6 +319,117 @@ export default function GeneralSettings() {
           <span className="font-mono font-medium">
             {(1234.56789).toFixed(decimals)} ريال
           </span>
+        </div>
+      </div>
+
+      {/* ─── Bulk Import Section ──────────────────────────────────────────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-5">
+        <div>
+          <h2 className="font-semibold text-base flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+            استيراد البيانات من Excel
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            ارفع ملفات Excel جاهزة لإضافة الأصناف والأرصدة الافتتاحية بشكل جماعي. حمّل القالب أولاً، عبّئه، ثم ارفعه.
+          </p>
+        </div>
+
+        {/* Items Import Card */}
+        <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+              <Package className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">ملف الأصناف</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                الأعمدة: <span className="font-mono" dir="ltr">code, nameAr, nameEn, barcode, groupCode, unitCode, itemType, costPrice, salePrice, vatRate, reorderLevel, maxLevel, description</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                إذا كان الكود موجوداً يتم تحديث بياناته، وإلا يُنشأ صنف جديد. <span className="font-mono" dir="ltr">groupCode</span> و <span className="font-mono" dir="ltr">unitCode</span> اختياريان ويجب أن يطابقا أكواد المجموعات/الوحدات.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={downloadItemsTemplate} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />تحميل القالب
+            </Button>
+            <Button type="button" size="sm" onClick={() => itemsFileRef.current?.click()} disabled={itemsImporting} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+              {itemsImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {itemsImporting ? "جاري الرفع..." : "رفع ملف الأصناف"}
+            </Button>
+            <input
+              ref={itemsFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleItemsUpload(f); e.target.value = ""; }}
+            />
+          </div>
+          {itemsReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                النتيجة: <span className="text-green-600">{itemsReport.created} إضافة</span> · <span className="text-blue-600">{itemsReport.updated} تحديث</span> من إجمالي {itemsReport.total}
+                {itemsReport.errors?.length ? <span className="text-red-600"> · {itemsReport.errors.length} خطأ</span> : null}
+              </p>
+              {itemsReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {itemsReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>السطر {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Opening Balances Import Card */}
+        <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <Boxes className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">الأرصدة الافتتاحية (الكميات وأسعار التكلفة)</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                الأعمدة: <span className="font-mono" dir="ltr">itemCode, warehouseCode, qty, costPrice</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                يستبدل الرصيد الحالي للصنف في المخزن المحدد بالكمية والتكلفة المُدخلة، ويُسجَّل قيد افتتاحي في دفتر المخزون.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={downloadBalancesTemplate} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />تحميل القالب
+            </Button>
+            <Button type="button" size="sm" onClick={() => balancesFileRef.current?.click()} disabled={balancesImporting} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              {balancesImporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {balancesImporting ? "جاري الرفع..." : "رفع الأرصدة الافتتاحية"}
+            </Button>
+            <input
+              ref={balancesFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBalancesUpload(f); e.target.value = ""; }}
+            />
+          </div>
+          {balancesReport && (
+            <div className="rounded-md border bg-card px-3 py-2 text-xs space-y-1">
+              <p className="font-medium">
+                النتيجة: <span className="text-emerald-600">{balancesReport.applied} رصيد طُبِّق</span> من إجمالي {balancesReport.total}
+                {balancesReport.errors?.length ? <span className="text-red-600"> · {balancesReport.errors.length} خطأ</span> : null}
+              </p>
+              {balancesReport.errors?.length > 0 && (
+                <ul className="text-[11px] text-red-700 space-y-0.5 max-h-32 overflow-auto pr-2">
+                  {balancesReport.errors.slice(0, 50).map((er, i) => (
+                    <li key={i}>السطر {er.row}: {er.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
