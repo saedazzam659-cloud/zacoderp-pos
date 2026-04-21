@@ -268,6 +268,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
 
             {/* Cash & Banks */}
+            {!isSuperAdmin && <Route path="/cash"><Redirect to="/cash/boxes" /></Route>}
             {!isSuperAdmin && <Route path="/cash/boxes"            component={CashBoxes}       />}
             {!isSuperAdmin && <Route path="/cash/banks"            component={BankAccounts}    />}
             {!isSuperAdmin && <Route path="/cash/receipt-vouchers" component={ReceiptVouchers} />}
