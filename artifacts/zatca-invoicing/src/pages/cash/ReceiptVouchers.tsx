@@ -134,9 +134,9 @@ export default function ReceiptVouchers() {
       </div>
 
       {/* Split layout: Form (right) + List (left) */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* RIGHT panel — Form (always visible) */}
-        <div className="lg:col-span-2 rounded-xl border bg-card overflow-hidden flex flex-col lg:sticky lg:top-4">
+        <div className="rounded-xl border bg-card overflow-hidden flex flex-col lg:sticky lg:top-4">
           <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
             <div className="flex items-center gap-2">
               <ArrowDownCircle className="h-4 w-4 text-green-600" />
