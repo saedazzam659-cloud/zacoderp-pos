@@ -213,7 +213,7 @@ export default function GeneralSettings() {
 
       {/* ─── Tabs Header (3 tabs aligned to top-right in RTL) ───────────────── */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 h-11 bg-muted/50">
+        <TabsList className="grid w-full grid-cols-4 h-11 bg-muted/50">
           <TabsTrigger value="general" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Settings2 className="h-4 w-4" />
             عام
@@ -225,6 +225,10 @@ export default function GeneralSettings() {
           <TabsTrigger value="balances" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Boxes className="h-4 w-4" />
             الأرصدة الافتتاحية
+          </TabsTrigger>
+          <TabsTrigger value="decimals" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Hash className="h-4 w-4" />
+            دقة الأرقام
           </TabsTrigger>
         </TabsList>
 
@@ -304,46 +308,7 @@ export default function GeneralSettings() {
         )}
       </div>
 
-      {/* ─── Decimal Places Section ────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-5 space-y-4">
-        <h2 className="font-semibold text-base flex items-center gap-2">
-          <Hash className="h-4 w-4 text-muted-foreground" />
-          دقة الأرقام العشرية في المبالغ
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          يُطبَّق هذا الإعداد على جميع حقول المبالغ في الفواتير
-        </p>
-
-        <div className="grid grid-cols-5 gap-2">
-          {DECIMAL_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setDecimals(opt.value)}
-              className={cn(
-                "flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 transition-all",
-                decimals === opt.value
-                  ? "border-primary bg-primary/10 text-primary shadow-sm"
-                  : "border-muted-foreground/20 hover:border-primary/40 hover:bg-muted/40 text-foreground"
-              )}
-            >
-              <span className="font-mono text-base font-bold">{opt.label}</span>
-              <span className="text-[9px] font-mono text-muted-foreground leading-tight text-center">{opt.example}</span>
-              {decimals === opt.value && (
-                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm">
-          <span className="text-muted-foreground">مثال: </span>
-          <span className="font-mono font-medium">
-            {(1234.56789).toFixed(decimals)} ريال
-          </span>
-        </div>
-      </div>
-
-      {/* ─── Save Button (inside General tab) ─────────────────────────────── */}
+      {/* ─── Save Button (inside General tab — saves logo + decimals together) ─ */}
       <div className="flex items-center justify-between gap-4">
         {isDirty ? (
           <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
@@ -467,6 +432,68 @@ export default function GeneralSettings() {
             </div>
           )}
         </div>
+        </TabsContent>
+
+        {/* ═══ TAB 4: Decimal Places ═════════════════════════════════════════ */}
+        <TabsContent value="decimals" className="mt-5 space-y-6">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <h2 className="font-semibold text-base flex items-center gap-2">
+              <Hash className="h-4 w-4 text-muted-foreground" />
+              دقة الأرقام العشرية في المبالغ
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              يُطبَّق هذا الإعداد على جميع حقول المبالغ في الفواتير
+            </p>
+
+            <div className="grid grid-cols-5 gap-2">
+              {DECIMAL_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDecimals(opt.value)}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 transition-all",
+                    decimals === opt.value
+                      ? "border-primary bg-primary/10 text-primary shadow-sm"
+                      : "border-muted-foreground/20 hover:border-primary/40 hover:bg-muted/40 text-foreground"
+                  )}
+                >
+                  <span className="font-mono text-base font-bold">{opt.label}</span>
+                  <span className="text-[9px] font-mono text-muted-foreground leading-tight text-center">{opt.example}</span>
+                  {decimals === opt.value && (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm">
+              <span className="text-muted-foreground">مثال: </span>
+              <span className="font-mono font-medium">
+                {(1234.56789).toFixed(decimals)} ريال
+              </span>
+            </div>
+          </div>
+
+          {/* Save button (also saves logo + decimals together) */}
+          <div className="flex items-center justify-between gap-4">
+            {isDirty ? (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                • يوجد تغييرات غير محفوظة
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">كل التغييرات محفوظة</p>
+            )}
+            <Button
+              onClick={handleSave}
+              disabled={saveMutation.isPending || !isDirty}
+              className="gap-2 min-w-36"
+            >
+              {saveMutation.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الحفظ...</>
+                : <><CheckCircle2 className="h-4 w-4" />حفظ الإعدادات</>
+              }
+            </Button>
+          </div>
         </TabsContent>
       </Tabs>
 
