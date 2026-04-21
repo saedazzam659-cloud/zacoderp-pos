@@ -320,11 +320,24 @@ export default function PurchaseInvoiceForm() {
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
-      const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
+      const j = await res.json(); if (!res.ok) throw new Error(j.error);
+
+      // Auto-post (ترحيل) immediately after save, only if still draft
+      if (j?.id && (j.status ?? "draft") === "draft") {
+        const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
+          method: "PATCH", headers,
+        });
+        const postJson = await postRes.json().catch(() => ({}));
+        if (!postRes.ok) {
+          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${postJson.error || postRes.statusText}`);
+        }
+        return postJson;
+      }
+      return j;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
-      toast({ title: isNew ? "✓ تم إنشاء الفاتورة" : "✓ تم الحفظ" });
+      toast({ title: isNew ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم الحفظ والترحيل" });
       navigate("/purchasing/invoices");
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
