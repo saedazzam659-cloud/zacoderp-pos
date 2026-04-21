@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet
@@ -210,6 +211,26 @@ export default function GeneralSettings() {
         </div>
       )}
 
+      {/* ─── Tabs Header (3 tabs aligned to top-right in RTL) ───────────────── */}
+      <Tabs defaultValue="general" dir="rtl" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 h-11 bg-muted/50">
+          <TabsTrigger value="general" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Settings2 className="h-4 w-4" />
+            عام
+          </TabsTrigger>
+          <TabsTrigger value="items" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Package className="h-4 w-4" />
+            استيراد الأصناف
+          </TabsTrigger>
+          <TabsTrigger value="balances" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Boxes className="h-4 w-4" />
+            الأرصدة الافتتاحية
+          </TabsTrigger>
+        </TabsList>
+
+        {/* ═══ TAB 1: General (Logo + Decimals + Save) ═══════════════════════ */}
+        <TabsContent value="general" className="mt-5 space-y-6">
+
       {/* ─── Logo Section ──────────────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
@@ -322,20 +343,32 @@ export default function GeneralSettings() {
         </div>
       </div>
 
-      {/* ─── Bulk Import Section ──────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-5 space-y-5">
-        <div>
-          <h2 className="font-semibold text-base flex items-center gap-2">
-            <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-            استيراد البيانات من Excel
-          </h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            ارفع ملفات Excel جاهزة لإضافة الأصناف والأرصدة الافتتاحية بشكل جماعي. حمّل القالب أولاً، عبّئه، ثم ارفعه.
+      {/* ─── Save Button (inside General tab) ─────────────────────────────── */}
+      <div className="flex items-center justify-between gap-4">
+        {isDirty ? (
+          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+            • يوجد تغييرات غير محفوظة
           </p>
-        </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">كل التغييرات محفوظة</p>
+        )}
+        <Button
+          onClick={handleSave}
+          disabled={saveMutation.isPending || !isDirty}
+          className="gap-2 min-w-36"
+        >
+          {saveMutation.isPending
+            ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الحفظ...</>
+            : <><CheckCircle2 className="h-4 w-4" />حفظ الإعدادات</>
+          }
+        </Button>
+      </div>
 
-        {/* Items Import Card */}
-        <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+        </TabsContent>
+
+        {/* ═══ TAB 2: Items Import ═══════════════════════════════════════════ */}
+        <TabsContent value="items" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
               <Package className="h-5 w-5" />
@@ -383,8 +416,11 @@ export default function GeneralSettings() {
           )}
         </div>
 
-        {/* Opening Balances Import Card */}
-        <div className="rounded-lg border bg-muted/10 p-4 space-y-3">
+        </TabsContent>
+
+        {/* ═══ TAB 3: Opening Balances Import ════════════════════════════════ */}
+        <TabsContent value="balances" className="mt-5">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
           <div className="flex items-start gap-3">
             <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
               <Boxes className="h-5 w-5" />
@@ -431,28 +467,8 @@ export default function GeneralSettings() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* ─── Save Button ──────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-4">
-        {isDirty ? (
-          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
-            • يوجد تغييرات غير محفوظة
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">كل التغييرات محفوظة</p>
-        )}
-        <Button
-          onClick={handleSave}
-          disabled={saveMutation.isPending || !isDirty}
-          className="gap-2 min-w-36"
-        >
-          {saveMutation.isPending
-            ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الحفظ...</>
-            : <><CheckCircle2 className="h-4 w-4" />حفظ الإعدادات</>
-          }
-        </Button>
-      </div>
+        </TabsContent>
+      </Tabs>
 
     </div>
   );
