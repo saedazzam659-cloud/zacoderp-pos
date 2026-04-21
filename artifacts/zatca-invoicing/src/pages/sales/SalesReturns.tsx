@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Label } from "@/components/ui/label";
@@ -402,7 +403,20 @@ export default function SalesReturns() {
           saveDisabled={!form.returnDate}
           saveLabel="حفظ المرتجع"
         >
-          <div className="space-y-5">
+          <Tabs defaultValue="header" dir="rtl" className="space-y-4">
+            <TabsList className="h-9 bg-muted/40 border gap-1">
+              <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Calculator className="h-3.5 w-3.5" />حسابات القيد
+              </TabsTrigger>
+              <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+              </TabsTrigger>
+              <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemId || l.itemName).length})
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="header" className="mt-0 space-y-5">
             <FormGrid>
               <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
@@ -456,8 +470,10 @@ export default function SalesReturns() {
               )}
               <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
+            </TabsContent>
 
-            <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-3 space-y-3">
+            <TabsContent value="accounts" className="mt-0">
+            <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
               <div className="flex items-center gap-2 text-blue-900">
                 <Calculator className="h-4 w-4" />
                 <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل المرتجع)</span>
@@ -484,11 +500,13 @@ export default function SalesReturns() {
                     placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
                 </div>
               </div>
-              <p className="text-[10px] text-blue-900/70">
+              <p className="text-[11px] text-blue-900/70">
                 إذا تم اختيار فاتورة المبيعات، فسيتم استخدام نفس حسابات الفاتورة تلقائياً.
               </p>
             </div>
+            </TabsContent>
 
+            <TabsContent value="lines" className="mt-0 space-y-5">
             <div className="space-y-3">
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
               {lines.map(l => (
@@ -594,7 +612,8 @@ export default function SalesReturns() {
                 <div className="flex justify-between"><span className="text-muted-foreground">قيمة الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
               </div>
             </div>
-          </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
