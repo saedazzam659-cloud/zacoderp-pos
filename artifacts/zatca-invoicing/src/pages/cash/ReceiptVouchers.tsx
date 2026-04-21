@@ -267,7 +267,7 @@ export default function ReceiptVouchers() {
                   </td>
                   <td className="px-4 py-3 text-center hidden lg:table-cell">
                     {row.journalEntryId
-                      ? <a href={`${import.meta.env.BASE_URL}accounting/journals/${row.journalEntryId}`} className="text-xs font-mono text-primary hover:underline" title="عرض القيد المحاسبي">JE-{row.journalEntryId}</a>
+                      ? <a href={`${import.meta.env.BASE_URL}accounting/journals/${row.journalEntryId}?tab=lines`} className="text-xs font-mono text-primary hover:underline" title="عرض سطور القيد المحاسبي">JE-{row.journalEntryId}</a>
                       : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-3 text-center">

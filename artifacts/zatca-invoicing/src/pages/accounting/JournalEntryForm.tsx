@@ -57,7 +57,13 @@ export default function JournalEntryForm() {
   const qc       = useQueryClient();
   const { toast } = useToast();
 
-  const [activeTab,    setActiveTab]    = useState("header");
+  const [activeTab,    setActiveTab]    = useState(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("tab") === "lines") return "lines";
+    }
+    return "header";
+  });
   const [docNumber,    setDocNumber]    = useState("");
   const [entryDate,    setEntryDate]    = useState(today());
   const [currency,     setCurrency]     = useState("SAR");
