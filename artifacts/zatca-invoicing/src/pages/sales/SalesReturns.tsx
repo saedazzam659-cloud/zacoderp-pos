@@ -691,7 +691,9 @@ export default function SalesReturns() {
                 const st = STATUS[r.status] ?? STATUS.draft;
                 const inv = invoices.find((i: any) => i.id === r.invoiceId);
                 return (
-                  <tr key={r.id} className="border-b hover:bg-muted/30">
+                  <tr key={r.id} className="border-b hover:bg-muted/30 cursor-pointer"
+                    onDoubleClick={() => editReturn(r.id)}
+                    title={r.status === "draft" ? "انقر مرتين للتعديل" : "انقر مرتين للعرض (فك الترحيل أولاً للتعديل)"}>
                     <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber ?? `SR-${r.id}`}</td>
                     <td className="px-3 py-2.5">{r.returnDate}</td>
                     <td className="px-3 py-2.5">{cusMap[r.customerId] ?? "—"}</td>

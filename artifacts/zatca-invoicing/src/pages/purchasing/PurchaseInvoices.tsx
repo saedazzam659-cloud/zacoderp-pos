@@ -178,7 +178,9 @@ export default function PurchaseInvoices() {
                 {filtered.map(inv => {
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   return (
-                    <tr key={inv.id} className="border-b hover:bg-muted/30 transition-colors">
+                    <tr key={inv.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
+                      onDoubleClick={() => navigate(`/purchasing/invoices/${inv.id}`)}
+                      title="انقر مرتين للفتح والتعديل">
                       <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">
                         {inv.docNumber ?? `PI-${inv.id}`}
                       </td>
