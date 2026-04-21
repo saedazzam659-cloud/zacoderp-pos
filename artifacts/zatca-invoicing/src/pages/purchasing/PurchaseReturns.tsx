@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2 } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
@@ -57,6 +57,7 @@ export default function PurchaseReturns() {
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [printData, setPrintData] = useState<any>(null);
@@ -177,11 +178,15 @@ export default function PurchaseReturns() {
 
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`${API}/api/purchasing/purchase-returns`, {
-        method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
+      const isEdit = !!editingId;
+      const url = isEdit
+        ? `${API}/api/purchasing/purchase-returns/${editingId}`
+        : `${API}/api/purchasing/purchase-returns`;
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
-      if (j?.id && (j.status ?? "draft") === "draft") {
+      if (!isEdit && j?.id && (j.status ?? "draft") === "draft") {
         const pr = await fetch(`${API}/api/purchasing/purchase-returns/${j.id}/post`, { method: "PATCH", headers });
         const pj = await pr.json().catch(() => ({}));
         if (!pr.ok) throw new Error(`تم الحفظ ولكن فشل الترحيل: ${pj.error || pr.statusText}`);
@@ -189,7 +194,7 @@ export default function PurchaseReturns() {
       }
       return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم إنشاء المرتجع وترحيله" }); },
+    onSuccess: () => { invalidate(); reset(); toast({ title: editingId ? "✓ تم تعديل المرتجع" : "✓ تم إنشاء المرتجع وترحيله" }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -220,9 +225,52 @@ export default function PurchaseReturns() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  async function startEdit(retId: number) {
+    try {
+      const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
+      if (!res.ok) { toast({ title: "تعذّر تحميل المرتجع", variant: "destructive" }); return; }
+      const full = await res.json();
+      setEditingId(retId);
+      setForm({
+        docNumber:    full.docNumber ?? "",
+        returnDate:   full.returnDate ?? today(),
+        supplierId:   full.supplierId ? String(full.supplierId) : "",
+        branchId:     full.branchId   ? String(full.branchId)   : "",
+        invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
+        paymentType:  full.paymentType ?? "credit",
+        cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
+        currencyCode: full.currencyCode ?? "",
+        exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
+        notes:        full.notes ?? "",
+        discountAmount: String(full.discountAmount ?? "0"),
+        inventoryAccountId: full.inventoryAccountId ? String(full.inventoryAccountId) : "",
+        taxAccountId:       full.taxAccountId       ? String(full.taxAccountId)       : "",
+        discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
+      });
+      setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
+        _id:         crypto.randomUUID(),
+        itemId:      l.itemId      ? String(l.itemId)      : "",
+        itemName:    l.itemName    ?? "",
+        itemCode:    l.itemCode    ?? "",
+        unitId:      l.unitId      ? String(l.unitId)      : "",
+        unit:        l.unit        ?? "",
+        conversionFactor: String(l.conversionFactor ?? "1"),
+        warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+        qty:         String(l.qty ?? "1"),
+        unitPrice:   String(l.unitPrice ?? "0"),
+        vatRate:     String(l.vatRate   ?? "15"),
+        lineTotal:   String(l.lineTotal ?? "0"),
+      })) : [newLine()]);
+      setShowForm(true);
+    } catch (e: any) {
+      toast({ title: e.message || "خطأ في التحميل", variant: "destructive" });
+    }
+  }
+
   function reset() {
     setForm({ ...EMPTY });
     setLines([newLine()]);
+    setEditingId(null);
     setShowForm(false);
     // clear fromInvoice param from URL without navigation
     const url = new URL(window.location.href);
@@ -416,7 +464,7 @@ export default function PurchaseReturns() {
       {showForm && (
         <FormPanel
           icon={RotateCcw}
-          title="مرتجع مشتريات جديد"
+          title={editingId ? "تعديل مرتجع مشتريات" : "مرتجع مشتريات جديد"}
           subtitle={form.invoiceId
             ? <>مستند من فاتورة رقم <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> — يمكنك تعديل الكميات قبل الحفظ</>
             : "إرجاع أصناف من فاتورة مشتريات وتقليل المخزون"}
@@ -814,6 +862,12 @@ export default function PurchaseReturns() {
                         title="طباعة المرتجع" onClick={() => openPrint(r)}>
                         <Printer className="h-3.5 w-3.5" />
                       </Button>
+                      {r.status === "draft" && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-700 hover:bg-blue-50"
+                          title="تعديل المرتجع" onClick={() => startEdit(r.id)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                       {r.status === "draft" && (
                         <Button
                           variant="outline" size="sm"
