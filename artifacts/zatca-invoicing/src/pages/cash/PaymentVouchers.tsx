@@ -45,7 +45,10 @@ export default function PaymentVouchers() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, cashBoxId: form.cashBoxId ? parseInt(form.cashBoxId) : null, bankAccountId: form.bankAccountId ? parseInt(form.bankAccountId) : null, entityId: form.entityId ? parseInt(form.entityId) : null };
+      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
+      const amtNum = Number(cleanAmt);
+      if (!isFinite(amtNum) || amtNum <= 0) throw new Error("المبلغ غير صحيح");
+      const body = { ...form, amount: amtNum.toFixed(2), companyId: cid, accountId: acctId ? parseInt(acctId) : null, cashBoxId: form.cashBoxId ? parseInt(form.cashBoxId) : null, bankAccountId: form.bankAccountId ? parseInt(form.bankAccountId) : null, entityId: form.entityId ? parseInt(form.entityId) : null };
       const url = editing ? `${API}/api/payment-vouchers/${editing.id}` : `${API}/api/payment-vouchers`;
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
@@ -178,13 +181,14 @@ export default function PaymentVouchers() {
               <th className="h-9 px-4 text-right font-medium hidden md:table-cell">الجهة</th>
               <th className="h-9 px-4 text-right font-medium hidden md:table-cell">وسيلة الدفع</th>
               <th className="h-9 px-4 text-right font-medium">المبلغ</th>
+              <th className="h-9 px-4 text-center font-medium hidden lg:table-cell">رقم القيد</th>
               <th className="h-9 px-4 text-center font-medium">الحالة</th>
               <th className="h-9 px-4 text-center font-medium w-28">إجراء</th>
             </tr></thead>
             <tbody>
-              {isLoading ? Array.from({ length: 4 }).map((_, i) => (<tr key={i} className="border-b"><td colSpan={7} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>))
+              {isLoading ? Array.from({ length: 4 }).map((_, i) => (<tr key={i} className="border-b"><td colSpan={8} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>))
               : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-14 text-center text-muted-foreground">
+                <tr><td colSpan={8} className="py-14 text-center text-muted-foreground">
                   <ArrowUpCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">{search ? "لا توجد نتائج" : "لا توجد سندات صرف بعد"}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند صرف جديد</Button>}
@@ -196,6 +200,7 @@ export default function PaymentVouchers() {
                   <td className="px-4 py-3 hidden md:table-cell"><span className="text-xs bg-muted px-2 py-0.5 rounded-full">{ENTITY_LABELS[row.entityType] || "—"}</span>{row.entityName && <p className="text-xs text-muted-foreground mt-0.5">{row.entityName}</p>}</td>
                   <td className="px-4 py-3 hidden md:table-cell"><span className={`text-xs px-2 py-0.5 rounded-full ${row.paymentType === "cash" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>{row.paymentType === "cash" ? "نقداً" : "بنك"}</span></td>
                   <td className="px-4 py-3 font-medium text-red-600">{parseFloat(row.amount || "0").toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-3 text-center hidden lg:table-cell">{row.journalEntryId ? <a href={`${import.meta.env.BASE_URL}accounting/journals/${row.journalEntryId}`} className="text-xs font-mono text-primary hover:underline" title="عرض القيد المحاسبي">JE-{row.journalEntryId}</a> : <span className="text-xs text-muted-foreground">—</span>}</td>
                   <td className="px-4 py-3 text-center">{row.status === "posted" ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full"><CheckCircle2 className="h-3 w-3" />مرحّل</span> : <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"><Clock className="h-3 w-3" />مسودة</span>}</td>
                   <td className="px-4 py-3 text-center"><div className="flex justify-center gap-1">{row.status === "draft" ? <><button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="تعديل"><Pencil className="h-3.5 w-3.5" /></button><button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button><button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title="حذف"><Trash2 className="h-3.5 w-3.5" /></button></> : <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title="فك الترحيل"><Undo2 className="h-3.5 w-3.5" /></button>}</div></td>
                 </tr>

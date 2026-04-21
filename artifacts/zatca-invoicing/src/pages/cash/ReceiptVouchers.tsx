@@ -73,7 +73,10 @@ export default function ReceiptVouchers() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, cashBoxId: form.cashBoxId ? parseInt(form.cashBoxId) : null, bankAccountId: form.bankAccountId ? parseInt(form.bankAccountId) : null, entityId: form.entityId ? parseInt(form.entityId) : null };
+      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
+      const amtNum = Number(cleanAmt);
+      if (!isFinite(amtNum) || amtNum <= 0) throw new Error("المبلغ غير صحيح");
+      const body = { ...form, amount: amtNum.toFixed(2), companyId: cid, accountId: acctId ? parseInt(acctId) : null, cashBoxId: form.cashBoxId ? parseInt(form.cashBoxId) : null, bankAccountId: form.bankAccountId ? parseInt(form.bankAccountId) : null, entityId: form.entityId ? parseInt(form.entityId) : null };
       const url = editing ? `${API}/api/receipt-vouchers/${editing.id}` : `${API}/api/receipt-vouchers`;
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
@@ -226,15 +229,16 @@ export default function ReceiptVouchers() {
                 <th className="h-9 px-4 text-right font-medium hidden md:table-cell">الجهة</th>
                 <th className="h-9 px-4 text-right font-medium hidden md:table-cell">وسيلة الدفع</th>
                 <th className="h-9 px-4 text-right font-medium">المبلغ</th>
+                <th className="h-9 px-4 text-center font-medium hidden lg:table-cell">رقم القيد</th>
                 <th className="h-9 px-4 text-center font-medium">الحالة</th>
                 <th className="h-9 px-4 text-center font-medium w-28">إجراء</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i} className="border-b"><td colSpan={7} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
+                <tr key={i} className="border-b"><td colSpan={8} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
               )) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-14 text-center text-muted-foreground">
+                <tr><td colSpan={8} className="py-14 text-center text-muted-foreground">
                   <ArrowDownCircle className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">{search ? "لا توجد نتائج" : "لا توجد سندات قبض بعد"}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className="h-3.5 w-3.5 mr-1" />سند قبض جديد</Button>}
@@ -260,6 +264,11 @@ export default function ReceiptVouchers() {
                   </td>
                   <td className="px-4 py-3 font-medium text-green-700">
                     {parseFloat(row.amount || "0").toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="px-4 py-3 text-center hidden lg:table-cell">
+                    {row.journalEntryId
+                      ? <a href={`${import.meta.env.BASE_URL}accounting/journals/${row.journalEntryId}`} className="text-xs font-mono text-primary hover:underline" title="عرض القيد المحاسبي">JE-{row.journalEntryId}</a>
+                      : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {row.status === "posted"
