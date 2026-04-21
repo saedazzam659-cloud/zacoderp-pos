@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send } from "lucide-react";
+import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -27,8 +27,9 @@ export default function PaymentVouchers() {
   const [editing, setEditing] = useState<any>(null);
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
   const [acctId,  setAcctId]  = useState("");
-  const [postRow, setPostRow] = useState<any>(null);
-  const [delRow,  setDelRow]  = useState<any>(null);
+  const [postRow,   setPostRow]   = useState<any>(null);
+  const [delRow,    setDelRow]    = useState<any>(null);
+  const [unpostRow, setUnpostRow] = useState<any>(null);
 
   const { data: vouchers = [],     isLoading } = useQuery({ queryKey: ["payment-vouchers", cid], queryFn: () => fetch(`${API}/api/payment-vouchers?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
   const { data: cashBoxes = [] }               = useQuery({ queryKey: ["cash-boxes", cid],       queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
@@ -71,6 +72,16 @@ export default function PaymentVouchers() {
     mutationFn: async (id: number) => { const res = await fetch(`${API}/api/payment-vouchers/${id}`, { method: "DELETE", headers: h }); if (!res.ok && res.status !== 204) throw new Error((await res.json()).error); },
     onSuccess: () => { toast({ title: "تم الحذف" }); qc.invalidateQueries({ queryKey: ["payment-vouchers"] }); setDelRow(null); },
     onError: (e: any) => toast({ title: e.message || "تعذّر الحذف", variant: "destructive" }),
+  });
+
+  const unpostMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/payment-vouchers/${id}/unpost`, { method: "POST", headers: h });
+      if (!res.ok) throw new Error((await res.json()).error || "فشل فك الترحيل");
+      return res.json();
+    },
+    onSuccess: () => { toast({ title: "تم فك الترحيل وحذف القيد المحاسبي" }); qc.invalidateQueries({ queryKey: ["payment-vouchers"] }); setUnpostRow(null); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   function f(name: keyof typeof EMPTY) { return { value: form[name] as string, onChange: (e: any) => setForm(p => ({ ...p, [name]: e.target.value })) }; }
@@ -186,7 +197,7 @@ export default function PaymentVouchers() {
                   <td className="px-4 py-3 hidden md:table-cell"><span className={`text-xs px-2 py-0.5 rounded-full ${row.paymentType === "cash" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700"}`}>{row.paymentType === "cash" ? "نقداً" : "بنك"}</span></td>
                   <td className="px-4 py-3 font-medium text-red-600">{parseFloat(row.amount || "0").toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-center">{row.status === "posted" ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full"><CheckCircle2 className="h-3 w-3" />مرحّل</span> : <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"><Clock className="h-3 w-3" />مسودة</span>}</td>
-                  <td className="px-4 py-3 text-center"><div className="flex justify-center gap-1">{row.status === "draft" && <><button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button><button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button><button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button></>}</div></td>
+                  <td className="px-4 py-3 text-center"><div className="flex justify-center gap-1">{row.status === "draft" ? <><button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="تعديل"><Pencil className="h-3.5 w-3.5" /></button><button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button><button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title="حذف"><Trash2 className="h-3.5 w-3.5" /></button></> : <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title="فك الترحيل"><Undo2 className="h-3.5 w-3.5" /></button>}</div></td>
                 </tr>
               ))}
             </tbody>
@@ -199,6 +210,11 @@ export default function PaymentVouchers() {
       <AlertDialog open={!!postRow} onOpenChange={v => { if (!v) setPostRow(null); }}>
         <AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2"><Send className="h-5 w-5 text-green-600" />ترحيل سند الصرف</AlertDialogTitle><AlertDialogDescription>هل تريد ترحيل <strong>{postRow?.code}</strong> بمبلغ <strong>{parseFloat(postRow?.amount || "0").toLocaleString("ar-SA-u-nu-latn")}</strong>؟ لا يمكن التعديل بعد الترحيل.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel>إلغاء</AlertDialogCancel><AlertDialogAction className="bg-green-600 hover:bg-green-700" onClick={() => postMut.mutate(postRow.id)} disabled={postMut.isPending}>{postMut.isPending ? "جاري الترحيل..." : "ترحيل"}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!unpostRow} onOpenChange={v => { if (!v) setUnpostRow(null); }}>
+        <AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle className="flex items-center gap-2"><Undo2 className="h-5 w-5 text-amber-600" />فك ترحيل سند الصرف</AlertDialogTitle><AlertDialogDescription>سيتم إعادة السند <strong>{unpostRow?.code}</strong> إلى مسودة وحذف القيد المحاسبي المرتبط به. هل أنت متأكد؟</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>إلغاء</AlertDialogCancel><AlertDialogAction className="bg-amber-600 hover:bg-amber-700" onClick={() => unpostMut.mutate(unpostRow.id)} disabled={unpostMut.isPending}>{unpostMut.isPending ? "جاري فك الترحيل..." : "فك الترحيل"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
       <AlertDialog open={!!delRow} onOpenChange={v => { if (!v) setDelRow(null); }}>

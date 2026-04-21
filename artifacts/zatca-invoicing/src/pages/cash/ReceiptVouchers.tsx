@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send } from "lucide-react";
+import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -28,8 +28,9 @@ export default function ReceiptVouchers() {
   const [editing, setEditing] = useState<any>(null);
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
   const [acctId,  setAcctId]  = useState("");
-  const [postRow, setPostRow] = useState<any>(null);
-  const [delRow,  setDelRow]  = useState<any>(null);
+  const [postRow,   setPostRow]   = useState<any>(null);
+  const [delRow,    setDelRow]    = useState<any>(null);
+  const [unpostRow, setUnpostRow] = useState<any>(null);
 
   const { data: vouchers = [], isLoading } = useQuery({
     queryKey: ["receipt-vouchers", cid],
@@ -103,6 +104,16 @@ export default function ReceiptVouchers() {
     mutationFn: async (id: number) => { const res = await fetch(`${API}/api/receipt-vouchers/${id}`, { method: "DELETE", headers: h }); if (!res.ok && res.status !== 204) throw new Error((await res.json()).error); },
     onSuccess: () => { toast({ title: "تم الحذف" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setDelRow(null); },
     onError: (e: any) => toast({ title: e.message || "تعذّر الحذف", variant: "destructive" }),
+  });
+
+  const unpostMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/receipt-vouchers/${id}/unpost`, { method: "POST", headers: h });
+      if (!res.ok) throw new Error((await res.json()).error || "فشل فك الترحيل");
+      return res.json();
+    },
+    onSuccess: () => { toast({ title: "تم فك الترحيل وحذف القيد المحاسبي" }); qc.invalidateQueries({ queryKey: ["receipt-vouchers"] }); setUnpostRow(null); },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   function f(name: keyof typeof EMPTY) {
@@ -257,10 +268,12 @@ export default function ReceiptVouchers() {
                   </td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex justify-center gap-1">
-                      {row.status === "draft" && <>
-                        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button>
+                      {row.status === "draft" ? <>
+                        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="تعديل"><Pencil className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title="ترحيل"><Send className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title="حذف"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </> : <>
+                        <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title="فك الترحيل"><Undo2 className="h-3.5 w-3.5" /></button>
                       </>}
                     </div>
                   </td>
@@ -285,6 +298,23 @@ export default function ReceiptVouchers() {
             <AlertDialogCancel>إلغاء</AlertDialogCancel>
             <AlertDialogAction className="bg-green-600 hover:bg-green-700" onClick={() => postMut.mutate(postRow.id)} disabled={postMut.isPending}>
               {postMut.isPending ? "جاري الترحيل..." : "ترحيل"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!unpostRow} onOpenChange={v => { if (!v) setUnpostRow(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2"><Undo2 className="h-5 w-5 text-amber-600" />فك ترحيل سند القبض</AlertDialogTitle>
+            <AlertDialogDescription>
+              سيتم إعادة السند <strong>{unpostRow?.code}</strong> إلى مسودة وحذف القيد المحاسبي المرتبط به. هل أنت متأكد؟
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction className="bg-amber-600 hover:bg-amber-700" onClick={() => unpostMut.mutate(unpostRow.id)} disabled={unpostMut.isPending}>
+              {unpostMut.isPending ? "جاري فك الترحيل..." : "فك الترحيل"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
