@@ -16,6 +16,92 @@ function getCompanyId(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+// ─── BULK IMPORT ──────────────────────────────────────────────────────────────
+router.post("/bulk-import", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { accounts, mode = "append" } = req.body as { accounts: any[]; mode?: "append" | "replace" };
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      res.status(400).json({ error: "لا توجد حسابات للاستيراد" }); return;
+    }
+
+    if (accounts.length > 5000) {
+      res.status(400).json({ error: "الحد الأقصى 5000 حساب في المرة الواحدة" }); return;
+    }
+
+    // Insert parents before children — sort by code length then code value
+    const sorted = [...accounts].sort((a, b) => {
+      const la = String(a.code ?? "").length, lb = String(b.code ?? "").length;
+      if (la !== lb) return la - lb;
+      return String(a.code ?? "").localeCompare(String(b.code ?? ""));
+    });
+
+    const validTypes = new Set(["asset", "liability", "equity", "revenue", "expense"]);
+
+    const performImport = async (tx: any) => {
+      if (mode === "replace") {
+        await tx.delete(accountsTable).where(eq(accountsTable.companyId, cid));
+      }
+      const existing = mode === "replace"
+        ? []
+        : await tx.select().from(accountsTable).where(eq(accountsTable.companyId, cid));
+      const codeToId: Record<string, number> = {};
+      for (const a of existing) codeToId[a.code] = a.id;
+
+      let inserted = 0, updated = 0, skipped = 0;
+      const errors: string[] = [];
+
+      for (const a of sorted) {
+        try {
+          const code   = String(a.code ?? "").trim();
+          const nameAr = String(a.nameAr ?? "").trim();
+          const accountType = String(a.accountType ?? "").trim();
+          if (!code || !nameAr || !accountType) { skipped++; errors.push(`سطر بدون كود/اسم/نوع: ${code || "—"}`); continue; }
+          if (!validTypes.has(accountType)) { skipped++; errors.push(`${code}: نوع حساب غير صحيح (${accountType})`); continue; }
+
+          const parentCode = a.parentCode ? String(a.parentCode).trim() : null;
+          const parentId   = parentCode ? (codeToId[parentCode] ?? null) : null;
+          if (parentCode && !parentId) errors.push(`${code}: لم يُعثر على الحساب الأب (${parentCode})`);
+
+          if (codeToId[code]) {
+            await tx.update(accountsTable).set({
+              nameAr, nameEn: a.nameEn || null,
+              accountType: accountType as any,
+              parentId, level: a.level ?? (parentCode ? 2 : 1),
+              isPosting: typeof a.isPosting === "boolean" ? a.isPosting : true,
+              isActive:  typeof a.isActive  === "boolean" ? a.isActive  : true,
+              notes: a.notes || null, updatedAt: new Date(),
+            }).where(and(eq(accountsTable.companyId, cid), eq(accountsTable.code, code)));
+            updated++;
+          } else {
+            const [row] = await tx.insert(accountsTable).values({
+              companyId: cid, code, nameAr, nameEn: a.nameEn || null,
+              accountType: accountType as any,
+              parentId, level: a.level ?? (parentCode ? 2 : 1),
+              isPosting: typeof a.isPosting === "boolean" ? a.isPosting : true,
+              isActive:  typeof a.isActive  === "boolean" ? a.isActive  : true,
+              notes: a.notes || null,
+            }).returning();
+            codeToId[code] = row.id;
+            inserted++;
+          }
+        } catch (err: any) {
+          errors.push(`${a.code || "—"}: ${err.message}`);
+          skipped++;
+        }
+      }
+      return { inserted, updated, skipped, errors };
+    };
+
+    // Wrap in a transaction for replace mode (atomic delete + insert).
+    const result = mode === "replace"
+      ? await db.transaction(async (tx) => performImport(tx))
+      : await performImport(db);
+
+    res.json({ ...result, total: accounts.length, errors: result.errors.slice(0, 25) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {

@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -334,6 +335,8 @@ export default function ChartOfAccounts() {
         </table>
         {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length} حساب</div>}
       </div>
+
+      <AccountsImportPanel />
 
     </div>
   );
