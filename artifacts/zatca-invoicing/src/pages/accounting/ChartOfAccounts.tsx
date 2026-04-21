@@ -34,7 +34,11 @@ const EXPORT_COLS = [
   { key: "level",       header: "المستوى",        width: 10 },
   { key: "isPosting",   header: "قيد",            width: 10 },
   { key: "isActive",    header: "الحالة",          width: 10 },
+  { key: "balance",     header: "الرصيد",          width: 16 },
 ];
+
+const fmtMoney = (n: number) =>
+  new Intl.NumberFormat("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 
 const REPORT_DIRECTIONS = [
   { value: "",               label: "— تلقائي حسب النوع —" },
@@ -79,7 +83,47 @@ export default function ChartOfAccounts() {
     enabled: !!user,
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["accounts"] });
+  // Fetch trial balance to enrich each account with its current balance
+  const { data: balanceRows = [] } = useQuery<any[]>({
+    queryKey: ["accounts-balances", cid],
+    queryFn: async () => {
+      const url = cid
+        ? `${API}/api/reports-accounting/trial-balance?companyId=${cid}`
+        : `${API}/api/reports-accounting/trial-balance`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
+  // Map: leaf accountId → balance (from journal entries)
+  const leafBalanceMap = new Map<number, number>();
+  for (const r of balanceRows) leafBalanceMap.set(r.id, Number(r.balance) || 0);
+
+  // Compute rolled-up balance per account (header = sum of all descendants).
+  // Build child index once.
+  const childrenIndex = new Map<number | null, any[]>();
+  for (const a of accounts) {
+    const key = a.parentId ?? null;
+    const arr = childrenIndex.get(key) || [];
+    arr.push(a);
+    childrenIndex.set(key, arr);
+  }
+  const balanceCache = new Map<number, number>();
+  function computeBalance(accountId: number): number {
+    if (balanceCache.has(accountId)) return balanceCache.get(accountId)!;
+    const own = leafBalanceMap.get(accountId) ?? 0;
+    const kids = childrenIndex.get(accountId) || [];
+    const sum = own + kids.reduce((s, c) => s + computeBalance(c.id), 0);
+    balanceCache.set(accountId, sum);
+    return sum;
+  }
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["accounts-balances"] });
+  };
 
   const createMut = useMutation({
     mutationFn: async (data: any) => {
@@ -140,6 +184,7 @@ export default function ChartOfAccounts() {
     level:       a.level,
     isPosting:   a.isPosting ? "نعم" : "لا",
     isActive:    a.isActive ? "نشط" : "موقوف",
+    balance:     fmtMoney(computeBalance(a.id)),
   }));
 
   const parentItems = [
@@ -273,6 +318,7 @@ export default function ChartOfAccounts() {
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20 hidden sm:table-cell">المستوى</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20 hidden sm:table-cell">قيد</th>
               <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20">الحالة</th>
+              <th className="px-4 py-3 text-left font-semibold text-muted-foreground w-32">الرصيد</th>
               <th className="px-4 py-3 w-24 font-semibold text-muted-foreground">إجراءات</th>
             </tr>
           </thead>
@@ -319,6 +365,19 @@ export default function ChartOfAccounts() {
                         {a.isActive
                           ? <span className="text-[10px] bg-green-50 text-green-700 border border-green-200 rounded-full px-2 py-0.5">نشط</span>
                           : <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">موقوف</span>}
+                      </td>
+                      <td className="px-4 py-3 text-left tabular-nums" dir="ltr">
+                        {(() => {
+                          const bal = computeBalance(a.id);
+                          if (Math.abs(bal) < 0.005) {
+                            return <span className="text-xs text-muted-foreground">0.00</span>;
+                          }
+                          return (
+                            <span className={cn("text-xs font-mono font-medium", bal < 0 ? "text-destructive" : "text-foreground")}>
+                              {fmtMoney(Math.abs(bal))} {bal < 0 ? "د" : "م"}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
