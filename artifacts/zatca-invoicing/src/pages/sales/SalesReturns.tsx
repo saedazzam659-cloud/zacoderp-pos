@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2 } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { AccountCombobox } from "@/components/AccountCombobox";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -42,6 +44,7 @@ const EMPTY = {
   docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
   paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
+  cogsAccountId: "", inventoryAccountId: "", salesAccountId: "", taxAccountId: "", discountAccountId: "",
 };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -227,6 +230,13 @@ export default function SalesReturns() {
           currencyCode: inv.currencyCode ?? defaultCurrency?.code ?? "",
           exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `SI-${inv.id}`}`,
+          paymentType: "credit",
+          cashBoxId: "",
+          cogsAccountId:      inv.cogsAccountId      ? String(inv.cogsAccountId)      : "",
+          inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
+          salesAccountId:     inv.salesAccountId     ? String(inv.salesAccountId)     : "",
+          taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : "",
+          discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : "",
         });
         if (inv.lines?.length) {
           setLines(inv.lines.map((l: any) => ({
@@ -419,6 +429,43 @@ export default function SalesReturns() {
               )}
               <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
+
+            <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-3 space-y-3">
+              <div className="flex items-center gap-2 text-blue-900">
+                <Calculator className="h-4 w-4" />
+                <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل المرتجع)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[11px]">حساب إيراد المبيعات <span className="text-destructive">*</span></Label>
+                  <AccountCombobox value={form.salesAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, salesAccountId: v }))}
+                    placeholder="اختر حساب الإيراد..." filterTypes={["revenue"]} allowEmpty={false} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">حساب تكلفة البضاعة المباعة <span className="text-destructive">*</span></Label>
+                  <AccountCombobox value={form.cogsAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, cogsAccountId: v }))}
+                    placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">حساب المخزون <span className="text-destructive">*</span></Label>
+                  <AccountCombobox value={form.inventoryAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, inventoryAccountId: v }))}
+                    placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">حساب ضريبة المخرجات (VAT)</Label>
+                  <AccountCombobox value={form.taxAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
+                    placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">حساب الخصم المسموح به</Label>
+                  <AccountCombobox value={form.discountAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
+                    placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
+                </div>
+              </div>
+              <p className="text-[10px] text-blue-900/70">
+                إذا تم اختيار فاتورة المبيعات، فسيتم استخدام نفس حسابات الفاتورة تلقائياً.
+              </p>
+            </div>
 
             <div className="space-y-3">
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>

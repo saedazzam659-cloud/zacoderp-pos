@@ -526,7 +526,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     // ── Build reversed journal entry ──
     // (Reverse of sales-invoice JE: customer becomes credit, sales/vat become debit, inventory becomes debit, COGS becomes credit)
     // If account FKs are missing on the return but a source invoice is linked, inherit them from the invoice.
-    if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.inventoryAccountId || !ret.taxAccountId)) {
+    if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.inventoryAccountId || !ret.taxAccountId || !ret.discountAccountId)) {
       const [srcInv] = await db.select().from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, ret.invoiceId), eq(salesInvoicesTable.companyId, cid)));
       if (srcInv) {
@@ -535,6 +535,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         if (!ret.cogsAccountId      && srcInv.cogsAccountId)      { patch.cogsAccountId      = srcInv.cogsAccountId;      ret.cogsAccountId      = srcInv.cogsAccountId; }
         if (!ret.inventoryAccountId && srcInv.inventoryAccountId) { patch.inventoryAccountId = srcInv.inventoryAccountId; ret.inventoryAccountId = srcInv.inventoryAccountId; }
         if (!ret.taxAccountId       && srcInv.taxAccountId)       { patch.taxAccountId       = srcInv.taxAccountId;       ret.taxAccountId       = srcInv.taxAccountId; }
+        if (!ret.discountAccountId  && srcInv.discountAccountId)  { patch.discountAccountId  = srcInv.discountAccountId;  ret.discountAccountId  = srcInv.discountAccountId; }
         if (Object.keys(patch).length) {
           await db.update(salesReturnsTable).set(patch).where(eq(salesReturnsTable.id, id));
         }
