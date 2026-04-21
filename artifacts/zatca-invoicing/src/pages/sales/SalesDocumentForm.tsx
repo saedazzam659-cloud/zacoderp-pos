@@ -80,6 +80,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
   const [customerId,setCustomerId]      = useState("");
+  const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
@@ -117,6 +118,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useEffect(() => {
+    if (!isNew || !defaultBranch || branchId) return;
+    setBranchId(String(defaultBranch.id));
+  }, [isNew, defaultBranch?.id]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -157,6 +168,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setDocDate((isInvoice ? existing.invoiceDate : existing.quotationDate) ?? today());
     if (!isInvoice) setValidUntil(existing.validUntil ?? "");
     setCustomerId(existing.customerId ? String(existing.customerId) : "");
+    if (isInvoice) setBranchId(existing.branchId ? String(existing.branchId) : "");
     if (isInvoice) setPaymentType(existing.paymentType ?? "credit");
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
@@ -238,6 +250,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isInvoice) {
       base.invoiceDate = docDate;
       base.paymentType = paymentType;
+      base.branchId = branchId || null;
     } else {
       base.quotationDate = docDate;
       base.validUntil = validUntil || null;
@@ -323,6 +336,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Label className="text-xs">العميل</Label>
                   <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder="العميل..." />
                 </div>
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">الفرع</Label>
+                    <Select value={branchId || undefined} onValueChange={setBranchId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                      <SelectContent>
+                        {(branches as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {isInvoice && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">نوع الدفع</Label>

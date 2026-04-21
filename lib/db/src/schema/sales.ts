@@ -13,6 +13,7 @@ export const salesInvoiceStatusEnum = pgEnum("sales_invoice_status", [
 export const salesInvoicesTable = pgTable("sales_invoices", {
   id:             serial("id").primaryKey(),
   companyId:      integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:       integer("branch_id"),
   docNumber:      text("doc_number"),
   invoiceDate:    text("invoice_date").notNull(),
   customerId:     integer("customer_id").references(() => customersTable.id),
@@ -51,6 +52,7 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
 export const salesReturnsTable = pgTable("sales_returns", {
   id:           serial("id").primaryKey(),
   companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:     integer("branch_id"),
   docNumber:    text("doc_number"),
   returnDate:   text("return_date").notNull(),
   customerId:   integer("customer_id").references(() => customersTable.id),

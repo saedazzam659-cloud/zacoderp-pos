@@ -81,11 +81,12 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
 router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, customerId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const [inv] = await db.insert(salesInvoicesTable).values({
-      companyId: cid, docNumber: docNumber || null, invoiceDate,
+      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      docNumber: docNumber || null, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
       paymentType: paymentType || "credit",
       currencyCode: currencyCode || "SAR",
@@ -106,9 +107,10 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, customerId, paymentType, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
     const [inv] = await db.update(salesInvoicesTable).set({
+      branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
       paymentType: paymentType || "credit",
@@ -229,11 +231,12 @@ router.get("/sales-returns/:id", async (req, res) => {
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, customerId, invoiceId, currencyCode, exchangeRate,
+    const { docNumber, returnDate, customerId, branchId, invoiceId, currencyCode, exchangeRate,
             totalAmount, vatAmount, notes, lines } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const [ret] = await db.insert(salesReturnsTable).values({
-      companyId: cid, docNumber: docNumber || null, returnDate,
+      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      docNumber: docNumber || null, returnDate,
       customerId: customerId ? Number(customerId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       currencyCode: currencyCode || "SAR",

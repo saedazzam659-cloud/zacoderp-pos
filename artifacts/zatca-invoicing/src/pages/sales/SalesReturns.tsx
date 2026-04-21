@@ -37,7 +37,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", returnDate: today(), customerId: "", invoiceId: "",
+  docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
 };
 
@@ -105,6 +105,17 @@ export default function SalesReturns() {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useEffect(() => {
+    if (!showForm || !defaultBranch || form.branchId) return;
+    setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
+  }, [showForm, defaultBranch?.id]);
 
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
@@ -185,6 +196,7 @@ export default function SalesReturns() {
           docNumber: "",
           returnDate: today(),
           customerId: inv.customerId ? String(inv.customerId) : "",
+          branchId:   inv.branchId   ? String(inv.branchId)   : "",
           invoiceId:  String(inv.id),
           currencyCode: inv.currencyCode ?? defaultCurrency?.code ?? "",
           exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
@@ -253,6 +265,7 @@ export default function SalesReturns() {
     saveMut.mutate({
       ...form,
       customerId: form.customerId || null,
+      branchId:   form.branchId   || null,
       invoiceId:  form.invoiceId  || null,
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
@@ -299,6 +312,16 @@ export default function SalesReturns() {
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="العميل"><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder="العميل..." /></Field>
               <Field label="فاتورة المبيعات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder="رقم الفاتورة..." /></Field>
+              <Field label="الفرع">
+                <Select value={form.branchId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                  <SelectContent>
+                    {(branches as any[]).map((b: any) => (
+                      <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <Field label="العملة">
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>

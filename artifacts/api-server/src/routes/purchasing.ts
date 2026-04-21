@@ -201,7 +201,7 @@ router.get("/purchase-invoices/:id", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, supplierId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
@@ -209,7 +209,8 @@ router.post("/purchase-invoices", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.insert(purchaseInvoicesTable).values({
-      companyId: cid, docNumber: docNumber || null, invoiceDate,
+      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -251,13 +252,14 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, supplierId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.update(purchaseInvoicesTable).set({
+      branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
@@ -387,14 +389,15 @@ router.get("/purchase-returns/:id", async (req, res) => {
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, supplierId, invoiceId, paymentType, cashBoxId,
+    const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
             currencyCode, exchangeRate, totalAmount, vatAmount, notes, lines } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     const [ret] = await db.insert(purchaseReturnsTable).values({
-      companyId: cid, docNumber: docNumber || null, returnDate,
+      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      docNumber: docNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,

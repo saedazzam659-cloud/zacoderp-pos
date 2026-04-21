@@ -39,7 +39,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", returnDate: today(), supplierId: "", invoiceId: "",
+  docNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
   paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
 };
@@ -127,6 +127,18 @@ export default function PurchaseReturns() {
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user && !!cid && form.paymentType === "cash",
   });
+
+  // ── Branches ─────────────────────────────────────────────
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useEffect(() => {
+    if (!showForm || !defaultBranch || form.branchId) return;
+    setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
+  }, [showForm, defaultBranch?.id]);
 
   // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -225,6 +237,7 @@ export default function PurchaseReturns() {
           docNumber: "",
           returnDate: today(),
           supplierId: inv.supplierId ? String(inv.supplierId) : "",
+          branchId:   inv.branchId   ? String(inv.branchId)   : "",
           invoiceId:  String(inv.id),
           paymentType: inv.paymentType ?? "credit",
           cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
@@ -361,6 +374,16 @@ export default function PurchaseReturns() {
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد"><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." /></Field>
               <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder="رقم الفاتورة..." /></Field>
+              <Field label="الفرع">
+                <Select value={form.branchId || undefined} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                  <SelectContent>
+                    {(branches as any[]).map((b: any) => (
+                      <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <Field label="العملة">
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>

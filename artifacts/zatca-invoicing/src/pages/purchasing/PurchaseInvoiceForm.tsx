@@ -73,6 +73,7 @@ export default function PurchaseInvoiceForm() {
   const [docNumber,    setDocNumber]    = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
+  const [branchId,     setBranchId]     = useState("");
   const [paymentType,  setPaymentType]  = useState("credit");
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [currencyCode, setCurrencyCode] = useState("");
@@ -124,6 +125,17 @@ export default function PurchaseInvoiceForm() {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/warehouses?companyId=${cid}` : `${API}/api/inventory/warehouses`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["branches", cid],
+    queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useEffect(() => {
+    if (!isNew || !defaultBranch || branchId) return;
+    setBranchId(String(defaultBranch.id));
+  }, [isNew, defaultBranch?.id]);
 
   // ── Supplier balances (for credit payment) ───────────────
   const { data: supplierBalances = [] } = useQuery<any[]>({
@@ -189,6 +201,7 @@ export default function PurchaseInvoiceForm() {
     setDocNumber(existing.docNumber ?? "");
     setInvoiceDate(existing.invoiceDate ?? today());
     setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
+    setBranchId(existing.branchId ? String(existing.branchId) : "");
     setPaymentType(existing.paymentType ?? "credit");
     setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
@@ -286,7 +299,8 @@ export default function PurchaseInvoiceForm() {
 
   function handleSave() {
     saveMut.mutate({
-      companyId: cid, docNumber: docNumber || null, invoiceDate,
+      companyId: cid, branchId: branchId || null,
+      docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
       currencyCode,
@@ -374,6 +388,17 @@ export default function PurchaseInvoiceForm() {
                 <div className="space-y-1.5 lg:col-span-2">
                   <Label className="text-xs">المورد</Label>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">الفرع</Label>
+                  <Select value={branchId || undefined} onValueChange={setBranchId}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                    <SelectContent>
+                      {(branches as any[]).map((b: any) => (
+                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
