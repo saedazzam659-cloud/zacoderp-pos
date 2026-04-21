@@ -200,7 +200,7 @@ export default function PurchaseInvoices() {
                             type="button"
                             className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
                             title="عرض القيد المحاسبي"
-                            onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}`)}>
+                            onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}?tab=lines`)}>
                             JE-{inv.journalEntryId}
                           </button>
                         ) : (

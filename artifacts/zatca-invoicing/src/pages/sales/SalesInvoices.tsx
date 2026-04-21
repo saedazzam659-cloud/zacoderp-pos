@@ -164,7 +164,7 @@ export default function SalesInvoices() {
                       <td className="px-3 py-2.5 font-mono font-semibold">{fmt(inv.totalAmount)}</td>
                       <td className="px-3 py-2.5">
                         {inv.journalEntryId ? (
-                          <button onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}`)}
+                          <button onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}?tab=lines`)}
                             className="font-mono text-xs text-blue-600 hover:underline">
                             JE-{inv.journalEntryId}
                           </button>

@@ -595,7 +595,7 @@ export default function SalesReturns() {
                     <td className="px-3 py-2.5">{r.currencyCode}</td>
                     <td className="px-3 py-2.5">
                       {r.journalEntryId ? (
-                        <button onClick={() => navigate(`/accounting/journals/${r.journalEntryId}`)}
+                        <button onClick={() => navigate(`/accounting/journals/${r.journalEntryId}?tab=lines`)}
                           className="font-mono text-xs text-blue-600 hover:underline">
                           JE-{r.journalEntryId}
                         </button>

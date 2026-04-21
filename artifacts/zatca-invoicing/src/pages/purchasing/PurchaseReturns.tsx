@@ -843,7 +843,7 @@ export default function PurchaseReturns() {
                         type="button"
                         className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
                         title="عرض القيد المحاسبي"
-                        onClick={() => { window.location.href = `/accounting/journals/${r.journalEntryId}`; }}>
+                        onClick={() => { window.location.href = `/accounting/journals/${r.journalEntryId}?tab=lines`; }}>
                         JE-{r.journalEntryId}
                       </button>
                     ) : (
