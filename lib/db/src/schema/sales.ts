@@ -34,6 +34,14 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
   discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
   journalEntryId:     integer("journal_entry_id"),
+  // ZATCA submission tracking ("pending" | "approved" | "rejected")
+  zatcaStatus:           text("zatca_status").default("pending"),
+  zatcaSubmittedAt:      timestamp("zatca_submitted_at"),
+  zatcaUuid:             text("zatca_uuid"),
+  zatcaResponseCode:     text("zatca_response_code"),
+  zatcaErrorMessages:    text("zatca_error_messages"),
+  zatcaWarningMessages:  text("zatca_warning_messages"),
+  zatcaAiSuggestion:     text("zatca_ai_suggestion"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });

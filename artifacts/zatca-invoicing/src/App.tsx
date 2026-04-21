@@ -24,6 +24,7 @@ import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
 import PlanSettings from "@/pages/PlanSettings";
 import ZatcaIntegration from "@/pages/ZatcaIntegration";
+import ZatcaBridge from "@/pages/ZatcaBridge";
 import MenuPermissions from "@/pages/MenuPermissions";
 import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
@@ -176,6 +177,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
             {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
             {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
+            {!isSuperAdmin && <Route path="/zatca-bridge" component={ZatcaBridge} />}
             {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
             {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
 

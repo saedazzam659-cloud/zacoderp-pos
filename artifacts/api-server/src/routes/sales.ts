@@ -1047,4 +1047,150 @@ router.delete("/customer-settlements/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// ZATCA — Submit a sales invoice for clearance/reporting
+// Validates the invoice against ZATCA-style rules and records the result.
+// Approved → zatcaStatus="approved", uuid generated.
+// Rejected → zatcaStatus="rejected", errorMessages JSON array.
+// ═══════════════════════════════════════════════════════════════════
+router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [inv] = await db.select().from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+
+    const lines = await db.select().from(salesInvoiceLinesTable)
+      .where(eq(salesInvoiceLinesTable.invoiceId, id));
+
+    // Tenant-scoped customer lookup: must belong to same company
+    const customer = inv.customerId
+      ? (await db.select().from(customersTable).where(and(
+          eq(customersTable.id, inv.customerId),
+          eq(customersTable.companyId, cid),
+        )))[0]
+      : null;
+
+    // ─── ZATCA-style validation rules ────────────────────────────────────
+    const errors: { code: string; message: string; field?: string }[] = [];
+    const warnings: { code: string; message: string }[] = [];
+
+    if (inv.status !== "posted") {
+      errors.push({ code: "BR-KSA-DRAFT", message: "لا يمكن إرسال فاتورة في حالة مسودة (draft) إلى الزكاة. يجب ترحيل الفاتورة أولاً." });
+    }
+    if (!lines.length) {
+      errors.push({ code: "BR-KSA-LINES", message: "الفاتورة لا تحتوي على أي بنود. يجب إضافة بند واحد على الأقل." });
+    }
+    if (Number(inv.totalAmount || 0) <= 0) {
+      errors.push({ code: "BR-KSA-AMOUNT", message: "إجمالي الفاتورة يجب أن يكون أكبر من صفر." });
+    }
+
+    // VAT consistency: subtotal * 0.15 should ≈ vatAmount (within 0.5 SAR tolerance)
+    const subtotalNet = Number(inv.subtotal || 0) - Number(inv.discountAmount || 0);
+    const expectedVat = Math.round(subtotalNet * 0.15 * 100) / 100;
+    const declaredVat = Number(inv.vatAmount || 0);
+    if (Math.abs(expectedVat - declaredVat) > 0.5) {
+      errors.push({
+        code: "BR-KSA-VAT-CALC",
+        message: `قيمة ضريبة القيمة المضافة غير متطابقة. المتوقع ${expectedVat.toFixed(2)} ريال (15% من الصافي ${subtotalNet.toFixed(2)})، ولكن المسجل في الفاتورة ${declaredVat.toFixed(2)} ريال.`,
+      });
+    }
+
+    // Customer rules — if total > 1000 SAR a customer is required for B2B clearance flow
+    if (Number(inv.totalAmount || 0) >= 1000 && !customer) {
+      errors.push({ code: "BR-KSA-CUSTOMER", message: "الفواتير التي يبلغ إجماليها 1000 ريال أو أكثر تتطلب تحديد العميل (فاتورة ضريبية)." });
+    }
+    // If customer exists and has VAT (B2B), require valid 15-digit VAT and address
+    if (customer?.vatNumber) {
+      const vat = String(customer.vatNumber).replace(/\D/g, "");
+      if (vat.length !== 15 || !vat.startsWith("3") || !vat.endsWith("3")) {
+        errors.push({ code: "BR-KSA-CUST-VAT", message: `الرقم الضريبي للعميل (${customer.vatNumber}) غير صحيح. يجب أن يتكوّن من 15 رقماً يبدأ وينتهي بالرقم 3.` });
+      }
+      if (!customer.city || !customer.street || !customer.buildingNumber || !customer.postalCode) {
+        errors.push({
+          code: "BR-KSA-CUST-ADDR",
+          message: "العنوان الوطني للعميل (المدينة، الشارع، رقم المبنى، الرمز البريدي) مطلوب للفاتورة الضريبية المعيارية (B2B).",
+        });
+      }
+    }
+
+    // Warnings (non-blocking)
+    if (lines.some((l: any) => !l.itemCode)) {
+      warnings.push({ code: "WARN-ITEM-CODE", message: "بعض البنود لا تحتوي على كود الصنف. يُفضّل تحديد الكود لكل بند." });
+    }
+    if (!inv.docNumber) {
+      warnings.push({ code: "WARN-DOC-NUM", message: "رقم المستند غير محدد. سيتم استخدام المعرّف التلقائي." });
+    }
+
+    const now = new Date();
+    if (errors.length > 0) {
+      await db.update(salesInvoicesTable).set({
+        zatcaStatus: "rejected",
+        zatcaSubmittedAt: now,
+        zatcaUuid: null,                // clear any prior approval UUID
+        zatcaResponseCode: "400",
+        zatcaErrorMessages: JSON.stringify(errors),
+        zatcaWarningMessages: warnings.length ? JSON.stringify(warnings) : null,
+        zatcaAiSuggestion: null,        // reset cached AI explanation
+        updatedAt: now,
+      }).where(eq(salesInvoicesTable.id, id));
+      res.json({ status: "rejected", errors, warnings });
+      return;
+    }
+
+    // Approved — generate a UUID
+    const uuid = `ZATCA-${cid}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+    await db.update(salesInvoicesTable).set({
+      zatcaStatus: "approved",
+      zatcaSubmittedAt: now,
+      zatcaUuid: uuid,
+      zatcaResponseCode: "200",
+      zatcaErrorMessages: null,
+      zatcaWarningMessages: warnings.length ? JSON.stringify(warnings) : null,
+      zatcaAiSuggestion: null,
+      updatedAt: now,
+    }).where(eq(salesInvoicesTable.id, id));
+    res.json({ status: "approved", uuid, warnings });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// ZATCA — Bridge view: list sales invoices joined with customer name
+// for the Customer/Sales ↔ ZATCA bridge screen.
+// ═══════════════════════════════════════════════════════════════════
+router.get("/sales-invoices-zatca-bridge", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const rows = await db.select({
+      id:                   salesInvoicesTable.id,
+      docNumber:            salesInvoicesTable.docNumber,
+      invoiceDate:          salesInvoicesTable.invoiceDate,
+      customerId:           salesInvoicesTable.customerId,
+      customerNameAr:       customersTable.nameAr,
+      customerVatNumber:    customersTable.vatNumber,
+      totalAmount:          salesInvoicesTable.totalAmount,
+      vatAmount:            salesInvoicesTable.vatAmount,
+      status:               salesInvoicesTable.status,
+      zatcaStatus:          salesInvoicesTable.zatcaStatus,
+      zatcaSubmittedAt:     salesInvoicesTable.zatcaSubmittedAt,
+      zatcaUuid:            salesInvoicesTable.zatcaUuid,
+      zatcaErrorMessages:   salesInvoicesTable.zatcaErrorMessages,
+      zatcaWarningMessages: salesInvoicesTable.zatcaWarningMessages,
+      zatcaResponseCode:    salesInvoicesTable.zatcaResponseCode,
+    })
+      .from(salesInvoicesTable)
+      // Tenant-scoped join: only join customers in the SAME company
+      .leftJoin(customersTable, and(
+        eq(salesInvoicesTable.customerId, customersTable.id),
+        eq(customersTable.companyId, cid),
+      ))
+      .where(eq(salesInvoicesTable.companyId, cid))
+      .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;
