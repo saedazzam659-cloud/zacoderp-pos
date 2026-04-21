@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
@@ -813,6 +813,16 @@ export default function PurchaseReturns() {
                           onClick={() => postMut.mutate(r.id)}
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />ترحيل
+                        </Button>
+                      )}
+                      {r.status === "posted" && (
+                        <Button
+                          variant="outline" size="sm"
+                          className="h-7 text-xs gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
+                          disabled={unpostMut.isPending}
+                          onClick={() => { if (confirm("سيتم فك ترحيل المرتجع وحذف القيد المحاسبي وعكس حركة المخزون. متابعة؟")) unpostMut.mutate(r.id); }}
+                        >
+                          <Undo2 className="h-3.5 w-3.5" />فك الترحيل
                         </Button>
                       )}
                       {r.status === "draft" && (

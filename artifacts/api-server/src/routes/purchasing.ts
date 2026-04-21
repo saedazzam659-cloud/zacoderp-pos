@@ -6,6 +6,7 @@ import {
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
   cashBoxesTable, journalEntriesTable, journalEntryLinesTable,
+  stockBalanceTable, stockLedgerTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -466,6 +467,68 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
+// Reverses stock movements, zeroes-out the journal entry lines (audit trail),
+// then deletes the JE and sets the invoice back to draft.
+router.patch("/purchase-invoices/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [inv] = await db.select().from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+    if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
+
+    // ── Reverse stock movements (delete ledger rows + decrement balances) ──
+    const ledger = await db.select().from(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "purchase_invoice"),
+        eq(stockLedgerTable.refId, id),
+      ));
+    for (const row of ledger) {
+      const qty = Number(row.qty);
+      // Reverse: subtract the qty that was added (cost stays at current avg)
+      const [bal] = await db.select().from(stockBalanceTable)
+        .where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, row.itemId),
+          eq(stockBalanceTable.warehouseId, row.warehouseId),
+        ));
+      if (bal) {
+        await db.update(stockBalanceTable)
+          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .where(eq(stockBalanceTable.id, bal.id));
+      }
+    }
+    await db.delete(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "purchase_invoice"),
+        eq(stockLedgerTable.refId, id),
+      ));
+
+    // ── Zero-out the JE lines, then delete the JE ──
+    if (inv.journalEntryId) {
+      await db.update(journalEntryLinesTable)
+        .set({ debit: "0", credit: "0" })
+        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+      await db.delete(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, inv.journalEntryId));
+      await db.delete(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, inv.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+    }
+
+    const [updated] = await db.update(purchaseInvoicesTable)
+      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+      .where(eq(purchaseInvoicesTable.id, id))
+      .returning();
+
+    res.json(updated);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.delete("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -630,6 +693,64 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
 
     const [updated] = await db.update(purchaseReturnsTable)
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
+      .where(eq(purchaseReturnsTable.id, id))
+      .returning();
+
+    res.json(updated);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
+router.patch("/purchase-returns/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [ret] = await db.select().from(purchaseReturnsTable)
+      .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
+    if (!ret) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    if (ret.status !== "posted") { res.status(400).json({ error: "المرتجع ليس مُرحَّلاً" }); return; }
+
+    // Reverse stock movements (returns reduce stock; unposting adds it back)
+    const ledger = await db.select().from(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "purchase_return"),
+        eq(stockLedgerTable.refId, id),
+      ));
+    for (const row of ledger) {
+      const qty = Number(row.qty);
+      const [bal] = await db.select().from(stockBalanceTable)
+        .where(and(
+          eq(stockBalanceTable.companyId, cid),
+          eq(stockBalanceTable.itemId, row.itemId),
+          eq(stockBalanceTable.warehouseId, row.warehouseId),
+        ));
+      if (bal) {
+        await db.update(stockBalanceTable)
+          .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+          .where(eq(stockBalanceTable.id, bal.id));
+      }
+    }
+    await db.delete(stockLedgerTable)
+      .where(and(
+        eq(stockLedgerTable.companyId, cid),
+        eq(stockLedgerTable.refType, "purchase_return"),
+        eq(stockLedgerTable.refId, id),
+      ));
+
+    if (ret.journalEntryId) {
+      await db.update(journalEntryLinesTable)
+        .set({ debit: "0", credit: "0" })
+        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+      await db.delete(journalEntryLinesTable)
+        .where(eq(journalEntryLinesTable.entryId, ret.journalEntryId));
+      await db.delete(journalEntriesTable)
+        .where(and(eq(journalEntriesTable.id, ret.journalEntryId), eq(journalEntriesTable.companyId, cid)));
+    }
+
+    const [updated] = await db.update(purchaseReturnsTable)
+      .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
       .where(eq(purchaseReturnsTable.id, id))
       .returning();
 

@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer } from "lucide-react";
+import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer, Undo2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -50,6 +50,22 @@ export default function PurchaseInvoices() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+
+  const unpostMut = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/purchasing/purchase-invoices/${id}/unpost`, { method: "PATCH", headers });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || "فشل فك الترحيل");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "تم فك ترحيل الفاتورة وحذف القيد المحاسبي" });
+      qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
@@ -207,6 +223,13 @@ export default function PurchaseInvoices() {
                               title="إنشاء مرتجع من هذه الفاتورة"
                               onClick={() => navigate(`/purchasing/returns?fromInvoice=${inv.id}`)}>
                               <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {inv.status === "posted" && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-700 hover:bg-amber-50"
+                              title="فك الترحيل وحذف القيد"
+                              onClick={() => { if (confirm("سيتم فك ترحيل الفاتورة وحذف القيد المحاسبي وعكس حركة المخزون. متابعة؟")) unpostMut.mutate(inv.id); }}>
+                              <Undo2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {inv.status === "draft" && (
