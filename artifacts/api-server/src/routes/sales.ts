@@ -69,6 +69,7 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
     itemCode:    l.itemCode    || null,
     unit:        l.unit        || null,
     unitId:      l.unitId      ? Number(l.unitId)      : null,
+    conversionFactor: String(l.conversionFactor || "1"),
     warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
     qty:         String(l.qty       || "1"),
     unitPrice:   String(l.unitPrice || "0"),
@@ -153,10 +154,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
-    // Validate stock availability first
+    // Validate stock availability first (qty * conversionFactor = base-unit qty)
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const qty = Number(line.qty);
+      const factor = Number(line.conversionFactor || "1") || 1;
+      const qty = Number(line.qty) * factor;
       const cur = await getBalance(cid, line.itemId, line.warehouseId);
       if (cur < qty) {
         res.status(400).json({
@@ -166,10 +168,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       }
     }
 
-    // Decrease stock for each stockable line
+    // Decrease stock for each stockable line (in base units)
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const qty     = Number(line.qty);
+      const factor  = Number(line.conversionFactor || "1") || 1;
+      const qty     = Number(line.qty) * factor;
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
@@ -281,6 +284,7 @@ router.post("/sales-returns", async (req, res) => {
           itemId:   l.itemId   ? Number(l.itemId)   : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
           unitId:   l.unitId   ? Number(l.unitId)   : null,
+          conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
           vatRate: String(l.vatRate || "15"),
@@ -306,13 +310,15 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       .where(eq(salesReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
-    // Increase stock for each stockable return line (items coming back into inventory)
+    // Increase stock for each stockable return line (items coming back into inventory, in base units)
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const qty     = Number(line.qty);
+      const factor  = Number(line.conversionFactor || "1") || 1;
+      const qty     = Number(line.qty) * factor;
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
-      // If item never existed in warehouse, fall back to the line's price as cost
-      const costUnit = avgCost > 0 ? avgCost : Number(line.unitPrice);
+      // If item never existed in warehouse, fall back to the line's price as cost.
+      // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
+      const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);

@@ -25,6 +25,7 @@ interface DocLine {
   itemCode: string;
   unitId: string;
   unit: string;
+  conversionFactor: string;
   warehouseId: string;
   qty: string;
   unitPrice: string;
@@ -37,7 +38,7 @@ interface DocLine {
 function newLine(): DocLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
-    unitId: "", unit: "", warehouseId: "",
+    unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", notes: "",
   };
@@ -187,6 +188,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       itemCode:    l.itemCode    ?? "",
       unitId:      l.unitId      ? String(l.unitId)      : "",
       unit:        l.unit        ?? "",
+      conversionFactor: String(l.conversionFactor ?? "1"),
       warehouseId: l.warehouseId ? String(l.warehouseId) : "",
       qty:         String(l.qty),
       unitPrice:   String(l.unitPrice),
@@ -206,21 +208,59 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     }));
   }
 
-  function selectItem(lineId: string, itemId: string) {
+  // Cache item-specific unit prices: itemId → [{ unitId, unit:{id,nameAr}, conversionFactor, salePrice, costPrice, isBase }]
+  const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
+  async function fetchItemUnits(itemId: string): Promise<any[]> {
+    if (itemUnitsMap[itemId]) return itemUnitsMap[itemId];
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/units?companyId=${cid}`, { headers: authH });
+    const rows = r.ok ? await r.json() : [];
+    setItemUnitsMap(prev => ({ ...prev, [itemId]: rows }));
+    return rows;
+  }
+
+  async function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
+    const itemUnits = await fetchItemUnits(itemId);
+    // Pick base unit (or first configured, or fallback to item's default unit)
+    const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+    const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    const chosenUnitId = base?.unitId ?? item.unitId ?? null;
+    const chosenUnitName = base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "";
+    const chosenPrice = base?.salePrice ?? item.sellPrice ?? item.price ?? "0";
+    const chosenFactor = base?.conversionFactor ?? "1";
+
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
-      const unit = units.find((u: any) => u.id === item.unitId);
       const updated: DocLine = {
         ...l,
         itemId:    String(item.id),
         itemName:  item.nameAr ?? "",
         itemCode:  item.code   ?? "",
-        unitId:    item.unitId ? String(item.unitId) : "",
-        unit:      unit?.nameAr ?? "",
-        unitPrice: String(item.sellPrice ?? item.price ?? "0"),
-        vatRate:   String(item.vatRate   ?? "15"),
+        unitId:    chosenUnitId ? String(chosenUnitId) : "",
+        unit:      chosenUnitName,
+        conversionFactor: String(chosenFactor),
+        unitPrice: String(chosenPrice),
+        vatRate:   String(item.vatRate ?? "15"),
+      };
+      const { lineTotal } = calcLine(updated);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
+
+  function changeLineUnit(lineId: string, newUnitId: string) {
+    setLines(prev => prev.map(l => {
+      if (l._id !== lineId) return l;
+      const itemUnits = itemUnitsMap[l.itemId] ?? [];
+      const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
+      const globalUnit = units.find((u: any) => String(u.id) === newUnitId);
+      const updated: DocLine = {
+        ...l,
+        unitId: newUnitId,
+        unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
+        conversionFactor: String(row?.conversionFactor ?? "1"),
+        // If item has this unit configured, snap to its salePrice
+        unitPrice: row?.salePrice != null ? String(row.salePrice) : l.unitPrice,
       };
       const { lineTotal } = calcLine(updated);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
@@ -429,20 +469,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       </div>
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">الوحدة</p>
-                        {units.length > 0 ? (
-                          <Select value={l.unitId || undefined} onValueChange={v => {
-                            const u = units.find((u: any) => String(u.id) === v);
-                            setLines(prev => prev.map(x => x._id === l._id ? { ...x, unitId: v, unit: u?.nameAr ?? "" } : x));
-                          }}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
-                            <SelectContent>
-                              {unitItems.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
-                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
-                        )}
+                        {(() => {
+                          const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
+                          const opts = itemUnits.length > 0
+                            ? itemUnits.map((iu: any) => ({
+                                value: String(iu.unitId),
+                                label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                              }))
+                            : unitItems;
+                          return units.length > 0 ? (
+                            <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                              <SelectContent>
+                                {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                              onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                          );
+                        })()}
                       </div>
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">الكمية</p>

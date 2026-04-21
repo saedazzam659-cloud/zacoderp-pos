@@ -233,6 +233,7 @@ router.post("/purchase-invoices", async (req, res) => {
           itemName: l.itemName, itemCode: l.itemCode || null,
           unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
+          conversionFactor: String(l.conversionFactor || "1"),
           qty: String(l.qty || "1"), weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
           discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
@@ -286,6 +287,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             itemName: l.itemName, itemCode: l.itemCode || null,
             unit: l.unit || null,
             unitId: l.unitId ? Number(l.unitId) : null,
+            conversionFactor: String(l.conversionFactor || "1"),
             qty: String(l.qty || "1"), weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
             discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
@@ -317,12 +319,13 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
-    // Update stock balance for each stockable line (has itemId + warehouseId)
+    // Update stock balance for each stockable line (in base units)
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const qty      = Number(line.qty);
+      const factor   = Number(line.conversionFactor || "1") || 1;
+      const qty      = Number(line.qty) * factor;
       const cost     = Number(line.finalCost || line.unitPrice);
-      const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice);
+      const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -434,6 +437,7 @@ router.post("/purchase-returns", async (req, res) => {
           itemId: l.itemId ? Number(l.itemId) : null,
           itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
           unitId: l.unitId ? Number(l.unitId) : null,
+          conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
           vatRate: String(l.vatRate || "15"),
@@ -459,11 +463,12 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       .where(eq(purchaseReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
-    // Decrease stock for each stockable return line
+    // Decrease stock for each stockable return line (in base units)
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
-      const qty      = Number(line.qty);
-      const costUnit = Number(line.unitPrice);
+      const factor   = Number(line.conversionFactor || "1") || 1;
+      const qty      = Number(line.qty) * factor;
+      const costUnit = Number(line.unitPrice) / factor;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
