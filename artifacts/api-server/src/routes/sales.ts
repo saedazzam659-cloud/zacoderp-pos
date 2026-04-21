@@ -527,6 +527,62 @@ router.post("/sales-returns", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.put("/sales-returns/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [existing] = await db.select().from(salesReturnsTable)
+      .where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
+    if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
+
+    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
+            totalAmount, vatAmount, notes, lines,
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
+    if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+
+    const [ret] = await db.update(salesReturnsTable).set({
+      branchId: branchId ? Number(branchId) : null,
+      docNumber: docNumber || null, returnDate,
+      customerId: customerId ? Number(customerId) : null,
+      invoiceId: invoiceId ? Number(invoiceId) : null,
+      paymentType: pType,
+      cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      currencyCode: currencyCode || "SAR",
+      exchangeRate: String(exchangeRate || "1"),
+      totalAmount: String(totalAmount || "0"),
+      vatAmount: String(vatAmount || "0"),
+      notes: notes || null,
+      cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
+      inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
+      salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
+      taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
+      discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      updatedAt: new Date(),
+    }).where(eq(salesReturnsTable.id, id)).returning();
+
+    await db.delete(salesReturnLinesTable).where(eq(salesReturnLinesTable.returnId, id));
+    if (lines?.length) {
+      await db.insert(salesReturnLinesTable).values(
+        lines.map((l: any) => ({
+          returnId: id, companyId: cid,
+          itemId:   l.itemId   ? Number(l.itemId)   : null,
+          itemName: l.itemName, itemCode: l.itemCode || null, unit: l.unit || null,
+          unitId:   l.unitId   ? Number(l.unitId)   : null,
+          conversionFactor: String(l.conversionFactor || "1"),
+          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+          qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          vatRate: String(l.vatRate || "15"),
+          lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
+        }))
+      );
+    }
+    res.json(ret);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 router.patch("/sales-returns/:id/post", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;

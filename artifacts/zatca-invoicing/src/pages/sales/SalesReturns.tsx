@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -63,6 +63,7 @@ export default function SalesReturns() {
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
 
@@ -157,7 +158,15 @@ export default function SalesReturns() {
 
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`${API}/api/sales/sales-returns`, { method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }) });
+      const isEdit = editingId != null;
+      const url = isEdit
+        ? `${API}/api/sales/sales-returns/${editingId}`
+        : `${API}/api/sales/sales-returns`;
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers,
+        body: JSON.stringify({ ...data, companyId: cid }),
+      });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
       if (j?.id && (j.status ?? "draft") === "draft") {
         const pr = await fetch(`${API}/api/sales/sales-returns/${j.id}/post`, { method: "PATCH", headers });
@@ -167,7 +176,12 @@ export default function SalesReturns() {
       }
       return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "✓ تم إنشاء المرتجع وترحيله" }); },
+    onSuccess: () => {
+      invalidate();
+      const wasEdit = editingId != null;
+      reset();
+      toast({ title: wasEdit ? "✓ تم تعديل المرتجع وترحيله" : "✓ تم إنشاء المرتجع وترحيله" });
+    },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -230,9 +244,55 @@ export default function SalesReturns() {
     setForm({ ...EMPTY, ...loadAcctDefaults() });
     setLines([newLine()]);
     setShowForm(false);
+    setEditingId(null);
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
     window.history.replaceState({}, "", url.toString());
+  }
+
+  async function editReturn(id: number) {
+    try {
+      const res = await fetch(`${API}/api/sales/sales-returns/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "تعذر تحميل المرتجع"); }
+      const r = await res.json();
+      setEditingId(id);
+      setForm({
+        docNumber: r.docNumber ?? "",
+        returnDate: r.returnDate ?? today(),
+        customerId: r.customerId ? String(r.customerId) : "",
+        invoiceId: r.invoiceId ? String(r.invoiceId) : "",
+        branchId: r.branchId ? String(r.branchId) : "",
+        currencyCode: r.currencyCode ?? "SAR",
+        exchangeRate: String(r.exchangeRate ?? "1"),
+        paymentType: r.paymentType ?? "credit",
+        cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "",
+        notes: r.notes ?? "",
+        salesAccountId:     r.salesAccountId     ? String(r.salesAccountId)     : "",
+        cogsAccountId:      r.cogsAccountId      ? String(r.cogsAccountId)      : "",
+        inventoryAccountId: r.inventoryAccountId ? String(r.inventoryAccountId) : "",
+        taxAccountId:       r.taxAccountId       ? String(r.taxAccountId)       : "",
+        discountAccountId:  r.discountAccountId  ? String(r.discountAccountId)  : "",
+      });
+      setLines((r.lines ?? []).length
+        ? r.lines.map((l: any) => ({
+            _id: `e-${l.id}-${Math.random().toString(36).slice(2,7)}`,
+            itemId: l.itemId ? String(l.itemId) : "",
+            itemName: l.itemName ?? "",
+            itemCode: l.itemCode ?? "",
+            unit: l.unit ?? "",
+            unitId: l.unitId ? String(l.unitId) : "",
+            conversionFactor: String(l.conversionFactor ?? "1"),
+            warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+            qty: String(l.qty ?? "1"),
+            unitPrice: String(l.unitPrice ?? "0"),
+            vatRate: String(l.vatRate ?? "15"),
+            lineTotal: String(l.lineTotal ?? "0"),
+          }))
+        : [newLine()]);
+      setShowForm(true);
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    }
   }
 
   // Pre-fill from sales invoice
@@ -650,6 +710,13 @@ export default function SalesReturns() {
                     <td className="px-3 py-2.5"><span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span></td>
                     <td className="px-3 py-2.5">
                       <div className="flex gap-1">
+                        {r.status === "draft" && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            title="تعديل"
+                            onClick={() => editReturn(r.id)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                         {r.status === "draft" && (
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
                             onClick={() => { if (confirm("ترحيل المرتجع؟ سيتم زيادة رصيد المخزون.")) postMut.mutate(r.id); }}>
