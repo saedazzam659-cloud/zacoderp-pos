@@ -664,11 +664,6 @@ export default function PurchaseInvoiceForm() {
                 <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">حساب المخزون <span className="text-destructive">*</span></Label>
-                    <AccountCombobox value={inventoryAccountId} onValueChange={setInventoryAccountId}
-                      placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
-                  </div>
-                  <div className="space-y-1.5">
                     <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
                     <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
                       placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />

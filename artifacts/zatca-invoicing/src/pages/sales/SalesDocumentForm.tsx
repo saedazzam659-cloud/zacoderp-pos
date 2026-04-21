@@ -497,11 +497,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px]">حساب المخزون <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={inventoryAccountId} onValueChange={setInventoryAccountId}
-                        placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
                       <Label className="text-[11px]">حساب ضريبة المخرجات (VAT)</Label>
                       <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
                         placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />

@@ -6,7 +6,7 @@ import {
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
   cashBoxesTable, journalEntriesTable, journalEntryLinesTable,
-  stockBalanceTable, stockLedgerTable,
+  stockBalanceTable, stockLedgerTable, warehousesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -73,6 +73,18 @@ async function getSupplierAccountId(cid: number, supplierId: number | null | und
   const [s] = await db.select().from(suppliersTable)
     .where(and(eq(suppliersTable.id, supplierId), eq(suppliersTable.companyId, cid)));
   return s?.accountId ?? null;
+}
+
+/** Map a list of warehouse IDs to their {accountId, allowNegative, name}. */
+async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<number, { accountId: number | null; allowNegative: boolean; nameAr: string | null }>> {
+  const out: Record<number, any> = {};
+  const uniq = Array.from(new Set(ids.filter(Boolean)));
+  for (const wid of uniq) {
+    const [w] = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, wid), eq(warehousesTable.companyId, cid)));
+    out[wid] = { accountId: w?.accountId ?? null, allowNegative: !!w?.allowNegative, nameAr: w?.nameAr ?? null };
+  }
+  return out;
 }
 
 const router = Router();
@@ -391,13 +403,24 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       .where(eq(purchaseInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
-    // Update stock balance for each stockable line (in base units)
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    if (noWh.length) {
+      res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+
+    // Load warehouse info for inventory account derivation
+    const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+
+    // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse
+    const inventoryByWarehouse: Record<number, number> = {};
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       const qty      = Number(line.qty) * factor;
       const cost     = Number(line.finalCost || line.unitPrice);
       const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
+      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -433,12 +456,37 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       : await getSupplierAccountId(cid, inv.supplierId);
 
     const missing: string[] = [];
-    if (!inv.inventoryAccountId) missing.push("حساب المخزون");
     if (vatAmount > 0 && !inv.taxAccountId) missing.push("حساب الضرائب");
     if (discountAmount > 0 && !inv.discountAccountId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    // Inventory account derived from warehouse — verify each used warehouse has one
+    const missingWh: string[] = [];
+    for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+      if (amt <= 0) continue;
+      const wid = Number(widStr);
+      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+    }
+    if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
     if (missing.length) {
-      throw new Error(`يجب تحديد الحسابات التالية على الفاتورة قبل الترحيل: ${missing.join("، ")}`);
+      throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
+    }
+
+    // Distribute landed-cost adjustment (LC expenses - discount on goods) proportionally over the warehouses,
+    // so the per-warehouse inventory debits sum to inventoryDebit instead of just goods cost.
+    const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
+    const inventoryDebitByWh: Record<number, number> = {};
+    if (goodsCostTotal > 0) {
+      const ratio = inventoryDebit / goodsCostTotal;
+      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+        inventoryDebitByWh[Number(widStr)] = amt * ratio;
+      }
+      // Fix rounding drift on the last warehouse so debits exactly balance
+      const sum = Object.values(inventoryDebitByWh).reduce((s, v) => s + v, 0);
+      const drift = inventoryDebit - sum;
+      if (Math.abs(drift) > 0.001) {
+        const lastKey = Object.keys(inventoryDebitByWh).pop();
+        if (lastKey) inventoryDebitByWh[Number(lastKey)] += drift;
+      }
     }
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
@@ -451,7 +499,17 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       entryType:    "purchase_invoice",
       exchangeRate: inv.exchangeRate,
       lines: [
-        { accountId: inv.inventoryAccountId, debit:  inventoryDebit, description: "قيمة البضاعة (شاملة المصاريف المحملة)" },
+        // Inventory: one debit line per warehouse using its own GL account
+        ...Object.entries(inventoryDebitByWh)
+          .filter(([, amt]) => amt > 0)
+          .map(([widStr, amt]) => {
+            const wid = Number(widStr);
+            return {
+              accountId: whInfo[wid]!.accountId!,
+              debit: amt,
+              description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+            };
+          }),
         { accountId: inv.taxAccountId,       debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
         { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : "مستحقات المورد" },
         { accountId: inv.discountAccountId,  credit: discountAmount, description: "خصم مكتسب" },
@@ -679,12 +737,39 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       .where(eq(purchaseReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
-    // Decrease stock for each stockable return line (in base units)
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    if (noWh.length) {
+      res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+
+    // Load warehouse info (account + allow-negative)
+    const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+
+    // Validate stock availability first — purchase returns ship goods OUT to the supplier
+    for (const line of lines) {
+      if (!line.itemId || !line.warehouseId) continue;
+      const wh = whInfo[line.warehouseId];
+      if (wh?.allowNegative) continue;
+      const factor = Number(line.conversionFactor || "1") || 1;
+      const qty = Number(line.qty) * factor;
+      const cur = await getBalance(cid, line.itemId, line.warehouseId);
+      if (cur < qty) {
+        res.status(400).json({
+          error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
+        });
+        return;
+      }
+    }
+
+    // Decrease stock for each stockable return line (in base units), accumulate per-warehouse credits
+    const inventoryByWarehouse: Record<number, number> = {};
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       const qty      = Number(line.qty) * factor;
       const costUnit = Number(line.unitPrice) / factor;
+      inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + qty * costUnit;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -719,12 +804,35 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       : await getSupplierAccountId(cid, ret.supplierId);
 
     const missing: string[] = [];
-    if (!(ret as any).inventoryAccountId) missing.push("حساب المخزون");
     if (vatAmount > 0 && !(ret as any).taxAccountId) missing.push("حساب الضرائب");
     if (discountAmount > 0 && !(ret as any).discountAccountId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    // Inventory account derived from warehouse — verify each used warehouse has one
+    const missingWh: string[] = [];
+    for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+      if (amt <= 0) continue;
+      const wid = Number(widStr);
+      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+    }
+    if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
     if (missing.length) {
-      throw new Error(`يجب تحديد الحسابات التالية على المرتجع قبل الترحيل: ${missing.join("، ")}`);
+      throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
+    }
+
+    // Scale per-warehouse credits so they sum to the JE subtotal (handles rounding/discount differences)
+    const goodsCostTotal = Object.values(inventoryByWarehouse).reduce((s, v) => s + v, 0);
+    const inventoryCreditByWh: Record<number, number> = {};
+    if (goodsCostTotal > 0) {
+      const ratio = subtotal / goodsCostTotal;
+      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+        inventoryCreditByWh[Number(widStr)] = amt * ratio;
+      }
+      const sum = Object.values(inventoryCreditByWh).reduce((s, v) => s + v, 0);
+      const drift = subtotal - sum;
+      if (Math.abs(drift) > 0.001) {
+        const lastKey = Object.keys(inventoryCreditByWh).pop();
+        if (lastKey) inventoryCreditByWh[Number(lastKey)] += drift;
+      }
     }
 
     const desc = `قيد مرتجع مشتريات رقم ${ret.docNumber || ret.id}`;
@@ -739,7 +847,17 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       lines: [
         { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : "تخفيض رصيد المورد" },
         { accountId: (ret as any).discountAccountId,  debit:  discountAmount, description: "إلغاء خصم مكتسب" },
-        { accountId: (ret as any).inventoryAccountId, credit: subtotal,       description: "ارتجاع البضاعة" },
+        // Inventory: one credit line per warehouse using its own GL account
+        ...Object.entries(inventoryCreditByWh)
+          .filter(([, amt]) => amt > 0)
+          .map(([widStr, amt]) => {
+            const wid = Number(widStr);
+            return {
+              accountId: whInfo[wid]!.accountId!,
+              credit: amt,
+              description: `ارتجاع البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+            };
+          }),
         { accountId: (ret as any).taxAccountId,       credit: vatAmount,      description: "إلغاء ضريبة القيمة المضافة" },
       ],
     });

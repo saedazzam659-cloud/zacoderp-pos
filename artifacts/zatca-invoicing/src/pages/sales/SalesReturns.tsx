@@ -447,11 +447,6 @@ export default function SalesReturns() {
                     placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[11px]">حساب المخزون <span className="text-destructive">*</span></Label>
-                  <AccountCombobox value={form.inventoryAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, inventoryAccountId: v }))}
-                    placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
-                </div>
-                <div className="space-y-1">
                   <Label className="text-[11px]">حساب ضريبة المخرجات (VAT)</Label>
                   <AccountCombobox value={form.taxAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
                     placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />

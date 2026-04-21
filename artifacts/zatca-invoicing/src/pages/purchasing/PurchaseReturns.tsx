@@ -543,12 +543,6 @@ export default function PurchaseReturns() {
               <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">حساب المخزون <span className="text-destructive">*</span></Label>
-                  <AccountCombobox value={form.inventoryAccountId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, inventoryAccountId: v }))}
-                    placeholder="اختر حساب المخزون..." filterTypes={["asset"]} allowEmpty={false} />
-                </div>
-                <div className="space-y-1.5">
                   <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
                   <AccountCombobox value={form.taxAccountId}
                     onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}

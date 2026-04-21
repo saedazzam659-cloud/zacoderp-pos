@@ -5,7 +5,7 @@ import {
   salesReturnsTable, salesReturnLinesTable,
   salesQuotationsTable, salesQuotationLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
-  customersTable, cashBoxesTable,
+  customersTable, cashBoxesTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
@@ -61,6 +61,18 @@ async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undef
   const [cb] = await db.select().from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
   return cb?.accountId ?? null;
+}
+
+/** Map a list of warehouse IDs (used by an invoice) to their {accountId, allowNegative, name}. */
+async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<number, { accountId: number | null; allowNegative: boolean; nameAr: string | null }>> {
+  const out: Record<number, any> = {};
+  const uniq = Array.from(new Set(ids.filter(Boolean)));
+  for (const wid of uniq) {
+    const [w] = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, wid), eq(warehousesTable.companyId, cid)));
+    out[wid] = { accountId: w?.accountId ?? null, allowNegative: !!w?.allowNegative, nameAr: w?.nameAr ?? null };
+  }
+  return out;
 }
 
 const router = Router();
@@ -218,28 +230,44 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
+    // Guard: every stock-affecting (item-bearing) line must specify a warehouse.
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    if (noWh.length) {
+      res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+
+    // Load warehouse info (account + allow-negative) for every distinct warehouse used
+    const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+
     // Validate stock availability first (qty * conversionFactor = base-unit qty)
+    // Skip the check for warehouses that explicitly allow negative stock.
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
+      const wh = whInfo[line.warehouseId];
+      if (wh?.allowNegative) continue;
       const factor = Number(line.conversionFactor || "1") || 1;
       const qty = Number(line.qty) * factor;
       const cur = await getBalance(cid, line.itemId, line.warehouseId);
       if (cur < qty) {
         res.status(400).json({
-          error: `رصيد الصنف "${line.itemName}" غير كافٍ — المتاح ${cur} والمطلوب ${qty}`,
+          error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
         });
         return;
       }
     }
 
-    // Decrease stock for each stockable line (in base units) + accumulate COGS
+    // Decrease stock for each stockable line (in base units) + accumulate COGS per warehouse
     let totalCogs = 0;
+    const cogsByWarehouse: Record<number, number> = {};
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
       const qty     = Number(line.qty) * factor;
       const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
-      totalCogs += qty * avgCost;
+      const lineCogs = qty * avgCost;
+      totalCogs += lineCogs;
+      cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -268,7 +296,17 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     //   Cr Inventory     (= total cost — credit reduces inventory asset)
     if (!inv.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
     if (!inv.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
-    if (!inv.inventoryAccountId) { res.status(400).json({ error: "اختر حساب المخزون قبل الترحيل" }); return; }
+    // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
+    const missingWh: string[] = [];
+    for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
+      if (amt <= 0) continue;
+      const wid = Number(widStr);
+      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+    }
+    if (missingWh.length) {
+      res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}. اضبط حساب المخزون من شاشة المخازن.` });
+      return;
+    }
 
     const subtotalAmt = Number(inv.subtotal || 0);
     const vatAmt      = Number(inv.vatAmount || 0);
@@ -308,7 +346,17 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         // Credits
         { accountId: inv.salesAccountId,     credit: subtotalAmt, description: "إيراد المبيعات" },
         { accountId: inv.taxAccountId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
-        { accountId: inv.inventoryAccountId, credit: totalCogs,   description: "إنقاص المخزون" },
+        // Inventory: one credit line per warehouse using its own GL account
+        ...Object.entries(cogsByWarehouse)
+          .filter(([, amt]) => amt > 0)
+          .map(([widStr, amt]) => {
+            const wid = Number(widStr);
+            return {
+              accountId: whInfo[wid]!.accountId!,
+              credit: amt,
+              description: `إنقاص المخزون — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+            };
+          }),
       ],
     });
 
@@ -493,8 +541,18 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       .where(eq(salesReturnLinesTable.returnId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في المرتجع" }); return; }
 
+    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    if (noWh.length) {
+      res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
+      return;
+    }
+
+    // Load warehouse info for inventory account derivation
+    const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+
     // Increase stock for each stockable return line (items coming back into inventory, in base units)
     let totalCogs = 0;
+    const cogsByWarehouse: Record<number, number> = {};
     for (const line of lines) {
       if (!line.itemId || !line.warehouseId) continue;
       const factor  = Number(line.conversionFactor || "1") || 1;
@@ -503,7 +561,9 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       // If item never existed in warehouse, fall back to the line's price as cost.
       // unitPrice is in the SELECTED unit, so divide by factor to get base-unit cost.
       const costUnit = avgCost > 0 ? avgCost : (Number(line.unitPrice) / factor);
-      totalCogs += qty * costUnit;
+      const lineCogs = qty * costUnit;
+      totalCogs += lineCogs;
+      cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -526,14 +586,13 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     // ── Build reversed journal entry ──
     // (Reverse of sales-invoice JE: customer becomes credit, sales/vat become debit, inventory becomes debit, COGS becomes credit)
     // If account FKs are missing on the return but a source invoice is linked, inherit them from the invoice.
-    if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.inventoryAccountId || !ret.taxAccountId || !ret.discountAccountId)) {
+    if (ret.invoiceId && (!ret.salesAccountId || !ret.cogsAccountId || !ret.taxAccountId || !ret.discountAccountId)) {
       const [srcInv] = await db.select().from(salesInvoicesTable)
         .where(and(eq(salesInvoicesTable.id, ret.invoiceId), eq(salesInvoicesTable.companyId, cid)));
       if (srcInv) {
         const patch: any = {};
         if (!ret.salesAccountId     && srcInv.salesAccountId)     { patch.salesAccountId     = srcInv.salesAccountId;     ret.salesAccountId     = srcInv.salesAccountId; }
         if (!ret.cogsAccountId      && srcInv.cogsAccountId)      { patch.cogsAccountId      = srcInv.cogsAccountId;      ret.cogsAccountId      = srcInv.cogsAccountId; }
-        if (!ret.inventoryAccountId && srcInv.inventoryAccountId) { patch.inventoryAccountId = srcInv.inventoryAccountId; ret.inventoryAccountId = srcInv.inventoryAccountId; }
         if (!ret.taxAccountId       && srcInv.taxAccountId)       { patch.taxAccountId       = srcInv.taxAccountId;       ret.taxAccountId       = srcInv.taxAccountId; }
         if (!ret.discountAccountId  && srcInv.discountAccountId)  { patch.discountAccountId  = srcInv.discountAccountId;  ret.discountAccountId  = srcInv.discountAccountId; }
         if (Object.keys(patch).length) {
@@ -543,7 +602,17 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     }
     if (!ret.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
     if (!ret.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
-    if (!ret.inventoryAccountId) { res.status(400).json({ error: "اختر حساب المخزون قبل الترحيل" }); return; }
+    // Inventory account derived from warehouse — verify each used warehouse has one
+    const missingWh: string[] = [];
+    for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
+      if (amt <= 0) continue;
+      const wid = Number(widStr);
+      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+    }
+    if (missingWh.length) {
+      res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}.` });
+      return;
+    }
 
     const totalAmt    = Number(ret.totalAmount || 0);
     const vatAmt      = Number(ret.vatAmount || 0);
@@ -574,7 +643,17 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         // Debits (reversed)
         { accountId: ret.salesAccountId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
         { accountId: ret.taxAccountId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
-        { accountId: ret.inventoryAccountId, debit: totalCogs,   description: "زيادة المخزون (مرتجع)" },
+        // Inventory: one debit line per warehouse using its own GL account
+        ...Object.entries(cogsByWarehouse)
+          .filter(([, amt]) => amt > 0)
+          .map(([widStr, amt]) => {
+            const wid = Number(widStr);
+            return {
+              accountId: whInfo[wid]!.accountId!,
+              debit: amt,
+              description: `زيادة المخزون (مرتجع) — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+            };
+          }),
         // Credits (reversed)
         { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : "تخفيض ذمم العميل" },
         { accountId: ret.cogsAccountId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
