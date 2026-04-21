@@ -153,7 +153,9 @@ export default function SalesInvoices() {
                 {filtered.map(inv => {
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   return (
-                    <tr key={inv.id} className="border-b hover:bg-muted/30 transition-colors">
+                    <tr key={inv.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
+                      onDoubleClick={() => navigate(`/sales/invoices/${inv.id}`)}
+                      title="انقر مرتين للفتح والتعديل">
                       <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{inv.docNumber ?? `SI-${inv.id}`}</td>
                       <td className="px-3 py-2.5">{inv.invoiceDate}</td>
                       <td className="px-3 py-2.5">{cusMap[inv.customerId] ?? "—"}</td>
