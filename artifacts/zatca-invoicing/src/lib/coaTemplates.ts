@@ -185,10 +185,25 @@ const INDUSTRIAL_EXTRA: CoaRow[] = [
   { code: "6308",  nameAr: "وقود ومحروقات الإنتاج",            nameEn: "Factory Fuel",                 accountType: "expense",   level: 3, isPosting: true, parentCode: "63" },
 ];
 
+// Auto-derive reportDirection from accountType so it appears next to every
+// row in the downloaded Excel template:
+//   asset / liability / equity → balance_sheet (مركز مالي)
+//   revenue / expense          → income_statement (قائمة دخل)
+function withDirection(rows: CoaRow[]): CoaRow[] {
+  return rows.map(r => ({
+    ...r,
+    reportDirection: r.reportDirection ?? (
+      r.accountType === "revenue" || r.accountType === "expense"
+        ? "income_statement"
+        : "balance_sheet"
+    ),
+  }));
+}
+
 export const COA_TEMPLATES = {
   empty:      [] as CoaRow[],
-  commercial: [...HEADERS, ...COMMERCIAL_LEAVES],
-  industrial: [...HEADERS, ...COMMERCIAL_LEAVES, ...INDUSTRIAL_EXTRA],
+  commercial: withDirection([...HEADERS, ...COMMERCIAL_LEAVES]),
+  industrial: withDirection([...HEADERS, ...COMMERCIAL_LEAVES, ...INDUSTRIAL_EXTRA]),
 };
 
 export const TEMPLATE_LABELS: Record<keyof typeof COA_TEMPLATES, string> = {
