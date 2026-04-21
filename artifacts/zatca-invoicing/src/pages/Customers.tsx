@@ -1,9 +1,9 @@
-import { useListCustomers } from "@workspace/api-client-react";
-import { useQuery } from "@tanstack/react-query";
+import { useListCustomers, useDeleteCustomer } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Plus, Users, Search, Phone, Mail, MapPin,
-  BadgeCheck, Building2, UserCheck, FileText, ChevronLeft, Pencil,
+  BadgeCheck, Building2, UserCheck, FileText, Pencil, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ExportButtons from "@/components/ExportButtons";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -37,6 +42,25 @@ export default function Customers() {
   const [activeTab, setActiveTab] = useState("all");
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.companyId;
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const deleteMut = useDeleteCustomer({
+    mutation: {
+      onSuccess: () => {
+        toast({ title: "✓ تم الحذف", description: "تم حذف العميل بنجاح." });
+        queryClient.invalidateQueries({ queryKey: ["customers"] });
+        setDeleteTarget(null);
+      },
+      onError: (e: any) => toast({
+        title: "تعذّر الحذف",
+        description: e?.message?.includes("foreign") || e?.status === 409
+          ? "لا يمكن حذف العميل لوجود فواتير مرتبطة به."
+          : "حدث خطأ أثناء حذف العميل.",
+        variant: "destructive",
+      }),
+    },
+  } as any);
 
   const { data: customers = [], isLoading } = useListCustomers(undefined, {
     query: { queryKey: ["customers", user?.companyId] },
@@ -375,7 +399,7 @@ export default function Customers() {
 
                     {/* Actions */}
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1">
                           <Link href={`/invoices/new?customerId=${customer.id}`}>
                             <FileText className="h-3 w-3" />فاتورة
@@ -386,10 +410,13 @@ export default function Customers() {
                             <Pencil className="h-3 w-3" />تعديل
                           </Link>
                         </Button>
-                        <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs text-muted-foreground">
-                          <Link href={`/customers/${customer.id}`}>
-                            <ChevronLeft className="h-3.5 w-3.5" />
-                          </Link>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs gap-1 border-red-200 text-red-700 hover:bg-red-50"
+                          onClick={() => setDeleteTarget(customer)}
+                        >
+                          <Trash2 className="h-3 w-3" />حذف
                         </Button>
                       </div>
                     </td>
@@ -407,6 +434,31 @@ export default function Customers() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>تأكيد حذف العميل</AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد من حذف العميل <strong>{deleteTarget?.nameAr}</strong>؟
+              لا يمكن التراجع عن هذه العملية، ولن يتم الحذف إذا كانت هناك فواتير مرتبطة به.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleteMut.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteTarget?.id) deleteMut.mutate({ id: deleteTarget.id });
+              }}
+            >
+              {deleteMut.isPending ? "جاري الحذف..." : "حذف"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
