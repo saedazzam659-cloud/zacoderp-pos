@@ -416,6 +416,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount)}`}
               </p>
               <TabsList className="h-8 bg-background border gap-1">
+                {isInvoice && (
+                  <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Calculator className="h-3.5 w-3.5" />حسابات القيد
+                  </TabsTrigger>
+                )}
                 <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   <FileText className="h-3.5 w-3.5" />البيانات الرأسية
                 </TabsTrigger>
@@ -507,46 +512,50 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
               </div>
 
-              {isInvoice && (
-                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-3 space-y-3">
-                  <div className="flex items-center gap-2 text-blue-900">
-                    <Calculator className="h-4 w-4" />
-                    <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل)</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">حساب إيراد المبيعات <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
-                        placeholder="اختر حساب الإيراد..." filterTypes={["revenue"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">حساب تكلفة البضاعة المباعة <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
-                        placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">حساب ضريبة المخرجات (VAT)</Label>
-                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
-                        placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">حساب الخصم المسموح به</Label>
-                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
-                        placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-blue-900/70">
-                    مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
-                  </p>
-                </div>
-              )}
-
               <div className="space-y-1.5">
                 <Label className="text-xs">ملاحظات</Label>
                 <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
             </CardContent>
           </TabsContent>
+
+          {isInvoice && (
+            <TabsContent value="accounts" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
+                  <div className="flex items-center gap-2 text-blue-900">
+                    <Calculator className="h-4 w-4" />
+                    <span className="text-sm font-semibold">حسابات القيد المحاسبي (ترحيل)</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs">حساب إيراد المبيعات <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
+                        placeholder="اختر حساب الإيراد..." filterTypes={["revenue"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">حساب تكلفة البضاعة المباعة <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
+                        placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">حساب ضريبة المخرجات (VAT)</Label>
+                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
+                        placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">حساب الخصم المسموح به</Label>
+                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
+                        placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-blue-900/70">
+                    مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
+                  </p>
+                </div>
+              </CardContent>
+            </TabsContent>
+          )}
 
           <TabsContent value="lines" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-3">
