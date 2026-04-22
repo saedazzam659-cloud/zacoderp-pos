@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
@@ -1046,6 +1046,13 @@ function TopBar({
   const { t, i18n } = useTranslation();
   const [, navigate] = useLocation();
   const crumbs = useMemo(() => getBreadcrumbs(location, t), [location, t, i18n.language]);
+
+  // Update browser tab title to current page name (so opening in a new tab shows the screen name)
+  useEffect(() => {
+    const last = crumbs[crumbs.length - 1]?.label;
+    const appName = t("app.name", "ZATCA e-Invoicing");
+    document.title = last && last !== t("topbar.page") ? `${last} — ${appName}` : appName;
+  }, [crumbs, t]);
 
   return (
     <header className="sticky top-0 z-10 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
