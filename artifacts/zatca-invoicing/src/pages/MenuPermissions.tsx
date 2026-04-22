@@ -1,27 +1,24 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
-  PieChart, Smartphone,
+  PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// ─── Menu definitions ─────────────────────────────────────────────────────────
-
-interface MenuItem {
-  key: string;
-  label: string;
-  icon: React.ElementType;
-  section: string;
-}
+// ─── Menu definitions ──────────────────────────────────────────────────
+interface MenuItem { key: string; label: string; icon: React.ElementType; section: string; }
 
 const MENU_ITEMS: MenuItem[] = [
   { key: "dashboard",          label: "لوحة التحكم",                icon: LayoutDashboard, section: "رئيسي" },
@@ -48,6 +45,18 @@ const MENU_ITEMS: MenuItem[] = [
   { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
 ];
 
+const SECTIONS = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
+
+const SECTION_THEME: Record<string, { bg: string; text: string; border: string; ring: string }> = {
+  "رئيسي":     { bg: "bg-blue-50",    text: "text-blue-700",    border: "border-blue-200",    ring: "from-blue-500/10" },
+  "الأعمال":    { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", ring: "from-emerald-500/10" },
+  "المخازن":    { bg: "bg-amber-50",   text: "text-amber-700",   border: "border-amber-200",   ring: "from-amber-500/10" },
+  "المبيعات":   { bg: "bg-cyan-50",    text: "text-cyan-700",    border: "border-cyan-200",    ring: "from-cyan-500/10" },
+  "المشتريات":  { bg: "bg-orange-50",  text: "text-orange-700",  border: "border-orange-200",  ring: "from-orange-500/10" },
+  "المحاسبة":   { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200",  ring: "from-indigo-500/10" },
+  "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
+};
+
 const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
   (acc, m) => { acc[m.key] = true; return acc; },
   {} as Record<string, boolean>,
@@ -58,46 +67,21 @@ function parsePerms(raw: string | null | undefined): Record<string, boolean> {
   catch { return { ...DEFAULT_PERMISSIONS }; }
 }
 
-// ─── Section label ─────────────────────────────────────────────────────────────
-
-function SectionBadge({ section }: { section: string }) {
-  const color =
-    section === "رئيسي"   ? "bg-blue-50 text-blue-700 border-blue-200" :
-    section === "الأعمال" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-    "bg-purple-50 text-purple-700 border-purple-200";
-  return (
-    <span className={cn("text-[10px] border rounded-full px-1.5 py-px font-medium", color)}>
-      {section}
-    </span>
-  );
-}
-
-// ─── Status dot ───────────────────────────────────────────────────────────────
-
-function StatusDot({ active }: { active: boolean }) {
-  return (
-    <span className={cn(
-      "inline-flex h-2 w-2 rounded-full shrink-0",
-      active ? "bg-green-500" : "bg-muted-foreground/30"
-    )} />
-  );
-}
-
-// ─── Main page ────────────────────────────────────────────────────────────────
-
+// ─── Page ──────────────────────────────────────────────────────────────
 export default function MenuPermissions() {
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [savingId, setSavingId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token ?? ""}`,
     "Content-Type": "application/json",
   };
 
-  // Load all companies
   const { data: companies = [], isLoading } = useQuery<any[]>({
     queryKey: ["companies-menu-perms"],
     queryFn: async () => {
@@ -107,7 +91,31 @@ export default function MenuPermissions() {
     },
   });
 
-  // Save permissions mutation (per company)
+  // Auto-select first company
+  useEffect(() => {
+    if (selectedId == null && companies.length > 0) setSelectedId(companies[0].id);
+  }, [companies, selectedId]);
+
+  const selected = useMemo(
+    () => companies.find((c: any) => c.id === selectedId) ?? null,
+    [companies, selectedId],
+  );
+
+  const savedPerms = useMemo(
+    () => (selected ? parsePerms(selected.menuPermissions) : { ...DEFAULT_PERMISSIONS }),
+    [selected],
+  );
+
+  // Load draft when selection changes
+  useEffect(() => {
+    setDraft(selected ? parsePerms(selected.menuPermissions) : null);
+  }, [selectedId, selected?.menuPermissions]);
+
+  const isDirty = useMemo(() => {
+    if (!draft) return false;
+    return MENU_ITEMS.some(m => Boolean(draft[m.key]) !== Boolean(savedPerms[m.key]));
+  }, [draft, savedPerms]);
+
   const saveMutation = useMutation({
     mutationFn: async ({ companyId, perms }: { companyId: number; perms: Record<string, boolean> }) => {
       const res = await fetch(`${API}/api/companies/${companyId}/menu-permissions`, {
@@ -121,168 +129,295 @@ export default function MenuPermissions() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["companies-menu-perms"] });
-      setSavingId(null);
-      toast({ title: "تم حفظ الصلاحيات بنجاح", variant: "default" });
+      toast({ title: "تم حفظ الصلاحيات بنجاح" });
     },
-    onError: (e: any) => {
-      toast({ title: "فشل الحفظ: " + e.message, variant: "destructive" });
-      setSavingId(null);
-    },
+    onError: (e: any) => toast({ title: "فشل الحفظ: " + e.message, variant: "destructive" }),
   });
 
-  function togglePerm(company: any, key: string) {
-    const perms = parsePerms(company.menuPermissions);
-    perms[key] = !perms[key];
-    setSavingId(company.id);
-    saveMutation.mutate({ companyId: company.id, perms });
-  }
+  const filteredCompanies = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    if (!s) return companies;
+    return companies.filter((c: any) =>
+      c.nameAr?.toLowerCase().includes(s) ||
+      c.nameEn?.toLowerCase().includes(s) ||
+      c.vatNumber?.includes(s),
+    );
+  }, [companies, search]);
 
-  const filtered = companies.filter((c: any) =>
-    !search || c.nameAr?.includes(search) || c.nameEn?.toLowerCase().includes(search.toLowerCase()) || c.vatNumber?.includes(search)
-  );
+  // ─── Helpers ─────────────────────────────────────────────────────
+  const toggle = (key: string) =>
+    setDraft(d => (d ? { ...d, [key]: !d[key] } : d));
+
+  const setSection = (section: string, val: boolean) =>
+    setDraft(d => {
+      if (!d) return d;
+      const next = { ...d };
+      MENU_ITEMS.filter(m => m.section === section).forEach(m => { next[m.key] = val; });
+      return next;
+    });
+
+  const setAll = (val: boolean) =>
+    setDraft(d => (d ? Object.fromEntries(MENU_ITEMS.map(m => [m.key, val])) : d));
+
+  const reset = () => setDraft(savedPerms);
+
+  const copyFrom = (sourceId: number) => {
+    const src = companies.find((c: any) => c.id === sourceId);
+    if (src) setDraft(parsePerms(src.menuPermissions));
+  };
+
+  const save = () => {
+    if (!selected || !draft) return;
+    saveMutation.mutate({ companyId: selected.id, perms: draft });
+  };
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-5" dir="rtl">
 
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <ShieldCheck className="h-5 w-5 text-primary" />
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
+          <div>
             <h1 className="text-xl font-bold">صلاحيات القوائم</h1>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            تحكم في القوائم الظاهرة لمستخدمي كل شركة — التغييرات تُطبَّق فورياً
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="ابحث باسم الشركة أو رقم ضريبي..."
-              className="h-8 pr-8 text-sm w-56"
-            />
+            <p className="text-sm text-muted-foreground">
+              اختر شركة من القائمة، ثم فعّل أو عطّل القوائم بسهولة. التغييرات تُحفظ بضغطة واحدة.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">القوائم:</span>
-        {MENU_ITEMS.map(m => (
-          <span key={m.key} className="flex items-center gap-1.5">
-            <m.icon className="h-3.5 w-3.5" />
-            {m.label}
-            <SectionBadge section={m.section} />
-          </span>
-        ))}
-      </div>
-
-      {/* Table */}
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">
-          لا توجد شركات مطابقة للبحث
-        </div>
       ) : (
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 border-b">
-                <tr>
-                  <th className="text-right font-semibold text-xs text-muted-foreground px-4 py-3 w-[200px] sticky right-0 bg-muted/40 z-10">
-                    <span className="flex items-center gap-1.5">
-                      <Building2 className="h-3.5 w-3.5" />الشركة
-                    </span>
-                  </th>
-                  {MENU_ITEMS.map(menu => (
-                    <th
-                      key={menu.key}
-                      className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[110px]"
-                    >
-                      <span className="flex flex-col items-center gap-1">
-                        <menu.icon className="h-4 w-4" />
-                        <span className="whitespace-nowrap">{menu.label}</span>
-                      </span>
-                    </th>
-                  ))}
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[70px]">الحالة</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filtered.map((company: any) => {
-                  const perms = parsePerms(company.menuPermissions);
-                  const isSaving = savingId === company.id && saveMutation.isPending;
-                  const enabledCount = MENU_ITEMS.filter(m => perms[m.key]).length;
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
 
-                  return (
-                    <tr
-                      key={company.id}
-                      className={cn(
-                        "transition-colors",
-                        isSaving ? "bg-primary/5" : "hover:bg-muted/30"
+          {/* ─── Companies sidebar ───────────────────────────── */}
+          <Card className="h-fit lg:sticky lg:top-4 max-h-[calc(100vh-6rem)] overflow-hidden flex flex-col">
+            <div className="p-3 border-b bg-muted/30">
+              <div className="relative mb-2">
+                <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="ابحث عن شركة..."
+                  className="h-8 pr-8 text-sm"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                <Building2 className="h-3 w-3 inline ml-1" />
+                {filteredCompanies.length} شركة
+              </p>
+            </div>
+            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+              {filteredCompanies.map((c: any) => {
+                const perms = parsePerms(c.menuPermissions);
+                const enabled = MENU_ITEMS.filter(m => perms[m.key]).length;
+                const total = MENU_ITEMS.length;
+                const isSel = c.id === selectedId;
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className={cn(
+                      "w-full text-right p-2.5 rounded-lg border transition-all",
+                      isSel
+                        ? "bg-gradient-to-l from-indigo-50 to-purple-50 border-indigo-300 shadow-sm dark:from-indigo-950/40 dark:to-purple-950/40"
+                        : "bg-card hover:bg-muted/50 border-transparent",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("font-medium text-sm truncate", isSel && "text-indigo-700 dark:text-indigo-400")}>
+                          {c.nameAr}
+                        </p>
+                        <p className="text-[11px] font-mono text-muted-foreground truncate" dir="ltr">
+                          {c.vatNumber}
+                        </p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "shrink-0 text-[10px] h-5 px-1.5",
+                          enabled === total
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                            : enabled === 0
+                            ? "bg-red-50 text-red-700 border-red-300"
+                            : "bg-amber-50 text-amber-700 border-amber-300",
+                        )}
+                      >
+                        {enabled}/{total}
+                      </Badge>
+                    </div>
+                  </button>
+                );
+              })}
+              {filteredCompanies.length === 0 && (
+                <div className="text-center text-sm text-muted-foreground py-8">
+                  لا توجد نتائج
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* ─── Editor panel ───────────────────────────────── */}
+          {!selected ? (
+            <Card><CardContent className="py-20 text-center text-muted-foreground">
+              <ShieldCheck className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              اختر شركة من القائمة للبدء
+            </CardContent></Card>
+          ) : (
+            <div className="space-y-4">
+
+              {/* Selected company sticky header */}
+              <Card className="sticky top-0 z-10 border-2 border-indigo-200 dark:border-indigo-900 shadow-md">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
+                        <Building2 className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="font-bold text-lg truncate">{selected.nameAr}</h2>
+                        <p className="text-xs text-muted-foreground font-mono" dir="ltr">
+                          الرقم الضريبي: {selected.vatNumber}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button size="sm" variant="outline" onClick={() => setAll(true)} className="gap-1 h-8">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> تفعيل الكل
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setAll(false)} className="gap-1 h-8">
+                        <XCircle className="h-3.5 w-3.5 text-red-600" /> تعطيل الكل
+                      </Button>
+                      <select
+                        onChange={(e) => { if (e.target.value) { copyFrom(Number(e.target.value)); e.target.value = ""; } }}
+                        defaultValue=""
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                        title="نسخ من شركة أخرى"
+                      >
+                        <option value="">📋 نسخ من شركة...</option>
+                        {companies.filter((c: any) => c.id !== selected.id).map((c: any) => (
+                          <option key={c.id} value={c.id}>{c.nameAr}</option>
+                        ))}
+                      </select>
+                      {isDirty && (
+                        <Button size="sm" variant="outline" onClick={reset} className="gap-1 h-8">
+                          <RotateCcw className="h-3.5 w-3.5" /> تراجع
+                        </Button>
                       )}
-                    >
-                      {/* Company info */}
-                      <td className="px-4 py-3">
-                        <div className="flex items-start gap-2">
-                          {isSaving ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0 mt-0.5" />
-                          ) : (
-                            <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                          )}
-                          <div className="min-w-0">
-                            <p className="font-medium truncate text-sm leading-tight">{company.nameAr}</p>
-                            <p className="text-[11px] font-mono text-muted-foreground mt-0.5" dir="ltr">{company.vatNumber}</p>
-                          </div>
-                        </div>
-                      </td>
+                      <Button
+                        size="sm"
+                        onClick={save}
+                        disabled={!isDirty || saveMutation.isPending}
+                        className="gap-1 h-8 bg-gradient-to-l from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
+                      >
+                        {saveMutation.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Save className="h-3.5 w-3.5" />
+                        )}
+                        {isDirty ? "حفظ التغييرات" : "محفوظ"}
+                      </Button>
+                    </div>
+                  </div>
+                  {isDirty && (
+                    <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5 flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      لديك تغييرات غير محفوظة — اضغط "حفظ التغييرات" لتطبيقها
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-                      {/* Per-menu toggles */}
-                      {MENU_ITEMS.map(menu => (
-                        <td key={menu.key} className="px-3 py-3 text-center">
-                          <div className="flex justify-center">
+              {/* Sections grid */}
+              {draft && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {SECTIONS.map(section => {
+                    const items = MENU_ITEMS.filter(m => m.section === section);
+                    const enabledIn = items.filter(m => draft[m.key]).length;
+                    const allOn  = enabledIn === items.length;
+                    const allOff = enabledIn === 0;
+                    const theme = SECTION_THEME[section] ?? SECTION_THEME["رئيسي"];
+                    const isCollapsed = collapsed[section];
+
+                    return (
+                      <Card key={section} className={cn("overflow-hidden border", theme.border)}>
+                        {/* Section header */}
+                        <div className={cn("px-4 py-3 border-b flex items-center justify-between", theme.bg)}>
+                          <button
+                            onClick={() => setCollapsed(c => ({ ...c, [section]: !c[section] }))}
+                            className="flex items-center gap-2"
+                          >
+                            {isCollapsed ? (
+                              <ChevronDown className={cn("h-4 w-4", theme.text)} />
+                            ) : (
+                              <ChevronUp className={cn("h-4 w-4", theme.text)} />
+                            )}
+                            <span className={cn("font-bold text-sm", theme.text)}>{section}</span>
+                            <Badge variant="outline" className={cn("text-[10px] h-5", theme.text, theme.border, "bg-white/60")}>
+                              {enabledIn}/{items.length}
+                            </Badge>
+                          </button>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">تفعيل القسم</span>
                             <Switch
-                              checked={perms[menu.key] ?? true}
-                              onCheckedChange={() => togglePerm(company, menu.key)}
-                              disabled={isSaving}
-                              className="scale-90"
+                              checked={allOn}
+                              onCheckedChange={(v) => setSection(section, v)}
+                              className={cn(allOff ? "" : "")}
                             />
                           </div>
-                        </td>
-                      ))}
+                        </div>
 
-                      {/* Summary */}
-                      <td className="px-3 py-3 text-center">
-                        <span className={cn(
-                          "inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5 border",
-                          enabledCount === MENU_ITEMS.length
-                            ? "bg-green-50 text-green-700 border-green-200"
-                            : enabledCount === 0
-                            ? "bg-red-50 text-red-700 border-red-200"
-                            : "bg-amber-50 text-amber-700 border-amber-200"
-                        )}>
-                          <StatusDot active={enabledCount > 0} />
-                          {enabledCount}/{MENU_ITEMS.length}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        {/* Items */}
+                        {!isCollapsed && (
+                          <div className="divide-y">
+                            {items.map(m => {
+                              const on = !!draft[m.key];
+                              return (
+                                <label
+                                  key={m.key}
+                                  className={cn(
+                                    "flex items-center justify-between gap-3 px-4 py-2.5 cursor-pointer transition",
+                                    on ? "bg-card hover:bg-muted/30" : "bg-muted/20 hover:bg-muted/40",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className={cn(
+                                      "p-1.5 rounded-md transition",
+                                      on ? cn(theme.bg, theme.text) : "bg-muted text-muted-foreground",
+                                    )}>
+                                      <m.icon className="h-4 w-4" />
+                                    </div>
+                                    <span className={cn("text-sm font-medium truncate", !on && "text-muted-foreground")}>
+                                      {m.label}
+                                    </span>
+                                  </div>
+                                  <Switch checked={on} onCheckedChange={() => toggle(m.key)} />
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
 
-          {/* Footer summary */}
-          <div className="border-t bg-muted/20 px-4 py-2.5 flex items-center justify-between text-xs text-muted-foreground">
-            <span>إجمالي الشركات: <strong className="text-foreground">{filtered.length}</strong></span>
-            <span>التغييرات تُطبَّق فورياً بدون حاجة لحفظ يدوي</span>
-          </div>
+              {/* Footer note */}
+              <p className="text-xs text-muted-foreground text-center py-2">
+                <Sparkles className="h-3 w-3 inline ml-1" />
+                نصيحة: استخدم "نسخ من شركة" لتطبيق نفس الإعدادات على شركة جديدة بسرعة
+              </p>
+            </div>
+          )}
+
         </div>
       )}
     </div>
