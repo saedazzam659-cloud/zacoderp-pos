@@ -187,6 +187,27 @@ export default function JournalEntryForm() {
     setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   }
   function addLine() { setLines(prev => [...prev, newLine()]); }
+
+  // Enter-key navigation between line inputs.
+  // Pressing Enter moves focus to the next input marked with [data-enter-nav].
+  // If on the last input, a new line is appended and focus jumps to its first cell.
+  function handleEnterNav(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    const all = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-enter-nav="true"]'));
+    const i = all.indexOf(e.currentTarget);
+    if (i >= 0 && i + 1 < all.length) {
+      all[i + 1].focus();
+      all[i + 1].select?.();
+    } else if (i === all.length - 1) {
+      // Last input on last row → append a new line and focus its first nav input
+      addLine();
+      setTimeout(() => {
+        const after = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-enter-nav="true"]'));
+        after[i + 1]?.focus();
+      }, 30);
+    }
+  }
   function removeLine(id: string) {
     if (lines.length <= 2) return;
     setLines(prev => prev.filter(l => l.id !== id));
@@ -583,13 +604,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
             <CardContent className="p-0">
               {/* Add line + column headers */}
               <div className="flex items-center justify-between px-4 py-2.5 border-b bg-muted/10">
-                <div className="grid grid-cols-[32px_2fr_1.2fr_1fr_1fr_1.5fr_32px] gap-2 flex-1 text-[11px] font-semibold text-muted-foreground">
+                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 flex-1 text-[11px] font-semibold text-muted-foreground">
                   <span></span>
                   <span>الحساب</span>
-                  <span>مركز التكلفة</span>
                   <span>مدين</span>
                   <span>دائن</span>
                   <span>البيان</span>
+                  <span>مركز التكلفة</span>
                   <span></span>
                 </div>
                 <Button
@@ -607,7 +628,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 {lines.map((line, idx) => (
                   <div
                     key={line.id}
-                    className="grid grid-cols-[32px_2fr_1.2fr_1fr_1fr_1.5fr_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
+                    className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 px-4 py-2.5 items-center hover:bg-muted/10"
                   >
                     <span className="text-[10px] text-muted-foreground text-center font-mono">{idx + 1}</span>
 
@@ -621,19 +642,14 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     />
 
                     <Input
-                      value={line.costCenter}
-                      onChange={e => updateLine(line.id, "costCenter", e.target.value)}
-                      placeholder="-"
-                      className="h-8 text-sm"
-                    />
-
-                    <Input
                       type="number"
+                      data-enter-nav="true"
                       value={line.debit}
                       onChange={e => {
                         updateLine(line.id, "debit", e.target.value);
                         if (e.target.value) updateLine(line.id, "credit", "");
                       }}
+                      onKeyDown={handleEnterNav}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
@@ -645,11 +661,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
                     <Input
                       type="number"
+                      data-enter-nav="true"
                       value={line.credit}
                       onChange={e => {
                         updateLine(line.id, "credit", e.target.value);
                         if (e.target.value) updateLine(line.id, "debit", "");
                       }}
+                      onKeyDown={handleEnterNav}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
@@ -660,9 +678,20 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     />
 
                     <Input
+                      data-enter-nav="true"
                       value={line.description}
                       onChange={e => updateLine(line.id, "description", e.target.value)}
+                      onKeyDown={handleEnterNav}
                       placeholder="بيان السطر..."
+                      className="h-8 text-sm"
+                    />
+
+                    <Input
+                      data-enter-nav="true"
+                      value={line.costCenter}
+                      onChange={e => updateLine(line.id, "costCenter", e.target.value)}
+                      onKeyDown={handleEnterNav}
+                      placeholder="-"
                       className="h-8 text-sm"
                     />
 
@@ -680,29 +709,29 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
               {/* Totals footer */}
               <div className="border-t bg-muted/20 px-4 py-3">
-                <div className="grid grid-cols-[32px_2fr_1.2fr_1fr_1fr_1.5fr_32px] gap-2 items-center">
+                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 items-center">
                   <span />
                   <span className="text-xs font-semibold text-muted-foreground">الإجماليات</span>
-                  <span />
                   <span className={cn(
-                    "font-mono font-bold text-sm px-2",
+                    "font-mono font-bold text-sm text-left px-2",
                     totalDebit > 0 ? "text-green-700" : "text-muted-foreground"
                   )}>
                     {totalDebit.toFixed(2)}
                   </span>
                   <span className={cn(
-                    "font-mono font-bold text-sm px-2",
+                    "font-mono font-bold text-sm text-left px-2",
                     totalCredit > 0 ? "text-red-700" : "text-muted-foreground"
                   )}>
                     {totalCredit.toFixed(2)}
                   </span>
                   <div className={cn(
-                    "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium",
+                    "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium justify-self-start",
                     isBalanced ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
                   )}>
                     {!isBalanced && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
                     {isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
                   </div>
+                  <span />
                   <span />
                 </div>
               </div>
