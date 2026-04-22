@@ -59,8 +59,10 @@ function supplierBlock(s: any) {
 }
 
 function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
+  const showDisc = lines.some(l => (Number(l.discount) || 0) > 0);
   const rows = lines.map((l, i) => {
-    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const sub  = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
     const vat  = sub * ((Number(l.vatRate) || 0) / 100);
     const tot  = sub + vat;
     return `
@@ -70,6 +72,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
         <td class="mono">${Math.round(Number(l.qty) || 0)}</td>
         <td>${l.unit ?? "—"}</td>
         <td class="mono">${fmt(l.unitPrice)}</td>
+        ${showDisc ? `<td class="mono" style="color:#b91c1c;">${disc}%</td>` : ""}
         <td class="mono">${l.vatRate ?? 15}%</td>
         <td class="mono">${fmt(vat)}</td>
         <td class="mono" style="font-weight:600;">${fmt(tot)}</td>
@@ -85,6 +88,7 @@ function linesTable(lines: any[], headerStyle = "", rowEvenStyle = "") {
           <th>الكمية</th>
           <th>الوحدة</th>
           <th>سعر الوحدة</th>
+          ${showDisc ? `<th>خصم%</th>` : ""}
           <th>الضريبة</th>
           <th>قيمة الضريبة</th>
           <th>الإجمالي</th>

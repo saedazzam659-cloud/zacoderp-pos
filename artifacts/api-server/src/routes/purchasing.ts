@@ -770,7 +770,8 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       if (!line.itemId || !line.warehouseId) continue;
       const factor   = Number(line.conversionFactor || "1") || 1;
       const qty      = Number(line.qty) * factor;
-      const costUnit = Number(line.unitPrice) / factor;
+      const lineDisc = Math.max(0, Math.min(100, Number((line as any).discount) || 0));
+      const costUnit = (Number(line.unitPrice) * (1 - lineDisc / 100)) / factor;
       inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + qty * costUnit;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, -qty, costUnit);
