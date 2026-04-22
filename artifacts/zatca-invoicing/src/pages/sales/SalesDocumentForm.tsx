@@ -3,6 +3,7 @@ import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -746,7 +747,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         const opts = itemUnits.length > 0
                           ? itemUnits.map((iu: any) => ({
                               value: String(iu.unitId),
-                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
                             }))
                           : unitItems;
                         return units.length > 0 ? (
