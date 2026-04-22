@@ -156,16 +156,22 @@ async function cleanupDocArtifacts(opts: {
   }
 
   // 2) Delete any cash/bank vouchers tied to this document
-  await db.delete(receiptVouchersTable).where(and(
-    eq(receiptVouchersTable.companyId, cid),
-    eq(receiptVouchersTable.refType, refType),
-    eq(receiptVouchersTable.refId,   refId),
-  ));
-  await db.delete(paymentVouchersTable).where(and(
-    eq(paymentVouchersTable.companyId, cid),
-    eq(paymentVouchersTable.refType, refType),
-    eq(paymentVouchersTable.refId,   refId),
-  ));
+  // Vouchers reference docs via refType + refNumber (text); the post handler
+  // sets refNumber to inv.docNumber || String(inv.id), so try both.
+  const refNum = (opts as any).refNumber as string | null | undefined;
+  const candidates = [String(refId), refNum].filter(Boolean) as string[];
+  for (const rn of candidates) {
+    await db.delete(receiptVouchersTable).where(and(
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.refType, refType),
+      eq(receiptVouchersTable.refNumber, rn),
+    ));
+    await db.delete(paymentVouchersTable).where(and(
+      eq(paymentVouchersTable.companyId, cid),
+      eq(paymentVouchersTable.refType, refType),
+      eq(paymentVouchersTable.refNumber, rn),
+    ));
+  }
 
   // 3) Delete any journal entry tied to this document
   if (journalEntryId) {
