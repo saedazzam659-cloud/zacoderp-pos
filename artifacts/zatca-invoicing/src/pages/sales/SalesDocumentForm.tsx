@@ -337,6 +337,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).subtotal, 0);
   const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).vat,      0);
+  const lineDiscountTotal = lines.reduce((s, l) => {
+    const noDisc = calcLine({ ...l, discount: "0" }, priceIncludesVat).lineTotal;
+    const withDisc = calcLine(l, priceIncludesVat).lineTotal;
+    return s + Math.max(0, noDisc - withDisc);
+  }, 0);
   const grossTotal  = subtotal + vatAmount;
   const discountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
   const totalAmount = grossTotal - discountAmt;
@@ -732,6 +737,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الصافي (قبل الضريبة)</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  {lineDiscountTotal > 0 && (
+                    <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
+                      <span className="text-muted-foreground">خصم الأصناف</span>
+                      <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                    </div>
+                  )}
                   <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>

@@ -158,6 +158,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
   - `SalesReturns.tsx`
   - `PurchaseReturns.tsx` — also removed the legacy standalone "خصم مكتسب" Field from form grid
 - Math everywhere: gross = sum(lineTotal incl. VAT) → docDiscountAmt = clamp(form.discountAmount, [0, gross]) → total = gross − docDiscountAmt
+- Per-line "خصم%" (sales invoices/quotations + purchase invoices) is also shown as a read-only red row "خصم الأصناف" in the totals card (data-testid `line-discount-total`), computed as Σ(noDiscountLineTotal − withDiscountLineTotal). Hidden when 0. Sales returns and purchase returns have no per-line discount.
 - Server-side hardening:
   - `clampDiscountAndTotal()` in `sales.ts` for sales invoices/quotations (POST/PUT)
   - `sales-returns` POST/PUT in `sales.ts` recompute total from clamped discount + line gross

@@ -345,6 +345,11 @@ export default function PurchaseInvoiceForm() {
   // ── Totals ───────────────────────────────────────────────
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
+  const lineDiscountTotal = lines.reduce((s, l) => {
+    const noDisc = calcLine({ ...l, discount: "0" }).lineTotal;
+    const withDisc = calcLine(l).lineTotal;
+    return s + Math.max(0, noDisc - withDisc);
+  }, 0);
   const grossTotal     = subtotal + vatAmount;
   const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
   const totalAmount    = grossTotal - docDiscountAmt;
@@ -853,6 +858,12 @@ export default function PurchaseInvoiceForm() {
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  {lineDiscountTotal > 0 && (
+                    <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
+                      <span className="text-muted-foreground">خصم الأصناف</span>
+                      <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                    </div>
+                  )}
                   <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
                   <div className="flex justify-between"><span className="text-muted-foreground">مصاريف الاعتماد</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
