@@ -93,7 +93,12 @@ export default function PurchaseInvoiceForm() {
   const [docDiscount,  setDocDiscount]  = useState("0");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
-  const [focusLineId, setFocusLineId] = useState<string>("");
+  const [focusLineId, setFocusLineId] = useState<string>(() => "");
+  useEffect(() => {
+    if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
+      setFocusLineId(lines[0]._id);
+    }
+  }, [lines, focusLineId]);
   const addLine = () => {
     const l = newLine();
     setLines(p => [...p, l]);

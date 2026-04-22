@@ -74,6 +74,11 @@ export default function SalesReturns() {
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
+  useEffect(() => {
+    if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
+      setFocusLineId(lines[0]._id);
+    }
+  }, [lines, focusLineId]);
   const addLine = () => {
     const l = newLine();
     setLines(p => [...p, l]);
