@@ -209,7 +209,13 @@ function NavItem({
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
   return (
-    <Link href={item.href} className="block" onClick={onClick}>
+    <a
+      href={item.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block"
+      onClick={onClick}
+    >
       <span className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         indent && "ps-8",
