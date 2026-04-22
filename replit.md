@@ -190,6 +190,13 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
   - Two-tab layout: "معلومات التسوية والقيد المحاسبي" + "الأصناف" (with item count badge).
   - Two `AccountCombobox` (asset / expense+revenue), AI suggestion button, live JE preview that detects net direction and shows DR/CR with warehouse-account fallback indicator.
 
+## Receipt Voucher — AI Counterparty Account Suggestion
+- AI endpoint `POST /api/ai/suggest-receipt-account`: picks the credit-side (counterparty) account for a receipt voucher; the debit side (cash/bank) is auto-resolved from cashbox/bankAccount on post.
+- Decision factors: entityType (customer/supplier/other), linked customer.accountId / supplier.accountId, description/refType keywords (فاتورة → AR, دفع مقدم/عربون → liability advances, قرض → loan liability, بيع نقدي → sales revenue), amount.
+- Pool: posting accounts of types asset + liability + revenue/income.
+- Deterministic rule-based fallback: linked-entity → keyword match → revenue, with explanatory `reasoning`. Used when AI unavailable / empty pool / runtime error.
+- Frontend (`ReceiptVouchers.tsx`): "اقتراح AI" button next to `AccountCombobox`, displays AI reasoning under the field, plus a live JE preview (DR cash/bank, CR counterparty) showing balanced amounts.
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

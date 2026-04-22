@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, warehousesTable } from "@workspace/db";
+import { accountsTable, warehousesTable, customersTable, suppliersTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
@@ -466,6 +466,172 @@ ${itemsSummary}
         adjustmentAccountId: adjAcc.id,
         adjustmentAccountLabel: `${adjAcc.code} - ${adjAcc.nameAr}`,
         direction: dir,
+        reasoning: String(parsed?.reasoning || "").trim() || "اقتراح تلقائي.",
+        source: "ai" as const,
+      });
+    } catch {
+      res.json(buildFallback());
+      return;
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Suggest counterparty account for a Receipt Voucher (سند قبض).
+// The DR side is auto-resolved from cashbox/bank. AI picks the CR
+// (counterparty) account based on entity, description, refType.
+// Falls back to: linked customer/supplier account → keyword match → revenue.
+router.post("/suggest-receipt-account", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req as any);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const { entityType = "customer", entityId, entityName = "", description = "", refType = "", refNumber = "", notes = "", amount = 0 } = req.body || {};
+
+    const accounts = await db.select({
+      id: accountsTable.id, code: accountsTable.code,
+      nameAr: accountsTable.nameAr, nameEn: accountsTable.nameEn,
+      accountType: accountsTable.accountType, isPosting: accountsTable.isPosting,
+    }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+
+    const posting = accounts.filter(a => a.isPosting);
+    const byType = (t: string) => posting.filter(a => a.accountType === t);
+    const assetPosting     = byType("asset");
+    const liabilityPosting = byType("liability");
+    const revenuePosting   = posting.filter(a => a.accountType === "revenue" || a.accountType === "income");
+
+    // Pre-fetch linked entity account (customer AR / supplier AP).
+    let linkedAccountId: number | null = null;
+    let linkedLabel = "";
+    if (entityType === "customer" && entityId) {
+      const [c] = await db.select().from(customersTable)
+        .where(and(eq(customersTable.id, Number(entityId)), eq(customersTable.companyId, cid)));
+      if (c?.accountId) {
+        linkedAccountId = c.accountId;
+        linkedLabel = `حساب العميل ${c.nameAr ?? ""}`.trim();
+      }
+    } else if (entityType === "supplier" && entityId) {
+      const [s] = await db.select().from(suppliersTable)
+        .where(and(eq(suppliersTable.id, Number(entityId)), eq(suppliersTable.companyId, cid)));
+      if (s?.accountId) {
+        linkedAccountId = s.accountId;
+        linkedLabel = `حساب المورد ${s.nameAr ?? ""}`.trim();
+      }
+    }
+
+    const findByKeywords = (pool: typeof accounts, kw: string[]) =>
+      pool.find(a => {
+        const t = `${a.nameAr ?? ""} ${a.nameEn ?? ""} ${a.code ?? ""}`.toLowerCase();
+        return kw.some(k => k && t.includes(k.toLowerCase()));
+      });
+
+    const ctx = `${description} ${refType} ${refNumber} ${notes} ${entityName}`.toLowerCase();
+    const isAdvance = /(دفع.?مقدم|advance|عربون|سلفة|deposit|عهدة)/i.test(ctx);
+    const isLoan    = /(قرض|تمويل|loan)/i.test(ctx);
+    const isCashSale= /(بيع.?نقد|نقد.?بيع|cash sale|مبيع)/i.test(ctx) && entityType !== "supplier";
+
+    const buildFallback = () => {
+      let acc: any = null;
+      let why = "";
+
+      if (linkedAccountId) {
+        acc = accounts.find(a => a.id === linkedAccountId);
+        why = `استخدام الحساب المرتبط مباشرةً بـ ${entityType === "customer" ? "العميل" : "المورد"}.`;
+      } else if (isAdvance) {
+        acc = findByKeywords(liabilityPosting, ["دفعات مقدمة", "دفع مقدم", "عربون", "advance", "deposit"])
+              || findByKeywords(liabilityPosting, ["دائن", "ذمم"])
+              || liabilityPosting[0];
+        why = "تم اختيار حساب التزام (دفعات مقدمة) لأن السند يبدو تحصيلاً مقدّماً.";
+      } else if (isLoan) {
+        acc = findByKeywords(liabilityPosting, ["قرض", "تمويل", "loan"]) || liabilityPosting[0];
+        why = "تم اختيار حساب التزام (قروض) لأن السبب يشير إلى تمويل.";
+      } else if (entityType === "customer") {
+        acc = findByKeywords(assetPosting, ["ذمم مدينة", "عملاء", "receivable", "ذمم العملاء"])
+              || (isCashSale ? (findByKeywords(revenuePosting, ["مبيعات", "إيراد", "sales", "revenue"]) || revenuePosting[0]) : null)
+              || assetPosting[0];
+        why = "تم اختيار حساب ذمم العملاء (أصل) كطرف مقابل لتحصيل من العميل.";
+      } else if (entityType === "supplier") {
+        acc = findByKeywords(liabilityPosting, ["ذمم دائنة", "موردين", "payable", "ذمم الموردين"]) || liabilityPosting[0];
+        why = "تم اختيار حساب ذمم الموردين (التزام) لأن المبلغ مستلم من المورد (مرتجع/تسوية).";
+      } else {
+        acc = findByKeywords(revenuePosting, ["إيراد", "أخرى", "other", "miscellaneous", "متنوع"])
+              || revenuePosting[0];
+        why = "تم اختيار حساب إيرادات متنوعة لأن الجهة عامة (أخرى).";
+      }
+
+      const label = (a: any) => a ? `${a.code} - ${a.nameAr}` : "";
+      return {
+        accountId: acc?.id ?? null,
+        accountLabel: label(acc),
+        reasoning: acc
+          ? (linkedLabel ? `${why} (${linkedLabel})` : why)
+          : "لم يتم العثور على حساب مناسب. الرجاء إنشاء حساب ذمم/إيراد أولاً أو اختياره يدوياً.",
+        source: "rules" as const,
+      };
+    };
+
+    if (!OPENAI_BASE || !OPENAI_KEY || posting.length === 0) {
+      res.json(buildFallback()); return;
+    }
+
+    try {
+      const candidates = [...assetPosting, ...liabilityPosting, ...revenuePosting];
+      const fmtList = candidates.map(a =>
+        `{ "id": ${a.id}, "code": "${a.code}", "name": "${a.nameAr}${a.nameEn ? " / " + a.nameEn : ""}", "type": "${a.accountType}" }`
+      ).join(",\n");
+
+      const userPrompt = `أنت محاسب سعودي خبير. اختر الحساب المقابل الأنسب لسند قبض (تحصيل):
+- نوع الجهة: ${entityType === "customer" ? "عميل" : entityType === "supplier" ? "مورّد" : "أخرى"}
+- اسم الجهة: ${entityName || "—"}
+- الحساب المرتبط بالجهة (إن وُجد): ${linkedLabel ? `(id=${linkedAccountId}) ${linkedLabel}` : "—"}
+- المبلغ: ${amount}
+- البيان: ${description || "—"}
+- نوع المرجع / رقمه: ${refType || "—"} / ${refNumber || "—"}
+- ملاحظات: ${notes || "—"}
+
+دليل الحسابات (ترحيل فقط — أصول/التزامات/إيرادات):
+[${fmtList}]
+
+قواعد الاختيار:
+1. السند المالي مدين النقدية/البنك ودائن الحساب الذي تختاره.
+2. تحصيل من عميل عن فاتورة → ذمم مدينة (أصل).
+3. تحصيل دفعة مقدمة/عربون → دفعات مقدمة (التزام).
+4. تحصيل بيع نقدي مباشر → حساب إيراد مبيعات.
+5. تحصيل من مورد (مرتجع/استرداد) → ذمم دائنة (التزام).
+6. جهة أخرى → اقرب حساب إيراد متنوع/أخرى.
+7. إن وُجد حساب مرتبط بالجهة، فضّله إلا إذا كان البيان يدل على شيء مختلف (مقدمة/قرض).
+8. أعد فقط ID موجود في القائمة ولا تخترع.
+
+أعد JSON فقط:
+{ "accountId": <id>, "reasoning": "شرح موجز بالعربية" }`;
+
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 600,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي. ترد بـ JSON صالح فقط." },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(buildFallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(buildFallback()); return; }
+
+      const accId = Number(parsed?.accountId);
+      const acc = candidates.find(a => a.id === accId);
+      if (!acc) { res.json(buildFallback()); return; }
+      res.json({
+        accountId: acc.id,
+        accountLabel: `${acc.code} - ${acc.nameAr}`,
         reasoning: String(parsed?.reasoning || "").trim() || "اقتراح تلقائي.",
         source: "ai" as const,
       });
