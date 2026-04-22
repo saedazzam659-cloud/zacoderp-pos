@@ -73,6 +73,12 @@ export default function JournalEntryForm() {
   const [entryType,    setEntryType]    = useState("general");
   const [branchId,     setBranchId]     = useState("");
   const [lines,        setLines]        = useState<JournalLine[]>([newLine(), newLine()]);
+  const [focusLineId, setFocusLineId] = useState<string>(() => "");
+  useEffect(() => {
+    if (lines.length > 0 && !lines.some(l => l.id === focusLineId)) {
+      setFocusLineId(lines[0].id);
+    }
+  }, [lines, focusLineId]);
 
   const { token } = useAuth() as any;
   const authHeaders = { Authorization: `Bearer ${token}` };
@@ -204,7 +210,11 @@ export default function JournalEntryForm() {
   function updateLine(id: string, field: keyof JournalLine, value: string) {
     setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
   }
-  function addLine() { setLines(prev => [...prev, newLine()]); }
+  function addLine() {
+    const l = newLine();
+    setLines(prev => [...prev, l]);
+    setFocusLineId(l.id);
+  }
 
   // Enter-key navigation between line inputs.
   // Pressing Enter moves focus to the next input marked with [data-enter-nav].
@@ -659,6 +669,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       grouped={false}
                       allowEmpty
                       emptyLabel="— اختر الحساب —"
+                      autoFocus={line.id === focusLineId}
                     />
 
                     <Input

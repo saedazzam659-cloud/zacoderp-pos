@@ -30,6 +30,7 @@ interface AccountComboboxProps {
   grouped?:       boolean;
   allowEmpty?:    boolean;
   emptyLabel?:    string;
+  autoFocus?:     boolean;
 }
 
 export function AccountCombobox({
@@ -42,6 +43,7 @@ export function AccountCombobox({
   grouped        = true,
   allowEmpty     = true,
   emptyLabel     = "بدون حساب",
+  autoFocus,
 }: AccountComboboxProps) {
   const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
