@@ -316,7 +316,7 @@ router.post("/purchase-invoices", async (req, res) => {
           conversionFactor: String(l.conversionFactor || "1"),
           qty: String(l.qty || "1"), weight: String(l.weight || "0"),
           unitPrice: String(l.unitPrice || "0"),
-          discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"),
           expenseShare: String(l.expenseShare || "0"),
           finalCost: String(l.finalCost || "0"),
@@ -374,7 +374,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
             conversionFactor: String(l.conversionFactor || "1"),
             qty: String(l.qty || "1"), weight: String(l.weight || "0"),
             unitPrice: String(l.unitPrice || "0"),
-            discount: String(l.discount || "0"), vatRate: String(l.vatRate || "15"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))), vatRate: String(l.vatRate || "15"),
             lineTotal: String(l.lineTotal || "0"),
             expenseShare: String(l.expenseShare || "0"),
             finalCost: String(l.finalCost || "0"),
@@ -661,6 +661,7 @@ router.post("/purchase-returns", async (req, res) => {
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
@@ -713,6 +714,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
             conversionFactor: String(l.conversionFactor || "1"),
             warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
             qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
             vatRate: String(l.vatRate || "15"),
             lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
           }))

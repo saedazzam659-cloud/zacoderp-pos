@@ -29,6 +29,7 @@ interface ReturnLine {
   warehouseId: string;
   qty: string;
   unitPrice: string;
+  discount: string;
   vatRate: string;
   lineTotal: string;
 }
@@ -37,7 +38,7 @@ function newLine(): ReturnLine {
   return {
     _id: crypto.randomUUID(), itemId: "", itemName: "", itemCode: "",
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
-    qty: "1", unitPrice: "0", vatRate: "15", lineTotal: "0",
+    qty: "1", unitPrice: "0", discount: "0", vatRate: "15", lineTotal: "0",
   };
 }
 
@@ -259,6 +260,7 @@ export default function PurchaseReturns() {
         warehouseId: l.warehouseId ? String(l.warehouseId) : "",
         qty:         String(l.qty ?? "1"),
         unitPrice:   String(l.unitPrice ?? "0"),
+        discount:    String(l.discount ?? "0"),
         vatRate:     String(l.vatRate   ?? "15"),
         lineTotal:   String(l.lineTotal ?? "0"),
       })) : [newLine()]);
@@ -355,6 +357,7 @@ export default function PurchaseReturns() {
             warehouseId: l.warehouseId ? String(l.warehouseId) : "",
             qty:         String(Math.round(Number(l.qty ?? 1))),
             unitPrice:   String(l.unitPrice ?? 0),
+            discount:    String(l.discount  ?? "0"),
             vatRate:     String(l.vatRate   ?? 15),
             lineTotal:   String(l.lineTotal ?? 0),
           })));
@@ -367,7 +370,8 @@ export default function PurchaseReturns() {
 
   // ── Line helpers ─────────────────────────────────────────
   function calcLineTotal(l: ReturnLine) {
-    return (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 + (Number(l.vatRate) || 0) / 100);
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - (Number(l.discount) || 0) / 100);
+    return sub * (1 + (Number(l.vatRate) || 0) / 100);
   }
 
   function updateLine(id: string, field: keyof ReturnLine, value: string) {
@@ -430,8 +434,13 @@ export default function PurchaseReturns() {
 
   const grossTotal  = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
   const vatAmount   = lines.reduce((s, l) => {
-    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - (Number(l.discount) || 0) / 100);
     return s + sub * ((Number(l.vatRate) || 0) / 100);
+  }, 0);
+  const lineDiscountTotal = lines.reduce((s, l) => {
+    const noDisc   = calcLineTotal({ ...l, discount: "0" });
+    const withDisc = calcLineTotal(l);
+    return s + Math.max(0, noDisc - withDisc);
   }, 0);
   const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(form.discountAmount) || 0));
   const totalAmount    = grossTotal - docDiscountAmt;
@@ -749,6 +758,11 @@ export default function PurchaseReturns() {
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
                     </div>
                     <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground">خصم%</p>
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                    </div>
+                    <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground">ضريبة%</p>
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
@@ -814,6 +828,12 @@ export default function PurchaseReturns() {
                   <span className="text-muted-foreground">قيمة الضريبة</span>
                   <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
                 </div>
+                {lineDiscountTotal > 0 && (
+                  <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
+                    <span className="text-muted-foreground">خصم الأصناف</span>
+                    <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                  </div>
+                )}
                 <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
                   <span>الإجمالي</span>

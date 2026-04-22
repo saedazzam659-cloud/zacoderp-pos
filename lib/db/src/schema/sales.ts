@@ -107,6 +107,7 @@ export const salesReturnLinesTable = pgTable("sales_return_lines", {
   warehouseId: integer("warehouse_id"),
   qty:         numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
   unitPrice:   numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
+  discount:    numeric("discount",   { precision: 5,  scale: 2 }).notNull().default("0"),
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),

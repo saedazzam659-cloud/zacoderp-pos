@@ -550,6 +550,7 @@ router.post("/sales-returns", async (req, res) => {
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
@@ -610,6 +611,7 @@ router.put("/sales-returns/:id", async (req, res) => {
           conversionFactor: String(l.conversionFactor || "1"),
           warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
           qty: String(l.qty || "1"), unitPrice: String(l.unitPrice || "0"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
           vatRate: String(l.vatRate || "15"),
           lineTotal: String(l.lineTotal || "0"), notes: l.notes || null,
         }))
