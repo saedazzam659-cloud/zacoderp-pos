@@ -7,6 +7,7 @@ import {
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
+  receiptVouchersTable, paymentVouchersTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -115,6 +116,65 @@ function guard(req: any, res: any): number | null {
 }
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+}
+
+// Cleanup any orphan stock movements / vouchers / journal entries tied to a draft document
+// (defensive: a draft normally has none, but past bugs may have left orphans behind).
+async function cleanupDocArtifacts(opts: {
+  companyId: number;
+  refType: string;       // "sales_invoice" | "sales_return" | "purchase_invoice" | "purchase_return"
+  refId: number;
+  journalEntryId?: number | null;
+}) {
+  const { companyId: cid, refType, refId, journalEntryId } = opts;
+
+  // 1) Reverse stock_balance for any orphan ledger entries, then delete them
+  const ledger = await db.select().from(stockLedgerTable).where(and(
+    eq(stockLedgerTable.companyId, cid),
+    eq(stockLedgerTable.refType, refType),
+    eq(stockLedgerTable.refId,   refId),
+  ));
+  for (const row of ledger) {
+    const qty = Number(row.qty);
+    const [bal] = await db.select().from(stockBalanceTable).where(and(
+      eq(stockBalanceTable.companyId,   cid),
+      eq(stockBalanceTable.itemId,      row.itemId),
+      eq(stockBalanceTable.warehouseId, row.warehouseId),
+    ));
+    if (bal) {
+      await db.update(stockBalanceTable)
+        .set({ qty: String(Number(bal.qty) - qty), updatedAt: new Date() })
+        .where(eq(stockBalanceTable.id, bal.id));
+    }
+  }
+  if (ledger.length) {
+    await db.delete(stockLedgerTable).where(and(
+      eq(stockLedgerTable.companyId, cid),
+      eq(stockLedgerTable.refType, refType),
+      eq(stockLedgerTable.refId,   refId),
+    ));
+  }
+
+  // 2) Delete any cash/bank vouchers tied to this document
+  await db.delete(receiptVouchersTable).where(and(
+    eq(receiptVouchersTable.companyId, cid),
+    eq(receiptVouchersTable.refType, refType),
+    eq(receiptVouchersTable.refId,   refId),
+  ));
+  await db.delete(paymentVouchersTable).where(and(
+    eq(paymentVouchersTable.companyId, cid),
+    eq(paymentVouchersTable.refType, refType),
+    eq(paymentVouchersTable.refId,   refId),
+  ));
+
+  // 3) Delete any journal entry tied to this document
+  if (journalEntryId) {
+    await db.delete(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, journalEntryId));
+    await db.delete(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, journalEntryId),
+      eq(journalEntriesTable.companyId, cid),
+    ));
+  }
 }
 
 async function getAvgCost(companyId: number, itemId: number, warehouseId: number): Promise<number> {
@@ -510,6 +570,7 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
       return;
     }
+    await cleanupDocArtifacts({ companyId: cid, refType: "sales_invoice", refId: id, journalEntryId: inv.journalEntryId });
     await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -905,6 +966,7 @@ router.delete("/sales-returns/:id", async (req, res) => {
       res.status(400).json({ error: "لا يمكن حذف مرتجع مُرحَّل. قم بإلغاء الترحيل أولاً ثم احذفه." });
       return;
     }
+    await cleanupDocArtifacts({ companyId: cid, refType: "sales_return", refId: id, journalEntryId: (ret as any).journalEntryId });
     await db.delete(salesReturnsTable).where(and(eq(salesReturnsTable.id, id), eq(salesReturnsTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
