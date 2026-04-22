@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, Calculator, FileText, ListOrdered } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DiscountRow } from "@/components/DiscountRow";
 import { cn } from "@/lib/utils";
@@ -510,7 +511,20 @@ export default function PurchaseReturns() {
           saveDisabled={!form.returnDate}
           saveLabel="حفظ المرتجع"
         >
-          <div className="space-y-5">
+          <Tabs defaultValue="header" dir="rtl" className="space-y-4">
+            <TabsList className="h-9 bg-muted/40 border gap-1">
+              <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Calculator className="h-3.5 w-3.5" />حسابات القيد
+              </TabsTrigger>
+              <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+              </TabsTrigger>
+              <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemId || l.itemName).length})
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="header" className="mt-0 space-y-4">
             <FormGrid>
               <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
@@ -568,28 +582,6 @@ export default function PurchaseReturns() {
               </Field>
               <Field label="ملاحظات" className="md:col-span-3"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
-
-            {/* ── Accounting / حسابات الترحيل ──────────────────────── */}
-            <div className="rounded-lg border bg-blue-50/40 p-3 space-y-2 mt-3">
-              <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
-                  <AccountCombobox value={form.taxAccountId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
-                    placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">حساب الخصم المكتسب</Label>
-                  <AccountCombobox value={form.discountAccountId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
-                    placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
-                </div>
-              </div>
-              <div className="text-[10px] text-muted-foreground">
-                مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
-              </div>
-            </div>
 
             {/* Payment link panel: credit (supplier) or cash (cash box) */}
             {form.paymentType === "credit" ? (
@@ -703,6 +695,35 @@ export default function PurchaseReturns() {
               })()
             )}
 
+            </TabsContent>
+
+            <TabsContent value="accounts" className="mt-0">
+            <div className="rounded-lg border bg-blue-50/40 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-blue-900">
+                <Calculator className="h-4 w-4" />
+                <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل المرتجع)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
+                  <AccountCombobox value={form.taxAccountId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
+                    placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">حساب الخصم المكتسب</Label>
+                  <AccountCombobox value={form.discountAccountId}
+                    onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
+                    placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
+                </div>
+              </div>
+              <p className="text-[11px] text-blue-900/70">
+                مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة. عند اختيار الفاتورة المصدر يتم تعبئة الحسابات تلقائياً.
+              </p>
+            </div>
+            </TabsContent>
+
+            <TabsContent value="lines" className="mt-0 space-y-5">
             {/* Lines */}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
@@ -846,8 +867,8 @@ export default function PurchaseReturns() {
                 )}
               </div>
             </div>
-
-          </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
