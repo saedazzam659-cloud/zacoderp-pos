@@ -74,6 +74,8 @@ export const employeesApi = {
   endOfService: (empId: number, reason: "resignation" | "termination" = "resignation") =>
     req<any>("GET", `/employees/${empId}/end-of-service?reason=${reason}`),
   aiExplainEos: (calc: any, employee: any) => req<any>("POST", "/ai/explain-eos", { calc, employee }),
+  aiParseAttendance: (data: { text: string; employees: any[]; date: string; defaultCheckIn?: string; defaultCheckOut?: string }) =>
+    req<any>("POST", "/ai/parse-attendance", data),
   aiExplainPayrollLine: (line: any, periodMonth?: string) =>
     req<any>("POST", "/ai/explain-payroll-line", { line, periodMonth }),
 

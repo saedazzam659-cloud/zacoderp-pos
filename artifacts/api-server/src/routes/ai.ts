@@ -1074,6 +1074,158 @@ router.post("/suggest-leave-policy", async (req, res) => {
   }
 });
 
+// HR — parse natural-language attendance into structured records
+router.post("/parse-attendance", async (req, res) => {
+  try {
+    const { text, employees, date, defaultCheckIn, defaultCheckOut } = req.body as any;
+    if (!text || !Array.isArray(employees)) {
+      res.status(400).json({ error: "النص وقائمة الموظفين مطلوبة" }); return;
+    }
+    const dCi = defaultCheckIn || "08:00";
+    const dCo = defaultCheckOut || "17:00";
+
+    // Helper: find employee by name/code fuzzy (Arabic-tolerant)
+    function normalize(s: string) {
+      return String(s || "")
+        .replace(/[إأآا]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+        .replace(/[ًٌٍَُِّْـ]/g, "")
+        .toLowerCase().trim();
+    }
+    function findEmp(token: string) {
+      const t = normalize(token);
+      if (!t) return null;
+      // exact code first
+      let hit = employees.find((e: any) => normalize(e.code) === t);
+      if (hit) return hit;
+      // exact name
+      hit = employees.find((e: any) => normalize(e.nameAr) === t || normalize(e.nameEn) === t);
+      if (hit) return hit;
+      // contains
+      hit = employees.find((e: any) => {
+        const n = normalize(e.nameAr); return n && (n.includes(t) || t.includes(n));
+      });
+      if (hit) return hit;
+      // first-name match
+      const firstNames = employees.map((e: any) => ({ e, f: normalize(e.nameAr).split(" ")[0] }));
+      hit = firstNames.find((x: any) => x.f && (x.f === t || x.f.includes(t) || t.includes(x.f)));
+      return hit?.e || null;
+    }
+
+    function fallback() {
+      // Heuristic parser for common Arabic patterns
+      const lines = String(text).split(/\n|،|;/).map(s => s.trim()).filter(Boolean);
+      const records: any[] = [];
+      const handled = new Set<number>();
+      let globalCi = dCi, globalCo = dCo;
+
+      // Detect global time (e.g. "كل الموظفين 8 إلى 5")
+      const globalMatch = String(text).match(/(\d{1,2})(?::(\d{2}))?\s*(?:الى|إلى|-|—|to)\s*(\d{1,2})(?::(\d{2}))?/);
+      if (globalMatch && /كل|الجميع|all/i.test(text)) {
+        globalCi = `${String(globalMatch[1]).padStart(2,"0")}:${globalMatch[2]||"00"}`;
+        const ch = Number(globalMatch[3]);
+        globalCo = `${String(ch < 7 ? ch + 12 : ch).padStart(2,"0")}:${globalMatch[4]||"00"}`;
+      }
+
+      for (const line of lines) {
+        const lower = normalize(line);
+        // Find employee in line
+        let matchedEmp: any = null;
+        for (const e of employees) {
+          const n = normalize(e.nameAr);
+          const f = n.split(" ")[0];
+          if ((f && lower.includes(f)) || normalize(e.code) === lower) { matchedEmp = e; break; }
+        }
+        if (!matchedEmp) continue;
+
+        let status = "present";
+        let ci = globalCi, co = globalCo, notes = "";
+
+        if (/غاي?ب|غياب|absent/i.test(lower)) { status = "absent"; ci = ""; co = ""; }
+        else if (/اجازه اسبوع|اجازه أسبوع|إجازه أسبوع|weekend|عطله|عطلة/i.test(lower)) { status = "weekend"; ci = ""; co = ""; }
+        else if (/اجازه|إجازه|leave/i.test(lower)) { status = "leave"; ci = ""; co = ""; }
+        else if (/متاخر|متأخر|late/i.test(lower)) { status = "late"; }
+
+        // Extract specific times in line
+        const times = [...line.matchAll(/(\d{1,2})(?::(\d{2}))?/g)].map(m => ({
+          h: Number(m[1]), m: Number(m[2] || 0),
+        }));
+        if (times.length >= 2 && status !== "absent" && status !== "leave" && status !== "weekend") {
+          ci = `${String(times[0].h).padStart(2,"0")}:${String(times[0].m).padStart(2,"0")}`;
+          const t2 = times[1];
+          const h2 = t2.h < 7 ? t2.h + 12 : t2.h;
+          co = `${String(h2).padStart(2,"0")}:${String(t2.m).padStart(2,"0")}`;
+        } else if (times.length === 1 && status === "late") {
+          ci = `${String(times[0].h).padStart(2,"0")}:${String(times[0].m).padStart(2,"0")}`;
+        }
+
+        records.push({ employeeId: matchedEmp.id, empNameAr: matchedEmp.nameAr, status, checkIn: ci, checkOut: co, notes });
+        handled.add(matchedEmp.id);
+      }
+
+      // If user said "كل" / "الجميع" — fill rest as present with global times
+      const all = /كل\s*الموظفين|الجميع|كلهم|all\s*employees/i.test(text);
+      if (all) {
+        for (const e of employees) {
+          if (!handled.has(e.id)) {
+            records.push({ employeeId: e.id, empNameAr: e.nameAr, status: "present", checkIn: globalCi, checkOut: globalCo, notes: "" });
+          }
+        }
+      }
+      return { source: "fallback", records, summary: `تم تحليل ${records.length} سجل من النص.` };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+
+    try {
+      const empList = employees.map((e: any) => ({ id: e.id, code: e.code, name: e.nameAr })).slice(0, 200);
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 1500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت مساعد لإدخال الحضور. حلّل النص العربي/الإنجليزي وحوّله لسجلات منظّمة. أعد JSON صالح فقط." },
+            { role: "user", content: `التاريخ: ${date || "اليوم"}
+وقت العمل الافتراضي: ${dCi} → ${dCo}
+
+قائمة الموظفين المتاحين:
+${JSON.stringify(empList, null, 2)}
+
+النص المُدخل من المستخدم:
+"""
+${text}
+"""
+
+استخرج لكل موظف مذكور (أو ضمناً عبر "كل/الجميع") سجل حضور.
+الحالات الممكنة: present (حاضر), absent (غائب), leave (إجازة), late (متأخر), weekend (إجازة أسبوعية).
+صيغة الوقت 24 ساعة HH:MM. إذا قال "5 مساءً" فهي 17:00. إذا قال "غايب" فاترك checkIn و checkOut فارغين.
+
+أعد JSON بالشكل التالي بالضبط:
+{
+  "records": [
+    { "employeeId": <number>, "empNameAr": "<name>", "status": "<present|absent|leave|late|weekend>", "checkIn": "HH:MM" أو "", "checkOut": "HH:MM" أو "", "notes": "ملاحظة قصيرة إن وُجدت" }
+  ],
+  "summary": "ملخص بالعربية لما تم استخراجه (سطر واحد)"
+}` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const records = Array.isArray(parsed.records) ? parsed.records.filter((x: any) =>
+        x && typeof x.employeeId === "number" && employees.find((e: any) => e.id === x.employeeId)
+      ) : [];
+      if (records.length === 0) { res.json(fallback()); return; }
+      res.json({ source: "ai", records, summary: parsed.summary || `تم تحليل ${records.length} سجل بالذكاء الاصطناعي.` });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 // HR — explain payroll line in plain Arabic
 router.post("/explain-payroll-line", async (req, res) => {
   try {

@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CalendarClock, Save, Trash2, Loader2, CheckCircle2, XCircle, Clock, Sparkles } from "lucide-react";
+import { CalendarClock, Save, Trash2, Loader2, CheckCircle2, XCircle, Clock, Sparkles, Wand2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
   present:  { label: "حاضر",   cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
@@ -35,6 +37,39 @@ export default function Attendance() {
   const activeEmps = useMemo(() => employees.filter((e: any) => e.status === "active"), [employees]);
 
   const [draft, setDraft] = useState<Record<number, { checkIn: string; checkOut: string; status: string; notes: string }>>({});
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiPreview, setAiPreview] = useState<any[] | null>(null);
+  const [aiSummary, setAiSummary] = useState<string>("");
+
+  const aiParse = useMutation({
+    mutationFn: () => employeesApi.aiParseAttendance({
+      text: aiText, employees: activeEmps, date,
+      defaultCheckIn: "08:00", defaultCheckOut: "17:00",
+    }),
+    onSuccess: (r: any) => {
+      setAiPreview(r.records || []);
+      setAiSummary(r.summary || "");
+      if (!r.records?.length) toast({ variant: "destructive", title: "لم نستطع استخراج أي سجل من النص" });
+    },
+    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+  });
+
+  function applyAiPreview() {
+    if (!aiPreview) return;
+    const next: any = { ...draft };
+    for (const rec of aiPreview) {
+      next[rec.employeeId] = {
+        checkIn: rec.checkIn || "",
+        checkOut: rec.checkOut || "",
+        status: rec.status || "present",
+        notes: rec.notes || merged[rec.employeeId]?.notes || "",
+      };
+    }
+    setDraft(next);
+    toast({ title: `تم تطبيق ${aiPreview.length} سجل`, description: "راجع البيانات ثم اضغط حفظ الكل" });
+    setAiOpen(false); setAiText(""); setAiPreview(null); setAiSummary("");
+  }
 
   // Pre-fill draft from existing attendance
   const merged = useMemo(() => {
@@ -122,6 +157,8 @@ export default function Attendance() {
     return Object.values(byEmp);
   }, [activeEmps, monthAtt]);
 
+  const STATUS_AI: any = STATUS;
+
   return (
     <div className="space-y-4 p-2 md:p-4" data-testid="page-attendance">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -151,6 +188,11 @@ export default function Attendance() {
             </Button>
             <Button variant="outline" size="sm" onClick={() => markAll("absent", "", "")} data-testid="btn-mark-absent">
               <XCircle className="size-3.5 me-1" /> الكل غائب
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAiOpen(true)}
+              className="bg-gradient-to-l from-violet-50 to-blue-50 border-violet-200 text-violet-700 hover:bg-violet-100"
+              data-testid="btn-ai-attendance">
+              <Wand2 className="size-3.5 me-1" /> إدخال ذكي بالـ AI
             </Button>
             <div className="ms-auto">
               <Button onClick={() => bulkSave.mutate()} disabled={bulkSave.isPending} data-testid="btn-save-attendance">
@@ -269,6 +311,92 @@ export default function Attendance() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={aiOpen} onOpenChange={(o) => { setAiOpen(o); if (!o) { setAiText(""); setAiPreview(null); setAiSummary(""); } }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="size-5 text-violet-600" /> إدخال الحضور بالذكاء الاصطناعي
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded border bg-violet-50/40 border-violet-200 p-3 text-xs space-y-1">
+              <div className="font-semibold text-violet-900">اكتب أو الصق ملخص الحضور بلغتك العادية. أمثلة:</div>
+              <ul className="list-disc list-inside text-violet-800 space-y-0.5">
+                <li>"كل الموظفين حضروا 8 صباحاً وانصرفوا 5 مساءً"</li>
+                <li>"محمد متأخر 9:30، أحمد غايب، سارة إجازة، الباقي عادي"</li>
+                <li>"حسن من 8 إلى 7" (سيُحسب الإضافي تلقائياً بعد 8 ساعات عمل)</li>
+                <li>"الجميع إجازة أسبوعية" (يوم جمعة مثلاً)</li>
+              </ul>
+            </div>
+
+            <Textarea
+              value={aiText}
+              onChange={(e) => setAiText(e.target.value)}
+              rows={5}
+              placeholder="اكتب هنا… مثال: كل الموظفين 8 إلى 5 ما عدا حسن متأخر 9 ومحمد غايب"
+              className="text-sm"
+              data-testid="ai-attendance-text"
+              dir="rtl"
+            />
+
+            <div className="flex items-center gap-2">
+              <Button onClick={() => aiParse.mutate()} disabled={!aiText.trim() || aiParse.isPending} data-testid="btn-ai-parse">
+                {aiParse.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Sparkles className="size-4 me-1" />}
+                تحليل بالذكاء الاصطناعي
+              </Button>
+              {aiSummary && <span className="text-xs text-muted-foreground">{aiSummary}</span>}
+            </div>
+
+            {aiPreview && aiPreview.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="size-4 text-emerald-600" />
+                  معاينة ({aiPreview.length} سجل) — راجع ثم طبّق:
+                </div>
+                <div className="rounded border overflow-hidden max-h-72 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40 sticky top-0">
+                      <tr>
+                        <th className="p-1.5 text-start">الموظف</th>
+                        <th className="p-1.5">الحالة</th>
+                        <th className="p-1.5">حضور</th>
+                        <th className="p-1.5">انصراف</th>
+                        <th className="p-1.5 text-start">ملاحظات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aiPreview.map((rec: any, i: number) => {
+                        const st = STATUS_AI[rec.status] || STATUS_AI.present;
+                        const Icon = st.icon;
+                        return (
+                          <tr key={i} className="border-t">
+                            <td className="p-1.5 font-medium">{rec.empNameAr}</td>
+                            <td className="p-1.5">
+                              <Badge variant="outline" className={st.cls}><Icon className="size-3 me-1" />{st.label}</Badge>
+                            </td>
+                            <td className="p-1.5 text-center tabular-nums">{rec.checkIn || "—"}</td>
+                            <td className="p-1.5 text-center tabular-nums">{rec.checkOut || "—"}</td>
+                            <td className="p-1.5 text-muted-foreground">{rec.notes || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAiOpen(false)}>إلغاء</Button>
+            <Button onClick={applyAiPreview} disabled={!aiPreview || aiPreview.length === 0} data-testid="btn-ai-apply">
+              <CheckCircle2 className="size-4 me-1" /> تطبيق على الجدول
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
