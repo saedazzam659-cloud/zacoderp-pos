@@ -12,3 +12,4 @@ export * from "./currencies";
 export * from "./purchasing";
 export * from "./sales";
 export * from "./cash";
+export * from "./fiscalPeriods";

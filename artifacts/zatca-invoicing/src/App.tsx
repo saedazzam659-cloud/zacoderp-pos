@@ -63,6 +63,7 @@ import AccountStatement from "@/pages/accounting/reports/AccountStatement";
 import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
 import BalanceSheet     from "@/pages/accounting/reports/BalanceSheet";
 import IncomeStatement  from "@/pages/accounting/reports/IncomeStatement";
+import FiscalPeriods    from "@/pages/accounting/FiscalPeriods";
 // Purchasing
 import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
 import LetterOfCredit       from "@/pages/purchasing/LetterOfCredit";
@@ -214,6 +215,7 @@ function AppRoutes() {
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
+            {!isSuperAdmin && <Route path="/accounting/fiscal-periods" component={FiscalPeriods} />}
             {!isSuperAdmin && <Route path="/accounting/journals"     component={JournalEntries} />}
             {!isSuperAdmin && <Route path="/accounting/journals/new" component={JournalEntryForm} />}
             {!isSuperAdmin && <Route path="/accounting/journals/:id" component={JournalEntryForm} />}

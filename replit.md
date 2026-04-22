@@ -123,6 +123,27 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
   - `StockLedger.tsx` — Full movement history with filters (date range, item, warehouse)
   - `StockBalance.tsx` — Current balance per item×warehouse with alert for below-reorder items
 
+## Fiscal Periods Module
+- Routes: `/accounting/fiscal-periods` (company users only)
+- Nav: المحاسبة → الفترات المالية (CalendarRange icon)
+- DB tables (lib/db/src/schema/fiscalPeriods.ts):
+  - `fiscal_years` (id, companyId, name, startDate, endDate, status)
+  - `fiscal_periods` (id, companyId, fiscalYearId, name, startDate, endDate, status, sequence)
+  - Status enum: open / closed / permanently_closed (permanently_closed is immutable)
+- API (`/api/fiscal/*` in fiscal-periods.ts):
+  - GET /years, GET /years/:id, POST /years (auto-splits into Arabic monthly periods)
+  - DELETE /years/:id (blocked if any period closed)
+  - PATCH /periods/:id/status, PATCH /years/:id/status (cascades, skips permanent)
+- Auto-split: timezone-agnostic UTC math; handles full years, partial months, mid-month, leap years, cross-year ranges
+- Strict ISO date validation (rejects calendar-invalid like 2026-02-31)
+- Overlap detection uses string compare on ISO dates (TZ-safe)
+- Frontend: master-detail layout (year sidebar + year header with stats + 3-col monthly period grid with status badges and per-period actions); inline new-year form with live period count
+
+## License Management Module
+- Route: `/admin/licenses` (superadmin only)
+- DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)
+- API: POST /api/admin/licenses (upsert), with strict ISO/int validation
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages

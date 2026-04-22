@@ -9,7 +9,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, Plus, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,7 @@ const companySystemNav: { name: string; href: string; icon: any; permKey?: strin
 // ─── Accounting Sub Nav ───────────────────────────────────────────────────────
 const accountingSubNav = [
   { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked },
+  { name: "الفترات المالية",  href: "/accounting/fiscal-periods", icon: CalendarRange },
   { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen   },
 ];
 const reportsSubNav = [
@@ -926,6 +927,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/sales/invoices/new":            { label: "فاتورة مبيعات جديدة", parent: "/sales/invoices" },
     "/sales/quotations/new":          { label: "عرض سعر جديد",        parent: "/sales/quotations" },
     "/accounting":                    { label: "المحاسبة" },
+    "/accounting/fiscal-periods":     { label: "الفترات المالية", parent: "/accounting" },
     "/accounting/reports":            { label: "التقارير المحاسبية", parent: "/accounting" },
     "/org":                           { label: "إعدادات الشركة" },
   };
