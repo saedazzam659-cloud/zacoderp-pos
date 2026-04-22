@@ -29,6 +29,7 @@ import cashAnalyticsRouter from "./cash-analytics";
 import aiRouter from "./ai";
 import usersRouter from "./users";
 import fiscalPeriodsRouter from "./fiscal-periods";
+import costCentersRouter from "./cost-centers";
 
 const router: IRouter = Router();
 
@@ -60,6 +61,7 @@ router.use("/cash-analytics",     cashAnalyticsRouter);
 router.use("/ai",                 aiRouter);
 router.use("/users",              usersRouter);
 router.use("/fiscal",             fiscalPeriodsRouter);
+router.use("/cost-centers",       costCentersRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

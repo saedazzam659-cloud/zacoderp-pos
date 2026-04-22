@@ -9,7 +9,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, Plus, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,7 @@ const companySystemNav: { name: string; href: string; icon: any; permKey?: strin
 // ─── Accounting Sub Nav ───────────────────────────────────────────────────────
 const accountingSubNav = [
   { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked },
+  { name: "مراكز التكلفة",     href: "/accounting/cost-centers", icon: Target },
   { name: "الفترات المالية",  href: "/accounting/fiscal-periods", icon: CalendarRange },
   { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen   },
 ];
