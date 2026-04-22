@@ -10,7 +10,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -209,24 +209,35 @@ function NavItem({
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
   return (
-    <a
-      href={item.href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block"
-      onClick={onClick}
-    >
-      <span className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        indent && "ps-8",
-        isActive
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <item.icon className="h-4 w-4 shrink-0" />
-        {t(item.nameKey)}
-      </span>
-    </a>
+    <div className={cn(
+      "flex items-center rounded-lg pe-1 transition-colors group",
+      isActive
+        ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    )}>
+      <Link href={item.href} className="block flex-1 min-w-0" onClick={onClick}>
+        <span className={cn(
+          "flex items-center gap-3 px-3 py-2 text-sm font-medium",
+          indent && "ps-8",
+        )}>
+          <item.icon className="h-4 w-4 shrink-0" />
+          {t(item.nameKey)}
+        </span>
+      </Link>
+      <a
+        href={item.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={t("nav.openInNewTab", "فتح في تبويب جديد")}
+        className={cn(
+          "p-1.5 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition",
+          isActive ? "text-sidebar-primary-foreground" : "text-muted-foreground"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+      </a>
+    </div>
   );
 }
 
@@ -565,9 +576,19 @@ function DashboardNavGroup({
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}>
-        <a href="/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
+        <Link href="/" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
           <LayoutDashboard className="h-4 w-4 shrink-0" />
           <span>{t("nav.dashboard")}</span>
+        </Link>
+        <a
+          href="/"
+          target="_blank"
+          rel="noopener noreferrer"
+          title={t("nav.openInNewTab", "فتح في تبويب جديد")}
+          onClick={(e) => e.stopPropagation()}
+          className="px-2 py-2 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
         </a>
         <button onClick={onToggle} className="px-2 py-2 rounded-lg" title={t("nav.dashboard")}>
           {open
@@ -906,9 +927,9 @@ function SidebarInner({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-              <a href="/settings" target="_blank" rel="noopener noreferrer">
+              <Link href="/settings">
                 <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
-              </a>
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
@@ -1109,9 +1130,9 @@ function TopBar({
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-                <a href="/settings" target="_blank" rel="noopener noreferrer">
+                <Link href="/settings">
                   <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
-                </a>
+                </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
