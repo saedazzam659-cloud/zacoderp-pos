@@ -5,7 +5,11 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2, ShieldCheck, BarChart3 } from "lucide-react";
+import {
+  Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
+  ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
+  PieChart, Smartphone,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -20,22 +24,34 @@ interface MenuItem {
 }
 
 const MENU_ITEMS: MenuItem[] = [
-  { key: "dashboard", label: "لوحة التحكم",     icon: LayoutDashboard, section: "رئيسي" },
-  { key: "invoices",  label: "الفواتير",         icon: FileText,        section: "الأعمال" },
-  { key: "customers", label: "العملاء",           icon: Users,           section: "الأعمال" },
-  { key: "suppliers", label: "الموردون",          icon: Truck,           section: "الأعمال" },
-  { key: "reports",   label: "الإقرار الضريبي",  icon: BarChart3,       section: "الأعمال" },
-  { key: "zatca",     label: "ربط ZATCA",         icon: Link2,           section: "النظام" },
+  { key: "dashboard",          label: "لوحة التحكم",                icon: LayoutDashboard, section: "رئيسي" },
+
+  { key: "invoices",           label: "الفواتير",                    icon: FileText,        section: "الأعمال" },
+  { key: "customers",          label: "العملاء",                     icon: Users,           section: "الأعمال" },
+  { key: "suppliers",          label: "الموردون",                    icon: Truck,           section: "الأعمال" },
+  { key: "reports",            label: "الإقرار الضريبي",            icon: BarChart3,       section: "الأعمال" },
+
+  { key: "inventory_mobile",   label: "موبيل المخازن",              icon: Smartphone,      section: "المخازن" },
+  { key: "inventory_reports",  label: "تقارير المخازن",             icon: Warehouse,       section: "المخازن" },
+
+  { key: "sales_module",       label: "العملاء والمبيعات",          icon: ShoppingCart,    section: "المبيعات" },
+  { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   icon: PieChart,        section: "المبيعات" },
+
+  { key: "purchases_module",   label: "الموردون والمشتريات",        icon: ShoppingBag,     section: "المشتريات" },
+  { key: "purchases_reports",  label: "تقارير الموردين والمشتريات", icon: PieChart,        section: "المشتريات" },
+
+  { key: "cash_module",        label: "النقد والبنوك",              icon: Wallet,          section: "المحاسبة" },
+  { key: "cash_reports",       label: "تقارير النقد والبنوك",       icon: PieChart,        section: "المحاسبة" },
+  { key: "accounts",           label: "الحسابات العامة",            icon: BookOpen,        section: "المحاسبة" },
+  { key: "accounting_reports", label: "التقارير المحاسبية",         icon: PieChart,        section: "المحاسبة" },
+
+  { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
 ];
 
-const DEFAULT_PERMISSIONS: Record<string, boolean> = {
-  dashboard: true,
-  invoices: true,
-  customers: true,
-  suppliers: true,
-  reports: true,
-  zatca: true,
-};
+const DEFAULT_PERMISSIONS: Record<string, boolean> = MENU_ITEMS.reduce(
+  (acc, m) => { acc[m.key] = true; return acc; },
+  {} as Record<string, boolean>,
+);
 
 function parsePerms(raw: string | null | undefined): Record<string, boolean> {
   try { return { ...DEFAULT_PERMISSIONS, ...JSON.parse(raw ?? "{}") }; }
@@ -179,41 +195,22 @@ export default function MenuPermissions() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 border-b">
                 <tr>
-                  <th className="text-right font-semibold text-xs text-muted-foreground px-4 py-3 w-[200px]">
+                  <th className="text-right font-semibold text-xs text-muted-foreground px-4 py-3 w-[200px] sticky right-0 bg-muted/40 z-10">
                     <span className="flex items-center gap-1.5">
                       <Building2 className="h-3.5 w-3.5" />الشركة
                     </span>
                   </th>
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[90px]">
-                    <span className="flex flex-col items-center gap-1">
-                      <LayoutDashboard className="h-4 w-4" />
-                      <span>لوحة التحكم</span>
-                    </span>
-                  </th>
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[80px]">
-                    <span className="flex flex-col items-center gap-1">
-                      <FileText className="h-4 w-4" />
-                      <span>الفواتير</span>
-                    </span>
-                  </th>
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[80px]">
-                    <span className="flex flex-col items-center gap-1">
-                      <Users className="h-4 w-4" />
-                      <span>العملاء</span>
-                    </span>
-                  </th>
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[90px]">
-                    <span className="flex flex-col items-center gap-1">
-                      <Truck className="h-4 w-4" />
-                      <span>الموردون</span>
-                    </span>
-                  </th>
-                  <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[90px]">
-                    <span className="flex flex-col items-center gap-1">
-                      <Link2 className="h-4 w-4" />
-                      <span>ربط ZATCA</span>
-                    </span>
-                  </th>
+                  {MENU_ITEMS.map(menu => (
+                    <th
+                      key={menu.key}
+                      className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[110px]"
+                    >
+                      <span className="flex flex-col items-center gap-1">
+                        <menu.icon className="h-4 w-4" />
+                        <span className="whitespace-nowrap">{menu.label}</span>
+                      </span>
+                    </th>
+                  ))}
                   <th className="text-center font-semibold text-xs text-muted-foreground px-3 py-3 min-w-[70px]">الحالة</th>
                 </tr>
               </thead>
