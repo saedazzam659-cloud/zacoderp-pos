@@ -182,10 +182,10 @@ export default function CostCenters() {
         </div>
         <div className="flex items-center gap-2">
           <ExportButtons
-            data={centers}
+            rows={centers}
             columns={EXPORT_COLS}
-            fileName="cost-centers"
-            sheetName="مراكز التكلفة"
+            filename="cost-centers"
+            title="مراكز التكلفة"
           />
           <Button size="lg" onClick={() => startNew()} className="gap-2 bg-gradient-to-l from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700 shadow-md">
             <Plus className="h-5 w-5" />
