@@ -67,6 +67,87 @@ export const employeeContractsTable = pgTable("employee_contracts", {
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const employeeAttendanceTable = pgTable("employee_attendance", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:   integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  date:         date("date").notNull(),
+  checkIn:      text("check_in"),
+  checkOut:     text("check_out"),
+  workedHours:  decimal("worked_hours", { precision: 6, scale: 2 }).default("0"),
+  overtimeHours:decimal("overtime_hours", { precision: 6, scale: 2 }).default("0"),
+  lateMinutes:  integer("late_minutes").default(0),
+  status:       text("status").notNull().default("present"),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  uqDay: unique("uq_attendance_emp_date").on(t.employeeId, t.date),
+}));
+
+export const employeeLoansTable = pgTable("employee_loans", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:     integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  loanDate:       date("loan_date").notNull(),
+  loanType:       text("loan_type").notNull().default("loan"),
+  amount:         decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  installments:   integer("installments").notNull().default(1),
+  installmentAmt: decimal("installment_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  paidAmount:     decimal("paid_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  status:         text("status").notNull().default("active"),
+  reason:         text("reason"),
+  notes:          text("notes"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const payrollRunsTable = pgTable("payroll_runs", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  branchId:       integer("branch_id").references(() => branchesTable.id),
+  code:           text("code").notNull(),
+  year:           integer("year").notNull(),
+  month:          integer("month").notNull(),
+  periodStart:    date("period_start").notNull(),
+  periodEnd:      date("period_end").notNull(),
+  payDate:        date("pay_date"),
+  totalGross:     decimal("total_gross", { precision: 14, scale: 2 }).notNull().default("0"),
+  totalDeductions:decimal("total_deductions", { precision: 14, scale: 2 }).notNull().default("0"),
+  totalNet:       decimal("total_net", { precision: 14, scale: 2 }).notNull().default("0"),
+  employeesCount: integer("employees_count").notNull().default(0),
+  status:         text("status").notNull().default("draft"),
+  postedJournalId:integer("posted_journal_id"),
+  notes:          text("notes"),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  uqPeriod: unique("uq_payroll_company_period").on(t.companyId, t.year, t.month),
+  uqCode:   unique("uq_payroll_company_code").on(t.companyId, t.code),
+}));
+
+export const payrollLinesTable = pgTable("payroll_lines", {
+  id:             serial("id").primaryKey(),
+  payrollRunId:   integer("payroll_run_id").references(() => payrollRunsTable.id, { onDelete: "cascade" }).notNull(),
+  employeeId:     integer("employee_id").references(() => employeesTable.id).notNull(),
+  basicSalary:    decimal("basic_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  housingAllow:   decimal("housing_allow", { precision: 12, scale: 2 }).notNull().default("0"),
+  transportAllow: decimal("transport_allow", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherAllow:     decimal("other_allow", { precision: 12, scale: 2 }).notNull().default("0"),
+  overtimeAmount: decimal("overtime_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  bonusAmount:    decimal("bonus_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  grossSalary:    decimal("gross_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  gosiEmployee:   decimal("gosi_employee", { precision: 12, scale: 2 }).notNull().default("0"),
+  loanDeduction:  decimal("loan_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  absenceDeduction:decimal("absence_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherDeduction: decimal("other_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalDeductions:decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
+  netSalary:      decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  workedDays:     integer("worked_days").notNull().default(30),
+  absentDays:     integer("absent_days").notNull().default(0),
+  notes:          text("notes"),
+});
+
 export const employeeLeavesTable = pgTable("employee_leaves", {
   id:           serial("id").primaryKey(),
   companyId:    integer("company_id").references(() => companiesTable.id).notNull(),

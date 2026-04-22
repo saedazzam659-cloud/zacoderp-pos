@@ -44,4 +44,41 @@ export const employeesApi = {
   aiParseId: (text: string) => req<any>("POST", "/ai/parse-employee-id", { text }),
   aiSuggestContract: (input: any) => req<any>("POST", "/ai/suggest-contract-terms", input),
   aiSuggestLeavePolicy: (input: any) => req<any>("POST", "/ai/suggest-leave-policy", input),
+
+  // Attendance
+  attendance: (params: { date?: string; employeeId?: number; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.date) qs.set("date", params.date);
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const q = qs.toString(); return req<any[]>("GET", `/employees/attendance/list${q ? `?${q}` : ""}`);
+  },
+  addAttendance:    (data: any) => req<any>("POST", "/employees/attendance", data),
+  updateAttendance: (id: number, data: any) => req<any>("PUT", `/employees/attendance/${id}`, data),
+  deleteAttendance: (id: number) => req<any>("DELETE", `/employees/attendance/${id}`),
+  bulkAttendance:   (date: string, records: any[]) => req<any>("POST", "/employees/attendance/bulk", { date, records }),
+
+  // Loans
+  loans:        (params: { employeeId?: number; status?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.employeeId) qs.set("employeeId", String(params.employeeId));
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString(); return req<any[]>("GET", `/employees/loans/list${q ? `?${q}` : ""}`);
+  },
+  addLoan:    (data: any) => req<any>("POST", "/employees/loans", data),
+  updateLoan: (id: number, data: any) => req<any>("PUT", `/employees/loans/${id}`, data),
+  deleteLoan: (id: number) => req<any>("DELETE", `/employees/loans/${id}`),
+
+  // EOS
+  endOfService: (empId: number, reason: "resignation" | "termination" = "resignation") =>
+    req<any>("GET", `/employees/${empId}/end-of-service?reason=${reason}`),
+
+  // Payroll
+  payrollRuns:    () => req<any[]>("GET", "/employees/payroll/runs"),
+  payrollRun:     (id: number) => req<any>("GET", `/employees/payroll/runs/${id}`),
+  payrollPreview: (year: number, month: number) => req<any>("POST", "/employees/payroll/preview", { year, month }),
+  createPayroll:  (data: any) => req<any>("POST", "/employees/payroll/runs", data),
+  postPayroll:    (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/post`, {}),
+  deletePayroll:  (id: number) => req<any>("DELETE", `/employees/payroll/runs/${id}`),
 };
