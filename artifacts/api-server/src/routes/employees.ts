@@ -388,6 +388,45 @@ router.delete("/:id/leaves/:leaveId", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── ALL CONTRACTS (across employees) ────────────────────────
+router.get("/contracts/all", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { status, expiringDays } = req.query as any;
+    const conds: any[] = [eq(employeeContractsTable.companyId, cid)];
+    if (status) conds.push(eq(employeeContractsTable.status, String(status)));
+    if (expiringDays) {
+      const limit = new Date(Date.now() + Number(expiringDays) * 86400000).toISOString().slice(0, 10);
+      conds.push(isNotNull(employeeContractsTable.endDate));
+      conds.push(lte(employeeContractsTable.endDate, limit));
+    }
+    const rows = await db.select({
+      id: employeeContractsTable.id,
+      employeeId: employeeContractsTable.employeeId,
+      contractNumber: employeeContractsTable.contractNumber,
+      contractType: employeeContractsTable.contractType,
+      startDate: employeeContractsTable.startDate,
+      endDate: employeeContractsTable.endDate,
+      basicSalary: employeeContractsTable.basicSalary,
+      housingAllow: employeeContractsTable.housingAllow,
+      transportAllow: employeeContractsTable.transportAllow,
+      otherAllow: employeeContractsTable.otherAllow,
+      vacationDays: employeeContractsTable.vacationDays,
+      probationDays: employeeContractsTable.probationDays,
+      noticePeriod: employeeContractsTable.noticePeriod,
+      status: employeeContractsTable.status,
+      empCode: employeesTable.code,
+      empNameAr: employeesTable.nameAr,
+      jobTitle: employeesTable.jobTitle,
+      nationality: employeesTable.nationality,
+    }).from(employeeContractsTable)
+      .leftJoin(employeesTable, eq(employeesTable.id, employeeContractsTable.employeeId))
+      .where(and(...conds))
+      .orderBy(desc(employeeContractsTable.startDate));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── ATTENDANCE ───────────────────────────────────────────────
 function calcWorkedHours(checkIn?: string, checkOut?: string): { worked: number; overtime: number } {
   if (!checkIn || !checkOut) return { worked: 0, overtime: 0 };

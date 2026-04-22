@@ -37,10 +37,12 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
 ];
 const companyBusinessNav: NavDef[] = [
-  { nameKey: "nav.hrEmployees",   href: "/hr/employees",   icon: UserCog },
-  { nameKey: "nav.hrAttendance",  href: "/hr/attendance",  icon: CalendarRange },
-  { nameKey: "nav.hrLoans",       href: "/hr/loans",       icon: Wallet },
-  { nameKey: "nav.hrPayroll",     href: "/hr/payroll",     icon: Banknote },
+  { nameKey: "nav.hrEmployees",   href: "/hr/employees",       icon: UserCog },
+  { nameKey: "nav.hrContracts",   href: "/hr/contracts",       icon: FileSignature },
+  { nameKey: "nav.hrAttendance",  href: "/hr/attendance",      icon: CalendarRange },
+  { nameKey: "nav.hrLoans",       href: "/hr/loans",           icon: Wallet },
+  { nameKey: "nav.hrPayroll",     href: "/hr/payroll",         icon: Banknote },
+  { nameKey: "nav.hrEos",         href: "/hr/end-of-service",  icon: Scale },
 ];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },

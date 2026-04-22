@@ -73,6 +73,17 @@ export const employeesApi = {
   // EOS
   endOfService: (empId: number, reason: "resignation" | "termination" = "resignation") =>
     req<any>("GET", `/employees/${empId}/end-of-service?reason=${reason}`),
+  aiExplainEos: (calc: any, employee: any) => req<any>("POST", "/ai/explain-eos", { calc, employee }),
+  aiExplainPayrollLine: (line: any, periodMonth?: string) =>
+    req<any>("POST", "/ai/explain-payroll-line", { line, periodMonth }),
+
+  // All contracts (cross-employee)
+  allContracts: (filters: { status?: string; expiringDays?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set("status", filters.status);
+    if (filters.expiringDays) qs.set("expiringDays", String(filters.expiringDays));
+    const q = qs.toString(); return req<any[]>("GET", `/employees/contracts/all${q ? `?${q}` : ""}`);
+  },
 
   // Payroll
   payrollRuns:    () => req<any[]>("GET", "/employees/payroll/runs"),

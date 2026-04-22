@@ -37,6 +37,8 @@ import EmployeeContracts from "@/pages/hr/EmployeeContracts";
 import Attendance from "@/pages/hr/Attendance";
 import EmployeeLoans from "@/pages/hr/EmployeeLoans";
 import Payroll from "@/pages/hr/Payroll";
+import AllContracts from "@/pages/hr/AllContracts";
+import EndOfService from "@/pages/hr/EndOfService";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -201,6 +203,8 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}
             {!isSuperAdmin && <Route path="/hr/loans" component={EmployeeLoans} />}
             {!isSuperAdmin && <Route path="/hr/payroll" component={Payroll} />}
+            {!isSuperAdmin && <Route path="/hr/contracts" component={AllContracts} />}
+            {!isSuperAdmin && <Route path="/hr/end-of-service" component={EndOfService} />}
 
             {/* Inventory routes */}
             {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}

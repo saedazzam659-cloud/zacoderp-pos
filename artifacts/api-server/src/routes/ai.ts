@@ -1074,4 +1074,119 @@ router.post("/suggest-leave-policy", async (req, res) => {
   }
 });
 
+// HR — explain payroll line in plain Arabic
+router.post("/explain-payroll-line", async (req, res) => {
+  try {
+    const { line, periodMonth } = req.body as any;
+    if (!line) { res.status(400).json({ error: "بيانات السطر مطلوبة" }); return; }
+
+    function fallback() {
+      const parts: string[] = [];
+      parts.push(`الموظف ${line.empNameAr || "—"}:`);
+      parts.push(`• الراتب الأساسي ${Number(line.basicSalary || 0).toFixed(2)} ر.س + بدلات (سكن ${Number(line.housingAllow || 0).toFixed(2)} + انتقال ${Number(line.transportAllow || 0).toFixed(2)} + أخرى ${Number(line.otherAllow || 0).toFixed(2)}).`);
+      if (Number(line.overtimeAmount || 0) > 0) {
+        parts.push(`• وقت إضافي ${Number(line.overtimeHours || 0).toFixed(2)} ساعة بقيمة ${Number(line.overtimeAmount).toFixed(2)} ر.س (أجر الساعة × 1.5 — المادة 107).`);
+      }
+      parts.push(`• إجمالي مستحقات الشهر: ${Number(line.grossSalary || 0).toFixed(2)} ر.س.`);
+      if (Number(line.gosiEmployee || 0) > 0) {
+        parts.push(`• تأمينات اجتماعية (10% من الأساسي + السكن للسعوديين): -${Number(line.gosiEmployee).toFixed(2)} ر.س.`);
+      }
+      if (Number(line.absenceDeduction || 0) > 0) {
+        parts.push(`• خصم غياب ${line.absentDays || 0} يوم: -${Number(line.absenceDeduction).toFixed(2)} ر.س.`);
+      }
+      if (Number(line.loanDeduction || 0) > 0) {
+        parts.push(`• قسط سلفة: -${Number(line.loanDeduction).toFixed(2)} ر.س.`);
+      }
+      parts.push(`• إجمالي الخصومات: ${Number(line.totalDeductions || 0).toFixed(2)} ر.س.`);
+      parts.push(`• الصافي للصرف: ${Number(line.netSalary || 0).toFixed(2)} ر.س.`);
+      return { source: "fallback", explanation: parts.join("\n") };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 700,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب رواتب خبير في نظام العمل السعودي. اشرح بدقة وبأسلوب بسيط ومهني." },
+            { role: "user", content: `اشرح بالعربية لمسؤول الرواتب كيف وصلنا إلى صافي راتب الموظف ${line.empNameAr || ""} لشهر ${periodMonth || ""} كأنك تحاسبه أمام الإدارة.
+
+البيانات:
+${JSON.stringify(line, null, 2)}
+
+أعد JSON: { "explanation": "نص الشرح بنقاط مرتبة، يذكر المعادلة لكل بند والمواد القانونية ذات العلاقة من نظام العمل السعودي عند اللزوم" }` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const explanation = String(parsed.explanation || "").trim();
+      if (!explanation) { res.json(fallback()); return; }
+      res.json({ source: "ai", explanation });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// HR — explain end of service calculation
+router.post("/explain-eos", async (req, res) => {
+  try {
+    const { calc, employee } = req.body as any;
+    if (!calc) { res.status(400).json({ error: "بيانات الحساب مطلوبة" }); return; }
+
+    function fallback() {
+      const parts: string[] = [];
+      parts.push(`حساب مكافأة نهاية الخدمة للموظف ${employee?.nameAr || "—"}:`);
+      parts.push(`• مدة الخدمة: ${calc.yearsOfService} سنة (من ${calc.hireDate} إلى ${calc.endDate}).`);
+      parts.push(`• الأجر الشامل الشهري: ${calc.basicSalary} (أساسي) + ${calc.housingAllow} (سكن) + ${calc.transportAllow} (انتقال) = ${calc.monthlySalary} ر.س.`);
+      parts.push(`• حسب المادة (84): نصف شهر عن كل سنة من السنوات الخمس الأولى + شهر كامل عن كل سنة بعد ذلك.`);
+      parts.push(`  - السنوات الخمس الأولى (${calc.breakdown.firstFiveYears} سنة) × ½ شهر = ${calc.breakdown.firstFiveAmount} ر.س.`);
+      if (calc.breakdown.afterFiveYears > 0) {
+        parts.push(`  - السنوات بعد الخمس (${calc.breakdown.afterFiveYears} سنة) × شهر كامل = ${calc.breakdown.afterFiveAmount} ر.س.`);
+      }
+      parts.push(`• المكافأة الكاملة: ${calc.grossEntitlement} ر.س.`);
+      parts.push(`• ${calc.factorReason}`);
+      parts.push(`• المعامل المطبّق: ${(calc.factor * 100).toFixed(0)}%.`);
+      parts.push(`✅ صافي المستحق: ${calc.netAmount} ر.س.`);
+      return { source: "fallback", explanation: parts.join("\n") };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 800,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت مستشار قانوني في الموارد البشرية متخصص في نظام العمل السعودي. اشرح الحسابات بدقة قانونية وبلغة واضحة." },
+            { role: "user", content: `اشرح للموظف ${employee?.nameAr || ""} كيف تم احتساب مكافأة نهاية الخدمة الخاصة به، مع ذكر المواد القانونية (84، 85) من نظام العمل السعودي ونصائح عملية إن أمكن.
+
+بيانات الحساب:
+${JSON.stringify(calc, null, 2)}
+
+أعد JSON: { "explanation": "شرح مفصّل بالعربية بنقاط مرتبة، يبدأ بمدة الخدمة، ثم الأجر المحتسب، ثم تطبيق المادة 84، ثم تطبيق نسبة الاستحقاق وفق سبب إنهاء الخدمة، وينتهي بالصافي. اذكر أرقاماً واضحة." }` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const explanation = String(parsed.explanation || "").trim();
+      if (!explanation) { res.json(fallback()); return; }
+      res.json({ source: "ai", explanation });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 export default router;
