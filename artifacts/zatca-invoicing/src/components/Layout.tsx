@@ -44,6 +44,7 @@ const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.hrPayroll",     href: "/hr/payroll",         icon: Banknote },
   { nameKey: "nav.hrEos",         href: "/hr/end-of-service",  icon: Scale },
   { nameKey: "nav.hrCalculators", href: "/hr/calculators",     icon: Calculator },
+  { nameKey: "nav.hrSettings",    href: "/hr/settings",        icon: Settings },
 ];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },

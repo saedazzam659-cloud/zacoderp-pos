@@ -36,6 +36,18 @@ export const companiesTable = pgTable("companies", {
   decimalPlaces: integer("decimal_places").notNull().default(2),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
+  // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
+  hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
+  hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),
+  hrGosiExpenseAccountId:        integer("hr_gosi_expense_account_id"),
+  hrEosExpenseAccountId:         integer("hr_eos_expense_account_id"),
+  hrSalariesPayableAccountId:    integer("hr_salaries_payable_account_id"),
+  hrGosiPayableAccountId:        integer("hr_gosi_payable_account_id"),
+  hrOtherDeductionsAccountId:    integer("hr_other_deductions_account_id"),
+  hrEmployeeLoansAccountId:      integer("hr_employee_loans_account_id"),
+  hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
+  hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
+  hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),

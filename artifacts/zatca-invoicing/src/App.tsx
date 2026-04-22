@@ -40,6 +40,7 @@ import Payroll from "@/pages/hr/Payroll";
 import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
 import HRCalculators from "@/pages/hr/HRCalculators";
+import HRSettings from "@/pages/hr/HRSettings";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -207,6 +208,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/hr/contracts" component={AllContracts} />}
             {!isSuperAdmin && <Route path="/hr/end-of-service" component={EndOfService} />}
             {!isSuperAdmin && <Route path="/hr/calculators" component={HRCalculators} />}
+            {!isSuperAdmin && <Route path="/hr/settings" component={HRSettings} />}
 
             {/* Inventory routes */}
             {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}

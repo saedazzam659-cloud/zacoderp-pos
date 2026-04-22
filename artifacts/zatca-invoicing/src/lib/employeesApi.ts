@@ -103,5 +103,23 @@ export const employeesApi = {
   payrollPreview: (year: number, month: number) => req<any>("POST", "/employees/payroll/preview", { year, month }),
   createPayroll:  (data: any) => req<any>("POST", "/employees/payroll/runs", data),
   postPayroll:    (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/post`, {}),
+  unpostPayroll:  (id: number) => req<any>("POST", `/employees/payroll/runs/${id}/unpost`, {}),
+  payrollJournal: (id: number) => req<any>("GET",  `/employees/payroll/runs/${id}/journal`),
   deletePayroll:  (id: number) => req<any>("DELETE", `/employees/payroll/runs/${id}`),
+
+  // Loan disbursement (creates JE)
+  disburseLoan: (id: number, data: { cashBoxId?: number | null; bankAccountId?: number | null }) =>
+    req<any>("POST", `/employees/loans/${id}/disburse`, data),
+
+  // EOS payment (creates JE)
+  payEos: (empId: number, data: { amount: number; payDate: string; cashBoxId?: number | null; bankAccountId?: number | null; useProvision?: boolean; description?: string; endEmployment?: boolean }) =>
+    req<any>("POST", `/employees/${empId}/eos-pay`, data),
+
+  // HR Settings (account mapping)
+  hrSettings:        () => req<any>("GET", "/hr/settings"),
+  updateHrSettings:  (mapping: any) => req<any>("PUT", "/hr/settings", { mapping }),
+
+  // AI — explain HR journal entry
+  aiExplainHrJournal: (entryType: string, entry: any, lines: any[], context?: any) =>
+    req<any>("POST", "/ai/explain-hr-journal", { entryType, entry, lines, context }),
 };

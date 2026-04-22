@@ -1450,4 +1450,86 @@ ${JSON.stringify(calc, null, 2)}
   }
 });
 
+// HR — explain HR-related journal entry (payroll / loan / EOS)
+router.post("/explain-hr-journal", async (req, res) => {
+  try {
+    const { entryType, entry, lines, context } = req.body as any;
+    if (!entryType || !entry || !Array.isArray(lines)) {
+      res.status(400).json({ error: "بيانات القيد المحاسبي مطلوبة" });
+      return;
+    }
+
+    const TITLES: Record<string, string> = {
+      payroll_run:    "قيد مسير الرواتب الشهري",
+      employee_loan:  "قيد صرف سلفة موظف",
+      eos_payment:    "قيد صرف مكافأة نهاية الخدمة",
+    };
+    const title = TITLES[entryType] || "قيد محاسبي خاص بالموارد البشرية";
+
+    function fallback() {
+      const out: string[] = [];
+      out.push(`${title}:`);
+      out.push(`• رقم المستند: ${entry.docNumber || "—"} — التاريخ: ${entry.entryDate}`);
+      const dr = (lines as any[]).filter((l) => Number(l.debit) > 0);
+      const cr = (lines as any[]).filter((l) => Number(l.credit) > 0);
+      const sum = (a: any[], k: "debit" | "credit") => a.reduce((s, x) => s + Number(x[k] || 0), 0);
+      out.push(`• إجمالي مدين: ${sum(dr, "debit").toFixed(2)} ر.س — إجمالي دائن: ${sum(cr, "credit").toFixed(2)} ر.س.`);
+      out.push("• الأطراف المدينة (من ح/):");
+      for (const l of dr) out.push(`   - ${l.description || "—"}: ${Number(l.debit).toFixed(2)} ر.س.`);
+      out.push("• الأطراف الدائنة (إلى ح/):");
+      for (const l of cr) out.push(`   - ${l.description || "—"}: ${Number(l.credit).toFixed(2)} ر.س.`);
+      if (entryType === "payroll_run") {
+        out.push("📌 الفكرة: الرواتب والبدلات تُسجّل كمصروف على الشركة، وتُجزّأ على الجانب الدائن إلى ما يستحق دفعه فعلاً للموظفين، وحصة الموظف من التأمينات (تُورّد للمؤسسة)، واسترداد أقساط السلف، وأي استقطاعات أخرى.");
+      } else if (entryType === "employee_loan") {
+        out.push("📌 الفكرة: صرف السلفة يُحوّل النقد إلى ذمة على الموظف (أصل يُسترد بالخصم من الراتب).");
+      } else if (entryType === "eos_payment") {
+        out.push("📌 الفكرة: صرف مكافأة نهاية الخدمة يُقفل المصروف (أو المخصص المُكوَّن سابقاً) مقابل النقد المُسلَّم للموظف.");
+      }
+      return { source: "fallback", explanation: out.join("\n") };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 700,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي خبير. اشرح القيود المحاسبية بأسلوب واضح مع تبيان منطق كل طرف ومدى توازن القيد، وفق النظام المحاسبي السعودي ومعايير IFRS-SME." },
+            { role: "user", content: `${title}.
+
+القيد:
+${JSON.stringify(entry, null, 2)}
+
+السطور:
+${JSON.stringify(lines, null, 2)}
+
+السياق الإضافي:
+${JSON.stringify(context || {}, null, 2)}
+
+اشرح:
+1. لماذا تم تسجيل هذا القيد،
+2. منطق كل طرف مدين وكل طرف دائن (ولماذا اخترنا هذه الحسابات)،
+3. التحقق من التوازن،
+4. الأثر على القوائم المالية وعلى علاقة الشركة بالموظف/المؤسسة.
+
+أعد JSON: { "explanation": "النص الكامل بالعربية" }` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const explanation = String(parsed.explanation || "").trim();
+      if (!explanation) { res.json(fallback()); return; }
+      res.json({ source: "ai", explanation });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 export default router;

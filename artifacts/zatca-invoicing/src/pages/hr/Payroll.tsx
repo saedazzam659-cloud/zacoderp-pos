@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X } from "lucide-react";
+import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X, BookOpen, RotateCcw } from "lucide-react";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -27,6 +27,8 @@ export default function Payroll() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [preview, setPreview] = useState<any | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
+  const [showJournal, setShowJournal] = useState(false);
+  const [jeExplain, setJeExplain] = useState<string>("");
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery<any[]>({
     queryKey: ["payroll-runs"], queryFn: () => employeesApi.payrollRuns(),
@@ -56,7 +58,36 @@ export default function Payroll() {
 
   const postMut = useMutation({
     mutationFn: (id: number) => employeesApi.postPayroll(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["payroll-runs"] }); qc.invalidateQueries({ queryKey: ["loans"] }); toast({ title: "تم اعتماد المسير", description: "تم خصم أقساط السلف من أرصدة الموظفين." }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
+      qc.invalidateQueries({ queryKey: ["loans"] });
+      toast({ title: "تم اعتماد المسير", description: "تم خصم أقساط السلف وإنشاء القيد المحاسبي." });
+    },
+    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+  });
+
+  const unpostMut = useMutation({
+    mutationFn: (id: number) => employeesApi.unpostPayroll(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["payroll-run", viewing] });
+      qc.invalidateQueries({ queryKey: ["loans"] });
+      setShowJournal(false); setJeExplain("");
+      toast({ title: "تم إلغاء اعتماد المسير", description: "تم حذف القيد المحاسبي وإعادة الأقساط للسلف." });
+    },
+    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+  });
+
+  const { data: journalData, isLoading: loadingJe } = useQuery<any>({
+    queryKey: ["payroll-journal", viewing],
+    queryFn: () => employeesApi.payrollJournal(viewing!),
+    enabled: !!viewing && showJournal && viewRun?.status === "posted",
+  });
+
+  const explainJeMut = useMutation({
+    mutationFn: () => employeesApi.aiExplainHrJournal("payroll_run", journalData.entry, journalData.lines, { run: { code: viewRun.code, year: viewRun.year, month: viewRun.month, employeesCount: viewRun.employeesCount } }),
+    onSuccess: (data) => { setJeExplain(data.explanation); toast({ title: "تم توليد الشرح" }); },
     onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
   });
 
@@ -275,8 +306,81 @@ export default function Payroll() {
                         <CheckCircle2 className="size-4 me-1" /> اعتماد المسير
                       </Button>
                     )}
+                    {viewRun.status === "posted" && (
+                      <>
+                        <Button variant="outline" onClick={() => { setShowJournal((s) => !s); setJeExplain(""); }} data-testid="btn-toggle-je">
+                          <BookOpen className="size-4 me-1" /> {showJournal ? "إخفاء القيد" : "عرض القيد المحاسبي"}
+                        </Button>
+                        <Button variant="outline" className="text-rose-700 hover:text-rose-800"
+                          onClick={() => { if (confirm("إلغاء اعتماد المسير؟ سيتم حذف القيد المحاسبي وإعادة الأقساط لرصيد السلف.")) unpostMut.mutate(viewRun.id); }}
+                          disabled={unpostMut.isPending} data-testid="btn-unpost">
+                          {unpostMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <RotateCcw className="size-4 me-1" />}
+                          إلغاء الاعتماد
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
+
+                {showJournal && viewRun.status === "posted" && (
+                  <div className="rounded-lg border bg-card overflow-hidden">
+                    <div className="bg-muted/40 p-3 border-b font-semibold flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="size-4" /> القيد المحاسبي للمسير
+                      </div>
+                      {journalData && (
+                        <Button size="sm" variant="outline" onClick={() => explainJeMut.mutate()} disabled={explainJeMut.isPending} data-testid="btn-explain-je">
+                          {explainJeMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Sparkles className="size-4 me-1" />}
+                          شرح بالـ AI
+                        </Button>
+                      )}
+                    </div>
+                    {loadingJe || !journalData ? (
+                      <div className="p-4"><Skeleton className="h-32" /></div>
+                    ) : (
+                      <div className="p-4 space-y-3">
+                        <div className="text-sm text-muted-foreground">
+                          رقم المستند: <strong>{journalData.entry.docNumber}</strong> ·
+                          التاريخ: <strong>{journalData.entry.entryDate}</strong> ·
+                          البيان: <strong>{journalData.entry.description}</strong>
+                        </div>
+                        <table className="w-full text-sm border rounded-lg overflow-hidden">
+                          <thead className="bg-muted/40 text-xs">
+                            <tr>
+                              <th className="p-2 text-start">الحساب</th>
+                              <th className="p-2 text-start">البيان</th>
+                              <th className="p-2 text-end">مدين</th>
+                              <th className="p-2 text-end">دائن</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {journalData.lines.map((l: any, i: number) => (
+                              <tr key={i} className="border-t">
+                                <td className="p-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountNameAr}</td>
+                                <td className="p-2 text-xs">{l.description}</td>
+                                <td className="p-2 text-end tabular-nums text-emerald-700">{Number(l.debit) > 0 ? Number(l.debit).toFixed(2) : "—"}</td>
+                                <td className="p-2 text-end tabular-nums text-rose-700">{Number(l.credit) > 0 ? Number(l.credit).toFixed(2) : "—"}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t bg-muted/20 font-semibold">
+                              <td className="p-2" colSpan={2}>الإجمالي</td>
+                              <td className="p-2 text-end tabular-nums text-emerald-700">{Number(journalData.entry.totalDebit).toFixed(2)}</td>
+                              <td className="p-2 text-end tabular-nums text-rose-700">{Number(journalData.entry.totalCredit).toFixed(2)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        {jeExplain && (
+                          <div className="rounded-lg border bg-blue-50/30 border-blue-200 p-4">
+                            <div className="flex items-center gap-2 mb-2 text-blue-900 font-semibold">
+                              <Sparkles className="size-4" /> شرح المحاسب الذكي
+                            </div>
+                            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-800">{jeExplain}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="rounded-lg border p-3 bg-card"><div className="text-xs text-muted-foreground">الموظفون</div><div className="text-xl font-semibold">{viewRun.employeesCount}</div></div>

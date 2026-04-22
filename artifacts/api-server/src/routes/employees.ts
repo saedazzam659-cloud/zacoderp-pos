@@ -3,6 +3,8 @@ import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
+import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 
 const router = Router();
 router.use(extractAuth);
@@ -626,6 +628,56 @@ router.post("/loans", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Disburse an existing loan — creates a journal entry (DR loans receivable / CR cash or bank)
+router.post("/loans/:id/disburse", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const result = await db.transaction(async (tx) => {
+      const [loan] = await tx.select().from(employeeLoansTable)
+        .where(and(eq(employeeLoansTable.id, id), eq(employeeLoansTable.companyId, cid)));
+      if (!loan) throw Object.assign(new Error("السلفة غير موجودة"), { status: 404 });
+      if ((loan.notes || "").includes("JE#")) throw new Error("تم صرف هذه السلفة بالفعل");
+      const journalId = await buildLoanDisbursementJournal(cid, id, {
+        cashBoxId:     b.cashBoxId     ? Number(b.cashBoxId)     : null,
+        bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+      }, tx);
+      const [upd] = await tx.update(employeeLoansTable)
+        .set({ notes: `JE#${journalId}${loan.notes ? " — " + loan.notes : ""}`, updatedAt: new Date() })
+        .where(eq(employeeLoansTable.id, id)).returning();
+      return { ...upd, journalId };
+    });
+    res.json(result);
+  } catch (e: any) { res.status(e?.status || 400).json({ error: e.message }); }
+});
+
+// EOS payment — creates a journal entry and stamps the employee end date
+router.post("/:id/eos-pay", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const empId = Number(req.params.id);
+    const b = req.body || {};
+    const amount = Number(b.amount);
+    const payDate = String(b.payDate || new Date().toISOString().slice(0, 10));
+    const useProvision = !!b.useProvision;
+    if (!(amount > 0)) { res.status(400).json({ error: "قيمة المكافأة مطلوبة" }); return; }
+    const result = await db.transaction(async (tx) => {
+      const journalId = await buildEosPaymentJournal(cid, empId, amount, payDate, {
+        cashBoxId:     b.cashBoxId     ? Number(b.cashBoxId)     : null,
+        bankAccountId: b.bankAccountId ? Number(b.bankAccountId) : null,
+      }, { useProvision, description: b.description }, tx);
+      if (b.endEmployment) {
+        await tx.update(employeesTable)
+          .set({ status: "terminated", endDate: payDate, updatedAt: new Date() })
+          .where(and(eq(employeesTable.id, empId), eq(employeesTable.companyId, cid)));
+      }
+      return { ok: true, journalId };
+    });
+    res.json(result);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
 router.put("/loans/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -926,39 +978,103 @@ router.post("/payroll/runs/:id/post", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    const result = await db.transaction(async (tx) => {
+      const [run] = await tx.select().from(payrollRunsTable)
+        .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
+      if (!run) throw Object.assign(new Error("غير موجود"), { status: 404 });
+      if (run.status !== "draft") throw new Error("المسير ليس مسودة");
+
+      // Update loan paidAmounts
+      const lines = await tx.select().from(payrollLinesTable)
+        .where(eq(payrollLinesTable.payrollRunId, id));
+      for (const l of lines) {
+        if (Number(l.loanDeduction) > 0) {
+          const activeLoans = await tx.select().from(employeeLoansTable)
+            .where(and(
+              eq(employeeLoansTable.companyId, cid),
+              eq(employeeLoansTable.employeeId, l.employeeId),
+              eq(employeeLoansTable.status, "active"),
+            )).orderBy(asc(employeeLoansTable.loanDate));
+          let remaining = Number(l.loanDeduction);
+          for (const loan of activeLoans) {
+            if (remaining <= 0) break;
+            const loanRemain = Number(loan.amount) - Number(loan.paidAmount);
+            const pay = Math.min(remaining, loanRemain);
+            const newPaid = +(Number(loan.paidAmount) + pay).toFixed(2);
+            const status = newPaid >= Number(loan.amount) ? "completed" : "active";
+            await tx.update(employeeLoansTable)
+              .set({ paidAmount: String(newPaid), status, updatedAt: new Date() })
+              .where(eq(employeeLoansTable.id, loan.id));
+            remaining -= pay;
+          }
+        }
+      }
+
+      // Build the accounting journal entry — any error rolls back loan updates too
+      const journalId = await buildPayrollJournal(cid, id, tx);
+      const [upd] = await tx.update(payrollRunsTable)
+        .set({ status: "posted", postedJournalId: journalId, updatedAt: new Date() })
+        .where(eq(payrollRunsTable.id, id)).returning();
+      return { ...upd, journalId };
+    });
+    res.json(result);
+  } catch (e: any) {
+    res.status(e?.status || 400).json({ error: e.message });
+  }
+});
+
+// Get the JE attached to a payroll run (if posted)
+router.get("/payroll/runs/:id/journal", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [run] = await db.select().from(payrollRunsTable)
+      .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
+    if (!run?.postedJournalId) { res.status(404).json({ error: "لا يوجد قيد لهذا المسير" }); return; }
+    const [entry] = await db.select().from(journalEntriesTable)
+      .where(eq(journalEntriesTable.id, run.postedJournalId));
+    const lines = await db.select().from(journalEntryLinesTable)
+      .where(eq(journalEntryLinesTable.entryId, run.postedJournalId))
+      .orderBy(asc(journalEntryLinesTable.sortOrder));
+    res.json({ entry, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Unpost a payroll run — deletes its JE and reverts loan paidAmounts
+router.post("/payroll/runs/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
     const [run] = await db.select().from(payrollRunsTable)
       .where(and(eq(payrollRunsTable.id, id), eq(payrollRunsTable.companyId, cid)));
     if (!run) { res.status(404).json({ error: "غير موجود" }); return; }
-    if (run.status !== "draft") { res.status(400).json({ error: "المسير ليس مسودة" }); return; }
+    if (run.status !== "posted") { res.status(400).json({ error: "المسير ليس معتمداً" }); return; }
 
-    // Update loan paidAmounts
-    const lines = await db.select().from(payrollLinesTable)
-      .where(eq(payrollLinesTable.payrollRunId, id));
+    // Reverse loan paidAmounts
+    const lines = await db.select().from(payrollLinesTable).where(eq(payrollLinesTable.payrollRunId, id));
     for (const l of lines) {
       if (Number(l.loanDeduction) > 0) {
-        const activeLoans = await db.select().from(employeeLoansTable)
-          .where(and(
-            eq(employeeLoansTable.companyId, cid),
-            eq(employeeLoansTable.employeeId, l.employeeId),
-            eq(employeeLoansTable.status, "active"),
-          )).orderBy(asc(employeeLoansTable.loanDate));
-        let remaining = Number(l.loanDeduction);
-        for (const loan of activeLoans) {
-          if (remaining <= 0) break;
-          const loanRemain = Number(loan.amount) - Number(loan.paidAmount);
-          const pay = Math.min(remaining, loanRemain);
-          const newPaid = +(Number(loan.paidAmount) + pay).toFixed(2);
-          const status = newPaid >= Number(loan.amount) ? "completed" : "active";
+        const loans = await db.select().from(employeeLoansTable)
+          .where(and(eq(employeeLoansTable.companyId, cid), eq(employeeLoansTable.employeeId, l.employeeId)))
+          .orderBy(desc(employeeLoansTable.loanDate));
+        let toReverse = Number(l.loanDeduction);
+        for (const loan of loans) {
+          if (toReverse <= 0) break;
+          const paid = Number(loan.paidAmount);
+          const give = Math.min(toReverse, paid);
+          const newPaid = +(paid - give).toFixed(2);
           await db.update(employeeLoansTable)
-            .set({ paidAmount: String(newPaid), status, updatedAt: new Date() })
+            .set({ paidAmount: String(newPaid), status: newPaid >= Number(loan.amount) ? "completed" : "active", updatedAt: new Date() })
             .where(eq(employeeLoansTable.id, loan.id));
-          remaining -= pay;
+          toReverse -= give;
         }
       }
     }
-
+    if (run.postedJournalId) {
+      await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, run.postedJournalId));
+    }
     const [upd] = await db.update(payrollRunsTable)
-      .set({ status: "posted", updatedAt: new Date() })
+      .set({ status: "draft", postedJournalId: null, updatedAt: new Date() })
       .where(eq(payrollRunsTable.id, id)).returning();
     res.json(upd);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

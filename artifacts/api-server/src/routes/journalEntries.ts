@@ -100,6 +100,7 @@ const LOCKED_ENTRY_TYPES = [
   "receipt_voucher", "payment_voucher",
   "stock_transfer", "stock_adjustment",
   "supplier_settlement", "customer_settlement",
+  "payroll_run", "employee_loan", "eos_payment",
 ];
 
 async function ensureNotLocked(id: number, cid: number): Promise<{ ok: boolean; entryType?: string | null }> {

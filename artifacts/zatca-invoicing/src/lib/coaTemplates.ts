@@ -137,6 +137,13 @@ const COMMERCIAL_LEAVES: CoaRow[] = [
   { code: "5210",  nameAr: "أتعاب مهنية واستشارات",           nameEn: "Professional Fees",            accountType: "expense",   level: 3, isPosting: true, parentCode: "52" },
   { code: "5211",  nameAr: "اشتراكات ورسوم حكومية",           nameEn: "Government Fees",              accountType: "expense",   level: 3, isPosting: true, parentCode: "52" },
   { code: "5212",  nameAr: "مصروفات بنكية",                   nameEn: "Bank Charges",                 accountType: "expense",   level: 3, isPosting: true, parentCode: "52" },
+  { code: "5215",  nameAr: "مكافأة نهاية الخدمة",              nameEn: "End-of-Service Expense",       accountType: "expense",   level: 3, isPosting: true, parentCode: "52" },
+  // HR-related postable liabilities/assets
+  { code: "21051", nameAr: "صافي الرواتب المستحقة الدفع",       nameEn: "Net Salaries Payable",         accountType: "liability", level: 4, isPosting: true, parentCode: "2105" },
+  { code: "21052", nameAr: "تأمينات اجتماعية مستحقة الدفع",     nameEn: "GOSI Payable",                 accountType: "liability", level: 4, isPosting: true, parentCode: "2105" },
+  { code: "21053", nameAr: "استقطاعات أخرى مستحقة الدفع",       nameEn: "Other Deductions Payable",     accountType: "liability", level: 4, isPosting: true, parentCode: "2105" },
+  { code: "11081", nameAr: "سلف وعُهد الموظفين",                nameEn: "Loans & Advances to Employees",accountType: "asset",     level: 4, isPosting: true, parentCode: "1108" },
+  { code: "22021", nameAr: "مخصص مكافأة نهاية الخدمة",          nameEn: "EOS Provision",                accountType: "liability", level: 4, isPosting: true, parentCode: "2202" },
 
   { code: "53",    nameAr: "مصروفات البيع والتسويق",          nameEn: "Selling & Marketing",          accountType: "expense",   level: 2, isPosting: false, parentCode: "5" },
   { code: "5301",  nameAr: "دعاية وإعلان",                    nameEn: "Advertising",                  accountType: "expense",   level: 3, isPosting: true, parentCode: "53" },

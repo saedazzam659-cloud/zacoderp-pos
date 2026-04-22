@@ -31,6 +31,7 @@ import usersRouter from "./users";
 import fiscalPeriodsRouter from "./fiscal-periods";
 import costCentersRouter from "./cost-centers";
 import employeesRouter from "./employees";
+import hrSettingsRouter from "./hr-settings";
 
 const router: IRouter = Router();
 
@@ -64,6 +65,7 @@ router.use("/users",              usersRouter);
 router.use("/fiscal",             fiscalPeriodsRouter);
 router.use("/cost-centers",       costCentersRouter);
 router.use("/employees",          employeesRouter);
+router.use("/hr/settings",        hrSettingsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 
