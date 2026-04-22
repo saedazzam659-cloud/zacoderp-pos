@@ -226,7 +226,7 @@ function NavItem({
         <item.icon className="h-4 w-4 shrink-0" />
         {t(item.nameKey)}
       </span>
-    </Link>
+    </a>
   );
 }
 
