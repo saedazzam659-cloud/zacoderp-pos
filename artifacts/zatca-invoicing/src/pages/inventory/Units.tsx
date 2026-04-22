@@ -50,8 +50,10 @@ export default function Units() {
   }
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (editId) updateMut.mutate({ id: editId, data: form });
-    else createMut.mutate(form);
+    const factor = Math.max(1, Math.trunc(Number(form.conversionFactor) || 1));
+    const payload = { ...form, conversionFactor: String(factor) };
+    if (editId) updateMut.mutate({ id: editId, data: payload });
+    else createMut.mutate(payload);
   }
 
   const filtered = data.filter((u: any) =>
@@ -140,7 +142,7 @@ export default function Units() {
               <Input placeholder="Piece" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
             </Field>
             <Field label="معامل التحويل الافتراضي" hint="مرجعي فقط — يُحدَّد التحويل الفعلي لكل صنف">
-              <Input type="number" step="any" min="0.000001" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} />
+              <Input type="number" step="1" min="1" placeholder="1" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value.replace(/[^0-9]/g, "") }))} />
             </Field>
           </FormGrid>
         </FormPanel>
@@ -181,7 +183,7 @@ export default function Units() {
                   <td className="px-4 py-3 font-medium">{u.nameAr}</td>
                   <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{u.nameEn ?? "—"}</td>
                   <td className="px-4 py-3 hidden sm:table-cell text-center">
-                    <span className="text-xs bg-muted rounded px-2 py-0.5 tabular-nums">×{Number(u.conversionFactor).toFixed(Number(u.conversionFactor) % 1 === 0 ? 0 : 4)}</span>
+                    <span className="text-xs bg-muted rounded px-2 py-0.5 tabular-nums">×{Math.trunc(Number(u.conversionFactor))}</span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
