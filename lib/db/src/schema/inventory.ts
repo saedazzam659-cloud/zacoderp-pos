@@ -80,6 +80,7 @@ export const itemsTable = pgTable("items", {
   costMethod:       costMethodEnum("cost_method").default("weighted_avg").notNull(),
   status:           itemStatusEnum("item_status").default("active").notNull(),
   description:      text("description"),
+  imageUrl:         text("image_url"),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),

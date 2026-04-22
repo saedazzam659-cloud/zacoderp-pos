@@ -138,6 +138,7 @@ export type Item = {
   salePrice: string;
   costPrice: string;
   vatRate: string;
+  imageUrl?: string | null;
   unit?: { id: number; nameAr: string } | null;
   group?: { id: number; nameAr: string } | null;
 };

@@ -26,8 +26,79 @@ const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock",
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
-  costAccountId: "", revenueAccountId: "",
+  costAccountId: "", revenueAccountId: "", imageUrl: "",
 };
+
+function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { toast } = useToast();
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "نوع ملف غير مدعوم", description: "يرجى اختيار صورة فقط", variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "حجم الصورة كبير", description: "الحد الأقصى 5 ميجابايت", variant: "destructive" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const res = await fetch("/api/storage/uploads/request-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}` },
+        body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+      });
+      if (!res.ok) throw new Error("فشل تجهيز رابط الرفع");
+      const { uploadURL, objectPath } = await res.json();
+      const putRes = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+      if (!putRes.ok) throw new Error("فشل رفع الصورة");
+      onChange(objectPath);
+      toast({ title: "تم رفع الصورة" });
+    } catch (e: any) {
+      toast({ title: "تعذّر رفع الصورة", description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const previewSrc = value ? (value.startsWith("/objects/") ? `/api/storage${value}` : value) : "";
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-20 h-20 rounded-xl border border-dashed border-border bg-muted/30 grid place-items-center overflow-hidden shrink-0">
+        {previewSrc ? (
+          <img src={previewSrc} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <Package className="h-7 w-7 text-muted-foreground/50" />
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="cursor-pointer">
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
+          />
+          <span className="inline-flex items-center gap-1.5 text-xs h-8 px-3 rounded-md border bg-background hover:bg-accent transition">
+            {uploading ? "جارٍ الرفع..." : value ? "تغيير الصورة" : "رفع صورة"}
+          </span>
+        </label>
+        {value && (
+          <button
+            type="button"
+            className="text-xs text-destructive hover:underline text-right"
+            onClick={() => onChange("")}
+          >
+            إزالة الصورة
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 const UNIT_EMPTY = { unitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false };
 
 // ─── Item Unit Prices Panel ──────────────────────────────────────────────────
@@ -346,6 +417,9 @@ export default function Items() {
                 <Field label={t("common.status")}>
                   <SearchCombobox items={[{ value: "active", label: t("pages.items.active") }, { value: "inactive", label: t("pages.items.inactive") }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder={t("common.status")} />
                 </Field>
+                <Field label="صورة الصنف" className="md:col-span-2">
+                  <ItemImageUpload value={form.imageUrl ?? ""} onChange={(v) => setForm((p: any) => ({ ...p, imageUrl: v }))} />
+                </Field>
               </FormGrid>
             </TabsContent>
             <TabsContent value="pricing" className="mt-0 space-y-6">
@@ -430,9 +504,24 @@ export default function Items() {
                       </td>
                       <td className="px-4 py-3 font-mono text-xs font-bold">{it.code}</td>
                       <td className="px-4 py-3">
-                        <p className="font-medium">{it.nameAr}</p>
-                        {it.nameEn && <p className="text-xs text-muted-foreground">{it.nameEn}</p>}
-                        {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
+                        <div className="flex items-center gap-2.5">
+                          {it.imageUrl ? (
+                            <img
+                              src={it.imageUrl.startsWith("/objects/") ? `/api/storage${it.imageUrl}` : it.imageUrl}
+                              alt=""
+                              className="w-10 h-10 rounded-md object-cover border border-border shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-md bg-muted grid place-items-center shrink-0">
+                              <Package className="h-4 w-4 text-muted-foreground/40" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium">{it.nameAr}</p>
+                            {it.nameEn && <p className="text-xs text-muted-foreground">{it.nameEn}</p>}
+                            {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground text-xs">{it.group?.nameAr ?? "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell">

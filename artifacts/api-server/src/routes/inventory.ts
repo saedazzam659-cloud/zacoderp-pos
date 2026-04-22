@@ -258,7 +258,7 @@ router.get("/items/:id", async (req, res) => {
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -276,6 +276,7 @@ router.post("/items", async (req, res) => {
     costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
+    imageUrl: imageUrl || null,
   }).returning();
   res.status(201).json(row);
 });
@@ -283,7 +284,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl } = req.body;
   const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
@@ -300,6 +301,7 @@ router.put("/items/:id", async (req, res) => {
     costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
+    imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }

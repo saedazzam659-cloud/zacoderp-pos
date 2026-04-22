@@ -57,6 +57,12 @@ function formatSAR(n: number) {
   }).format(n);
 }
 
+function imageSrc(item: Item): string | null {
+  const u = item.imageUrl;
+  if (!u) return null;
+  return u.startsWith("/objects/") ? `/api/storage${u}` : u;
+}
+
 function emojiFor(item: Item): string {
   const name = (item.nameAr || "").toLowerCase();
   if (/قهوة|coffee/.test(name)) return "☕";
@@ -526,8 +532,12 @@ export default function CashierPage() {
                           {inCart.qty}
                         </div>
                       )}
-                      <div className="aspect-square rounded-xl bg-gradient-to-br from-muted to-muted/30 grid place-items-center text-5xl mb-2">
-                        {emojiFor(p)}
+                      <div className="aspect-square rounded-xl bg-gradient-to-br from-muted to-muted/30 grid place-items-center text-5xl mb-2 overflow-hidden">
+                        {imageSrc(p) ? (
+                          <img src={imageSrc(p)!} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          emojiFor(p)
+                        )}
                       </div>
                       <p className="font-bold text-sm leading-snug line-clamp-2 min-h-[2.5rem]">
                         {p.nameAr}
