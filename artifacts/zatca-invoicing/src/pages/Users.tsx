@@ -12,13 +12,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
-  CheckCircle2, XCircle, Loader2,
+  CheckCircle2, XCircle, Loader2, X, Save, Check,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -69,7 +66,7 @@ export default function Users() {
   const [openForm, setOpenForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm());
-  const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   const url   = cid ? `${API}/api/users?companyId=${cid}` : `${API}/api/users`;
   const burl  = cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`;
@@ -89,7 +86,6 @@ export default function Users() {
       const r = await fetch(burl, { headers: authH });
       if (!r.ok) return [];
       const data = await r.json();
-      // Endpoint may return {regions, branches} or just an array — normalize:
       if (Array.isArray(data)) return data;
       return Array.isArray(data?.branches) ? data.branches : [];
     },
@@ -107,11 +103,14 @@ export default function Users() {
     );
   }, [users, search]);
 
-  // ─── Open create / edit ─────────────────────────────────────
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm());
     setOpenForm(true);
+    setConfirmDeleteId(null);
+    setTimeout(() => {
+      document.getElementById("user-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
   };
 
   const openEdit = (u: UserRow) => {
@@ -130,9 +129,18 @@ export default function Users() {
       permissions: { ...viewOnlyPermissions(), ...(u.permissions ?? {}) },
     });
     setOpenForm(true);
+    setConfirmDeleteId(null);
+    setTimeout(() => {
+      document.getElementById("user-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
   };
 
-  // ─── Save (create or update) ────────────────────────────────
+  const closeForm = () => {
+    setOpenForm(false);
+    setEditingId(null);
+    setForm(emptyForm());
+  };
+
   const saveMut = useMutation({
     mutationFn: async () => {
       const body: any = {
@@ -172,7 +180,7 @@ export default function Users() {
     onSuccess: () => {
       toast({ title: "تم الحفظ", description: editingId == null ? "تم إضافة المستخدم" : "تم تحديث المستخدم" });
       qc.invalidateQueries({ queryKey: ["users", cid] });
-      setOpenForm(false);
+      closeForm();
     },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
@@ -189,12 +197,11 @@ export default function Users() {
     onSuccess: () => {
       toast({ title: "تم الحذف" });
       qc.invalidateQueries({ queryKey: ["users", cid] });
-      setConfirmDelete(null);
+      setConfirmDeleteId(null);
     },
     onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
   });
 
-  // ─── Permissions matrix helpers ─────────────────────────────
   const togglePerm = (modKey: string, action: Action, val: boolean) => {
     setForm(f => ({
       ...f,
@@ -236,11 +243,251 @@ export default function Users() {
             </p>
           </div>
         </div>
-        <Button onClick={openCreate} className="gap-2 bg-gradient-to-l from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700">
-          <Plus className="h-4 w-4" />
-          إضافة مستخدم جديد
-        </Button>
+        {!openForm && (
+          <Button onClick={openCreate} className="gap-2 bg-gradient-to-l from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700">
+            <Plus className="h-4 w-4" />
+            إضافة مستخدم جديد
+          </Button>
+        )}
       </div>
+
+      {/* ─── Inline Form (replaces popup) ─────────────────── */}
+      {openForm && (
+        <Card id="user-form-card" className="border-2 border-blue-200 dark:border-blue-900 shadow-lg">
+          <CardHeader className="bg-gradient-to-l from-blue-50 to-cyan-50 dark:from-blue-950/40 dark:to-cyan-950/40 border-b">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                {editingId == null ? <Plus className="h-5 w-5 text-blue-600" /> : <Pencil className="h-5 w-5 text-blue-600" />}
+                {editingId == null ? "إضافة مستخدم جديد" : `تعديل: ${form.nameAr || form.username}`}
+              </CardTitle>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={closeForm} className="gap-1">
+                  <X className="h-4 w-4" /> إلغاء
+                </Button>
+                <Button
+                  onClick={() => saveMut.mutate()}
+                  disabled={
+                    saveMut.isPending ||
+                    !form.username ||
+                    (editingId == null && !form.password)
+                  }
+                  className="bg-blue-600 hover:bg-blue-700 gap-1"
+                >
+                  {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {editingId == null ? "إنشاء المستخدم" : "حفظ التعديلات"}
+                </Button>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              املأ البيانات الأساسية، اختر الفروع، وحدّد الصلاحيات لكل شاشة.
+            </p>
+          </CardHeader>
+
+          <CardContent className="pt-5">
+            <Tabs defaultValue="info" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="info">البيانات الأساسية</TabsTrigger>
+                <TabsTrigger value="branches">الفروع ({form.branchIds.length})</TabsTrigger>
+                <TabsTrigger value="permissions">الصلاحيات</TabsTrigger>
+              </TabsList>
+
+              {/* ─── Info Tab ───────────────────────────── */}
+              <TabsContent value="info" className="space-y-4 pt-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label>الكود</Label>
+                    <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="EMP-001" />
+                  </div>
+                  <div>
+                    <Label>الاسم بالعربية</Label>
+                    <Input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} placeholder="محمد أحمد" />
+                  </div>
+                  <div>
+                    <Label>English Name</Label>
+                    <Input value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} placeholder="Mohamed Ahmed" />
+                  </div>
+                  <div>
+                    <Label>اسم المستخدم *</Label>
+                    <Input
+                      value={form.username}
+                      onChange={(e) => setForm({ ...form, username: e.target.value })}
+                      placeholder="username"
+                      disabled={editingId != null}
+                      className="font-mono"
+                    />
+                  </div>
+                  <div>
+                    <Label>البريد الإلكتروني</Label>
+                    <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" />
+                  </div>
+                  <div>
+                    <Label className="flex items-center gap-1">
+                      <KeyRound className="h-3 w-3" />
+                      {editingId == null ? "كلمة المرور *" : "كلمة مرور جديدة (اختياري)"}
+                    </Label>
+                    <Input
+                      type="password"
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                      placeholder={editingId == null ? "6 أحرف على الأقل" : "اتركها فارغة لعدم التغيير"}
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div>
+                    <Label>الدور</Label>
+                    <select
+                      value={form.role}
+                      onChange={(e) => setForm({ ...form, role: e.target.value as any })}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    >
+                      <option value="user">مستخدم (يستخدم الصلاحيات أدناه)</option>
+                      <option value="admin">مدير الشركة (صلاحيات كاملة)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end gap-3 pb-2">
+                    <Switch checked={form.isActive} onCheckedChange={(v) => setForm({ ...form, isActive: v })} />
+                    <Label>الحساب نشط</Label>
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* ─── Branches Tab ───────────────────────── */}
+              <TabsContent value="branches" className="space-y-3 pt-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-sm text-muted-foreground">
+                    حدّد الفروع التي يستطيع المستخدم الوصول إليها. اتركها فارغة للسماح بكل الفروع.
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: branches.map(b => b.id) })}>
+                      تحديد الكل
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: [] })}>
+                      مسح الكل
+                    </Button>
+                  </div>
+                </div>
+                {branches.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground border rounded-lg">
+                    لا توجد فروع. أضف فروعاً من شاشة "الفروع" أولاً.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {branches.map(b => {
+                      const checked = form.branchIds.includes(b.id);
+                      return (
+                        <label
+                          key={b.id}
+                          className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                            checked ? "bg-blue-50 border-blue-300 dark:bg-blue-950/30" : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) => {
+                              setForm(f => ({
+                                ...f,
+                                branchIds: v
+                                  ? [...f.branchIds, b.id]
+                                  : f.branchIds.filter(id => id !== b.id),
+                              }));
+                            }}
+                          />
+                          <div>
+                            <div className="font-mono text-xs text-muted-foreground">{b.code}</div>
+                            <div className="font-medium">{b.nameAr}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* ─── Permissions Tab ────────────────────── */}
+              <TabsContent value="permissions" className="space-y-4 pt-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-indigo-600" />
+                    حدّد ما يستطيع المستخدم فعله في كل شاشة.
+                    {form.role === "admin" && <span className="text-amber-600 font-semibold">(دور المدير: كل الصلاحيات تلقائياً)</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>كل الصلاحيات</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>عرض فقط</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>لا شيء</Button>
+                  </div>
+                </div>
+
+                <div className={`space-y-4 ${form.role === "admin" ? "opacity-50 pointer-events-none" : ""}`}>
+                  {PERMISSION_GROUPS.map(group => {
+                    const mods = PERMISSION_MODULES.filter(m => m.group === group);
+                    return (
+                      <div key={group} className="border rounded-lg overflow-hidden">
+                        <div className="bg-muted/50 px-4 py-2 flex items-center justify-between">
+                          <div className="font-semibold text-sm">{group}</div>
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, true)}>تفعيل</Button>
+                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, false)}>تعطيل</Button>
+                          </div>
+                        </div>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b">
+                              <th className="text-right p-2 font-medium">الشاشة</th>
+                              {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => (
+                                <th key={a} className="p-2 font-medium w-16 text-center">{ACTION_LABELS[a]}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mods.map(m => (
+                              <tr key={m.key} className="border-b last:border-b-0 hover:bg-muted/30">
+                                <td className="p-2">{m.label}</td>
+                                {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => {
+                                  const supported = m.actions.includes(a);
+                                  const checked = !!form.permissions[m.key]?.[a];
+                                  return (
+                                    <td key={a} className="p-2 text-center">
+                                      {supported ? (
+                                        <Checkbox checked={checked} onCheckedChange={(v) => togglePerm(m.key, a, !!v)} />
+                                      ) : (
+                                        <span className="text-muted-foreground/40">—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            {/* Bottom action bar (mirror) */}
+            <div className="flex justify-end gap-2 pt-5 mt-4 border-t">
+              <Button variant="outline" onClick={closeForm} className="gap-1">
+                <X className="h-4 w-4" /> إلغاء
+              </Button>
+              <Button
+                onClick={() => saveMut.mutate()}
+                disabled={
+                  saveMut.isPending ||
+                  !form.username ||
+                  (editingId == null && !form.password)
+                }
+                className="bg-blue-600 hover:bg-blue-700 gap-1"
+              >
+                {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {editingId == null ? "إنشاء المستخدم" : "حفظ التعديلات"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Search */}
       <Card>
@@ -291,8 +538,9 @@ export default function Users() {
                 <TableBody>
                   {filtered.map(u => {
                     const branchNames = branches.filter(b => u.branchIds?.includes(b.id)).map(b => b.nameAr);
+                    const isConfirming = confirmDeleteId === u.id;
                     return (
-                      <TableRow key={u.id}>
+                      <TableRow key={u.id} className={isConfirming ? "bg-red-50/60 dark:bg-red-950/20" : ""}>
                         <TableCell className="font-mono">{u.code || "—"}</TableCell>
                         <TableCell>{u.nameAr || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{u.nameEn || "—"}</TableCell>
@@ -322,21 +570,44 @@ export default function Users() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title="تعديل">
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                              onClick={() => setConfirmDelete(u)}
-                              title="حذف"
-                              disabled={u.role === "superadmin" || u.id === user?.id}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          {isConfirming ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-red-700 font-semibold">تأكيد الحذف؟</span>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => deleteMut.mutate(u.id)}
+                                disabled={deleteMut.isPending}
+                                className="h-7 px-2"
+                              >
+                                {deleteMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="h-7 px-2"
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1">
+                              <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title="تعديل">
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => setConfirmDeleteId(u.id)}
+                                title="حذف"
+                                disabled={u.role === "superadmin" || u.id === user?.id}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -347,241 +618,6 @@ export default function Users() {
           )}
         </CardContent>
       </Card>
-
-      {/* Create/Edit Dialog */}
-      <Dialog open={openForm} onOpenChange={setOpenForm}>
-        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {editingId == null ? <Plus className="h-5 w-5" /> : <Pencil className="h-5 w-5" />}
-              {editingId == null ? "إضافة مستخدم جديد" : "تعديل بيانات المستخدم"}
-            </DialogTitle>
-            <DialogDescription>
-              املأ البيانات الأساسية، اختر الفروع، وحدّد الصلاحيات لكل شاشة.
-            </DialogDescription>
-          </DialogHeader>
-
-          <Tabs defaultValue="info" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="info">البيانات الأساسية</TabsTrigger>
-              <TabsTrigger value="branches">الفروع ({form.branchIds.length})</TabsTrigger>
-              <TabsTrigger value="permissions">الصلاحيات</TabsTrigger>
-            </TabsList>
-
-            {/* ─── Info Tab ─────────────────────────────── */}
-            <TabsContent value="info" className="space-y-4 pt-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <Label>الكود</Label>
-                  <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="EMP-001" />
-                </div>
-                <div>
-                  <Label>الاسم بالعربية</Label>
-                  <Input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} placeholder="محمد أحمد" />
-                </div>
-                <div>
-                  <Label>English Name</Label>
-                  <Input value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} placeholder="Mohamed Ahmed" />
-                </div>
-                <div>
-                  <Label>اسم المستخدم *</Label>
-                  <Input
-                    value={form.username}
-                    onChange={(e) => setForm({ ...form, username: e.target.value })}
-                    placeholder="username"
-                    disabled={editingId != null}
-                    className="font-mono"
-                  />
-                </div>
-                <div>
-                  <Label>البريد الإلكتروني</Label>
-                  <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" />
-                </div>
-                <div>
-                  <Label className="flex items-center gap-1"><KeyRound className="h-3 w-3" /> {editingId == null ? "كلمة المرور *" : "كلمة مرور جديدة (اختياري)"}</Label>
-                  <Input
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    placeholder={editingId == null ? "6 أحرف على الأقل" : "اتركها فارغة لعدم التغيير"}
-                    autoComplete="new-password"
-                  />
-                </div>
-                <div>
-                  <Label>الدور</Label>
-                  <select
-                    value={form.role}
-                    onChange={(e) => setForm({ ...form, role: e.target.value as any })}
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-                  >
-                    <option value="user">مستخدم (يستخدم الصلاحيات أدناه)</option>
-                    <option value="admin">مدير الشركة (صلاحيات كاملة)</option>
-                  </select>
-                </div>
-                <div className="flex items-end gap-3 pb-2">
-                  <Switch checked={form.isActive} onCheckedChange={(v) => setForm({ ...form, isActive: v })} />
-                  <Label>الحساب نشط</Label>
-                </div>
-              </div>
-            </TabsContent>
-
-            {/* ─── Branches Tab ─────────────────────────── */}
-            <TabsContent value="branches" className="space-y-3 pt-4">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">
-                  حدّد الفروع التي يستطيع المستخدم الوصول إليها. اتركها فارغة للسماح بكل الفروع.
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: branches.map(b => b.id) })}>
-                    تحديد الكل
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: [] })}>
-                    مسح الكل
-                  </Button>
-                </div>
-              </div>
-              {branches.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground border rounded-lg">
-                  لا توجد فروع. أضف فروعاً من شاشة "الفروع" أولاً.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {branches.map(b => {
-                    const checked = form.branchIds.includes(b.id);
-                    return (
-                      <label
-                        key={b.id}
-                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
-                          checked ? "bg-blue-50 border-blue-300 dark:bg-blue-950/30" : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={(v) => {
-                            setForm(f => ({
-                              ...f,
-                              branchIds: v
-                                ? [...f.branchIds, b.id]
-                                : f.branchIds.filter(id => id !== b.id),
-                            }));
-                          }}
-                        />
-                        <div>
-                          <div className="font-mono text-xs text-muted-foreground">{b.code}</div>
-                          <div className="font-medium">{b.nameAr}</div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </TabsContent>
-
-            {/* ─── Permissions Tab ──────────────────────── */}
-            <TabsContent value="permissions" className="space-y-4 pt-4">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="text-sm text-muted-foreground flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-indigo-600" />
-                  حدّد ما يستطيع المستخدم فعله في كل شاشة. {form.role === "admin" && <span className="text-amber-600 font-semibold">(دور المدير: كل الصلاحيات تلقائياً)</span>}
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>كل الصلاحيات</Button>
-                  <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>عرض فقط</Button>
-                  <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>لا شيء</Button>
-                </div>
-              </div>
-
-              <div className={`space-y-4 ${form.role === "admin" ? "opacity-50 pointer-events-none" : ""}`}>
-                {PERMISSION_GROUPS.map(group => {
-                  const mods = PERMISSION_MODULES.filter(m => m.group === group);
-                  return (
-                    <div key={group} className="border rounded-lg overflow-hidden">
-                      <div className="bg-muted/50 px-4 py-2 flex items-center justify-between">
-                        <div className="font-semibold text-sm">{group}</div>
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, true)}>تفعيل</Button>
-                          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, false)}>تعطيل</Button>
-                        </div>
-                      </div>
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-right p-2 font-medium">الشاشة</th>
-                            {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => (
-                              <th key={a} className="p-2 font-medium w-16 text-center">{ACTION_LABELS[a]}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mods.map(m => (
-                            <tr key={m.key} className="border-b last:border-b-0 hover:bg-muted/30">
-                              <td className="p-2">{m.label}</td>
-                              {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => {
-                                const supported = m.actions.includes(a);
-                                const checked = !!form.permissions[m.key]?.[a];
-                                return (
-                                  <td key={a} className="p-2 text-center">
-                                    {supported ? (
-                                      <Checkbox checked={checked} onCheckedChange={(v) => togglePerm(m.key, a, !!v)} />
-                                    ) : (
-                                      <span className="text-muted-foreground/40">—</span>
-                                    )}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })}
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setOpenForm(false)}>إلغاء</Button>
-            <Button
-              onClick={() => saveMut.mutate()}
-              disabled={
-                saveMut.isPending ||
-                !form.username ||
-                (editingId == null && !form.password)
-              }
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {saveMut.isPending && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
-              {editingId == null ? "إنشاء المستخدم" : "حفظ التعديلات"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete confirm */}
-      <Dialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
-        <DialogContent dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-red-600 flex items-center gap-2">
-              <Trash2 className="h-5 w-5" /> تأكيد الحذف
-            </DialogTitle>
-            <DialogDescription>
-              هل تريد حذف المستخدم "{confirmDelete?.nameAr || confirmDelete?.username}"؟ لا يمكن التراجع.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(null)}>إلغاء</Button>
-            <Button
-              variant="destructive"
-              onClick={() => confirmDelete && deleteMut.mutate(confirmDelete.id)}
-              disabled={deleteMut.isPending}
-            >
-              {deleteMut.isPending && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
-              حذف
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
