@@ -10,6 +10,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { DiscountRow } from "@/components/DiscountRow";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -427,11 +428,13 @@ export default function PurchaseReturns() {
     }));
   }
 
-  const totalAmount = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
+  const grossTotal  = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
   const vatAmount   = lines.reduce((s, l) => {
     const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
     return s + sub * ((Number(l.vatRate) || 0) / 100);
   }, 0);
+  const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(form.discountAmount) || 0));
+  const totalAmount    = grossTotal - docDiscountAmt;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -443,7 +446,7 @@ export default function PurchaseReturns() {
       inventoryAccountId: form.inventoryAccountId ? Number(form.inventoryAccountId) : null,
       taxAccountId:       form.taxAccountId       ? Number(form.taxAccountId)       : null,
       discountAccountId:  form.discountAccountId  ? Number(form.discountAccountId)  : null,
-      discountAmount: Number(form.discountAmount || 0).toFixed(2),
+      discountAmount: docDiscountAmt.toFixed(2),
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -554,11 +557,7 @@ export default function PurchaseReturns() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="خصم مكتسب">
-                <Input type="number" step="0.01" min="0" value={form.discountAmount}
-                  onChange={e => setForm((p: any) => ({ ...p, discountAmount: e.target.value }))} />
-              </Field>
-              <Field label="ملاحظات" className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              <Field label="ملاحظات" className="md:col-span-3"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 
             {/* ── Accounting / حسابات الترحيل ──────────────────────── */}
@@ -806,11 +805,16 @@ export default function PurchaseReturns() {
 
             {/* Totals */}
             <div className="flex justify-end">
-              <div className="w-64 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
+              <div className="w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">الضريبة</span>
+                  <span className="text-muted-foreground">المجموع شامل الضريبة</span>
+                  <span className="font-mono">{fmt(grossTotal)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">قيمة الضريبة</span>
                   <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
                 </div>
+                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
                   <span>الإجمالي</span>
                   <span className="font-mono text-primary">{fmt(totalAmount)}</span>

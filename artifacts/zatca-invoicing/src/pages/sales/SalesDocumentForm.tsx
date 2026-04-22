@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator } from "lucide-react";
@@ -731,19 +732,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الصافي (قبل الضريبة)</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">الخصم</span>
-                    <input
-                      data-testid="doc-discount-input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={docDiscount}
-                      onFocus={e => e.target.select()}
-                      onChange={e => setDocDiscount(e.target.value)}
-                      className="w-28 h-7 text-left font-mono text-rose-700 bg-background border rounded px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    />
-                  </div>
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
                     <span className="font-mono text-primary">{fmt(totalAmount)}</span>

@@ -81,6 +81,7 @@ export const salesReturnsTable = pgTable("sales_returns", {
   exchangeRate: numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
   totalAmount:  numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatAmount:    numeric("vat_amount",   { precision: 15, scale: 2 }).notNull().default("0"),
+  discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
   cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),

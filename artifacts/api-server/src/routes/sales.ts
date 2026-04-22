@@ -513,11 +513,14 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, notes, lines,
+            totalAmount, vatAmount, discountAmount, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
+    const discR     = Math.max(0, Math.min(grossR, Number(discountAmount) || 0));
+    const totalR    = grossR - discR;
     const [ret] = await db.insert(salesReturnsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, returnDate,
@@ -527,8 +530,9 @@ router.post("/sales-returns", async (req, res) => {
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      totalAmount: String(totalAmount || "0"),
+      totalAmount: totalR.toFixed(2),
       vatAmount: String(vatAmount || "0"),
+      discountAmount: discR.toFixed(2),
       status: "draft", notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -565,11 +569,14 @@ router.put("/sales-returns/:id", async (req, res) => {
     if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
 
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, notes, lines,
+            totalAmount, vatAmount, discountAmount, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    const grossR2 = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
+    const discR2  = Math.max(0, Math.min(grossR2, Number(discountAmount) || 0));
+    const totalR2 = grossR2 - discR2;
 
     const [ret] = await db.update(salesReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
@@ -580,8 +587,9 @@ router.put("/sales-returns/:id", async (req, res) => {
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      totalAmount: String(totalAmount || "0"),
+      totalAmount: totalR2.toFixed(2),
       vatAmount: String(vatAmount || "0"),
+      discountAmount: discR2.toFixed(2),
       notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,

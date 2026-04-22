@@ -11,6 +11,7 @@ import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, Lis
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { DiscountRow } from "@/components/DiscountRow";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ const EMPTY = {
   paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   cogsAccountId: "", inventoryAccountId: "", salesAccountId: "", taxAccountId: "", discountAccountId: "",
+  discountAmount: "0",
 };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -266,6 +268,7 @@ export default function SalesReturns() {
         exchangeRate: String(r.exchangeRate ?? "1"),
         paymentType: r.paymentType ?? "credit",
         cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "",
+        discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
         notes: r.notes ?? "",
         salesAccountId:     r.salesAccountId     ? String(r.salesAccountId)     : "",
         cogsAccountId:      r.cogsAccountId      ? String(r.cogsAccountId)      : "",
@@ -409,11 +412,13 @@ export default function SalesReturns() {
     }));
   }
 
-  const totalAmount = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
+  const grossTotal  = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
   const vatAmount   = lines.reduce((s, l) => {
     const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0);
     return s + sub * ((Number(l.vatRate) || 0) / 100);
   }, 0);
+  const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(form.discountAmount) || 0));
+  const totalAmount    = grossTotal - docDiscountAmt;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -426,6 +431,7 @@ export default function SalesReturns() {
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
+      discountAmount: docDiscountAmt.toFixed(2),
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
     });
   }
@@ -668,8 +674,13 @@ export default function SalesReturns() {
 
             <div className="flex justify-end">
               <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
-                <div className="flex justify-between"><span className="text-muted-foreground">المجموع شامل الضريبة</span><span className="font-mono">{fmt(totalAmount)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">المجموع شامل الضريبة</span><span className="font-mono">{fmt(grossTotal)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">قيمة الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
+                <div className="flex justify-between font-bold border-t pt-2 text-base">
+                  <span>الإجمالي</span>
+                  <span className="font-mono text-primary">{fmt(totalAmount)}</span>
+                </div>
               </div>
             </div>
             </TabsContent>

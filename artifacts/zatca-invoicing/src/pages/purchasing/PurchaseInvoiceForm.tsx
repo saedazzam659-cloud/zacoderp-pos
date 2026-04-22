@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
@@ -83,6 +84,7 @@ export default function PurchaseInvoiceForm() {
   const [lcId,         setLcId]         = useState("");
   const [distMethod,   setDistMethod]   = useState("value");
   const [notes,        setNotes]        = useState("");
+  const [docDiscount,  setDocDiscount]  = useState("0");
   const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
 
   // Accounting accounts (used to build the journal entry on post)
@@ -238,6 +240,7 @@ export default function PurchaseInvoiceForm() {
     setLcId(existing.lcId ? String(existing.lcId) : "");
     setDistMethod(existing.distributionMethod ?? "value");
     setNotes(existing.notes ?? "");
+    setDocDiscount(String(existing.discountAmount ?? "0"));
     setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
     setTaxAccountId(existing.taxAccountId ? String(existing.taxAccountId) : "");
     setDiscountAccountId(existing.discountAccountId ? String(existing.discountAccountId) : "");
@@ -342,7 +345,9 @@ export default function PurchaseInvoiceForm() {
   // ── Totals ───────────────────────────────────────────────
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
-  const totalAmount    = subtotal + vatAmount;
+  const grossTotal     = subtotal + vatAmount;
+  const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
+  const totalAmount    = grossTotal - docDiscountAmt;
   const totalExpLoaded = lines.reduce((s, l) => s + (Number(l.expenseShare) || 0), 0);
   const selectedLc     = lcs.find((lc: any) => String(lc.id) === lcId);
 
@@ -386,7 +391,7 @@ export default function PurchaseInvoiceForm() {
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
-      discountAmount: "0", totalExpensesLoaded: totalExpLoaded.toFixed(2),
+      discountAmount: docDiscountAmt.toFixed(2), totalExpensesLoaded: totalExpLoaded.toFixed(2),
       totalAmount: (totalAmount + totalExpLoaded).toFixed(2),
       notes: notes || null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -848,6 +853,7 @@ export default function PurchaseInvoiceForm() {
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
                   <div className="flex justify-between"><span className="text-muted-foreground">مصاريف الاعتماد</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>الإجمالي</span>

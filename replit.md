@@ -150,12 +150,21 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Quotation→invoice conversion (`POST /sales-quotations/:id/convert`) propagates the flag to the new invoice
 - Posting/JE generation unchanged — uses stored `subtotal` and `vatAmount` directly
 
-## Document-Level Discount on Sales Documents
-- Frontend: numeric input under VAT row in the totals card of `SalesDocumentForm.tsx` (data-testid `doc-discount-input`)
-- Live deduction: Net + VAT − Discount = Total (works in both inclusive and exclusive VAT modes)
-- API hardening: `clampDiscountAndTotal()` server-side clamps `discountAmount` to `[0, subtotal+vatAmount]` and recomputes `totalAmount` so stored rows are always self-consistent (verified: 99999→1150, −50→0)
-- JE balance preserved on posting: party debit = totalAmount (= gross−discount), discount account debit = discountAmount, credit sales = subtotal, credit VAT = vatAmount → balanced
-- Discount account requirement (existing): posting blocks with friendly Arabic error if discount > 0 and no `discountAccountId` set
+## Document-Level Discount (Shared across Sales + Purchasing)
+- Shared component: `artifacts/zatca-invoicing/src/components/DiscountRow.tsx` — two synced inputs (% and SAR amount). Editing % auto-derives amount from gross; editing amount auto-derives %. Both clamped: % ∈ [0,100], amount ∈ [0, gross]. testids: `doc-discount-pct-input`, `doc-discount-input`.
+- Wired into 4 forms (placed under VAT in totals card):
+  - `SalesDocumentForm.tsx` (sales invoices + quotations)
+  - `PurchaseInvoiceForm.tsx`
+  - `SalesReturns.tsx`
+  - `PurchaseReturns.tsx` — also removed the legacy standalone "خصم مكتسب" Field from form grid
+- Math everywhere: gross = sum(lineTotal incl. VAT) → docDiscountAmt = clamp(form.discountAmount, [0, gross]) → total = gross − docDiscountAmt
+- Server-side hardening:
+  - `clampDiscountAndTotal()` in `sales.ts` for sales invoices/quotations (POST/PUT)
+  - `sales-returns` POST/PUT in `sales.ts` recompute total from clamped discount + line gross
+  - `salesReturnsTable` schema: added `discountAmount` numeric(15,2) NOT NULL DEFAULT '0'; `editReturn()` loads it back for round-trip
+  - Purchase invoices/returns: schema already had `discountAmount`; JE generation uses it; server-side clamp on these endpoints is a TODO
+- JE balance preserved on posting: party debit = total (gross−discount), discount account debit = discountAmount, credit sales/inventory = subtotal, credit VAT = vatAmount → balanced
+- Posting requirement: blocks with Arabic error if discount > 0 and no `discountAccountId` set
 
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
