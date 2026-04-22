@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
@@ -8,7 +9,7 @@ import {
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
-  Search, Home, HelpCircle, Plus, ChevronLeft,
+  Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -20,110 +21,110 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
-const superAdminNav = [
-  { name: "لوحة التحكم",       href: "/",                         icon: LayoutDashboard, exact: true },
-  { name: "طلبات التسجيل",     href: "/admin/requests",            icon: Clock },
-  { name: "ترخيص النسخة",      href: "/admin/licenses",            icon: KeyRound },
-  { name: "إدارة الاشتراكات",  href: "/admin/subscriptions",       icon: Package },
-  { name: "إعدادات الباقات",   href: "/admin/plans",               icon: Settings2 },
-  { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
-  { name: "الشركات",            href: "/companies",                 icon: Building2 },
+type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string };
+
+const superAdminNav: NavDef[] = [
+  { nameKey: "nav.dashboard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
+  { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
+  { nameKey: "nav.subscriptions",        href: "/admin/subscriptions",      icon: Package },
+  { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
+  { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
+  { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
 ];
-const companyBusinessNav: { name: string; href: string; icon: any; permKey?: string }[] = [];
-const dashboardSubNav = [
-  { name: "المناطق الجغرافية", href: "/org/regions",          icon: MapPin     },
-  { name: "الفروع",            href: "/org/branches",         icon: BranchIcon },
-  { name: "ربط ZATCA",         href: "/zatca",                 icon: Link2      },
-  { name: "الإعدادات العامة",  href: "/general-settings",     icon: Sliders    },
-  { name: "المستخدمون",        href: "/users",                 icon: Users      },
-  { name: "العملات والتحويل",  href: "/settings/currencies",  icon: DollarSign },
-  { name: "الفواتير",          href: "/invoices",             icon: FileText   },
-  { name: "الإقرار الضريبي",  href: "/vat-declaration",      icon: BarChart3  },
+const companyBusinessNav: NavDef[] = [];
+const dashboardSubNav: NavDef[] = [
+  { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },
+  { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon },
+  { nameKey: "nav.zatcaLink",       href: "/zatca",               icon: Link2      },
+  { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders    },
+  { nameKey: "nav.users",           href: "/users",               icon: Users      },
+  { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign },
+  { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText   },
+  { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3  },
 ];
 
-// ─── Purchasing Sub Nav ────────────────────────────────────────────────────────
-const purchasingSubNav = [
-  { name: "الموردون",                href: "/suppliers",                  icon: Truck        },
-  { name: "مجموعات الموردين",        href: "/purchasing/supplier-groups", icon: Users        },
-  { name: "الاعتمادات المستندية",    href: "/purchasing/lc",              icon: CreditCard   },
-  { name: "فواتير المشتريات",        href: "/purchasing/invoices",        icon: ShoppingCart },
-  { name: "مرتجعات المشتريات",      href: "/purchasing/returns",         icon: RotateCcw    },
-  { name: "تسوية الموردين",          href: "/purchasing/settlements",     icon: Banknote     },
+const purchasingSubNav: NavDef[] = [
+  { nameKey: "nav.suppliers",            href: "/suppliers",                  icon: Truck        },
+  { nameKey: "nav.supplierGroups",       href: "/purchasing/supplier-groups", icon: Users        },
+  { nameKey: "nav.lc",                   href: "/purchasing/lc",              icon: CreditCard   },
+  { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart },
+  { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw    },
+  { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote     },
 ];
-// ─── Sales Sub Nav ─────────────────────────────────────────────────────────────
-const salesSubNav = [
-  { name: "العملاء",              href: "/customers",          icon: Users           },
-  { name: "عروض الأسعار",         href: "/sales/quotations",   icon: FileSignature   },
-  { name: "فواتير المبيعات",      href: "/sales/invoices",     icon: ShoppingBag     },
-  { name: "مرتجعات المبيعات",    href: "/sales/returns",      icon: RotateCcw       },
-  { name: "تحصيل العملاء",        href: "/sales/settlements",  icon: ArrowDownCircle },
-  { name: "جسر ZATCA",            href: "/zatca-bridge",       icon: Link2           },
-  { name: "تقرير فواتير ZATCA",   href: "/zatca-report",       icon: BarChart3       },
+const salesSubNav: NavDef[] = [
+  { nameKey: "nav.customers",            href: "/customers",         icon: Users           },
+  { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature   },
+  { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag     },
+  { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw       },
+  { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle },
+  { nameKey: "nav.zatcaBridge",          href: "/zatca-bridge",      icon: Link2           },
+  { nameKey: "nav.zatcaReport",          href: "/zatca-report",      icon: BarChart3       },
 ];
-const companySystemNav: { name: string; href: string; icon: any; permKey?: string }[] = [];
+const companySystemNav: NavDef[] = [];
 
-// ─── Accounting Sub Nav ───────────────────────────────────────────────────────
-const accountingSubNav = [
-  { name: "شجرة الحسابات",    href: "/accounting/accounts", icon: BookMarked },
-  { name: "مراكز التكلفة",     href: "/accounting/cost-centers", icon: Target },
-  { name: "الفترات المالية",  href: "/accounting/fiscal-periods", icon: CalendarRange },
-  { name: "القيود المحاسبية", href: "/accounting/journals", icon: BookOpen   },
+const accountingSubNav: NavDef[] = [
+  { nameKey: "nav.chartOfAccounts", href: "/accounting/accounts",       icon: BookMarked    },
+  { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target        },
+  { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange },
+  { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen      },
 ];
-const reportsSubNav = [
-  { name: "كشف حساب",               href: "/accounting/reports/account-statement", icon: FileText    },
-  { name: "ميزان المراجعة بالمجاميع", href: "/accounting/reports/trial-balance",     icon: Scale       },
-  { name: "المركز المالي",           href: "/accounting/reports/balance-sheet",     icon: PieChart    },
-  { name: "قائمة الدخل",            href: "/accounting/reports/income-statement",  icon: TrendingUp  },
+const reportsSubNav: NavDef[] = [
+  { nameKey: "nav.accountStatement", href: "/accounting/reports/account-statement", icon: FileText   },
+  { nameKey: "nav.trialBalance",     href: "/accounting/reports/trial-balance",     icon: Scale      },
+  { nameKey: "nav.balanceSheet",     href: "/accounting/reports/balance-sheet",     icon: PieChart   },
+  { nameKey: "nav.incomeStatement",  href: "/accounting/reports/income-statement",  icon: TrendingUp },
 ];
-// ─── Cash Sub Nav ─────────────────────────────────────────────────────────────
-const cashSubNav = [
-  { name: "الخزن",          href: "/cash/boxes",             icon: Wallet           },
-  { name: "البنوك",          href: "/cash/banks",             icon: Landmark         },
-  { name: "سندات القبض",    href: "/cash/receipt-vouchers",  icon: ArrowDownCircle  },
-  { name: "سندات الصرف",    href: "/cash/payment-vouchers",  icon: ArrowUpCircle    },
-  { name: "التحويلات",       href: "/cash/transfers",         icon: ArrowLeftRight   },
+const cashSubNav: NavDef[] = [
+  { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet           },
+  { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark         },
+  { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle  },
+  { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle    },
+  { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight   },
 ];
 
-const inventoryHeader = { name: "لوحة المخازن", href: "/inventory", icon: LayoutDashboard, exact: true };
-const inventorySubNav = [
-  { name: "الأصناف",             href: "/inventory/items",            icon: Package           },
-  { name: "مجموعات الأصناف",     href: "/inventory/item-groups",      icon: Tag               },
-  { name: "وحدات القياس",        href: "/inventory/units",            icon: Ruler             },
-  { name: "المخازن",             href: "/inventory/warehouses",       icon: Warehouse         },
-  { name: "مجموعات المخازن",     href: "/inventory/warehouse-groups", icon: Layers            },
-  { name: "التحويل بين المخازن",  href: "/inventory/transfers",        icon: ArrowRightLeft    },
-  { name: "التسوية المخزنية",    href: "/inventory/adjustments",      icon: SlidersHorizontal },
-  { name: "الجرد المخزني",       href: "/inventory/counts",           icon: ClipboardList     },
+const inventoryHeader: NavDef = { nameKey: "nav.inventoryDashboard", href: "/inventory", icon: LayoutDashboard, exact: true };
+const inventorySubNav: NavDef[] = [
+  { nameKey: "nav.items",             href: "/inventory/items",            icon: Package           },
+  { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag               },
+  { nameKey: "nav.units",             href: "/inventory/units",            icon: Ruler             },
+  { nameKey: "nav.warehouses",        href: "/inventory/warehouses",       icon: Warehouse         },
+  { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers            },
+  { nameKey: "nav.stockTransfers",    href: "/inventory/transfers",        icon: ArrowRightLeft    },
+  { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal },
+  { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList     },
 ];
 
-// ─── Inventory Reports Sub Nav ─────────────────────────────────────────────────
-const inventoryReportsHeader = { name: "كل التقارير", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
-const inventoryReportsSubNav = [
-  { name: "رصيد المخزون",            href: "/inventory/reports/stock-balance", icon: BarChart2     },
-  { name: "دفتر حركة المخزون",        href: "/inventory/reports/stock-ledger",  icon: BookOpen      },
-  { name: "كارت الصنف",               href: "/inventory/reports/item-card",     icon: ClipboardList },
-  { name: "الأصناف منخفضة المخزون",   href: "/inventory/reports/low-stock",     icon: SlidersHorizontal },
-  { name: "تقييم المخزون حسب المخزن", href: "/inventory/reports/valuation",     icon: Wallet        },
-  { name: "الأصناف الراكدة",          href: "/inventory/reports/slow-moving",   icon: Layers        },
+const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
+const inventoryReportsSubNav: NavDef[] = [
+  { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2     },
+  { nameKey: "navExtra.stockLedger",  href: "/inventory/reports/stock-ledger",  icon: BookOpen      },
+  { nameKey: "navExtra.itemCard",     href: "/inventory/reports/item-card",     icon: ClipboardList },
+  { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal },
+  { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet        },
+  { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers        },
 ];
 
 // ─── CashNavGroup ──────────────────────────────────────────────────────────────
 function CashNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
   const isOnCash = location.startsWith("/cash") && !location.startsWith("/cash/reports");
   return (
     <div>
       <button onClick={onToggle} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isOnCash && !open ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
         <Wallet className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">النقد والبنوك</span>
+        <span className="flex-1 text-start">{t("nav.cashGroup")}</span>
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {cashSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -134,21 +135,22 @@ function CashNavGroup({
 }
 
 // ─── CashReportsNavGroup ──────────────────────────────────────────────────────
-const cashReportsSubNav = [
-  { name: "أرصدة الخزائن",        href: "/cash/reports/cash-balances",      icon: FileText },
-  { name: "أرصدة البنوك",         href: "/cash/reports/bank-balances",      icon: FileText },
-  { name: "كشف حساب خزينة",       href: "/cash/reports/cash-box-statement", icon: FileText },
-  { name: "كشف حساب بنكي",        href: "/cash/reports/bank-statement",     icon: FileText },
-  { name: "الحركة اليومية للنقدية", href: "/cash/reports/daily-summary",     icon: FileText },
-  { name: "تقرير سندات القبض",    href: "/cash/reports/receipts",           icon: FileText },
-  { name: "تقرير سندات الصرف",    href: "/cash/reports/payments",           icon: FileText },
-  { name: "تقرير التحويلات",      href: "/cash/reports/transfers",          icon: FileText },
+const cashReportsSubNav: NavDef[] = [
+  { nameKey: "navExtra.cashBalances",   href: "/cash/reports/cash-balances",      icon: FileText },
+  { nameKey: "navExtra.bankBalances",   href: "/cash/reports/bank-balances",      icon: FileText },
+  { nameKey: "navExtra.cashBoxStatement", href: "/cash/reports/cash-box-statement", icon: FileText },
+  { nameKey: "navExtra.bankStatement",  href: "/cash/reports/bank-statement",     icon: FileText },
+  { nameKey: "navExtra.dailySummary",   href: "/cash/reports/daily-summary",      icon: FileText },
+  { nameKey: "navExtra.receiptsReport", href: "/cash/reports/receipts",           icon: FileText },
+  { nameKey: "navExtra.paymentsReport", href: "/cash/reports/payments",           icon: FileText },
+  { nameKey: "navExtra.transfersReport", href: "/cash/reports/transfers",         icon: FileText },
 ];
-const cashReportsHeader = { name: "كل التقارير", href: "/cash/reports", icon: BarChart2 };
+const cashReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/cash/reports", icon: BarChart2 };
 
 function CashReportsNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
   const isOnReports = location.startsWith("/cash/reports");
   return (
     <div>
@@ -162,14 +164,14 @@ function CashReportsNavGroup({
         )}
       >
         <BarChart2 className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">تقارير النقد والبنوك</span>
+        <span className="flex-1 text-start">{t("nav.cashReports")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={cashReportsHeader} location={location} onClick={onNavigate} indent />
           {cashReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
@@ -189,19 +191,20 @@ function parseMenuPerms(raw: string | null | undefined): Record<string, boolean>
   try { return { ...DEFAULT_PERMS, ...JSON.parse(raw ?? "{}") }; }
   catch { return { ...DEFAULT_PERMS }; }
 }
-const PLAN_LABELS: Record<string, string> = {
-  starter: "مبتدئ", professional: "احترافي", enterprise: "مؤسسي",
+const PLAN_KEYS: Record<string, string> = {
+  starter: "plans.starter", professional: "plans.professional", enterprise: "plans.enterprise",
 };
 
 // ─── NavItem (stable, top-level component) ─────────────────────────────────────
 function NavItem({
   item, location, onClick, indent = false,
 }: {
-  item: { name: string; href: string; icon: React.ElementType; exact?: boolean };
+  item: NavDef;
   location: string;
   onClick?: () => void;
   indent?: boolean;
 }) {
+  const { t } = useTranslation();
   const isActive = item.exact
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
@@ -209,13 +212,13 @@ function NavItem({
     <Link href={item.href} className="block" onClick={onClick}>
       <span className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        indent && "pr-8",
+        indent && "ps-8",
         isActive
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}>
         <item.icon className="h-4 w-4 shrink-0" />
-        {item.name}
+        {t(item.nameKey)}
       </span>
     </Link>
   );
@@ -230,6 +233,7 @@ function PurchasingNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnPurchasing = ((location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
   return (
     <div>
@@ -243,7 +247,7 @@ function PurchasingNavGroup({
         )}
       >
         <ShoppingCart className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">الموردون والمشتريات</span>
+        <span className="flex-1 text-start">{t("nav.purchasingGroup")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -251,7 +255,7 @@ function PurchasingNavGroup({
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {purchasingSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -270,6 +274,7 @@ function SalesNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnSales = (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers");
   return (
     <div>
@@ -283,7 +288,7 @@ function SalesNavGroup({
         )}
       >
         <ShoppingBag className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">العملاء والمبيعات</span>
+        <span className="flex-1 text-start">{t("nav.salesGroup")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -291,7 +296,7 @@ function SalesNavGroup({
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {salesSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -302,17 +307,17 @@ function SalesNavGroup({
 }
 
 // ─── SalesReportsNavGroup ─────────────────────────────────────────────────────
-const salesReportsSubNav = [
-  { name: "كشف حساب عميل",            href: "/sales/reports/customer-statement", icon: FileText  },
-  { name: "أرصدة العملاء",            href: "/sales/reports/customer-balances",  icon: FileText  },
-  { name: "تحليل أعمار الديون",       href: "/sales/reports/aging",              icon: FileText  },
-  { name: "المبيعات حسب العميل",       href: "/sales/reports/sales-by-customer",  icon: FileText  },
-  { name: "المبيعات حسب الصنف",        href: "/sales/reports/sales-by-item",      icon: FileText  },
-  { name: "المبيعات اليومية / الشهرية", href: "/sales/reports/sales-by-period",    icon: FileText  },
-  { name: "أفضل العملاء",              href: "/sales/reports/top-customers",      icon: FileText  },
-  { name: "مرتجعات المبيعات",          href: "/sales/reports/returns",            icon: FileText  },
+const salesReportsSubNav: NavDef[] = [
+  { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText },
+  { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText },
+  { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText },
+  { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText },
+  { nameKey: "navExtra.salesByItem",        href: "/sales/reports/sales-by-item",      icon: FileText },
+  { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText },
+  { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText },
+  { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText },
 ];
-const salesReportsHeader = { name: "كل التقارير", href: "/sales/reports", icon: BarChart2 };
+const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2 };
 
 function SalesReportsNavGroup({
   location, onNavigate, open, onToggle,
@@ -322,6 +327,7 @@ function SalesReportsNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnReports = location.startsWith("/sales/reports");
   return (
     <div>
@@ -335,14 +341,14 @@ function SalesReportsNavGroup({
         )}
       >
         <BarChart2 className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">تقارير العملاء والمبيعات</span>
+        <span className="flex-1 text-start">{t("navExtra.salesReportsGroup")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={salesReportsHeader} location={location} onClick={onNavigate} indent />
           {salesReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
@@ -354,17 +360,17 @@ function SalesReportsNavGroup({
 }
 
 // ─── PurchasingReportsNavGroup ────────────────────────────────────────────────
-const purchasingReportsSubNav = [
-  { name: "كشف حساب مورد",              href: "/purchasing/reports/supplier-statement",   icon: FileText },
-  { name: "أرصدة الموردين",              href: "/purchasing/reports/supplier-balances",    icon: FileText },
-  { name: "أعمار الذمم الدائنة",         href: "/purchasing/reports/aging",                icon: FileText },
-  { name: "المشتريات حسب المورد",        href: "/purchasing/reports/purchases-by-supplier", icon: FileText },
-  { name: "المشتريات حسب الصنف",         href: "/purchasing/reports/purchases-by-item",    icon: FileText },
-  { name: "المشتريات اليومية / الشهرية", href: "/purchasing/reports/purchases-by-period",  icon: FileText },
-  { name: "أكبر الموردين",               href: "/purchasing/reports/top-suppliers",        icon: FileText },
-  { name: "مرتجعات المشتريات",           href: "/purchasing/reports/returns",              icon: FileText },
+const purchasingReportsSubNav: NavDef[] = [
+  { nameKey: "navExtra.supplierStatement",      href: "/purchasing/reports/supplier-statement",   icon: FileText },
+  { nameKey: "navExtra.supplierBalances",       href: "/purchasing/reports/supplier-balances",    icon: FileText },
+  { nameKey: "navExtra.purchaseAging",          href: "/purchasing/reports/aging",                icon: FileText },
+  { nameKey: "navExtra.purchasesBySupplier",    href: "/purchasing/reports/purchases-by-supplier", icon: FileText },
+  { nameKey: "navExtra.purchasesByItem",        href: "/purchasing/reports/purchases-by-item",    icon: FileText },
+  { nameKey: "navExtra.purchasesByPeriod",      href: "/purchasing/reports/purchases-by-period",  icon: FileText },
+  { nameKey: "navExtra.topSuppliers",           href: "/purchasing/reports/top-suppliers",        icon: FileText },
+  { nameKey: "navExtra.purchaseReturnsReport",  href: "/purchasing/reports/returns",              icon: FileText },
 ];
-const purchasingReportsHeader = { name: "كل التقارير", href: "/purchasing/reports", icon: BarChart2 };
+const purchasingReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/purchasing/reports", icon: BarChart2 };
 
 function PurchasingReportsNavGroup({
   location, onNavigate, open, onToggle,
@@ -374,6 +380,7 @@ function PurchasingReportsNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnReports = location.startsWith("/purchasing/reports");
   return (
     <div>
@@ -387,14 +394,14 @@ function PurchasingReportsNavGroup({
         )}
       >
         <BarChart2 className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">تقارير الموردين والمشتريات</span>
+        <span className="flex-1 text-start">{t("navExtra.purchaseReportsGroup")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={purchasingReportsHeader} location={location} onClick={onNavigate} indent />
           {purchasingReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
@@ -414,6 +421,7 @@ function InventoryNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnInventory = location.startsWith("/inventory") && !location.startsWith("/inventory/reports");
   return (
     <div>
@@ -428,7 +436,7 @@ function InventoryNavGroup({
         )}
       >
         <Warehouse className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">موديل المخازن</span>
+        <span className="flex-1 text-start">{t("navExtra.inventoryModule")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -438,7 +446,7 @@ function InventoryNavGroup({
       {/* Sub-items */}
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryHeader} location={location} onClick={onNavigate} indent />
           {inventorySubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
@@ -458,6 +466,7 @@ function InventoryReportsNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnReports = location.startsWith("/inventory/reports");
   return (
     <div>
@@ -471,14 +480,14 @@ function InventoryReportsNavGroup({
         )}
       >
         <BarChart2 className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">تقارير المخازن</span>
+        <span className="flex-1 text-start">{t("nav.inventoryReports")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           <NavItem item={inventoryReportsHeader} location={location} onClick={onNavigate} indent />
           {inventoryReportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
@@ -498,6 +507,7 @@ function ReportsNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isOnReports = location.startsWith("/accounting/reports");
   return (
     <div>
@@ -511,7 +521,7 @@ function ReportsNavGroup({
         )}
       >
         <BarChart2 className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">التقارير المحاسبية</span>
+        <span className="flex-1 text-start">{t("navExtra.accountingReports")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -519,7 +529,7 @@ function ReportsNavGroup({
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {reportsSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -538,6 +548,7 @@ function DashboardNavGroup({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const isActive = location === "/";
   const isOnSub  = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
   return (
@@ -550,9 +561,9 @@ function DashboardNavGroup({
       )}>
         <Link href="/" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
           <LayoutDashboard className="h-4 w-4 shrink-0" />
-          <span>لوحة التحكم</span>
+          <span>{t("nav.dashboard")}</span>
         </Link>
-        <button onClick={onToggle} className="px-2 py-2 rounded-lg" title="عرض القائمة الفرعية">
+        <button onClick={onToggle} className="px-2 py-2 rounded-lg" title={t("nav.dashboard")}>
           {open
             ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
             : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -561,7 +572,7 @@ function DashboardNavGroup({
       </div>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {dashboardSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -575,6 +586,7 @@ function DashboardNavGroup({
 function AccountingNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
   const isOnSub = accountingSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
@@ -585,14 +597,14 @@ function AccountingNavGroup({
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}>
         <BookMarked className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-right">الحسابات العامة</span>
+        <span className="flex-1 text-start">{t("nav.accountingGroup")}</span>
         {open
           ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
           : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
-          <div className="absolute top-0 bottom-0 right-[26px] w-px bg-sidebar-border/60" />
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
           {accountingSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
@@ -663,6 +675,7 @@ function SidebarInner({
   onNavigate: () => void;
   onLogout: () => void;
 }) {
+  const { t } = useTranslation();
   const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
   const filteredSystem   = companySystemNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
 
@@ -679,7 +692,7 @@ function SidebarInner({
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm shadow">Z</div>
           <div>
-            <p className="text-sm font-bold text-sidebar-foreground leading-tight">نظام الفاتورة</p>
+            <p className="text-sm font-bold text-sidebar-foreground leading-tight">{t("auth.appName")}</p>
             <p className="text-[10px] text-sidebar-foreground/50 leading-tight">ZATCA e-Invoicing</p>
           </div>
         </div>
@@ -693,9 +706,9 @@ function SidebarInner({
         <div className="mx-3 mt-3 mb-1 rounded-lg border bg-purple-50 border-purple-200 px-3 py-2.5">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-3.5 w-3.5 text-purple-600 shrink-0" />
-            <span className="text-xs font-semibold text-purple-800">لوحة المشرف العام</span>
+            <span className="text-xs font-semibold text-purple-800">{t("topbar.superAdminPanel")}</span>
           </div>
-          <p className="text-[10px] text-purple-600 mt-0.5">إدارة الشركات والطلبات</p>
+          <p className="text-[10px] text-purple-600 mt-0.5">{t("topbar.superAdminSub")}</p>
         </div>
       ) : user?.company ? (
         <div className="mx-3 mt-3 mb-1 rounded-lg border bg-sidebar-accent/40 px-3 py-2.5">
@@ -707,7 +720,7 @@ function SidebarInner({
             <span className="text-[10px] font-mono text-sidebar-foreground/50 truncate">{user.company.vatNumber}</span>
             {user.subscription?.plan && (
               <span className={cn("text-[10px] border rounded-full px-1.5 py-0 font-medium shrink-0", planColor)}>
-                {PLAN_LABELS[user.subscription.plan] ?? user.subscription.plan}
+                {PLAN_KEYS[user.subscription.plan] ? t(PLAN_KEYS[user.subscription.plan]) : user.subscription.plan}
               </span>
             )}
           </div>
@@ -853,12 +866,12 @@ function SidebarInner({
         {!isSuperAdmin && user?.subscription && (
           <div className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-sidebar-accent/30 text-xs text-sidebar-foreground/60">
             <Package className="h-3 w-3 shrink-0" />
-            <span>ينتهي: {user.subscription.endDate ? new Date(user.subscription.endDate).toLocaleDateString("ar-SA") : "—"}</span>
+            <span>{t("topbar.expires")}: {user.subscription.endDate ? new Date(user.subscription.endDate).toLocaleDateString() : "—"}</span>
           </div>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex w-full items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors text-right">
+            <button className="flex w-full items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors text-start">
               <Avatar className="h-8 w-8 shrink-0">
                 <AvatarFallback className={cn(
                   "text-xs font-bold",
@@ -867,10 +880,10 @@ function SidebarInner({
                   {user?.username?.[0]?.toUpperCase() ?? "م"}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex-1 min-w-0 text-right">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.username ?? "مستخدم"}</p>
+              <div className="flex-1 min-w-0 text-start">
+                <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.username ?? t("topbar.user")}</p>
                 <p className="text-xs text-sidebar-foreground/50 truncate">
-                  {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير" : "مستخدم"}
+                  {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
                 </p>
               </div>
               <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
@@ -881,19 +894,19 @@ function SidebarInner({
               <div>
                 <p className="text-sm font-medium">{user?.username}</p>
                 <p className="text-xs text-muted-foreground">
-                  {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير الشركة" : "مستخدم"}
+                  {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
                 </p>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild className="gap-2 cursor-pointer">
               <Link href="/settings">
-                <Settings className="h-4 w-4" />إعدادات الحساب
+                <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
-              <LogOut className="h-4 w-4" />تسجيل الخروج
+              <LogOut className="h-4 w-4" />{t("topbar.logout")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -907,30 +920,32 @@ function SidebarInner({
 type CrumbInfo = { label: string; parent?: string };
 const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
   const map: Record<string, CrumbInfo> = {
-    "/":                              { label: "لوحة التحكم" },
-    "/companies":                     { label: "الشركات" },
-    "/customers":                     { label: "العملاء" },
-    "/customers/new":                 { label: "عميل جديد",       parent: "/customers" },
-    "/suppliers/new":                 { label: "مورد جديد",       parent: "/suppliers" },
-    "/invoices/new":                  { label: "فاتورة جديدة",    parent: "/invoices" },
-    "/settings":                      { label: "الإعدادات" },
-    "/admin/requests":                { label: "طلبات التسجيل" },
-    "/admin/licenses":                { label: "ترخيص النسخة" },
-    "/admin/subscriptions":           { label: "إدارة الاشتراكات" },
-    "/admin/plans":                   { label: "إعدادات الباقات" },
-    "/admin/menu-permissions":        { label: "صلاحيات القوائم" },
-    // Section roots (parents for sub items)
-    "/inventory":                     { label: "المخزون" },
-    "/cash":                          { label: "النقد والبنوك" },
-    "/cash/reports":                  { label: "تقارير النقد والبنوك", parent: "/cash" },
-    "/purchasing":                    { label: "الموردون والمشتريات" },
-    "/sales":                         { label: "العملاء والمبيعات" },
-    "/sales/invoices/new":            { label: "فاتورة مبيعات جديدة", parent: "/sales/invoices" },
-    "/sales/quotations/new":          { label: "عرض سعر جديد",        parent: "/sales/quotations" },
-    "/accounting":                    { label: "المحاسبة" },
-    "/accounting/fiscal-periods":     { label: "الفترات المالية", parent: "/accounting" },
-    "/accounting/reports":            { label: "التقارير المحاسبية", parent: "/accounting" },
-    "/org":                           { label: "إعدادات الشركة" },
+    "/":                              { label: "nav.dashboard" },
+    "/companies":                     { label: "nav.companies" },
+    "/customers":                     { label: "nav.customers" },
+    "/customers/new":                 { label: "navExtra.newCustomer",       parent: "/customers" },
+    "/suppliers/new":                 { label: "navExtra.newSupplier",       parent: "/suppliers" },
+    "/invoices/new":                  { label: "navExtra.newInvoice",        parent: "/invoices" },
+    "/settings":                      { label: "nav.settings" },
+    "/admin/requests":                { label: "nav.registrationRequests" },
+    "/admin/licenses":                { label: "nav.licenses" },
+    "/admin/subscriptions":           { label: "nav.subscriptions" },
+    "/admin/plans":                   { label: "nav.plans" },
+    "/admin/menu-permissions":        { label: "nav.menuPermissions" },
+    "/inventory":                     { label: "navExtra.inventoryRoot" },
+    "/cash":                          { label: "nav.cashGroup" },
+    "/cash/reports":                  { label: "nav.cashReports", parent: "/cash" },
+    "/purchasing":                    { label: "nav.purchasingGroup" },
+    "/sales":                         { label: "nav.salesGroup" },
+    "/sales/invoices/new":            { label: "navExtra.newSalesInvoice", parent: "/sales/invoices" },
+    "/sales/quotations/new":          { label: "navExtra.newQuotation",    parent: "/sales/quotations" },
+    "/sales/reports":                 { label: "navExtra.salesReportsGroup", parent: "/sales" },
+    "/purchasing/reports":            { label: "navExtra.purchaseReportsGroup", parent: "/purchasing" },
+    "/inventory/reports":             { label: "nav.inventoryReports", parent: "/inventory" },
+    "/accounting":                    { label: "navExtra.accountingRoot" },
+    "/accounting/fiscal-periods":     { label: "nav.fiscalPeriods", parent: "/accounting" },
+    "/accounting/reports":            { label: "navExtra.accountingReports", parent: "/accounting" },
+    "/org":                           { label: "navExtra.orgRoot" },
   };
   const all = [
     ...dashboardSubNav,
@@ -940,31 +955,35 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...reportsSubNav.map(i => ({ ...i, parent: "/accounting/reports" })),
     ...cashSubNav.map(i => ({ ...i, parent: "/cash" })),
     ...cashReportsSubNav.map(i => ({ ...i, parent: "/cash/reports" })),
+    salesReportsHeader,
+    ...salesReportsSubNav.map(i => ({ ...i, parent: "/sales/reports" })),
+    purchasingReportsHeader,
+    ...purchasingReportsSubNav.map(i => ({ ...i, parent: "/purchasing/reports" })),
     inventoryHeader,
     ...inventorySubNav.map(i => ({ ...i, parent: "/inventory" })),
+    inventoryReportsHeader,
+    ...inventoryReportsSubNav.map(i => ({ ...i, parent: "/inventory/reports" })),
     ...companyBusinessNav,
   ];
   for (const item of all) {
     map[item.href] = {
-      label: item.name,
+      label: (item as any).nameKey ?? (item as any).name ?? "",
       parent: (item as any).parent,
     };
   }
   return map;
 })();
 
-function getBreadcrumbs(location: string): { label: string; href?: string }[] {
-  // Try exact match first, then progressively trim segments
+function getBreadcrumbs(location: string, t: (k: string) => string): { label: string; href?: string }[] {
+  const resolve = (label: string) => label.includes(".") ? t(label) : label;
+  if (location === "/") return [{ label: t("nav.dashboard") }];
   const tryPaths: string[] = [];
-  if (location === "/") return [{ label: "لوحة التحكم" }];
   let current: string | undefined = location;
-  // Find longest matching prefix in ROUTE_MAP
   while (current && current !== "/") {
     if (ROUTE_MAP[current]) { tryPaths.unshift(current); break; }
     const idx = current.lastIndexOf("/");
     current = idx > 0 ? current.slice(0, idx) : "/";
   }
-  // Walk up via parent chain
   const chain: string[] = [];
   let cursor: string | undefined = tryPaths[0];
   const seen = new Set<string>();
@@ -973,18 +992,17 @@ function getBreadcrumbs(location: string): { label: string; href?: string }[] {
     chain.unshift(cursor);
     cursor = ROUTE_MAP[cursor]?.parent;
   }
-  const crumbs: { label: string; href?: string }[] = [{ label: "الرئيسية", href: "/" }];
+  const crumbs: { label: string; href?: string }[] = [{ label: t("topbar.home"), href: "/" }];
   for (let i = 0; i < chain.length; i++) {
     const path = chain[i];
     const info = ROUTE_MAP[path];
     if (!info) continue;
     crumbs.push({
-      label: info.label,
+      label: resolve(info.label),
       href: i === chain.length - 1 ? undefined : path,
     });
   }
-  // If nothing matched, fall back to a generic crumb
-  if (crumbs.length === 1) crumbs.push({ label: "صفحة" });
+  if (crumbs.length === 1) crumbs.push({ label: t("topbar.page") });
   return crumbs;
 }
 
@@ -998,15 +1016,15 @@ function TopBar({
   onMobileMenu: () => void;
   onLogout: () => void;
 }) {
-  const crumbs = useMemo(() => getBreadcrumbs(location), [location]);
-  const currentLabel = crumbs[crumbs.length - 1]?.label ?? "";
+  const { t, i18n } = useTranslation();
+  const crumbs = useMemo(() => getBreadcrumbs(location, t), [location, t, i18n.language]);
 
   return (
     <header className="sticky top-0 z-10 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
       {/* Row 1: search + actions */}
       <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
         <Button
-          variant="ghost" size="icon" className="md:hidden -mr-2"
+          variant="ghost" size="icon" className="md:hidden -ms-2"
           onClick={onMobileMenu}
         >
           <Menu className="h-5 w-5" />
@@ -1014,11 +1032,11 @@ function TopBar({
 
         {/* Search */}
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Search className="absolute end-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           <Input
             type="search"
-            placeholder="بحث سريع..."
-            className="h-9 pr-9 pl-3 bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input"
+            placeholder={t("topbar.quickSearch")}
+            className="h-9 pe-9 ps-3 bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input"
           />
         </div>
 
@@ -1026,12 +1044,13 @@ function TopBar({
 
         {/* Right cluster */}
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title="المساعدة">
+          <LanguageSwitcher variant="compact" />
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground relative" title="الإشعارات">
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground relative" title={t("topbar.notifications")}>
             <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute top-1.5 left-2 h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="absolute top-1.5 end-2 h-1.5 w-1.5 rounded-full bg-primary" />
           </Button>
           <div className="h-5 w-px bg-border mx-1" />
           <DropdownMenu>
@@ -1045,10 +1064,10 @@ function TopBar({
                     {user?.username?.[0]?.toUpperCase() ?? "م"}
                   </AvatarFallback>
                 </Avatar>
-                <div className="hidden lg:block text-right">
-                  <p className="text-xs font-medium leading-tight">{user?.username ?? "مستخدم"}</p>
+                <div className="hidden lg:block text-start">
+                  <p className="text-xs font-medium leading-tight">{user?.username ?? t("topbar.user")}</p>
                   <p className="text-[10px] text-muted-foreground leading-tight">
-                    {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير" : "مستخدم"}
+                    {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.manager") : t("topbar.user")}
                   </p>
                 </div>
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden lg:block" />
@@ -1059,19 +1078,19 @@ function TopBar({
                 <div>
                   <p className="text-sm font-medium">{user?.username}</p>
                   <p className="text-xs text-muted-foreground">
-                    {isSuperAdmin ? "مشرف عام" : user?.role === "admin" ? "مدير الشركة" : "مستخدم"}
+                    {isSuperAdmin ? t("topbar.superAdmin") : user?.role === "admin" ? t("topbar.companyManager") : t("topbar.user")}
                   </p>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 cursor-pointer">
                 <Link href="/settings">
-                  <Settings className="h-4 w-4" />إعدادات الحساب
+                  <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
-                <LogOut className="h-4 w-4" />تسجيل الخروج
+                <LogOut className="h-4 w-4" />{t("topbar.logout")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1085,7 +1104,10 @@ function TopBar({
             const isLast = i === crumbs.length - 1;
             return (
               <React.Fragment key={`${c.label}-${i}`}>
-                {i > 0 && <ChevronLeft className="h-3 w-3 text-muted-foreground/50 shrink-0" />}
+                {i > 0 && (i18n.dir() === "rtl"
+                  ? <ChevronLeft className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                  : <ChevronRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                )}
                 {c.href && !isLast ? (
                   <Link
                     href={c.href}
@@ -1107,7 +1129,7 @@ function TopBar({
         </nav>
         <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-md bg-card border border-border/60 text-muted-foreground shrink-0">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          متصل
+          {t("topbar.online")}
         </span>
       </div>
     </header>
@@ -1181,10 +1203,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onLogout: logout,
   };
 
+  const { i18n } = useTranslation();
+  const langCode = normalizeLang(i18n.language);
+  const langMeta = SUPPORTED_LANGUAGES.find(l => l.code === langCode) ?? SUPPORTED_LANGUAGES[0];
+  const isRtl = langMeta.dir === "rtl";
+
   return (
-    <div className="flex min-h-screen w-full flex-col bg-background text-right" dir="rtl">
+    <div className="flex min-h-screen w-full flex-col bg-background" dir={langMeta.dir}>
       {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 right-0 z-20 hidden w-64 flex-col border-l border-border bg-sidebar md:flex">
+      <aside className={cn(
+        "fixed inset-y-0 z-20 hidden w-64 flex-col bg-sidebar md:flex",
+        isRtl ? "right-0 border-l border-border" : "left-0 border-r border-border"
+      )}>
         <SidebarInner {...sharedProps} />
       </aside>
 
@@ -1193,14 +1223,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={closeMobile} />
       )}
       <aside className={cn(
-        "fixed inset-y-0 right-0 z-40 flex w-72 flex-col border-l border-border bg-sidebar transition-transform duration-200 md:hidden",
-        mobileOpen ? "translate-x-0" : "translate-x-full"
+        "fixed inset-y-0 z-40 flex w-72 flex-col bg-sidebar transition-transform duration-200 md:hidden",
+        isRtl
+          ? `right-0 border-l border-border ${mobileOpen ? "translate-x-0" : "translate-x-full"}`
+          : `left-0 border-r border-border ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`
       )}>
         <SidebarInner {...sharedProps} />
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-col md:mr-64 min-h-screen">
+      <div className={cn("flex flex-col min-h-screen", isRtl ? "md:mr-64" : "md:ml-64")}>
         <TopBar
           location={location}
           user={user}
