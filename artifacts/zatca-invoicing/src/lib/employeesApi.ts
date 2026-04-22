@@ -76,6 +76,16 @@ export const employeesApi = {
   aiExplainEos: (calc: any, employee: any) => req<any>("POST", "/ai/explain-eos", { calc, employee }),
   aiParseAttendance: (data: { text: string; employees: any[]; date: string; defaultCheckIn?: string; defaultCheckOut?: string }) =>
     req<any>("POST", "/ai/parse-attendance", data),
+
+  // HR Calculators
+  calcAnnualLeave:  (d: any) => req<any>("POST", "/employees/calc/annual-leave", d),
+  calcSickLeave:    (d: any) => req<any>("POST", "/employees/calc/sick-leave", d),
+  calcOvertime:     (d: any) => req<any>("POST", "/employees/calc/overtime", d),
+  calcGosi:         (d: any) => req<any>("POST", "/employees/calc/gosi", d),
+  calcNoticePeriod: (d: any) => req<any>("POST", "/employees/calc/notice-period", d),
+  calcProbation:    (d: any) => req<any>("POST", "/employees/calc/probation", d),
+  aiExplainHrCalc: (calcType: string, inputs: any, result: any) =>
+    req<any>("POST", "/ai/explain-hr-calc", { calcType, inputs, result }),
   aiExplainPayrollLine: (line: any, periodMonth?: string) =>
     req<any>("POST", "/ai/explain-payroll-line", { line, periodMonth }),
 

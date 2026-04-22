@@ -977,4 +977,172 @@ router.delete("/payroll/runs/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── HR CALCULATORS (Saudi Labor Law) ─────────────────────────
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// Annual leave (Article 109): 21 days < 5y, 30 days >= 5y, pro-rated
+router.post("/calc/annual-leave", async (req, res) => {
+  try {
+    const { hireDate, asOfDate, daysTaken = 0, basicSalary = 0, housingAllow = 0, transportAllow = 0 } = req.body as any;
+    if (!hireDate) { res.status(400).json({ error: "تاريخ التعيين مطلوب" }); return; }
+    const hire = new Date(hireDate);
+    const asOf = asOfDate ? new Date(asOfDate) : new Date();
+    if (asOf < hire) { res.status(400).json({ error: "التاريخ يجب أن يكون بعد تاريخ التعيين" }); return; }
+    const totalDays = (asOf.getTime() - hire.getTime()) / 86400000;
+    const totalYears = totalDays / 365.25;
+    const fullYears = Math.floor(totalYears);
+    const yearStart = new Date(hire); yearStart.setFullYear(hire.getFullYear() + fullYears);
+    const daysInCurrent = (asOf.getTime() - yearStart.getTime()) / 86400000;
+    const ratePerYear = totalYears >= 5 ? 30 : 21;
+    const ratePerYearAfter5 = 30;
+    const accruedFull = (totalYears < 5)
+      ? totalYears * 21
+      : (5 * 21) + ((totalYears - 5) * 30);
+    const dailyWage = (Number(basicSalary) + Number(housingAllow) + Number(transportAllow)) / 30;
+    const remaining = round2(accruedFull - Number(daysTaken));
+    const cashValue = round2(remaining > 0 ? remaining * dailyWage : 0);
+    res.json({
+      hireDate, asOfDate: asOf.toISOString().slice(0, 10),
+      yearsOfService: round2(totalYears),
+      ratePerYearCurrent: ratePerYear,
+      noteTransition: totalYears >= 5 ? "تجاوز 5 سنوات → 30 يوم/سنة" : `أقل من 5 سنوات → 21 يوم/سنة (يتحول إلى 30 بعد ${(5 - totalYears).toFixed(2)} سنة)`,
+      accruedDaysTotal: round2(accruedFull),
+      daysTaken: Number(daysTaken),
+      remainingDays: remaining,
+      currentYearAccrual: round2((daysInCurrent / 365.25) * (totalYears < 5 ? 21 : ratePerYearAfter5)),
+      dailyWage: round2(dailyWage),
+      cashValueIfPaid: cashValue,
+      legalRef: "المادة 109 من نظام العمل السعودي",
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Sick leave (Article 117): year window 30 full + 60 at 75% + 30 unpaid
+router.post("/calc/sick-leave", async (req, res) => {
+  try {
+    const { daysTaken, basicSalary = 0, housingAllow = 0 } = req.body as any;
+    const d = Math.max(0, Number(daysTaken || 0));
+    const dailyWage = (Number(basicSalary) + Number(housingAllow)) / 30;
+    const fullPaidDays = Math.min(d, 30);
+    const partialPaidDays = Math.min(Math.max(d - 30, 0), 60);
+    const unpaidDays = Math.min(Math.max(d - 90, 0), 30);
+    const beyondLimit = Math.max(d - 120, 0);
+    const fullPay = round2(fullPaidDays * dailyWage);
+    const partialPay = round2(partialPaidDays * dailyWage * 0.75);
+    const totalPay = round2(fullPay + partialPay);
+    const lostWages = round2(unpaidDays * dailyWage + (partialPaidDays * dailyWage * 0.25));
+    res.json({
+      daysTaken: d,
+      dailyWage: round2(dailyWage),
+      fullPaidDays, partialPaidDays, unpaidDays, beyondLimit,
+      fullPay, partialPay, totalPay, lostWages,
+      remainingFull: Math.max(0, 30 - d),
+      remainingPartial: Math.max(0, 90 - d),
+      remainingTotal: Math.max(0, 120 - d),
+      warning: beyondLimit > 0 ? `تجاوز 120 يوم — لصاحب العمل الحق في إنهاء العقد وفق المادة 82.` : null,
+      legalRef: "المادة 117 من نظام العمل السعودي",
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Overtime (Article 107)
+router.post("/calc/overtime", async (req, res) => {
+  try {
+    const { basicSalary = 0, housingAllow = 0, transportAllow = 0,
+            workingDaysPerMonth = 30, hoursPerDay = 8, overtimeHours = 0,
+            isHoliday = false } = req.body as any;
+    const monthlyWage = Number(basicSalary) + Number(housingAllow) + Number(transportAllow);
+    const dailyWage = monthlyWage / Number(workingDaysPerMonth);
+    const hourlyWage = dailyWage / Number(hoursPerDay);
+    const multiplier = isHoliday ? 1.5 : 1.5;
+    const overtimeAmount = round2(Number(overtimeHours) * hourlyWage * multiplier);
+    res.json({
+      monthlyWage: round2(monthlyWage),
+      dailyWage: round2(dailyWage),
+      hourlyWage: round2(hourlyWage),
+      overtimeHours: Number(overtimeHours),
+      multiplier,
+      overtimeAmount,
+      formula: `${Number(overtimeHours)} × ${round2(hourlyWage)} × ${multiplier} = ${overtimeAmount} ر.س`,
+      legalRef: "المادة 107 — أجر الساعة الإضافية = أجر الساعة العادية + 50% منه",
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// GOSI (full breakdown)
+router.post("/calc/gosi", async (req, res) => {
+  try {
+    const { basicSalary = 0, housingAllow = 0, isSaudi = false } = req.body as any;
+    const wage = Number(basicSalary) + Number(housingAllow);
+    const cap = 45000;
+    const gosiWage = Math.min(wage, cap);
+    const employeeShare = isSaudi ? round2(gosiWage * 0.10) : 0;
+    const employerAnnuities = isSaudi ? round2(gosiWage * 0.12) : 0;
+    const employerOH = round2(gosiWage * 0.02);
+    const totalEmployer = round2(employerAnnuities + employerOH);
+    res.json({
+      wageBeforeCap: round2(wage),
+      gosiWage: round2(gosiWage),
+      cap, isSaudi,
+      employeeShare,
+      employerAnnuities,
+      employerOccupationalHazards: employerOH,
+      totalEmployer,
+      totalCost: round2(employeeShare + totalEmployer),
+      netToEmployee: round2(wage - employeeShare),
+      capApplied: wage > cap,
+      legalRef: isSaudi
+        ? "10% خصم من الموظف + 12% معاشات + 2% أخطار مهنية على صاحب العمل (سعودي)."
+        : "2% فقط أخطار مهنية على صاحب العمل (غير سعودي)، لا خصم على الموظف.",
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Notice period compensation (Article 75)
+router.post("/calc/notice-period", async (req, res) => {
+  try {
+    const { basicSalary = 0, housingAllow = 0, transportAllow = 0,
+            requiredNoticeDays = 60, daysActuallyGiven = 0 } = req.body as any;
+    const monthlyWage = Number(basicSalary) + Number(housingAllow) + Number(transportAllow);
+    const dailyWage = monthlyWage / 30;
+    const compensationDays = Math.max(0, Number(requiredNoticeDays) - Number(daysActuallyGiven));
+    const compensationAmount = round2(compensationDays * dailyWage);
+    res.json({
+      monthlyWage: round2(monthlyWage),
+      dailyWage: round2(dailyWage),
+      requiredNoticeDays: Number(requiredNoticeDays),
+      daysActuallyGiven: Number(daysActuallyGiven),
+      compensationDays,
+      compensationAmount,
+      formula: `${compensationDays} يوم × ${round2(dailyWage)} ر.س = ${compensationAmount} ر.س`,
+      legalRef: "المادة 75 — العقد غير محدد المدة يُنهى بإشعار 60 يوم من صاحب العمل، 30 يوم من العامل.",
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Probation period status (Article 53)
+router.post("/calc/probation", async (req, res) => {
+  try {
+    const { hireDate, probationDays = 90, asOfDate } = req.body as any;
+    if (!hireDate) { res.status(400).json({ error: "تاريخ التعيين مطلوب" }); return; }
+    const pd = Math.min(Number(probationDays), 180);
+    const hire = new Date(hireDate);
+    const asOf = asOfDate ? new Date(asOfDate) : new Date();
+    const probationEnd = new Date(hire); probationEnd.setDate(hire.getDate() + pd);
+    const elapsed = Math.floor((asOf.getTime() - hire.getTime()) / 86400000);
+    const remaining = Math.floor((probationEnd.getTime() - asOf.getTime()) / 86400000);
+    const status = remaining > 0 ? "underProbation" : "completed";
+    res.json({
+      hireDate, probationDays: pd,
+      probationEndDate: probationEnd.toISOString().slice(0, 10),
+      daysElapsed: elapsed,
+      daysRemaining: Math.max(0, remaining),
+      status,
+      statusLabel: status === "underProbation" ? `تحت التجربة — متبقي ${Math.max(0, remaining)} يوم` : `أكملت فترة التجربة منذ ${Math.abs(remaining)} يوم`,
+      legalRef: "المادة 53 — الحد الأقصى لفترة التجربة 90 يوماً، يجوز تمديدها باتفاق كتابي حتى 180 يوماً.",
+      warning: pd > 90 ? "⚠ فترة التجربة تتجاوز 90 يوماً — تتطلب اتفاقاً كتابياً صريحاً." : null,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;

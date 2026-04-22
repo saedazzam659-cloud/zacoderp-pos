@@ -1286,6 +1286,115 @@ ${JSON.stringify(line, null, 2)}
   }
 });
 
+// HR — generic explainer for any HR calculation
+router.post("/explain-hr-calc", async (req, res) => {
+  try {
+    const { calcType, inputs, result } = req.body as any;
+    if (!calcType || !result) { res.status(400).json({ error: "نوع الحساب والنتيجة مطلوبان" }); return; }
+
+    const TYPE_CONTEXT: Record<string, { title: string; law: string; angle: string }> = {
+      "annual-leave": { title: "حساب رصيد الإجازة السنوية", law: "المادة 109", angle: "يوضح الرصيد المستحق والمتبقي والقيمة النقدية" },
+      "sick-leave":   { title: "حساب الإجازة المرضية",       law: "المادة 117", angle: "يوضح الأيام المدفوعة كاملة والمدفوعة جزئياً وغير المدفوعة" },
+      "overtime":     { title: "حساب الوقت الإضافي",         law: "المادة 107", angle: "يوضح أجر الساعة الأصلي وأجر الساعة الإضافية" },
+      "gosi":         { title: "حساب التأمينات الاجتماعية",  law: "نظام التأمينات الاجتماعية", angle: "يوضح حصة الموظف وحصة صاحب العمل والتكلفة الإجمالية" },
+      "notice-period":{ title: "حساب بدل الإشعار",           law: "المادة 75", angle: "يوضح أيام الإشعار المطلوبة وقيمة التعويض" },
+      "probation":    { title: "حالة فترة التجربة",          law: "المادة 53", angle: "يوضح المدة المنقضية والمتبقية" },
+    };
+    const ctx = TYPE_CONTEXT[calcType] || { title: "حساب موارد بشرية", law: "نظام العمل", angle: "" };
+
+    function fallback() {
+      const lines: string[] = [`${ctx.title} (${ctx.law}):`];
+      const r = result || {};
+      if (calcType === "annual-leave") {
+        lines.push(`• مدة الخدمة: ${r.yearsOfService} سنة.`);
+        lines.push(`• معدل الاستحقاق الحالي: ${r.ratePerYearCurrent} يوم/سنة (${r.noteTransition || ""}).`);
+        lines.push(`• إجمالي الأيام المتراكمة: ${r.accruedDaysTotal} يوم.`);
+        lines.push(`• الأيام المستهلكة: ${r.daysTaken} يوم.`);
+        lines.push(`• الرصيد المتبقي: ${r.remainingDays} يوم.`);
+        lines.push(`• قيمة الرصيد نقداً (للموظف): ${r.cashValueIfPaid} ر.س (بأجر يومي ${r.dailyWage}).`);
+      } else if (calcType === "sick-leave") {
+        lines.push(`• إجمالي الأيام المرضية في العام: ${r.daysTaken} يوم.`);
+        lines.push(`• الأجر اليومي: ${r.dailyWage} ر.س.`);
+        lines.push(`• 30 يوم بأجر كامل: ${r.fullPaidDays} يوم → ${r.fullPay} ر.س.`);
+        lines.push(`• 60 يوم تالية بأجر 75%: ${r.partialPaidDays} يوم → ${r.partialPay} ر.س.`);
+        lines.push(`• 30 يوم تالية بدون أجر: ${r.unpaidDays} يوم.`);
+        lines.push(`• إجمالي ما يُدفع للموظف: ${r.totalPay} ر.س.`);
+        if (r.warning) lines.push(`⚠ ${r.warning}`);
+      } else if (calcType === "overtime") {
+        lines.push(`• الأجر الشهري الشامل: ${r.monthlyWage} ر.س.`);
+        lines.push(`• الأجر اليومي: ${r.dailyWage}، أجر الساعة العادية: ${r.hourlyWage} ر.س.`);
+        lines.push(`• ساعات الوقت الإضافي: ${r.overtimeHours}.`);
+        lines.push(`• المعامل: ×${r.multiplier} (الأصل + 50%).`);
+        lines.push(`• قيمة الوقت الإضافي: ${r.overtimeAmount} ر.س.`);
+        lines.push(`• المعادلة: ${r.formula}.`);
+      } else if (calcType === "gosi") {
+        lines.push(`• الأجر التأميني (أساسي + سكن، بحد أقصى 45,000): ${r.gosiWage} ر.س${r.capApplied ? " ⚠ تم تطبيق الحد الأعلى" : ""}.`);
+        lines.push(`• ${r.isSaudi ? "موظف سعودي" : "موظف غير سعودي"}.`);
+        lines.push(`• حصة الموظف (10%): ${r.employeeShare} ر.س${r.isSaudi ? "" : " — لا تُخصم"}.`);
+        lines.push(`• حصة صاحب العمل — معاشات (12%): ${r.employerAnnuities} ر.س${r.isSaudi ? "" : " — لا تُحتسب"}.`);
+        lines.push(`• حصة صاحب العمل — أخطار مهنية (2%): ${r.employerOccupationalHazards} ر.س.`);
+        lines.push(`• إجمالي ما يدفعه صاحب العمل: ${r.totalEmployer} ر.س.`);
+        lines.push(`• إجمالي التكلفة (موظف + صاحب عمل): ${r.totalCost} ر.س.`);
+        lines.push(`• صافي ما يصل للموظف من الأجر التأميني: ${r.netToEmployee} ر.س.`);
+      } else if (calcType === "notice-period") {
+        lines.push(`• الأجر الشهري الشامل: ${r.monthlyWage} ر.س، الأجر اليومي: ${r.dailyWage} ر.س.`);
+        lines.push(`• الإشعار المطلوب: ${r.requiredNoticeDays} يوم.`);
+        lines.push(`• الإشعار الفعلي الممنوح: ${r.daysActuallyGiven} يوم.`);
+        lines.push(`• أيام التعويض المستحقة: ${r.compensationDays} يوم.`);
+        lines.push(`• قيمة بدل الإشعار: ${r.compensationAmount} ر.س.`);
+        lines.push(`• المعادلة: ${r.formula}.`);
+      } else if (calcType === "probation") {
+        lines.push(`• تاريخ التعيين: ${r.hireDate}، فترة التجربة: ${r.probationDays} يوم.`);
+        lines.push(`• تنتهي فترة التجربة في: ${r.probationEndDate}.`);
+        lines.push(`• المنقضي: ${r.daysElapsed} يوم، المتبقي: ${r.daysRemaining} يوم.`);
+        lines.push(`• الحالة: ${r.statusLabel}.`);
+        if (r.warning) lines.push(`⚠ ${r.warning}`);
+      }
+      lines.push(`📚 المرجع: ${r.legalRef || ctx.law}`);
+      return { source: "fallback", explanation: lines.join("\n") };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 800,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: `أنت مستشار في الموارد البشرية متخصص في نظام العمل السعودي ولوائحه التنفيذية. اشرح بدقة قانونية وبأسلوب مهني واضح للموظفين والإدارة.` },
+            { role: "user", content: `${ctx.title} — ${ctx.angle}.
+
+المُدخلات:
+${JSON.stringify(inputs || {}, null, 2)}
+
+النتيجة:
+${JSON.stringify(result, null, 2)}
+
+اشرح بالعربية بنقاط مرتبة:
+1. المعطيات الأساسية،
+2. كيف طُبقت ${ctx.law} للوصول للنتيجة،
+3. ما تعنيه الأرقام عملياً للموظف وصاحب العمل،
+4. أي تحذيرات أو نصائح ذات صلة.
+
+أعد JSON: { "explanation": "النص الكامل بالعربية" }` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const explanation = String(parsed.explanation || "").trim();
+      if (!explanation) { res.json(fallback()); return; }
+      res.json({ source: "ai", explanation });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 // HR — explain end of service calculation
 router.post("/explain-eos", async (req, res) => {
   try {

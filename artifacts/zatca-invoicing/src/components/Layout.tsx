@@ -10,7 +10,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.hrLoans",       href: "/hr/loans",           icon: Wallet },
   { nameKey: "nav.hrPayroll",     href: "/hr/payroll",         icon: Banknote },
   { nameKey: "nav.hrEos",         href: "/hr/end-of-service",  icon: Scale },
+  { nameKey: "nav.hrCalculators", href: "/hr/calculators",     icon: Calculator },
 ];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },
