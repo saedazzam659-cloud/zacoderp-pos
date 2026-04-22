@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,23 +20,23 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
-const SUPPLIER_EXPORT_COLS = [
-  { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
-  { key: "nameEn",     header: "الاسم (إنجليزي)",     width: 28 },
-  { key: "vatNumber",  header: "الرقم الضريبي",       width: 20 },
-  { key: "crNumber",   header: "السجل التجاري",       width: 18 },
-  { key: "phone",      header: "الهاتف",              width: 18 },
-  { key: "email",      header: "البريد الإلكتروني",  width: 28 },
-  { key: "city",       header: "المدينة",             width: 16 },
-  { key: "balance",    header: "الرصيد",              width: 16 },
-];
-
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-const TYPE_TABS = [
-  { key: "all",     label: "الكل" },
-  { key: "withVat", label: "مسجّلو الضريبة" },
-  { key: "noVat",   label: "غير مسجّلين" },
+const buildSupplierExportCols = (t: (k: string) => string) => [
+  { key: "nameAr",     header: t("pages.suppliers.nameArHeader"),    width: 28 },
+  { key: "nameEn",     header: t("pages.suppliers.nameEnHeader"),    width: 28 },
+  { key: "vatNumber",  header: t("pages.suppliers.vatNumberHeader"), width: 20 },
+  { key: "crNumber",   header: t("pages.suppliers.crNumberHeader"),  width: 18 },
+  { key: "phone",      header: t("pages.suppliers.phoneHeader"),     width: 18 },
+  { key: "email",      header: t("pages.suppliers.emailHeader"),     width: 28 },
+  { key: "city",       header: t("pages.suppliers.cityHeader"),      width: 16 },
+  { key: "balance",    header: t("common.balance"),                  width: 16 },
+];
+
+const buildTypeTabs = (t: (k: string) => string) => [
+  { key: "all",     label: t("common.all") },
+  { key: "withVat", label: t("pages.suppliers.taxRegistered") },
+  { key: "noVat",   label: t("pages.suppliers.notRegistered") },
 ];
 
 const EMPTY_FORM = {
@@ -47,8 +48,11 @@ const EMPTY_FORM = {
 
 export default function Suppliers() {
   const { user, token } = useAuth();
+  const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const SUPPLIER_EXPORT_COLS = buildSupplierExportCols(t);
+  const TYPE_TABS = buildTypeTabs(t);
 
   const [search,    setSearch]    = useState("");
   const [activeTab, setActiveTab] = useState("all");
@@ -128,15 +132,15 @@ export default function Suppliers() {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
-      if (!res.ok) throw new Error("فشل التحديث");
+      if (!res.ok) throw new Error(t("pages.suppliers.updateFailed"));
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "تم تحديث بيانات المورد" });
+      toast({ title: t("pages.suppliers.updateSuccess") });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       setEditSup(null);
     },
-    onError: () => toast({ title: "حدث خطأ أثناء التحديث", variant: "destructive" }),
+    onError: () => toast({ title: t("pages.suppliers.updateError"), variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -144,15 +148,15 @@ export default function Suppliers() {
       const res = await fetch(`${API}/api/suppliers/${id}`, {
         method: "DELETE", headers,
       });
-      if (!res.ok) throw new Error("فشل الحذف");
+      if (!res.ok) throw new Error(t("pages.suppliers.deleteFailed"));
     },
     onSuccess: () => {
-      toast({ title: "تم حذف المورد" });
+      toast({ title: t("pages.suppliers.deleteSuccess") });
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: ["supplier-balances"] });
       setDeleteSup(null);
     },
-    onError: () => toast({ title: "تعذّر الحذف — قد يكون مرتبطاً بفواتير", variant: "destructive" }),
+    onError: () => toast({ title: t("pages.suppliers.deleteErrorRelated"), variant: "destructive" }),
   });
 
   function BalanceBadge({ supplierId }: { supplierId: number }) {
@@ -165,13 +169,13 @@ export default function Suppliers() {
     if (bal > 0) return (
       <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 whitespace-nowrap" dir="ltr">
         <TrendingUp className="h-3 w-3 shrink-0" />
-        {bal.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} دائن
+        {bal.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t("pages.suppliers.creditor")}
       </span>
     );
     return (
       <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 whitespace-nowrap" dir="ltr">
         <TrendingDown className="h-3 w-3 shrink-0" />
-        {Math.abs(bal).toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} مدين
+        {Math.abs(bal).toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t("pages.suppliers.debtor")}
       </span>
     );
   }
@@ -197,9 +201,9 @@ export default function Suppliers() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Truck className="h-6 w-6 text-primary" />الموردون
+            <Truck className="h-6 w-6 text-primary" />{t("pages.suppliers.title")}
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">إدارة بيانات الموردين والموزعين</p>
+          <p className="text-muted-foreground mt-1 text-sm">{t("pages.suppliers.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           <ExportButtons
@@ -214,12 +218,12 @@ export default function Suppliers() {
               balance:    (balanceMap[s.id] ?? 0).toFixed(2),
             }))}
             columns={SUPPLIER_EXPORT_COLS}
-            filename={`موردون-${new Date().toISOString().slice(0, 10)}`}
-            title="قائمة الموردين"
-            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+            filename={`${t("pages.suppliers.title")}-${new Date().toISOString().slice(0, 10)}`}
+            title={t("pages.suppliers.exportTitle")}
+            subtitle={`${t("pages.suppliers.eInvoiceSystem")} — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
           />
           <Button asChild className="gap-2">
-            <Link href="/suppliers/new"><Plus className="h-4 w-4" />إضافة مورد</Link>
+            <Link href="/suppliers/new"><Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}</Link>
           </Button>
         </div>
       </div>
@@ -227,49 +231,49 @@ export default function Suppliers() {
       {editSup && (
         <FormPanel
           icon={Truck}
-          title={editSup?.nameAr ?? "تعديل المورد"}
-          subtitle="تعديل بيانات الهوية التجارية والعنوان الوطني للمورد"
+          title={editSup?.nameAr ?? t("pages.suppliers.editSupplier")}
+          subtitle={t("pages.suppliers.editSubtitle")}
           width="4xl"
           onClose={() => setEditSup(null)}
           onSave={() => updateMutation.mutate(editForm)}
           saving={updateMutation.isPending}
           saveDisabled={!editForm.nameAr.trim()}
-          saveLabel="حفظ التعديلات"
+          saveLabel={t("pages.suppliers.saveChanges")}
         >
           <div className="space-y-6">
             <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />بيانات الهوية التجارية</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />{t("pages.suppliers.commercialIdentity")}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <div className="md:col-span-2"><Field label="اسم المورد (عربي) *" name="nameAr" placeholder="شركة التوريدات الوطنية" /></div>
-                <div className="md:col-span-2"><Field label="الاسم (إنجليزي)" name="nameEn" placeholder="National Supply Co." dir="ltr" /></div>
-                <Field label="الرقم الضريبي" name="vatNumber" placeholder="310000000000003" dir="ltr" />
-                <Field label="السجل التجاري" name="crNumber" placeholder="1010000001" dir="ltr" />
-                <Field label="البريد الإلكتروني" name="email" placeholder="info@supplier.com" dir="ltr" />
-                <Field label="الهاتف" name="phone" placeholder="0500000000" dir="ltr" />
+                <div className="md:col-span-2"><Field label={`${t("pages.suppliers.supplierNameAr")} *`} name="nameAr" placeholder={t("pages.suppliers.supplierNameArPlaceholder")} /></div>
+                <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} name="nameEn" placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
+                <Field label={t("pages.suppliers.vatNumberLabel")} name="vatNumber" placeholder="310000000000003" dir="ltr" />
+                <Field label={t("pages.suppliers.crNumberLabel")} name="crNumber" placeholder="1010000001" dir="ltr" />
+                <Field label={t("pages.suppliers.emailLabel")} name="email" placeholder="info@supplier.com" dir="ltr" />
+                <Field label={t("pages.suppliers.phoneLabel")} name="phone" placeholder="0500000000" dir="ltr" />
               </div>
             </div>
             <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><MapPin className="h-3.5 w-3.5" />العنوان الوطني</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><MapPin className="h-3.5 w-3.5" />{t("pages.suppliers.nationalAddress")}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <Field label="اسم الشارع" name="street" placeholder="شارع الملك فهد" />
-                <Field label="رقم المبنى" name="buildingNumber" placeholder="1234" dir="ltr" />
-                <Field label="الحي / المنطقة" name="district" placeholder="حي العليا" />
-                <Field label="المدينة" name="city" placeholder="الرياض" />
-                <Field label="الرمز البريدي" name="postalCode" placeholder="12345" dir="ltr" />
+                <Field label={t("pages.suppliers.streetName")} name="street" placeholder={t("pages.suppliers.streetPlaceholder")} />
+                <Field label={t("pages.suppliers.buildingNumber")} name="buildingNumber" placeholder="1234" dir="ltr" />
+                <Field label={t("pages.suppliers.district")} name="district" placeholder={t("pages.suppliers.districtPlaceholder")} />
+                <Field label={t("pages.suppliers.cityLabel")} name="city" placeholder={t("pages.suppliers.cityPlaceholder")} />
+                <Field label={t("pages.suppliers.postalCode")} name="postalCode" placeholder="12345" dir="ltr" />
               </div>
             </div>
             <div className="space-y-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">الربط المحاسبي</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2">{t("pages.suppliers.accountingLink")}</p>
               <div className="max-w-sm space-y-1.5">
                 <label className="text-sm font-medium">حساب الدائنين (المورد)</label>
                 <AccountCombobox
                   value={editForm.accountId}
                   onValueChange={(v) => setEditForm(f => ({ ...f, accountId: v }))}
-                  placeholder="— اختر حساب الدائنين —"
+                  placeholder={`— ${t("pages.suppliers.selectAccountsPayable")} —`}
                   filterTypes={["liability"]}
                   grouped={false}
                 />
-                <p className="text-xs text-muted-foreground">الحساب المرتبط بهذا المورد في دفتر الأستاذ (يستخدم عند ترحيل الفواتير والمرتجعات).</p>
+                <p className="text-xs text-muted-foreground">{t("pages.suppliers.accountingLinkHelp")}</p>
               </div>
             </div>
           </div>
@@ -284,7 +288,7 @@ export default function Suppliers() {
           </div>
           <div>
             <p className="text-2xl font-bold">{isLoading ? "—" : suppliers.length}</p>
-            <p className="text-xs text-muted-foreground">إجمالي الموردين</p>
+            <p className="text-xs text-muted-foreground">{t("pages.suppliers.totalSuppliers")}</p>
           </div>
         </div>
         <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
@@ -293,7 +297,7 @@ export default function Suppliers() {
           </div>
           <div>
             <p className="text-2xl font-bold">{isLoading ? "—" : withVat}</p>
-            <p className="text-xs text-muted-foreground">مسجّلو ضريبة</p>
+            <p className="text-xs text-muted-foreground">{t("pages.suppliers.taxRegistered")}</p>
           </div>
         </div>
         <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
@@ -302,7 +306,7 @@ export default function Suppliers() {
           </div>
           <div>
             <p className="text-2xl font-bold">{isLoading ? "—" : suppliers.length - withVat}</p>
-            <p className="text-xs text-muted-foreground">غير مسجّلين</p>
+            <p className="text-xs text-muted-foreground">{t("pages.suppliers.notRegistered")}</p>
           </div>
         </div>
       </div>
@@ -330,7 +334,7 @@ export default function Suppliers() {
           </div>
           <div className="relative px-4 py-3">
             <Search className="absolute right-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="بحث بالاسم أو الرقم الضريبي..."
+            <Input placeholder={t("pages.suppliers.searchPlaceholder")}
               className="pl-4 pr-10 w-full sm:w-64 h-9"
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
@@ -341,14 +345,14 @@ export default function Suppliers() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/20">
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">المورد</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">الرقم الضريبي</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">المدينة</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">الهاتف / البريد</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">الفئة</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">حالة الضريبة</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">الرصيد</th>
-                <th className="h-10 px-4 text-center font-medium text-muted-foreground text-xs tracking-wide w-20">إجراء</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.suppliers.supplier")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("pages.suppliers.vatNumberLabel")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.suppliers.cityLabel")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">{t("pages.suppliers.phoneEmail")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.suppliers.category")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.suppliers.taxStatus")}</th>
+                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("common.balance")}</th>
+                <th className="h-10 px-4 text-center font-medium text-muted-foreground text-xs tracking-wide w-20">{t("pages.suppliers.action")}</th>
               </tr>
             </thead>
             <tbody>
@@ -364,10 +368,10 @@ export default function Suppliers() {
                 <tr>
                   <td colSpan={8} className="py-16 text-center text-muted-foreground">
                     <Truck className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                    <p className="text-sm">{search ? "لا توجد نتائج مطابقة" : "لا يوجد موردون بعد"}</p>
+                    <p className="text-sm">{search ? t("common.noResults") : t("pages.suppliers.noSuppliersYet")}</p>
                     {!search && (
                       <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
-                        <Link href="/suppliers/new"><Plus className="h-3.5 w-3.5" />إضافة مورد</Link>
+                        <Link href="/suppliers/new"><Plus className="h-3.5 w-3.5" />{t("common.add")} {t("pages.suppliers.supplier")}</Link>
                       </Button>
                     )}
                   </td>
@@ -379,7 +383,7 @@ export default function Suppliers() {
                     {/* Name — double-click to edit */}
                     <td className="px-5 py-3.5"
                       onDoubleClick={() => openEdit(supplier)}
-                      title="انقر مرتين للتعديل">
+                      title={t("pages.suppliers.doubleClickEdit")}>
                       <div className="flex items-center gap-3">
                         <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
                           {supplier.nameAr?.[0] ?? "م"}
@@ -419,8 +423,8 @@ export default function Suppliers() {
                           : "bg-amber-50 text-amber-700 border-amber-200"
                       }`}>
                         {supplier.vatNumber
-                          ? <><BadgeCheck className="h-3 w-3" />مسجّل</>
-                          : <><Building2 className="h-3 w-3" />غير مسجّل</>}
+                          ? <><BadgeCheck className="h-3 w-3" />{t("pages.suppliers.registered")}</>
+                          : <><Building2 className="h-3 w-3" />{t("pages.suppliers.notRegisteredBadge")}</>}
                       </span>
                     </td>
                     {/* Balance column */}
@@ -433,13 +437,13 @@ export default function Suppliers() {
                         <button
                           onClick={e => { e.stopPropagation(); openEdit(supplier); }}
                           className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                          title="تعديل">
+                          title={t("common.edit")}>
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                         <button
                           onClick={e => { e.stopPropagation(); setDeleteSup(supplier); }}
                           className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
-                          title="حذف">
+                          title={t("common.delete")}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -454,7 +458,7 @@ export default function Suppliers() {
         {/* Footer */}
         {!isLoading && filtered.length > 0 && (
           <div className="border-t bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
-            عدد النتائج: <strong>{filtered.length}</strong>
+            {t("pages.suppliers.resultsCount")}: <strong>{filtered.length}</strong>
           </div>
         )}
       </div>
@@ -465,20 +469,20 @@ export default function Suppliers() {
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-destructive" />حذف المورد
+              <Trash2 className="h-5 w-5 text-destructive" />{t("common.delete")} {t("pages.suppliers.supplier")}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من حذف المورد <strong>{deleteSup?.nameAr}</strong>؟
-              لا يمكن التراجع عن هذا الإجراء. إذا كان المورد مرتبطاً بفواتير لن يتم حذفه.
+              {t("pages.suppliers.deleteConfirm")} <strong>{deleteSup?.nameAr}</strong>؟
+              {t("pages.suppliers.deleteWarning")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2">
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive hover:bg-destructive/90"
               onClick={() => deleteMutation.mutate(deleteSup.id)}
               disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? "جاري الحذف..." : "تأكيد الحذف"}
+              {deleteMutation.isPending ? t("pages.suppliers.deleting") : t("pages.suppliers.confirmDelete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

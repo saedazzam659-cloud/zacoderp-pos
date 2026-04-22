@@ -16,28 +16,13 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useTranslation } from "react-i18next";
+import { Trans } from "react-i18next";
 
 const API = import.meta.env.VITE_API_URL || "";
 
-const CUSTOMER_EXPORT_COLS = [
-  { key: "nameAr",     header: "الاسم (عربي)",        width: 28 },
-  { key: "nameEn",     header: "الاسم (إنجليزي)",     width: 28 },
-  { key: "vatNumber",  header: "الرقم الضريبي",       width: 20 },
-  { key: "crNumber",   header: "السجل التجاري",       width: 18 },
-  { key: "phone",      header: "الهاتف",              width: 18 },
-  { key: "email",      header: "البريد الإلكتروني",  width: 28 },
-  { key: "city",       header: "المدينة",             width: 16 },
-  { key: "district",   header: "الحي",               width: 16 },
-  { key: "postalCode", header: "الرقم البريدي",      width: 14 },
-];
-
-const TABS = [
-  { key: "all",        label: "جميع العملاء",    icon: Users },
-  { key: "withVat",    label: "شركات (B2B)",      icon: Building2 },
-  { key: "individual", label: "أفراد (B2C)",       icon: UserCheck },
-];
-
 export default function Customers() {
+  const { t, i18n } = useTranslation();
   const [search, setSearch]       = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const { user, token } = useAuth() as any;
@@ -45,18 +30,37 @@ export default function Customers() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
+
+  const CUSTOMER_EXPORT_COLS = [
+    { key: "nameAr",     header: t("pages.customers.nameAr"),        width: 28 },
+    { key: "nameEn",     header: t("pages.customers.nameEn"),        width: 28 },
+    { key: "vatNumber",  header: t("pages.customers.vatNumber"),       width: 20 },
+    { key: "crNumber",   header: t("pages.customers.crNumber"),       width: 18 },
+    { key: "phone",      header: t("pages.customers.phone"),              width: 18 },
+    { key: "email",      header: t("pages.customers.email"),  width: 28 },
+    { key: "city",       header: t("pages.customers.city"),             width: 16 },
+    { key: "district",   header: t("pages.customers.district"),               width: 16 },
+    { key: "postalCode", header: t("pages.customers.postalCode"),      width: 14 },
+  ];
+
+  const TABS = [
+    { key: "all",        label: t("pages.customers.allCustomers"),    icon: Users },
+    { key: "withVat",    label: t("pages.customers.companiesB2b"),      icon: Building2 },
+    { key: "individual", label: t("pages.customers.individualsB2c"),       icon: UserCheck },
+  ];
+
   const deleteMut = useDeleteCustomer({
     mutation: {
       onSuccess: () => {
-        toast({ title: "✓ تم الحذف", description: "تم حذف العميل بنجاح." });
+        toast({ title: `✓ ${t("pages.customers.deleteSuccess")}`, description: t("pages.customers.deleteSuccessDesc") });
         queryClient.invalidateQueries({ queryKey: ["customers"] });
         setDeleteTarget(null);
       },
       onError: (e: any) => toast({
-        title: "تعذّر الحذف",
+        title: t("pages.customers.deleteError"),
         description: e?.message?.includes("foreign") || e?.status === 409
-          ? "لا يمكن حذف العميل لوجود فواتير مرتبطة به."
-          : "حدث خطأ أثناء حذف العميل.",
+          ? t("pages.customers.deleteErrorLinked")
+          : t("pages.customers.deleteErrorGeneric"),
         variant: "destructive",
       }),
     },
@@ -106,18 +110,20 @@ export default function Customers() {
     return matchSearch && matchTab;
   });
 
+  const isRtl = i18n.language === "ar";
+
   return (
-    <div className="space-y-0" dir="rtl">
+    <div className="space-y-0" dir={isRtl ? "rtl" : "ltr"}>
 
       {/* ── Header strip ── */}
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Users className="h-6 w-6 text-primary" />
-            العملاء
+            {t("pages.customers.customers")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            إدارة بيانات العملاء لإصدار الفواتير الإلكترونية
+            {t("pages.customers.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -134,13 +140,13 @@ export default function Customers() {
               postalCode: c.postalCode ?? "",
             }))}
             columns={CUSTOMER_EXPORT_COLS}
-            filename={`عملاء-${new Date().toISOString().slice(0, 10)}`}
-            title="قائمة العملاء"
-            subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
+            filename={`${t("pages.customers.filenamePrefix")}-${new Date().toISOString().slice(0, 10)}`}
+            title={t("pages.customers.exportTitle")}
+            subtitle={`${t("pages.customers.exportSubtitle")} — ${new Date().toLocaleDateString(isRtl ? "ar-SA-u-nu-latn" : "en-US")}`}
           />
           <Button asChild className="gap-2 shrink-0">
             <Link href="/customers/new">
-              <Plus className="h-4 w-4" />إضافة عميل
+              <Plus className="h-4 w-4" />{t("pages.customers.addCustomer")}
             </Link>
           </Button>
         </div>
@@ -182,14 +188,14 @@ export default function Customers() {
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
           {
-            label: "إجمالي العملاء",
+            label: t("pages.customers.totalCustomers"),
             value: isLoading ? null : (customers as any[]).length,
             icon: Users,
             color: "text-primary",
             bg:    "bg-primary/10",
           },
           {
-            label: "مسجّلو الضريبة",
+            label: t("pages.customers.vatRegistered"),
             value: isLoading ? null : withVat,
             icon: BadgeCheck,
             color: "text-emerald-600",
@@ -197,7 +203,7 @@ export default function Customers() {
             sub:   "B2B",
           },
           {
-            label: "أفراد",
+            label: t("pages.customers.individuals"),
             value: isLoading ? null : individuals,
             icon: UserCheck,
             color: "text-blue-600",
@@ -218,7 +224,7 @@ export default function Customers() {
                 }
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {stat.label}
-                  {stat.sub && <span className="text-[10px] mr-1 opacity-60">{stat.sub}</span>}
+                  {stat.sub && <span className="text-[10px] mx-1 opacity-60">{stat.sub}</span>}
                 </p>
               </div>
             </div>
@@ -232,12 +238,12 @@ export default function Customers() {
         {/* Search bar */}
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b bg-muted/10">
           <p className="text-xs text-muted-foreground">
-            {isLoading ? "جاري التحميل..." : `${filtered.length} نتيجة`}
+            {isLoading ? t("common.loading") : t("pages.customers.resultsCount", { count: filtered.length })}
           </p>
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="بحث بالاسم أو الرقم الضريبي أو المدينة..."
+              placeholder={t("pages.customers.searchPlaceholder")}
               className="pr-9 h-8 w-64 text-sm"
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -250,13 +256,13 @@ export default function Customers() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/20">
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">العميل</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">الرقم الضريبي</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">المدينة</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">التواصل</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">النوع</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">الرصيد</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">إجراء</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.customer")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("pages.customers.vatNumber")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.customers.city")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">{t("pages.customers.contact")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.type")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.balance")}</th>
+                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("common.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -279,16 +285,16 @@ export default function Customers() {
                       </div>
                       <div>
                         <p className="font-medium text-sm">
-                          {search ? "لا توجد نتائج مطابقة" : "لا يوجد عملاء في هذا التصنيف"}
+                          {search ? t("pages.customers.noResultsMatch") : t("pages.customers.noCustomersInCategory")}
                         </p>
                         <p className="text-xs mt-0.5 opacity-70">
-                          {search ? "جرّب كلمة بحث مختلفة" : "ابدأ بإضافة عميلك الأول"}
+                          {search ? t("pages.customers.tryDifferentSearch") : t("pages.customers.startByAdding")}
                         </p>
                       </div>
                       {!search && (
                         <Button asChild variant="outline" size="sm" className="gap-2 mt-1">
                           <Link href="/customers/new">
-                            <Plus className="h-3.5 w-3.5" />إضافة عميل
+                            <Plus className="h-3.5 w-3.5" />{t("pages.customers.addCustomer")}
                           </Link>
                         </Button>
                       )}
@@ -362,11 +368,11 @@ export default function Customers() {
                     <td className="px-5 py-3">
                       {customer.vatNumber ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <Building2 className="h-3 w-3" />شركة B2B
+                          <Building2 className="h-3 w-3" />{t("pages.customers.companiesB2b")}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                          <UserCheck className="h-3 w-3" />فرد B2C
+                          <UserCheck className="h-3 w-3" />{t("pages.customers.individualsB2c")}
                         </span>
                       )}
                     </td>
@@ -376,22 +382,22 @@ export default function Customers() {
                       {(() => {
                         const bal = balMap[customer.id] ?? 0;
                         const abs = Math.abs(bal);
-                        const fmt = abs.toLocaleString("ar-SA-u-nu-latn", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const fmt = abs.toLocaleString(isRtl ? "ar-SA-u-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         if (Math.abs(bal) < 0.005) {
-                          return <span className="text-xs text-muted-foreground/60">متوازن</span>;
+                          return <span className="text-xs text-muted-foreground/60">{t("pages.customers.balanced")}</span>;
                         }
                         if (bal > 0) {
                           return (
                             <span className="inline-flex items-center gap-1.5">
                               <span className="font-semibold tabular-nums text-rose-700">{fmt}</span>
-                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">مدين</span>
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">{t("pages.customers.debit")}</span>
                             </span>
                           );
                         }
                         return (
                           <span className="inline-flex items-center gap-1.5">
                             <span className="font-semibold tabular-nums text-emerald-700">{fmt}</span>
-                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">دائن</span>
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">{t("pages.customers.credit")}</span>
                           </span>
                         );
                       })()}
@@ -402,12 +408,12 @@ export default function Customers() {
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1">
                           <Link href={`/invoices/new?customerId=${customer.id}`}>
-                            <FileText className="h-3 w-3" />فاتورة
+                            <FileText className="h-3 w-3" />{t("pages.customers.invoice")}
                           </Link>
                         </Button>
                         <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50">
                           <Link href={`/customers/${customer.id}`}>
-                            <Pencil className="h-3 w-3" />تعديل
+                            <Pencil className="h-3 w-3" />{t("common.edit")}
                           </Link>
                         </Button>
                         <Button
@@ -416,7 +422,7 @@ export default function Customers() {
                           className="h-7 px-2.5 text-xs gap-1 border-red-200 text-red-700 hover:bg-red-50"
                           onClick={() => setDeleteTarget(customer)}
                         >
-                          <Trash2 className="h-3 w-3" />حذف
+                          <Trash2 className="h-3 w-3" />{t("common.delete")}
                         </Button>
                       </div>
                     </td>
@@ -430,22 +436,29 @@ export default function Customers() {
         {/* Footer */}
         {!isLoading && filtered.length > 0 && (
           <div className="border-t bg-muted/10 px-5 py-2.5 flex items-center justify-between text-xs text-muted-foreground">
-            <span>عرض <strong>{filtered.length}</strong> من أصل <strong>{(customers as any[]).length}</strong> عميل</span>
+            <Trans
+              i18nKey="pages.customers.viewingCount"
+              values={{ filtered: filtered.length, total: (customers as any[]).length }}
+              components={{ strong: <strong /> }}
+            />
           </div>
         )}
       </div>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
           <AlertDialogHeader>
-            <AlertDialogTitle>تأكيد حذف العميل</AlertDialogTitle>
+            <AlertDialogTitle>{t("pages.customers.deleteConfirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              هل أنت متأكد من حذف العميل <strong>{deleteTarget?.nameAr}</strong>؟
-              لا يمكن التراجع عن هذه العملية، ولن يتم الحذف إذا كانت هناك فواتير مرتبطة به.
+              <Trans
+                i18nKey="pages.customers.deleteConfirmDesc"
+                values={{ name: deleteTarget?.nameAr }}
+                components={{ strong: <strong /> }}
+              />
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700"
               disabled={deleteMut.isPending}
@@ -454,7 +467,7 @@ export default function Customers() {
                 if (deleteTarget?.id) deleteMut.mutate({ id: deleteTarget.id });
               }}
             >
-              {deleteMut.isPending ? "جاري الحذف..." : "حذف"}
+              {deleteMut.isPending ? t("pages.customers.deleting") : t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

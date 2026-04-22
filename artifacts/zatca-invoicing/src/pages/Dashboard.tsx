@@ -17,6 +17,7 @@ import { arSA } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info";
@@ -38,10 +39,11 @@ function KpiTile({
   hint?: string;
   href?: string;
 }) {
-  const t = toneStyles[tone];
+  const { t } = useTranslation();
+  const ts = toneStyles[tone];
   const body = (
     <div className="group relative overflow-hidden rounded-xl border bg-card shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
-      <div className={cn("absolute inset-y-0 right-0 w-1", t.bar)} />
+      <div className={cn("absolute inset-y-0 right-0 w-1", ts.bar)} />
       <div className="p-5 pr-6">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -49,13 +51,13 @@ function KpiTile({
             <p className="mt-2 text-2xl font-bold text-foreground tabular-nums truncate">{value}</p>
             {hint && <p className="text-[11px] text-muted-foreground mt-1.5">{hint}</p>}
           </div>
-          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", t.iconBg)}>
-            <Icon className={cn("h-5 w-5", t.iconFg)} />
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", ts.iconBg)}>
+            <Icon className={cn("h-5 w-5", ts.iconFg)} />
           </div>
         </div>
         {href && (
           <div className="mt-3 flex items-center text-[11px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-            عرض التفاصيل <ArrowUpRight className="h-3 w-3 mr-1" />
+            {t("pages.dashboard.viewDetails")} <ArrowUpRight className="h-3 w-3 mr-1" />
           </div>
         )}
       </div>
@@ -87,6 +89,7 @@ function QuickAction({
 }
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const companyId = user?.companyId;
 
@@ -111,9 +114,9 @@ export default function Dashboard() {
   const chartData =
     monthlyStats?.map(stat => ({
       name: stat.month,
-      الإيرادات: stat.revenue,
-      الضريبة: stat.vatAmount,
-      الفواتير: stat.invoiceCount,
+      [t("pages.dashboard.revenue")]: stat.revenue,
+      [t("pages.dashboard.vat")]: stat.vatAmount,
+      [t("pages.dashboard.invoices")]: stat.invoiceCount,
     })) || [];
 
   return (
@@ -121,15 +124,15 @@ export default function Dashboard() {
       {/* Page header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-foreground">لوحة التحكم</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">نظرة عامة على أداء نظام الفوترة الإلكترونية</p>
+          <h1 className="text-xl font-bold text-foreground">{t("pages.dashboard.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">{t("pages.dashboard.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button asChild variant="outline" size="sm" className="gap-1.5">
-            <Link href="/invoices"><FileText className="h-4 w-4" />الفواتير</Link>
+            <Link href="/invoices"><FileText className="h-4 w-4" />{t("pages.dashboard.invoices")}</Link>
           </Button>
           <Button asChild size="sm" className="gap-1.5">
-            <Link href="/invoices/new"><Plus className="h-4 w-4" />فاتورة جديدة</Link>
+            <Link href="/invoices/new"><Plus className="h-4 w-4" />{t("pages.dashboard.newInvoice")}</Link>
           </Button>
         </div>
       </div>
@@ -141,12 +144,12 @@ export default function Dashboard() {
             <ShieldCheck className="h-5 w-5 text-amber-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-amber-800 text-sm">لم تكتمل عملية الربط مع هيئة الزكاة والدخل</p>
-            <p className="text-xs text-amber-700 mt-0.5">يجب ربط شركتك بمنظومة فاتورة قبل إصدار فواتير رسمية</p>
+            <p className="font-semibold text-amber-800 text-sm">{t("pages.dashboard.zatcaNotConnected")}</p>
+            <p className="text-xs text-amber-700 mt-0.5">{t("pages.dashboard.zatcaNotConnectedDesc")}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button asChild size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
-              <Link href="/zatca"><ShieldCheck className="h-4 w-4" />ربط الشركة الآن</Link>
+              <Link href="/zatca"><ShieldCheck className="h-4 w-4" />{t("pages.dashboard.connectNow")}</Link>
             </Button>
           </div>
         </div>
@@ -165,34 +168,34 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiTile
-            label="إجمالي الإيرادات"
+            label={t("pages.dashboard.totalRevenue")}
             value={formatCurrency(summary?.totalRevenue || 0)}
             icon={TrendingUp}
             tone="primary"
-            hint={`إجمالي الضريبة: ${formatCurrency(summary?.totalVat || 0)}`}
+            hint={t("pages.dashboard.totalVatHint", { amount: formatCurrency(summary?.totalVat || 0) })}
           />
           <KpiTile
-            label="الفواتير المصدرة"
+            label={t("pages.dashboard.issuedInvoices")}
             value={summary?.issuedCount || 0}
             icon={CheckCircle2}
             tone="success"
-            hint="فواتير معتمدة من هيئة الزكاة"
+            hint={t("pages.dashboard.zatcaApproved")}
             href="/invoices"
           />
           <KpiTile
-            label="مسودات"
+            label={t("pages.dashboard.drafts")}
             value={summary?.draftCount || 0}
             icon={FileWarning}
             tone="warning"
-            hint="بانتظار الإصدار"
+            hint={t("pages.dashboard.pendingIssue")}
             href="/invoices"
           />
           <KpiTile
-            label="الفواتير الملغاة"
+            label={t("pages.dashboard.cancelledInvoices")}
             value={summary?.cancelledCount || 0}
             icon={XCircle}
             tone="danger"
-            hint="تم إلغاؤها أو إرجاعها"
+            hint={t("pages.dashboard.cancelledOrReturned")}
           />
         </div>
       )}
@@ -201,17 +204,17 @@ export default function Dashboard() {
       <div className="rounded-xl border bg-card shadow-sm">
         <div className="flex items-center justify-between px-5 py-3 border-b">
           <div>
-            <h3 className="text-sm font-bold text-foreground">إجراءات سريعة</h3>
-            <p className="text-[11px] text-muted-foreground">اختر عملية للبدء بها مباشرة</p>
+            <h3 className="text-sm font-bold text-foreground">{t("pages.dashboard.quickActions")}</h3>
+            <p className="text-[11px] text-muted-foreground">{t("pages.dashboard.quickActionsDesc")}</p>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 p-4">
-          <QuickAction href="/invoices/new"     icon={Receipt}   label="فاتورة جديدة"     color="bg-primary" />
-          <QuickAction href="/customers/new"    icon={Users}     label="عميل جديد"        color="bg-sky-500" />
-          <QuickAction href="/suppliers/new"    icon={Truck}     label="مورد جديد"        color="bg-indigo-500" />
-          <QuickAction href="/inventory/items"  icon={Package}   label="إضافة صنف"        color="bg-emerald-500" />
-          <QuickAction href="/cash/receipt-vouchers" icon={Wallet}    label="سند قبض"     color="bg-amber-500" />
-          <QuickAction href="/accounting/accounts"   icon={BookOpen}  label="شجرة الحسابات" color="bg-rose-500" />
+          <QuickAction href="/invoices/new"     icon={Receipt}   label={t("pages.dashboard.newInvoice")}     color="bg-primary" />
+          <QuickAction href="/customers/new"    icon={Users}     label={t("pages.dashboard.newCustomer")}        color="bg-sky-500" />
+          <QuickAction href="/suppliers/new"    icon={Truck}     label={t("pages.dashboard.newSupplier")}        color="bg-indigo-500" />
+          <QuickAction href="/inventory/items"  icon={Package}   label={t("pages.dashboard.addItem")}        color="bg-emerald-500" />
+          <QuickAction href="/cash/receipt-vouchers" icon={Wallet}    label={t("pages.dashboard.receiptVoucher")}     color="bg-amber-500" />
+          <QuickAction href="/accounting/accounts"   icon={BookOpen}  label={t("pages.dashboard.chartOfAccounts")} color="bg-rose-500" />
         </div>
       </div>
 
@@ -222,8 +225,8 @@ export default function Dashboard() {
           <CardHeader className="pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle className="text-base">إحصائيات الإيرادات الشهرية</CardTitle>
-                <CardDescription className="text-xs">ملخص الإيرادات والضرائب لآخر 12 شهراً</CardDescription>
+                <CardTitle className="text-base">{t("pages.dashboard.monthlyRevenueStats")}</CardTitle>
+                <CardDescription className="text-xs">{t("pages.dashboard.monthlyStatsDesc")}</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -253,8 +256,8 @@ export default function Dashboard() {
                       }}
                     />
                     <Legend wrapperStyle={{ paddingTop: "16px", fontSize: "12px" }} />
-                    <Bar dataKey="الإيرادات" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={36} />
-                    <Bar dataKey="الضريبة" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                    <Bar dataKey={t("pages.dashboard.revenue")} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                    <Bar dataKey={t("pages.dashboard.vat")} fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} maxBarSize={36} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -266,11 +269,11 @@ export default function Dashboard() {
         <Card className="xl:col-span-1">
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-base">أحدث الفواتير</CardTitle>
-              <CardDescription className="text-xs">آخر العمليات المسجلة</CardDescription>
+              <CardTitle className="text-base">{t("pages.dashboard.recentInvoices")}</CardTitle>
+              <CardDescription className="text-xs">{t("pages.dashboard.recentInvoicesDesc")}</CardDescription>
             </div>
             <Button asChild variant="ghost" size="sm" className="h-7 text-xs gap-1">
-              <Link href="/invoices">عرض الكل <ArrowUpRight className="h-3 w-3" /></Link>
+              <Link href="/invoices">{t("pages.dashboard.viewAll")} <ArrowUpRight className="h-3 w-3" /></Link>
             </Button>
           </CardHeader>
           <CardContent className="px-0 pb-2">
@@ -286,7 +289,7 @@ export default function Dashboard() {
                   </div>
                 ))
               ) : !recentInvoices || recentInvoices.length === 0 ? (
-                <div className="p-6 text-center text-sm text-muted-foreground">لا توجد فواتير حديثة</div>
+                <div className="p-6 text-center text-sm text-muted-foreground">{t("pages.dashboard.noRecentInvoices")}</div>
               ) : (
                 recentInvoices.slice(0, 5).map(invoice => {
                   const statusStyle =
@@ -296,7 +299,11 @@ export default function Dashboard() {
                       ? "bg-amber-50 text-amber-700 border-amber-200"
                       : "bg-rose-50 text-rose-700 border-rose-200";
                   const statusText =
-                    invoice.status === "issued" ? "مصدرة" : invoice.status === "draft" ? "مسودة" : "ملغاة";
+                    invoice.status === "issued" 
+                      ? t("pages.dashboard.statusIssued") 
+                      : invoice.status === "draft" 
+                      ? t("pages.dashboard.statusDraft") 
+                      : t("pages.dashboard.statusCancelled");
                   return (
                     <Link
                       key={invoice.id}
@@ -315,7 +322,7 @@ export default function Dashboard() {
                         </div>
                         <div className="flex items-center justify-between gap-2 mt-0.5">
                           <p className="text-xs text-muted-foreground truncate">
-                            {invoice.customer?.nameAr || "عميل نقدي"}
+                            {invoice.customer?.nameAr || t("pages.dashboard.cashCustomer")}
                           </p>
                           <p className="text-xs font-semibold tabular-nums">{formatCurrency(invoice.grandTotal)}</p>
                         </div>

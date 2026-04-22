@@ -19,6 +19,7 @@ import {
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock",
@@ -28,22 +29,9 @@ const EMPTY = {
 };
 const UNIT_EMPTY = { unitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false };
 
-const ITEM_EXPORT_COLS = [
-  { key: "code",          header: "كود الصنف",       width: 16 },
-  { key: "nameAr",        header: "الاسم بالعربي",   width: 30 },
-  { key: "nameEn",        header: "الاسم بالإنجليزي", width: 30 },
-  { key: "barcode",       header: "باركود",           width: 18 },
-  { key: "itemType",      header: "النوع",             width: 12 },
-  { key: "groupName",     header: "المجموعة",          width: 20 },
-  { key: "unitName",      header: "الوحدة",            width: 14 },
-  { key: "costPrice",     header: "سعر التكلفة",       width: 16 },
-  { key: "salePrice",     header: "سعر البيع",         width: 16 },
-  { key: "reorderLevel",  header: "حد الطلب",          width: 14 },
-  { key: "status",        header: "الحالة",             width: 12 },
-];
-
 // ─── Item Unit Prices Panel ──────────────────────────────────────────────────
 function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -63,15 +51,15 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   const inv = () => qc.invalidateQueries({ queryKey: ["item-units", itemId] });
   const addMut = useMutation({
     mutationFn: (data: any) => inventoryApi.addItemUnit(itemId, data),
-    onSuccess: () => { inv(); setForm(UNIT_EMPTY); setShowUnitForm(false); toast({ title: "تمت إضافة الوحدة" }); },
+    onSuccess: () => { inv(); setForm(UNIT_EMPTY); setShowUnitForm(false); toast({ title: t("pages.items.unitAdded") }); },
   });
   const updMut = useMutation({
     mutationFn: ({ upId, data }: any) => inventoryApi.updateItemUnit(itemId, upId, data),
-    onSuccess: () => { inv(); setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(false); toast({ title: "تم التعديل" }); },
+    onSuccess: () => { inv(); setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(false); toast({ title: t("pages.items.updated") }); },
   });
   const delMut = useMutation({
     mutationFn: (upId: number) => inventoryApi.deleteItemUnit(itemId, upId),
-    onSuccess: () => { inv(); toast({ title: "تم الحذف" }); },
+    onSuccess: () => { inv(); toast({ title: t("pages.items.deleted") }); },
   });
 
   function handleEditUp(up: any) {
@@ -94,11 +82,11 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
       {/* Header + Add button */}
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          اربط الصنف بوحدات قياس متعددة مع تحديد معامل التحويل وسعر التكلفة والبيع لكل وحدة
+          {t("pages.items.unitPricesDescription")}
         </p>
         {!showUnitForm && (
           <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => { setForm(UNIT_EMPTY); setEditUpId(null); setShowUnitForm(true); }}>
-            <Plus className="h-3.5 w-3.5" />إضافة وحدة
+            <Plus className="h-3.5 w-3.5" />{t("pages.items.addUnit")}
           </Button>
         )}
       </div>
@@ -109,45 +97,45 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
           <form onSubmit={handleSubmitUp} className="space-y-3">
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">وحدة القياس *</Label>
+                <Label className="text-xs">{t("pages.items.unitLabel")}</Label>
                 <SearchCombobox
                   items={availableUnits.map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))}
                   value={form.unitId}
                   onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))}
-                  placeholder="— اختر وحدة —"
+                  placeholder={t("pages.items.chooseUnit")}
                   className="h-8 text-xs"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">معامل التحويل *</Label>
+                <Label className="text-xs">{t("pages.items.conversionFactorLabel")}</Label>
                 <Input className="h-8 text-xs" type="number" step="any" min="0.000001" value={form.conversionFactor} onChange={e => setForm((p: any) => ({ ...p, conversionFactor: e.target.value }))} required />
-                <p className="text-[10px] text-muted-foreground">عدد الوحدات الأساسية</p>
+                <p className="text-[10px] text-muted-foreground">{t("pages.items.conversionFactorHint")}</p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">سعر التكلفة</Label>
+                <Label className="text-xs">{t("pages.items.costPriceLabel")}</Label>
                 <Input className="h-8 text-xs" type="number" step="any" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">سعر البيع</Label>
+                <Label className="text-xs">{t("pages.items.salePriceLabel")}</Label>
                 <Input className="h-8 text-xs" type="number" step="any" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">وحدة أساسية؟</Label>
+                <Label className="text-xs">{t("pages.items.isBaseLabel")}</Label>
                 <div className="flex items-center gap-2 h-8">
                   <input type="checkbox" id="isbase" checked={form.isBase} onChange={e => setForm((p: any) => ({ ...p, isBase: e.target.checked }))} className="rounded" />
-                  <label htmlFor="isbase" className="text-xs text-muted-foreground">نعم (وحدة المرجع)</label>
+                  <label htmlFor="isbase" className="text-xs text-muted-foreground">{t("pages.items.isBaseYes")}</label>
                 </div>
               </div>
             </div>
             {/* Preview */}
             {form.unitId && form.conversionFactor && (
               <div className="text-xs bg-amber-50 border border-amber-100 rounded px-3 py-2 text-amber-800">
-                كل 1 من هذه الوحدة = <b>{Number(form.conversionFactor).toFixed(Number(form.conversionFactor) % 1 === 0 ? 0 : 4)}</b> وحدة أساسية في المخزون
+                {t("pages.items.unitConversionPreview", { factor: Number(form.conversionFactor).toFixed(Number(form.conversionFactor) % 1 === 0 ? 0 : 4) })}
               </div>
             )}
             <div className="flex gap-2 justify-end">
-              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowUnitForm(false); setEditUpId(null); }}>إلغاء</Button>
-              <Button type="submit" size="sm" className="h-7 text-xs" disabled={addMut.isPending || updMut.isPending}>{editUpId ? "حفظ" : "إضافة"}</Button>
+              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowUnitForm(false); setEditUpId(null); }}>{t("common.cancel")}</Button>
+              <Button type="submit" size="sm" className="h-7 text-xs" disabled={addMut.isPending || updMut.isPending}>{editUpId ? t("common.save") : t("common.add")}</Button>
             </div>
           </form>
         </div>
@@ -157,8 +145,8 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
       {isLoading ? <Skeleton className="h-16 w-full" /> : (unitPrices as any[]).length === 0 && !showUnitForm ? (
         <div className="text-center py-6 text-xs text-muted-foreground border border-dashed rounded-lg">
           <Ruler className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
-          <p>لم يتم ربط أي وحدات بهذا الصنف بعد</p>
-          <p className="mt-0.5 text-[10px]">انقر "إضافة وحدة" لتحديد وحدات التسعير</p>
+          <p>{t("pages.items.noUnitsLinked")}</p>
+          <p className="mt-0.5 text-[10px]">{t("pages.items.addUnitToDefinePricing")}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -166,7 +154,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
             <div key={up.id} className={cn("rounded-lg border p-3 bg-background flex flex-col gap-1 relative", up.isBase && "border-green-300 bg-green-50/40")}>
               {up.isBase && (
                 <span className="absolute top-2 left-2 flex items-center gap-0.5 text-[9px] font-bold text-green-700 bg-green-100 rounded-full px-1.5 py-0.5">
-                  <Star className="h-2.5 w-2.5" />أساسية
+                  <Star className="h-2.5 w-2.5" />{t("pages.items.base")}
                 </span>
               )}
               <div className="flex items-center gap-1.5 mb-0.5">
@@ -175,21 +163,21 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
               </div>
               <div className="grid grid-cols-3 gap-1 text-[10px]">
                 <div className="bg-muted/50 rounded px-1.5 py-1 text-center">
-                  <p className="text-muted-foreground">معامل</p>
+                  <p className="text-muted-foreground">{t("pages.items.factor")}</p>
                   <p className="font-bold tabular-nums">×{Number(up.conversionFactor).toFixed(Number(up.conversionFactor) % 1 === 0 ? 0 : 4)}</p>
                 </div>
                 <div className="bg-orange-50 rounded px-1.5 py-1 text-center">
-                  <p className="text-orange-600">تكلفة</p>
+                  <p className="text-orange-600">{t("pages.items.cost")}</p>
                   <p className="font-bold tabular-nums text-orange-800">{fmt(up.costPrice)}</p>
                 </div>
                 <div className="bg-blue-50 rounded px-1.5 py-1 text-center">
-                  <p className="text-blue-600">بيع</p>
+                  <p className="text-blue-600">{t("pages.items.sale")}</p>
                   <p className="font-bold tabular-nums text-blue-800">{fmt(up.salePrice)}</p>
                 </div>
               </div>
               <div className="flex gap-1 justify-end mt-1">
                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditUp(up)}><Pencil className="h-3 w-3" /></Button>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف وحدة التسعير؟")) delMut.mutate(up.id); }}><Trash2 className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteUnitPriceConfirm"))) delMut.mutate(up.id); }}><Trash2 className="h-3 w-3" /></Button>
               </div>
             </div>
           ))}
@@ -201,6 +189,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { fmt, fmtQty } = useFmt();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -234,9 +223,9 @@ export default function Items() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["items"] });
-  const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: "تم حفظ الصنف" }); } });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل الصنف" }); } });
-  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
+  const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); } });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); } });
+  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveItemTab("basic"); }
   function handleEdit(item: any) {
@@ -275,18 +264,32 @@ export default function Items() {
     return matchText && matchType;
   });
 
+  const ITEM_EXPORT_COLS = [
+    { key: "code",          header: t("pages.items.itemCode"),       width: 16 },
+    { key: "nameAr",        header: t("pages.items.nameAr"),   width: 30 },
+    { key: "nameEn",        header: t("pages.items.nameEn"), width: 30 },
+    { key: "barcode",       header: t("pages.items.barcode"),           width: 18 },
+    { key: "itemType",      header: t("common.status"),             width: 12 }, // Used for type here in original? Wait.
+    { key: "groupName",     header: t("pages.items.group"),          width: 20 },
+    { key: "unitName",      header: t("pages.items.unit"),            width: 14 },
+    { key: "costPrice",     header: t("pages.items.costPriceLabel"),       width: 16 },
+    { key: "salePrice",     header: t("pages.items.salePriceLabel"),         width: 16 },
+    { key: "reorderLevel",  header: t("pages.items.reorderLevel"),          width: 14 },
+    { key: "status",        header: t("common.status"),             width: 12 },
+  ];
+
   const exportRows = filtered.map((it: any) => ({
     code:         it.code,
     nameAr:       it.nameAr,
     nameEn:       it.nameEn ?? "",
     barcode:      it.barcode ?? "",
-    itemType:     it.itemType === "stock" ? "مخزني" : "خدمي",
+    itemType:     it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service"),
     groupName:    it.group?.nameAr ?? "",
     unitName:     it.unit?.nameAr ?? "",
     costPrice:    fmt(it.costPrice),
     salePrice:    fmt(it.salePrice),
     reorderLevel: fmtQty(it.reorderLevel),
-    status:       it.status === "active" ? "نشط" : "موقوف",
+    status:       it.status === "active" ? t("pages.items.active") : t("pages.items.inactive"),
   }));
 
   return (
@@ -294,13 +297,13 @@ export default function Items() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />الأصناف</h1>
-          <p className="text-muted-foreground text-sm mt-1">إدارة الأصناف المخزنية والخدمية — انقر على الصنف لإدارة وحدات التسعير والأرصدة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{t("pages.items.itemsTitle")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("pages.items.itemsSubtitle")}</p>
         </div>
         <div className="flex gap-2">
-          <ExportButtons rows={exportRows} columns={ITEM_EXPORT_COLS} filename={`أصناف-${new Date().toISOString().slice(0,10)}`} title="قائمة الأصناف" />
+          <ExportButtons rows={exportRows} columns={ITEM_EXPORT_COLS} filename={`${t("pages.items.itemsTitle")}-${new Date().toISOString().slice(0,10)}`} title={t("pages.items.itemsTitle")} />
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-            <Plus className="h-4 w-4" />صنف جديد
+            <Plus className="h-4 w-4" />{t("pages.items.newItem")}
           </Button>
         </div>
       </div>
@@ -308,69 +311,69 @@ export default function Items() {
       {showForm && (
         <FormPanel
           icon={Package}
-          title={editId ? "تعديل صنف" : "صنف جديد"}
-          subtitle="البيانات الأساسية، التسعير، والربط المحاسبي للصنف"
+          title={editId ? t("pages.items.editItem") : t("pages.items.newItem")}
+          subtitle={t("pages.items.itemFormSubtitle")}
           width="4xl"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
           saveDisabled={!form.code || !form.nameAr}
-          saveLabel={editId ? "حفظ التعديل" : "إضافة الصنف"}
+          saveLabel={editId ? t("pages.items.saveEdit") : t("pages.items.addItem")}
         >
           <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
             <TabsList className="w-full h-9 mb-5">
-              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />البيانات الأساسية</TabsTrigger>
-              <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />التسعير والتحكم</TabsTrigger>
-              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />الربط المحاسبي</TabsTrigger>
+              <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
+              <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("pages.items.pricingAndControl")}</TabsTrigger>
+              <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
             </TabsList>
             <TabsContent value="basic" className="mt-0">
               <FormGrid>
-                <Field label="كود الصنف" required><Input placeholder="ITM-001" dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
-                <Field label="الاسم بالعربي" required><Input placeholder="اسم الصنف" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
-                <Field label="الاسم بالإنجليزي"><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
-                <Field label="باركود"><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
-                <Field label="نوع الصنف">
-                  <SearchCombobox items={[{ value: "stock", label: "مخزني" }, { value: "service", label: "خدمي" }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder="نوع الصنف" />
+                <Field label={t("pages.items.itemCode")} required><Input placeholder="ITM-001" dir="ltr" className="text-left" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} /></Field>
+                <Field label={t("pages.items.nameAr")} required><Input placeholder={t("pages.items.nameAr")} value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} /></Field>
+                <Field label={t("pages.items.nameEn")}><Input placeholder="Item Name" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} /></Field>
+                <Field label={t("pages.items.barcode")}><Input placeholder="1234567890" dir="ltr" className="text-left" value={form.barcode} onChange={e => setForm((p: any) => ({ ...p, barcode: e.target.value }))} /></Field>
+                <Field label={t("pages.items.itemType")}>
+                  <SearchCombobox items={[{ value: "stock", label: t("pages.items.stock") }, { value: "service", label: t("pages.items.service") }]} value={form.itemType} onValueChange={v => setForm((p: any) => ({ ...p, itemType: v }))} placeholder={t("pages.items.itemType")} />
                 </Field>
-                <Field label="المجموعة">
-                  <SearchCombobox items={[{ value: "", label: "بدون مجموعة" }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder="— اختر مجموعة —" />
+                <Field label={t("pages.items.group")}>
+                  <SearchCombobox items={[{ value: "", label: t("pages.items.noGroup") }, ...(groups as any[]).map((g: any) => ({ value: String(g.id), code: g.code, label: g.nameAr, labelEn: g.nameEn }))]} value={form.groupId} onValueChange={v => setForm((p: any) => ({ ...p, groupId: v }))} placeholder={t("pages.items.chooseGroup")} />
                 </Field>
-                <Field label="وحدة القياس الأساسية" hint="وحدات التسعير المتعددة تُضاف بعد حفظ الصنف">
-                  <SearchCombobox items={[{ value: "", label: "— بدون وحدة —" }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder="— اختر وحدة —" />
+                <Field label={t("pages.items.baseUnit")} hint={t("pages.items.baseUnitHint")}>
+                  <SearchCombobox items={[{ value: "", label: t("pages.items.chooseUnit") }, ...(units as any[]).map((u: any) => ({ value: String(u.id), code: u.code, label: u.nameAr }))]} value={form.unitId} onValueChange={v => setForm((p: any) => ({ ...p, unitId: v }))} placeholder={t("pages.items.chooseUnit")} />
                 </Field>
-                <Field label="الحالة">
-                  <SearchCombobox items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder="الحالة" />
+                <Field label={t("common.status")}>
+                  <SearchCombobox items={[{ value: "active", label: t("pages.items.active") }, { value: "inactive", label: t("pages.items.inactive") }]} value={form.status} onValueChange={v => setForm((p: any) => ({ ...p, status: v }))} placeholder={t("common.status")} />
                 </Field>
               </FormGrid>
             </TabsContent>
             <TabsContent value="pricing" className="mt-0 space-y-6">
               <div>
-                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">التسعير الافتراضي</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.defaultPricing")}</p>
                 <FormGrid>
-                  <Field label="سعر التكلفة"><Input type="number" step="any" dir="ltr" className="text-left" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></Field>
-                  <Field label="سعر البيع"><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
-                  <Field label="نسبة الضريبة %"><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
-                  <Field label="طريقة احتساب التكلفة">
-                    <SearchCombobox items={[{ value: "weighted_avg", label: "متوسط مرجح" }, { value: "last_cost", label: "آخر سعر" }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder="طريقة التكلفة" />
+                  <Field label={t("pages.items.costPriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.costPrice} onChange={e => setForm((p: any) => ({ ...p, costPrice: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.salePriceLabel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.salePrice} onChange={e => setForm((p: any) => ({ ...p, salePrice: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.vatRate")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.costMethod")}>
+                    <SearchCombobox items={[{ value: "weighted_avg", label: t("pages.items.weightedAvg") }, { value: "last_cost", label: t("pages.items.lastCost") }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder={t("pages.items.costMethodPlaceholder")} />
                   </Field>
                 </FormGrid>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">بيانات التحكم</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">{t("pages.items.controlData")}</p>
                 <FormGrid>
-                  <Field label="حد الطلب"><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
-                  <Field label="الحد الأقصى للمخزون"><Input type="number" step="any" placeholder="اختياري" dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
-                  <Field label="ملاحظات / وصف" className="md:col-span-2"><Input placeholder="وصف الصنف" value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.reorderLevel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.maxStockLevel")}><Input type="number" step="any" placeholder={t("pages.items.optional")} dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
+                  <Field label={t("pages.items.notesDescription")} className="md:col-span-2"><Input placeholder={t("pages.items.descriptionPlaceholder")} value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
                 </FormGrid>
               </div>
             </TabsContent>
             <TabsContent value="accounts" className="mt-0">
               <FormGrid>
-                <Field label="حساب التكلفة">
-                  <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder="— اختر حساب التكلفة —" filterTypes={["expense", "asset"]} grouped={false} />
+                <Field label={t("pages.items.costAccount")}>
+                  <AccountCombobox value={form.costAccountId} onValueChange={v => setForm((p: any) => ({ ...p, costAccountId: v }))} placeholder={t("pages.items.chooseCostAccount")} filterTypes={["expense", "asset"]} grouped={false} />
                 </Field>
-                <Field label="حساب الإيراد">
-                  <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder="— اختر حساب الإيراد —" filterTypes={["revenue"]} grouped={false} />
+                <Field label={t("pages.items.revenueAccount")}>
+                  <AccountCombobox value={form.revenueAccountId} onValueChange={v => setForm((p: any) => ({ ...p, revenueAccountId: v }))} placeholder={t("pages.items.chooseRevenueAccount")} filterTypes={["revenue"]} grouped={false} />
                 </Field>
               </FormGrid>
             </TabsContent>
@@ -382,12 +385,12 @@ export default function Items() {
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pr-9" placeholder="بحث بالكود أو الاسم أو الباركود..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Input className="pr-9" placeholder={t("pages.items.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="flex gap-1 bg-muted/50 p-1 rounded-lg border">
-          {(["all", "stock", "service"] as const).map(t => (
-            <button key={t} onClick={() => setFilterType(t)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium transition-all", filterType === t ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}>
-              {t === "all" ? "الكل" : t === "stock" ? "مخزني" : "خدمي"}
+          {(["all", "stock", "service"] as const).map(ti => (
+            <button key={ti} onClick={() => setFilterType(ti)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium transition-all", filterType === ti ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}>
+              {ti === "all" ? t("pages.items.all") : ti === "stock" ? t("pages.items.stock") : t("pages.items.service")}
             </button>
           ))}
         </div>
@@ -399,22 +402,22 @@ export default function Items() {
           <thead className="bg-muted/50 border-b">
             <tr>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8"></th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الكود</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المجموعة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">الوحدة الأساسية</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">التكلفة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">سعر البيع</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">النوع</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">إجراءات</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.code")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.item")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("pages.items.group")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.items.baseUnit")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">{t("pages.items.cost")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">{t("pages.items.sale")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("pages.items.itemType")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{t("common.status")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {isLoading
               ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={10} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
-              ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد أصناف{search ? " مطابقة للبحث" : ""}</td></tr>
+              ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
               : filtered.map((it: any) => (
                   <Fragment key={it.id}>
                     <tr className="hover:bg-muted/30">
@@ -439,18 +442,18 @@ export default function Items() {
                       <td className="px-4 py-3 hidden lg:table-cell tabular-nums text-xs font-medium">{fmt(it.salePrice)}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.itemType === "stock" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700")}>
-                          {it.itemType === "stock" ? "مخزني" : "خدمي"}
+                          {it.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", it.status === "active" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-500")}>
-                          {it.status === "active" ? "نشط" : "موقوف"}
+                          {it.status === "active" ? t("pages.items.active") : t("pages.items.inactive")}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(it)}><Pencil className="h-3.5 w-3.5" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("حذف الصنف؟")) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteItemConfirm"))) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -465,21 +468,21 @@ export default function Items() {
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
                                 expandedTab === "balances" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
                             >
-                              <Warehouse className="h-3.5 w-3.5" />أرصدة المخازن
+                              <Warehouse className="h-3.5 w-3.5" />{t("pages.items.warehouseBalances")}
                             </button>
                             <button
                               onClick={() => setExpandedTab("units")}
                               className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
                                 expandedTab === "units" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
                             >
-                              <Ruler className="h-3.5 w-3.5" />وحدات التسعير
+                              <Ruler className="h-3.5 w-3.5" />{t("pages.items.unitPrices")}
                             </button>
                           </div>
 
                           {expandedTab === "balances" && (
                             <>
                               {!itemDetail?.balances?.length
-                                ? <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg"><Warehouse className="h-6 w-6 mx-auto mb-1.5 opacity-30" />لا توجد أرصدة مسجّلة</p>
+                                ? <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg"><Warehouse className="h-6 w-6 mx-auto mb-1.5 opacity-30" />{t("pages.items.noBalancesRegistered")}</p>
                                 : (
                                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                                     {itemDetail.balances.map((b: any) => (
@@ -489,12 +492,12 @@ export default function Items() {
                                           <span className="text-lg font-bold tabular-nums">{fmtQty(b.qty)}</span>
                                           <span className="text-xs text-muted-foreground mb-0.5">{it.unit?.code ?? ""}</span>
                                         </div>
-                                        <p className="text-[10px] text-muted-foreground">متوسط التكلفة: {fmt(b.avgCost)} ر.س</p>
+                                        <p className="text-[10px] text-muted-foreground">{t("pages.items.avgCost")}: {fmt(b.avgCost)} {t("pages.items.sar")}</p>
                                         {Number(b.qty) < Number(it.reorderLevel) && Number(b.qty) >= 0 && (
-                                          <p className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />دون حد الطلب</p>
+                                          <p className="text-[10px] text-amber-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />{t("pages.items.belowReorderLevel")}</p>
                                         )}
                                         {Number(b.qty) < 0 && (
-                                          <p className="text-[10px] text-red-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />رصيد سالب</p>
+                                          <p className="text-[10px] text-red-600 flex items-center gap-0.5 mt-0.5"><AlertTriangle className="h-2.5 w-2.5" />{t("pages.items.negativeBalance")}</p>
                                         )}
                                       </div>
                                     ))}
@@ -515,7 +518,7 @@ export default function Items() {
         </table>
         {!isLoading && (
           <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length} صنف من {items.length} — انقر على السهم لإدارة وحدات التسعير وأرصدة المخازن
+            {t("pages.items.itemsCount", { filtered: filtered.length, total: items.length })}
           </div>
         )}
       </div>
