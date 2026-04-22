@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer, Undo2 } from "lucide-react";
+import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer, Undo2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -214,6 +214,11 @@ export default function PurchaseInvoices() {
                           <Button variant="ghost" size="icon" className="h-7 w-7" title="عرض / تعديل"
                             onClick={() => navigate(`/purchasing/invoices/${inv.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            title="نسخة مماثلة"
+                            onClick={() => navigate(`/purchasing/invoices/new?from=${inv.id}`)}>
+                            <Copy className="h-3.5 w-3.5" />
                           </Button>
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10"
                             title="طباعة الفاتورة"

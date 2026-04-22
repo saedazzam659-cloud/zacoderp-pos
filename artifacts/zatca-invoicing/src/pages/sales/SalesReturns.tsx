@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -320,6 +320,56 @@ export default function SalesReturns() {
           }))
         : [newLine()]);
       setShowForm(true);
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    }
+  }
+
+  async function duplicateReturn(id: number) {
+    try {
+      const res = await fetch(`${API}/api/sales/sales-returns/${id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "تعذر تحميل المرتجع"); }
+      const r = await res.json();
+      setEditingId(null);
+      setForm({
+        docNumber: "",
+        returnDate: today(),
+        customerId: r.customerId ? String(r.customerId) : "",
+        invoiceId: r.invoiceId ? String(r.invoiceId) : "",
+        branchId: r.branchId ? String(r.branchId) : "",
+        currencyCode: r.currencyCode ?? "SAR",
+        exchangeRate: String(r.exchangeRate ?? "1"),
+        paymentType: r.paymentType ?? "credit",
+        cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "",
+        discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
+        notes: r.notes ?? "",
+        priceIncludesVat: !!r.priceIncludesVat,
+        salesAccountId:     r.salesAccountId     ? String(r.salesAccountId)     : "",
+        cogsAccountId:      r.cogsAccountId      ? String(r.cogsAccountId)      : "",
+        inventoryAccountId: r.inventoryAccountId ? String(r.inventoryAccountId) : "",
+        taxAccountId:       r.taxAccountId       ? String(r.taxAccountId)       : "",
+        discountAccountId:  r.discountAccountId  ? String(r.discountAccountId)  : "",
+      });
+      setLines((r.lines ?? []).length
+        ? r.lines.map((l: any) => ({
+            _id: crypto.randomUUID(),
+            itemId: l.itemId ? String(l.itemId) : "",
+            itemName: l.itemName ?? "",
+            itemCode: l.itemCode ?? "",
+            unit: l.unit ?? "",
+            unitId: l.unitId ? String(l.unitId) : "",
+            conversionFactor: String(l.conversionFactor ?? "1"),
+            warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+            qty: String(l.qty ?? "1"),
+            unitPrice: String(l.unitPrice ?? "0"),
+            discount: String(l.discount ?? "0"),
+            vatRate: String(l.vatRate ?? "15"),
+            lineTotal: String(l.lineTotal ?? "0"),
+            notes: l.notes ?? "",
+          }))
+        : [newLine()]);
+      setShowForm(true);
+      toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
     } catch (e: any) {
       toast({ title: e.message, variant: "destructive" });
     }
@@ -799,6 +849,11 @@ export default function SalesReturns() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         )}
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          title="نسخة مماثلة"
+                          onClick={() => duplicateReturn(r.id)}>
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
                         {r.status === "draft" && (
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
                             onClick={() => { if (confirm("ترحيل المرتجع؟ سيتم زيادة رصيد المخزون.")) postMut.mutate(r.id); }}>

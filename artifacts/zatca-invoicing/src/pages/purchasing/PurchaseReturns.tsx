@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, Calculator, FileText, ListOrdered } from "lucide-react";
+import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, Calculator, FileText, ListOrdered, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -291,6 +291,52 @@ export default function PurchaseReturns() {
         notes:       l.notes ?? "",
       })) : [newLine()]);
       setShowForm(true);
+    } catch (e: any) {
+      toast({ title: e.message || "خطأ في التحميل", variant: "destructive" });
+    }
+  }
+
+  async function duplicateReturn(retId: number) {
+    try {
+      const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
+      if (!res.ok) { toast({ title: "تعذّر تحميل المرتجع", variant: "destructive" }); return; }
+      const full = await res.json();
+      setEditingId(null);
+      setForm({
+        docNumber:    "",
+        returnDate:   today(),
+        supplierId:   full.supplierId ? String(full.supplierId) : "",
+        branchId:     full.branchId   ? String(full.branchId)   : "",
+        invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
+        paymentType:  full.paymentType ?? "credit",
+        cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
+        currencyCode: full.currencyCode ?? "",
+        exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
+        notes:        full.notes ?? "",
+        discountAmount: String(full.discountAmount ?? "0"),
+        priceIncludesVat: !!full.priceIncludesVat,
+        inventoryAccountId: full.inventoryAccountId ? String(full.inventoryAccountId) : "",
+        taxAccountId:       full.taxAccountId       ? String(full.taxAccountId)       : "",
+        discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
+      });
+      setLines((full.lines ?? []).length ? full.lines.map((l: any) => ({
+        _id:         crypto.randomUUID(),
+        itemId:      l.itemId      ? String(l.itemId)      : "",
+        itemName:    l.itemName    ?? "",
+        itemCode:    l.itemCode    ?? "",
+        unitId:      l.unitId      ? String(l.unitId)      : "",
+        unit:        l.unit        ?? "",
+        conversionFactor: String(l.conversionFactor ?? "1"),
+        warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+        qty:         String(l.qty ?? "1"),
+        unitPrice:   String(l.unitPrice ?? "0"),
+        discount:    String(l.discount ?? "0"),
+        vatRate:     String(l.vatRate   ?? "15"),
+        lineTotal:   String(l.lineTotal ?? "0"),
+        notes:       l.notes ?? "",
+      })) : [newLine()]);
+      setShowForm(true);
+      toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
     } catch (e: any) {
       toast({ title: e.message || "خطأ في التحميل", variant: "destructive" });
     }
@@ -979,6 +1025,10 @@ export default function PurchaseReturns() {
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       )}
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                        title="نسخة مماثلة" onClick={() => duplicateReturn(r.id)}>
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
                       {r.status === "draft" && (
                         <Button
                           variant="outline" size="sm"

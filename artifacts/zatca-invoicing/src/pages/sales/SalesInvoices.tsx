@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2 } from "lucide-react";
+import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -180,6 +180,11 @@ export default function SalesInvoices() {
                           <Button variant="ghost" size="icon" className="h-7 w-7" title="عرض / تعديل"
                             onClick={() => navigate(`/sales/invoices/${inv.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            title="نسخة مماثلة"
+                            onClick={() => navigate(`/sales/invoices/new?from=${inv.id}`)}>
+                            <Copy className="h-3.5 w-3.5" />
                           </Button>
                           {inv.status === "posted" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-600 hover:text-orange-700 hover:bg-orange-50"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -291,6 +291,64 @@ export default function PurchaseInvoiceForm() {
       notes:       l.notes ?? "",
     })) : [newLine()]);
   }, [existing]);
+
+  // ── Duplicate from another invoice (?from=<id> on /new) ──
+  const duplicatedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew || duplicatedRef.current || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    const fromId = params.get("from");
+    if (!fromId) return;
+    duplicatedRef.current = true;
+
+    (async () => {
+      try {
+        const r = await fetch(`${API}/api/purchasing/purchase-invoices/${fromId}?companyId=${cid}`, { headers: authH });
+        if (!r.ok) return;
+        const src = await r.json();
+        setDocNumber("");
+        setInvoiceDate(today());
+        setSupplierId(src.supplierId ? String(src.supplierId) : "");
+        setBranchId(src.branchId ? String(src.branchId) : "");
+        setPaymentType(src.paymentType ?? "credit");
+        setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
+        setCurrencyCode(src.currencyCode ?? "SAR");
+        setExchangeRate(String(src.exchangeRate ?? "1"));
+        setLcId(src.lcId ? String(src.lcId) : "");
+        setDistMethod(src.distributionMethod ?? "value");
+        setNotes(src.notes ?? "");
+        setDocDiscount(String(src.discountAmount ?? "0"));
+        setPriceIncludesVat(!!src.priceIncludesVat);
+        setInventoryAccountId(src.inventoryAccountId ? String(src.inventoryAccountId) : "");
+        setTaxAccountId(src.taxAccountId ? String(src.taxAccountId) : "");
+        setDiscountAccountId(src.discountAccountId ? String(src.discountAccountId) : "");
+        setLines(src.lines?.length ? src.lines.map((l: any) => ({
+          _id: crypto.randomUUID(),
+          itemId:      l.itemId      ? String(l.itemId)      : "",
+          itemName:    l.itemName    ?? "",
+          itemCode:    l.itemCode    ?? "",
+          unitId:      l.unitId      ? String(l.unitId)      : "",
+          unit:        l.unit        ?? "",
+          conversionFactor: String(l.conversionFactor ?? "1"),
+          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+          qty:         String(l.qty),
+          weight:      String(l.weight ?? "0"),
+          unitPrice:   String(l.unitPrice),
+          discount:    String(l.discount ?? "0"),
+          vatRate:     String(l.vatRate ?? "15"),
+          lineTotal:   String(l.lineTotal),
+          expenseShare:String(l.expenseShare ?? "0"),
+          finalCost:   String(l.finalCost ?? "0"),
+          notes:       l.notes ?? "",
+        })) : [newLine()]);
+        toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
+        const url = new URL(window.location.href);
+        url.searchParams.delete("from");
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, user, cid]);
 
   // ── Line helpers ─────────────────────────────────────────
   function updateLine(id: string, field: keyof InvoiceLine, value: string) {

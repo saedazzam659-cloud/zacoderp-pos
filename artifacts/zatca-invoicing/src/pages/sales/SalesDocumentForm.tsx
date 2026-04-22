@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -275,6 +275,64 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       notes:       l.notes ?? "",
     })) : [newLine()]);
   }, [existing]);
+
+  // ── Duplicate from another document (?from=<id> on /new) ──
+  const duplicatedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew || duplicatedRef.current || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    const fromId = params.get("from");
+    if (!fromId) return;
+    duplicatedRef.current = true;
+
+    (async () => {
+      try {
+        const r = await fetch(`${API}/api/sales/${apiPath}/${fromId}?companyId=${cid}`, { headers: authH });
+        if (!r.ok) return;
+        const src = await r.json();
+        setDocNumber("");
+        setDocDate(today());
+        if (!isInvoice) setValidUntil("");
+        setCustomerId(src.customerId ? String(src.customerId) : "");
+        if (isInvoice) setBranchId(src.branchId ? String(src.branchId) : "");
+        if (isInvoice) setPaymentType(src.paymentType ?? "credit");
+        if (isInvoice) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
+        setCurrencyCode(src.currencyCode ?? "SAR");
+        setExchangeRate(String(src.exchangeRate ?? "1"));
+        setNotes(src.notes ?? "");
+        setPriceIncludesVat(!!src.priceIncludesVat);
+        setDocDiscount(String(src.discountAmount ?? "0"));
+        if (isInvoice) {
+          setCogsAccountId(src.cogsAccountId ? String(src.cogsAccountId) : "");
+          setInventoryAccountId(src.inventoryAccountId ? String(src.inventoryAccountId) : "");
+          setSalesAccountId(src.salesAccountId ? String(src.salesAccountId) : "");
+          setTaxAccountId(src.taxAccountId ? String(src.taxAccountId) : "");
+          setDiscountAccountId(src.discountAccountId ? String(src.discountAccountId) : "");
+        }
+        setLines(src.lines?.length ? src.lines.map((l: any) => ({
+          _id: crypto.randomUUID(),
+          itemId:      l.itemId      ? String(l.itemId)      : "",
+          itemName:    l.itemName    ?? "",
+          itemCode:    l.itemCode    ?? "",
+          unitId:      l.unitId      ? String(l.unitId)      : "",
+          unit:        l.unit        ?? "",
+          conversionFactor: String(l.conversionFactor ?? "1"),
+          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+          qty:         String(l.qty),
+          unitPrice:   String(l.unitPrice),
+          discount:    String(l.discount ?? "0"),
+          vatRate:     String(l.vatRate ?? "15"),
+          lineTotal:   String(l.lineTotal),
+          notes:       l.notes ?? "",
+        })) : [newLine()]);
+        toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
+        const url = new URL(window.location.href);
+        url.searchParams.delete("from");
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, user, cid]);
 
   function updateLine(id: string, field: keyof DocLine, value: string) {
     setLines(prev => prev.map(l => {
