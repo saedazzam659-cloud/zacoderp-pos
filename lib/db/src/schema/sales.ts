@@ -82,6 +82,7 @@ export const salesReturnsTable = pgTable("sales_returns", {
   totalAmount:  numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   vatAmount:    numeric("vat_amount",   { precision: 15, scale: 2 }).notNull().default("0"),
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
   cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),

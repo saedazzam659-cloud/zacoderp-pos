@@ -513,7 +513,7 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, discountAmount, notes, lines,
+            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
@@ -533,6 +533,7 @@ router.post("/sales-returns", async (req, res) => {
       totalAmount: totalR.toFixed(2),
       vatAmount: String(vatAmount || "0"),
       discountAmount: discR.toFixed(2),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft", notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -570,7 +571,7 @@ router.put("/sales-returns/:id", async (req, res) => {
     if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
 
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, discountAmount, notes, lines,
+            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
@@ -591,6 +592,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       totalAmount: totalR2.toFixed(2),
       vatAmount: String(vatAmount || "0"),
       discountAmount: discR2.toFixed(2),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,

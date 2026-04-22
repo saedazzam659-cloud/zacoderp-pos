@@ -280,7 +280,7 @@ router.post("/purchase-invoices", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
-            totalAmount, notes, lines,
+            totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
@@ -300,6 +300,7 @@ router.post("/purchase-invoices", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalExpensesLoaded: String(totalExpensesLoaded || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
@@ -336,7 +337,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
-            totalAmount, notes, lines,
+            totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
@@ -355,6 +356,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       discountAmount: String(discountAmount || "0"),
       totalExpensesLoaded: String(totalExpensesLoaded || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
@@ -628,7 +630,7 @@ router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
-            currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines,
+            currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
@@ -646,6 +648,7 @@ router.post("/purchase-returns", async (req, res) => {
       totalAmount: String(totalAmount || "0"),
       vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
@@ -676,7 +679,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
-            currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines,
+            currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
       .where(and(eq(purchaseReturnsTable.id, id), eq(purchaseReturnsTable.companyId, cid)));
@@ -697,6 +700,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
       totalAmount: String(totalAmount || "0"),
       vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,

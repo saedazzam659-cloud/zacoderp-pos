@@ -49,6 +49,7 @@ const EMPTY = {
   paymentType: "credit", cashBoxId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
+  priceIncludesVat: false,
   inventoryAccountId: "", taxAccountId: "", discountAccountId: "",
 };
 
@@ -248,6 +249,7 @@ export default function PurchaseReturns() {
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
         notes:        full.notes ?? "",
         discountAmount: String(full.discountAmount ?? "0"),
+        priceIncludesVat: !!full.priceIncludesVat,
         inventoryAccountId: full.inventoryAccountId ? String(full.inventoryAccountId) : "",
         taxAccountId:       full.taxAccountId       ? String(full.taxAccountId)       : "",
         discountAccountId:  full.discountAccountId  ? String(full.discountAccountId)  : "",
@@ -342,6 +344,7 @@ export default function PurchaseReturns() {
           exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
           discountAmount: "0",
+          priceIncludesVat: !!inv.priceIncludesVat,
           inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
           taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : "",
           discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : "",
@@ -372,18 +375,41 @@ export default function PurchaseReturns() {
   }, [user, currencies.length]);
 
   // ── Line helpers ─────────────────────────────────────────
-  function calcLineTotal(l: ReturnLine) {
-    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - (Number(l.discount) || 0) / 100);
-    return sub * (1 + (Number(l.vatRate) || 0) / 100);
+  function calcLineTotal(l: ReturnLine, priceIncludesVat = false) {
+    const qty   = Number(l.qty) || 0;
+    const price = Number(l.unitPrice) || 0;
+    const disc  = Number(l.discount) || 0;
+    const rate  = (Number(l.vatRate) || 0) / 100;
+    const gross = qty * price * (1 - disc / 100);
+    if (priceIncludesVat) return gross;
+    return gross * (1 + rate);
+  }
+  function calcLineParts(l: ReturnLine, priceIncludesVat = false) {
+    const qty   = Number(l.qty) || 0;
+    const price = Number(l.unitPrice) || 0;
+    const disc  = Number(l.discount) || 0;
+    const rate  = (Number(l.vatRate) || 0) / 100;
+    const gross = qty * price * (1 - disc / 100);
+    if (priceIncludesVat) {
+      const net = rate > -1 ? gross / (1 + rate) : gross;
+      return { subtotal: net, vat: gross - net, lineTotal: gross };
+    }
+    const vat = gross * rate;
+    return { subtotal: gross, vat, lineTotal: gross + vat };
   }
 
   function updateLine(id: string, field: keyof ReturnLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
       const u = { ...l, [field]: value };
-      return { ...u, lineTotal: calcLineTotal(u).toFixed(2) };
+      return { ...u, lineTotal: calcLineTotal(u, !!form.priceIncludesVat).toFixed(2) };
     }));
   }
+
+  useEffect(() => {
+    setLines(prev => prev.map(l => ({ ...l, lineTotal: calcLineTotal(l, !!form.priceIncludesVat).toFixed(2) })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.priceIncludesVat]);
 
   // Cache item-specific unit prices: itemId → rows
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
@@ -408,7 +434,7 @@ export default function PurchaseReturns() {
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: row?.costPrice != null ? String(row.costPrice) : l.unitPrice,
       };
-      return { ...updated, lineTotal: calcLineTotal(updated).toFixed(2) };
+      return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));
   }
 
@@ -431,18 +457,16 @@ export default function PurchaseReturns() {
         unitPrice: String(base?.costPrice ?? item.costPrice ?? "0"),
         vatRate:   String(item.vatRate ?? "15"),
       };
-      return { ...updated, lineTotal: calcLineTotal(updated).toFixed(2) };
+      return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));
   }
 
+  const priceIncludesVat = !!form.priceIncludesVat;
   const grossTotal  = lines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
-  const vatAmount   = lines.reduce((s, l) => {
-    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - (Number(l.discount) || 0) / 100);
-    return s + sub * ((Number(l.vatRate) || 0) / 100);
-  }, 0);
+  const vatAmount   = lines.reduce((s, l) => s + calcLineParts(l, priceIncludesVat).vat, 0);
   const lineDiscountTotal = lines.reduce((s, l) => {
-    const noDisc   = calcLineTotal({ ...l, discount: "0" });
-    const withDisc = calcLineTotal(l);
+    const noDisc   = calcLineTotal({ ...l, discount: "0" }, priceIncludesVat);
+    const withDisc = calcLineTotal(l, priceIncludesVat);
     return s + Math.max(0, noDisc - withDisc);
   }, 0);
   const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(form.discountAmount) || 0));
@@ -841,8 +865,37 @@ export default function PurchaseReturns() {
             </div>
 
             {/* Totals */}
-            <div className="flex justify-end">
+            <div className="mt-5 flex flex-wrap justify-between gap-4">
+              <label
+                data-testid="price-includes-vat-toggle"
+                className={cn(
+                  "flex items-start gap-2.5 rounded-xl border-2 p-3 cursor-pointer select-none transition-colors max-w-sm",
+                  priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                )}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
+                  checked={priceIncludesVat}
+                  onChange={e => setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }))}
+                />
+                <div className="space-y-0.5">
+                  <p className="text-xs font-semibold">السعر شامل الضريبة</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    {priceIncludesVat
+                      ? "السعر المُدخل يتضمن الضريبة — يستخرج النظام قيمة الضريبة من المبلغ"
+                      : "السعر المُدخل بدون ضريبة — يضيف النظام الضريبة فوق المبلغ"}
+                  </p>
+                </div>
+              </label>
+
               <div className="w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
+                  <span>طريقة الحساب</span>
+                  <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                    {priceIncludesVat ? "شامل الضريبة" : "غير شامل الضريبة"}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">المجموع شامل الضريبة</span>
                   <span className="font-mono">{fmt(grossTotal)}</span>
@@ -859,7 +912,7 @@ export default function PurchaseReturns() {
                 )}
                 <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
-                  <span>الإجمالي</span>
+                  <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
                   <span className="font-mono text-primary">{fmt(totalAmount)}</span>
                 </div>
                 {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
