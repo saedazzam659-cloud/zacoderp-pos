@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { Link } from "wouter";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -23,13 +23,28 @@ import {
   ShoppingBag,
   X,
   Check,
+  LogOut,
+  Loader2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { categories, products, type PosProduct } from "@/lib/posData";
+import {
+  api,
+  getStoredUser,
+  getToken,
+  clearAuth,
+  type Item,
+  type ItemGroup,
+  type CashBox,
+  type Branch,
+  type Warehouse,
+  type AuthUser,
+  type SalesInvoice,
+  type CreateInvoiceLine,
+} from "@/lib/api";
 
 type CartLine = {
-  product: PosProduct;
+  item: Item;
   qty: number;
 };
 
@@ -42,19 +57,63 @@ function formatSAR(n: number) {
   }).format(n);
 }
 
+function emojiFor(item: Item): string {
+  const name = (item.nameAr || "").toLowerCase();
+  if (/قهوة|coffee/.test(name)) return "☕";
+  if (/شاي|tea/.test(name)) return "🍵";
+  if (/خبز|عيش|bread/.test(name)) return "🥖";
+  if (/تمر|date/.test(name)) return "🌴";
+  if (/حليب|milk/.test(name)) return "🥛";
+  if (/ماء|water/.test(name)) return "💧";
+  if (/عصير|juice/.test(name)) return "🧃";
+  if (/أرز|rice/.test(name)) return "🍚";
+  if (/دجاج|chicken/.test(name)) return "🍗";
+  if (/لحم|meat/.test(name)) return "🥩";
+  if (/برج|burger/.test(name)) return "🍔";
+  if (/ساندو/.test(name)) return "🥪";
+  if (/شوكو|chocolate/.test(name)) return "🍫";
+  if (/كيك|cake/.test(name)) return "🍰";
+  if (/فاكهة|fruit/.test(name)) return "🍎";
+  if (/خضار/.test(name)) return "🥦";
+  if (/ملابس|قميص/.test(name)) return "👕";
+  if (/جوال|هاتف/.test(name)) return "📱";
+  return "📦";
+}
+
 export default function CashierPage() {
-  const [activeCat, setActiveCat] = useState("all");
+  const [, navigate] = useLocation();
+  const [user, setUser] = useState<AuthUser | null>(getStoredUser());
+  const [items, setItems] = useState<Item[]>([]);
+  const [groups, setGroups] = useState<ItemGroup[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [cashBoxes, setCashBoxes] = useState<CashBox[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [activeCat, setActiveCat] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [discountPct, setDiscountPct] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
   const [paid, setPaid] = useState(false);
   const [paidMethod, setPaidMethod] = useState<string | null>(null);
+  const [lastInvoice, setLastInvoice] = useState<SalesInvoice | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [online, setOnline] = useState(
     typeof navigator !== "undefined" ? navigator.onLine : true,
   );
   const [time, setTime] = useState(new Date());
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
+  // Auth gate
+  useEffect(() => {
+    if (!getToken()) {
+      navigate("/login");
+    }
+  }, [navigate]);
+
+  // Online + clock
   useEffect(() => {
     const onO = () => setOnline(true);
     const onF = () => setOnline(false);
@@ -68,44 +127,115 @@ export default function CashierPage() {
     };
   }, []);
 
+  // Load reference + catalog data
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!user) {
+          const me = await api.me();
+          if (!alive) return;
+          setUser(me);
+        }
+        const cid = (user?.companyId ?? getStoredUser()?.companyId) as
+          | number
+          | null
+          | undefined;
+        if (!cid) {
+          setLoadError("لا توجد شركة مرتبطة بحسابك. تواصل مع المدير.");
+          setLoading(false);
+          return;
+        }
+        const [its, grs, whs, brs, cbs] = await Promise.all([
+          api.getItems(cid),
+          api.getItemGroups(cid).catch(() => []),
+          api.getWarehouses(cid).catch(() => []),
+          api.getBranches(cid).catch(() => []),
+          api.getCashBoxes(cid).catch(() => []),
+        ]);
+        if (!alive) return;
+        setItems(its);
+        setGroups(grs);
+        setWarehouses(whs);
+        setBranches(brs);
+        setCashBoxes(cbs);
+      } catch (err: any) {
+        if (alive) setLoadError(err?.message || "تعذّر تحميل البيانات");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const branchId = useMemo<number | null>(() => {
+    const stored = Number(localStorage.getItem("pos_branch_id") || "0");
+    if (stored && branches.some((b) => b.id === stored)) return stored;
+    return branches[0]?.id ?? null;
+  }, [branches]);
+
+  const defaultWarehouseId = useMemo<number | null>(
+    () => warehouses[0]?.id ?? null,
+    [warehouses],
+  );
+  const defaultCashBoxId = useMemo<number | null>(
+    () => cashBoxes[0]?.id ?? null,
+    [cashBoxes],
+  );
+
+  const branchName = useMemo(() => {
+    return branches.find((b) => b.id === branchId)?.nameAr || "—";
+  }, [branches, branchId]);
+
+  // Build category list from groups actually used by items
+  const categories = useMemo(() => {
+    const usedIds = new Set(items.map((i) => i.groupId).filter(Boolean));
+    const list = groups.filter((g) => usedIds.has(g.id));
+    return [{ id: "all" as const, nameAr: "الكل" }, ...list];
+  }, [items, groups]);
+
   const filtered = useMemo(() => {
-    let list = products;
-    if (activeCat !== "all") list = list.filter((p) => p.categoryId === activeCat);
+    let list = items;
+    if (activeCat !== "all") list = list.filter((p) => p.groupId === activeCat);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(
         (p) =>
           p.nameAr.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q),
+          p.code.toLowerCase().includes(q) ||
+          (p.barcode || "").toLowerCase().includes(q),
       );
     }
     return list;
-  }, [activeCat, search]);
+  }, [items, activeCat, search]);
 
-  const addToCart = (p: PosProduct) => {
+  const addToCart = (p: Item) => {
     setCart((c) => {
-      const existing = c.find((l) => l.product.id === p.id);
+      const existing = c.find((l) => l.item.id === p.id);
       if (existing) {
         return c.map((l) =>
-          l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l,
+          l.item.id === p.id ? { ...l, qty: l.qty + 1 } : l,
         );
       }
-      return [...c, { product: p, qty: 1 }];
+      return [...c, { item: p, qty: 1 }];
     });
   };
 
-  const updateQty = (id: string, delta: number) => {
+  const updateQty = (id: number, delta: number) => {
     setCart((c) =>
       c
         .map((l) =>
-          l.product.id === id ? { ...l, qty: Math.max(0, l.qty + delta) } : l,
+          l.item.id === id ? { ...l, qty: Math.max(0, l.qty + delta) } : l,
         )
         .filter((l) => l.qty > 0),
     );
   };
 
-  const removeLine = (id: string) => {
-    setCart((c) => c.filter((l) => l.product.id !== id));
+  const removeLine = (id: number) => {
+    setCart((c) => c.filter((l) => l.item.id !== id));
   };
 
   const clearCart = () => {
@@ -113,20 +243,110 @@ export default function CashierPage() {
     setDiscountPct(0);
     setPaid(false);
     setPaidMethod(null);
+    setLastInvoice(null);
+    setSubmitError(null);
   };
 
-  const subtotal = cart.reduce((s, l) => s + l.product.price * l.qty, 0);
+  const subtotal = cart.reduce(
+    (s, l) => s + Number(l.item.salePrice) * l.qty,
+    0,
+  );
   const discountAmount = (subtotal * discountPct) / 100;
   const afterDiscount = subtotal - discountAmount;
-  const vatAmount = (afterDiscount * VAT_RATE) / 100;
+  const vatAmount = cart.reduce((s, l) => {
+    const lineGross = Number(l.item.salePrice) * l.qty;
+    const lineDisc = (lineGross * discountPct) / 100;
+    const rate = Number(l.item.vatRate) || VAT_RATE;
+    return s + ((lineGross - lineDisc) * rate) / 100;
+  }, 0);
   const grandTotal = afterDiscount + vatAmount;
   const itemCount = cart.reduce((n, l) => n + l.qty, 0);
 
-  const pay = (method: string) => {
-    if (cart.length === 0) return;
-    setPaidMethod(method);
-    setPaid(true);
+  const handleLogout = () => {
+    api.logout().catch(() => {});
+    clearAuth();
+    navigate("/login");
   };
+
+  const pay = useCallback(
+    async (method: "cash" | "card" | "apple" | "wallet") => {
+      if (cart.length === 0 || submitting) return;
+      setSubmitError(null);
+      setSubmitting(true);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const lines: CreateInvoiceLine[] = cart.map((l) => {
+        const unitPrice = Number(l.item.salePrice);
+        const lineGross = unitPrice * l.qty;
+        const lineDisc = (lineGross * discountPct) / 100;
+        return {
+          itemId: l.item.id,
+          itemName: l.item.nameAr,
+          itemCode: l.item.code,
+          unit: l.item.unit?.nameAr || null,
+          unitId: l.item.unitId ?? null,
+          warehouseId:
+            l.item.itemType === "stock" ? defaultWarehouseId : null,
+          qty: l.qty,
+          unitPrice,
+          discount: lineDisc,
+          vatRate: Number(l.item.vatRate) || VAT_RATE,
+          lineTotal: lineGross - lineDisc,
+        };
+      });
+
+      // POS treats card / apple / wallet as cash-equivalent into the till
+      // for v1; a future iteration can map them to specific bank accounts.
+      const paymentType = "cash" as const;
+
+      try {
+        const inv = await api.createSalesInvoice({
+          invoiceDate: today,
+          branchId,
+          paymentType,
+          cashBoxId: defaultCashBoxId,
+          subtotal,
+          vatAmount,
+          discountAmount,
+          totalAmount: grandTotal,
+          priceIncludesVat: false,
+          notes: `POS — ${methodArabic(method)}`,
+          lines,
+        });
+        // Try to post (creates journal entry + decrements stock).
+        // If posting fails (e.g. missing accounts), keep the draft so the
+        // cashier still sees the receipt.
+        try {
+          const posted = await api.postSalesInvoice(inv.id);
+          setLastInvoice(posted);
+        } catch (postErr: any) {
+          setLastInvoice(inv);
+          setSubmitError(
+            "تم حفظ الفاتورة كمسودة، لكن تعذّر ترحيلها: " +
+              (postErr?.message || ""),
+          );
+        }
+        setPaidMethod(method);
+        setPaid(true);
+      } catch (err: any) {
+        setSubmitError(err?.message || "تعذّر إنشاء الفاتورة");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [
+      cart,
+      submitting,
+      discountPct,
+      defaultWarehouseId,
+      defaultCashBoxId,
+      branchId,
+      subtotal,
+      vatAmount,
+      discountAmount,
+      grandTotal,
+    ],
+  );
 
   const timeStr = new Intl.DateTimeFormat("ar-SA", {
     hour: "2-digit",
@@ -142,18 +362,15 @@ export default function CashierPage() {
       {/* TOP BAR */}
       <header className="h-16 border-b border-border bg-card/80 backdrop-blur-xl px-4 lg:px-6 flex items-center justify-between gap-4 sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-chart-2 grid place-items-center shadow-lg shadow-primary/30 hover-elevate active-elevate-2"
-          >
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-chart-2 grid place-items-center shadow-lg shadow-primary/30">
             <Store className="w-5 h-5 text-primary-foreground" strokeWidth={2.4} />
-          </Link>
+          </div>
           <div className="hidden sm:block">
             <p className="text-sm font-extrabold leading-tight">
               زاكود <span className="text-primary">POS</span>
             </p>
             <p className="text-[10px] text-muted-foreground leading-tight">
-              الفرع الرئيسي • الرياض
+              {branchName} • {user?.company?.nameAr || ""}
             </p>
           </div>
         </div>
@@ -195,8 +412,18 @@ export default function CashierPage() {
           <div className="hidden lg:flex items-center gap-2 text-xs font-semibold text-muted-foreground font-mono px-2.5 py-1.5 rounded-full bg-muted">
             {timeStr}
           </div>
-          <button className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2">
+          <button
+            title={user?.username || "حساب"}
+            className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2"
+          >
             <UserIcon className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleLogout}
+            title="تسجيل الخروج"
+            className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2"
+          >
+            <LogOut className="w-4 h-4" />
           </button>
           <button
             onClick={() => setMobileCartOpen(true)}
@@ -216,42 +443,72 @@ export default function CashierPage() {
         {/* LEFT — products */}
         <section className="flex flex-col min-h-0">
           {/* Categories */}
-          <div className="px-4 lg:px-6 py-3 border-b border-border overflow-x-auto">
-            <div className="flex items-center gap-2 min-w-max">
-              {categories.map((c) => {
-                const active = activeCat === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => setActiveCat(c.id)}
-                    className={`flex items-center gap-2 px-4 h-11 rounded-xl border font-bold text-sm whitespace-nowrap transition-all hover-elevate active-elevate-2 ${
-                      active
-                        ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/25"
-                        : "bg-card border-border text-foreground"
-                    }`}
-                  >
-                    <span className="text-base">{c.icon}</span>
-                    {c.nameAr}
-                  </button>
-                );
-              })}
+          {categories.length > 1 && (
+            <div className="px-4 lg:px-6 py-3 border-b border-border overflow-x-auto">
+              <div className="flex items-center gap-2 min-w-max">
+                {categories.map((c) => {
+                  const active = activeCat === c.id;
+                  return (
+                    <button
+                      key={String(c.id)}
+                      onClick={() => setActiveCat(c.id as any)}
+                      className={`flex items-center gap-2 px-4 h-11 rounded-xl border font-bold text-sm whitespace-nowrap transition-all hover-elevate active-elevate-2 ${
+                        active
+                          ? "bg-primary text-primary-foreground border-primary shadow-md shadow-primary/25"
+                          : "bg-card border-border text-foreground"
+                      }`}
+                    >
+                      {c.nameAr}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Products grid */}
           <div className="flex-1 overflow-y-auto p-4 lg:p-6">
-            {filtered.length === 0 ? (
+            {loading ? (
+              <div className="h-full grid place-items-center text-muted-foreground py-20">
+                <div className="text-center">
+                  <Loader2 className="w-8 h-8 mx-auto animate-spin text-primary mb-2" />
+                  <p className="font-bold">جاري تحميل المنتجات...</p>
+                </div>
+              </div>
+            ) : loadError ? (
+              <div className="h-full grid place-items-center text-center text-destructive py-20">
+                <div>
+                  <div className="text-5xl mb-3">⚠️</div>
+                  <p className="font-bold">{loadError}</p>
+                  <Button
+                    onClick={() => window.location.reload()}
+                    className="mt-4"
+                    variant="outline"
+                  >
+                    إعادة المحاولة
+                  </Button>
+                </div>
+              </div>
+            ) : filtered.length === 0 ? (
               <div className="h-full grid place-items-center text-center text-muted-foreground py-20">
                 <div>
                   <div className="text-5xl mb-3">🔍</div>
-                  <p className="font-bold">لا توجد منتجات مطابقة</p>
-                  <p className="text-xs mt-1">جرّب كلمة بحث أخرى أو فئة مختلفة</p>
+                  <p className="font-bold">
+                    {items.length === 0
+                      ? "لا توجد أصناف معرّفة بعد"
+                      : "لا توجد منتجات مطابقة"}
+                  </p>
+                  <p className="text-xs mt-1">
+                    {items.length === 0
+                      ? "أضف أصنافًا من نظام إدارة المخزون"
+                      : "جرّب كلمة بحث أخرى أو فئة مختلفة"}
+                  </p>
                 </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
                 {filtered.map((p) => {
-                  const inCart = cart.find((l) => l.product.id === p.id);
+                  const inCart = cart.find((l) => l.item.id === p.id);
                   return (
                     <motion.button
                       key={p.id}
@@ -259,7 +516,9 @@ export default function CashierPage() {
                       whileTap={{ scale: 0.97 }}
                       onClick={() => addToCart(p)}
                       className={`relative text-right rounded-2xl border bg-card p-3 hover-elevate active-elevate-2 transition-all ${
-                        inCart ? "border-primary ring-2 ring-primary/20" : "border-card-border"
+                        inCart
+                          ? "border-primary ring-2 ring-primary/20"
+                          : "border-card-border"
                       }`}
                     >
                       {inCart && (
@@ -268,17 +527,17 @@ export default function CashierPage() {
                         </div>
                       )}
                       <div className="aspect-square rounded-xl bg-gradient-to-br from-muted to-muted/30 grid place-items-center text-5xl mb-2">
-                        {p.emoji}
+                        {emojiFor(p)}
                       </div>
                       <p className="font-bold text-sm leading-snug line-clamp-2 min-h-[2.5rem]">
                         {p.nameAr}
                       </p>
                       <div className="mt-2 flex items-baseline justify-between gap-1">
                         <span className="text-[10px] text-muted-foreground font-mono">
-                          {p.sku}
+                          {p.code}
                         </span>
                         <span className="text-base font-black text-primary">
-                          {formatSAR(p.price)}
+                          {formatSAR(Number(p.salePrice))}
                           <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
                             ر.س
                           </span>
@@ -307,6 +566,8 @@ export default function CashierPage() {
             grandTotal={grandTotal}
             itemCount={itemCount}
             pay={pay}
+            submitting={submitting}
+            submitError={submitError}
           />
         </aside>
       </div>
@@ -350,10 +611,12 @@ export default function CashierPage() {
                 vatAmount={vatAmount}
                 grandTotal={grandTotal}
                 itemCount={itemCount}
-                pay={(m) => {
-                  pay(m);
+                pay={async (m) => {
+                  await pay(m);
                   setMobileCartOpen(false);
                 }}
+                submitting={submitting}
+                submitError={submitError}
               />
             </motion.div>
           </>
@@ -365,11 +628,13 @@ export default function CashierPage() {
         {paid && (
           <ReceiptModal
             method={paidMethod || ""}
+            invoice={lastInvoice}
             cart={cart}
             subtotal={subtotal}
             discountAmount={discountAmount}
             vatAmount={vatAmount}
             grandTotal={grandTotal}
+            warning={submitError}
             onClose={clearCart}
           />
         )}
@@ -378,12 +643,23 @@ export default function CashierPage() {
   );
 }
 
+function methodArabic(method: string) {
+  return (
+    {
+      cash: "نقداً",
+      card: "شبكة",
+      apple: "Apple Pay",
+      wallet: "محفظة",
+    } as Record<string, string>
+  )[method] || method;
+}
+
 /* ---------- Cart Panel ---------- */
 
 function CartPanel(props: {
   cart: CartLine[];
-  updateQty: (id: string, delta: number) => void;
-  removeLine: (id: string) => void;
+  updateQty: (id: number, delta: number) => void;
+  removeLine: (id: number) => void;
   clearCart: () => void;
   subtotal: number;
   discountPct: number;
@@ -392,7 +668,9 @@ function CartPanel(props: {
   vatAmount: number;
   grandTotal: number;
   itemCount: number;
-  pay: (method: string) => void;
+  pay: (method: "cash" | "card" | "apple" | "wallet") => void | Promise<void>;
+  submitting: boolean;
+  submitError: string | null;
 }) {
   const {
     cart,
@@ -407,6 +685,8 @@ function CartPanel(props: {
     grandTotal,
     itemCount,
     pay,
+    submitting,
+    submitError,
   } = props;
 
   return (
@@ -445,7 +725,7 @@ function CartPanel(props: {
             <AnimatePresence initial={false}>
               {cart.map((l) => (
                 <motion.li
-                  key={l.product.id}
+                  key={l.item.id}
                   layout
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -453,19 +733,20 @@ function CartPanel(props: {
                   className="rounded-xl bg-card border border-border p-2.5 flex items-start gap-2.5"
                 >
                   <div className="w-12 h-12 rounded-lg bg-muted grid place-items-center text-2xl shrink-0">
-                    {l.product.emoji}
+                    {emojiFor(l.item)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold leading-tight line-clamp-1">
-                      {l.product.nameAr}
+                      {l.item.nameAr}
                     </p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {formatSAR(l.product.price)} ر.س / {l.product.unit}
+                      {formatSAR(Number(l.item.salePrice))} ر.س /{" "}
+                      {l.item.unit?.nameAr || "وحدة"}
                     </p>
                     <div className="mt-2 flex items-center justify-between">
                       <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
                         <button
-                          onClick={() => updateQty(l.product.id, -1)}
+                          onClick={() => updateQty(l.item.id, -1)}
                           className="w-7 h-7 rounded-md grid place-items-center hover-elevate active-elevate-2"
                           aria-label="إنقاص"
                         >
@@ -475,7 +756,7 @@ function CartPanel(props: {
                           {l.qty}
                         </span>
                         <button
-                          onClick={() => updateQty(l.product.id, 1)}
+                          onClick={() => updateQty(l.item.id, 1)}
                           className="w-7 h-7 rounded-md grid place-items-center hover-elevate active-elevate-2"
                           aria-label="زيادة"
                         >
@@ -483,7 +764,7 @@ function CartPanel(props: {
                         </button>
                       </div>
                       <p className="text-sm font-black text-primary">
-                        {formatSAR(l.product.price * l.qty)}
+                        {formatSAR(Number(l.item.salePrice) * l.qty)}
                         <span className="text-[10px] text-muted-foreground font-bold mr-0.5">
                           ر.س
                         </span>
@@ -491,7 +772,7 @@ function CartPanel(props: {
                     </div>
                   </div>
                   <button
-                    onClick={() => removeLine(l.product.id)}
+                    onClick={() => removeLine(l.item.id)}
                     className="w-7 h-7 rounded-md grid place-items-center text-muted-foreground hover:text-destructive hover-elevate active-elevate-2"
                     aria-label="حذف"
                   >
@@ -506,6 +787,12 @@ function CartPanel(props: {
 
       {/* Totals + Pay */}
       <div className="border-t border-border bg-gradient-to-b from-card to-muted/30 p-4 space-y-3">
+        {submitError && (
+          <div className="text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
+            {submitError}
+          </div>
+        )}
+
         {/* Discount */}
         <div className="flex items-center gap-2">
           <div className="flex-1 flex items-center gap-1 bg-card border border-border rounded-xl px-2.5 py-1.5">
@@ -564,25 +851,25 @@ function CartPanel(props: {
         {/* Payment buttons */}
         <div className="grid grid-cols-2 gap-2 pt-1">
           <PayButton
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || submitting}
             onClick={() => pay("cash")}
             icon={<Banknote className="w-4 h-4" />}
             label="نقداً"
           />
           <PayButton
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || submitting}
             onClick={() => pay("card")}
             icon={<CreditCard className="w-4 h-4" />}
             label="شبكة"
           />
           <PayButton
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || submitting}
             onClick={() => pay("apple")}
             icon={<Smartphone className="w-4 h-4" />}
             label="Apple Pay"
           />
           <PayButton
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || submitting}
             onClick={() => pay("wallet")}
             icon={<Wallet className="w-4 h-4" />}
             label="محفظة"
@@ -590,14 +877,23 @@ function CartPanel(props: {
         </div>
 
         <Button
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || submitting}
           onClick={() => pay("cash")}
           className="w-full h-13 py-3.5 text-base font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 text-primary-foreground pos-glow disabled:opacity-50 disabled:pos-glow-none"
         >
           <span className="inline-flex items-center gap-2">
-            <Receipt className="w-5 h-5" />
-            إتمام الدفع
-            <ChevronLeft className="w-4 h-4" />
+            {submitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                جاري حفظ الفاتورة...
+              </>
+            ) : (
+              <>
+                <Receipt className="w-5 h-5" />
+                إتمام الدفع
+                <ChevronLeft className="w-4 h-4" />
+              </>
+            )}
           </span>
         </Button>
       </div>
@@ -632,21 +928,26 @@ function PayButton({
 
 function ReceiptModal(props: {
   method: string;
+  invoice: SalesInvoice | null;
   cart: CartLine[];
   subtotal: number;
   discountAmount: number;
   vatAmount: number;
   grandTotal: number;
+  warning: string | null;
   onClose: () => void;
 }) {
-  const { method, cart, subtotal, discountAmount, vatAmount, grandTotal, onClose } =
-    props;
-  const methodLabel: Record<string, string> = {
-    cash: "نقداً",
-    card: "شبكة",
-    apple: "Apple Pay",
-    wallet: "محفظة",
-  };
+  const {
+    method,
+    invoice,
+    cart,
+    subtotal,
+    discountAmount,
+    vatAmount,
+    grandTotal,
+    warning,
+    onClose,
+  } = props;
 
   return (
     <motion.div
@@ -672,21 +973,24 @@ function ReceiptModal(props: {
             <Check className="w-9 h-9" strokeWidth={3} />
           </motion.div>
           <p className="text-lg font-extrabold">تم الدفع بنجاح</p>
-          <p className="text-sm opacity-90 mt-0.5">
-            {methodLabel[method] || method}
-          </p>
+          <p className="text-sm opacity-90 mt-0.5">{methodArabic(method)}</p>
           <Sparkles className="absolute top-4 right-4 w-5 h-5 opacity-40" />
           <Sparkles className="absolute bottom-4 left-4 w-4 h-4 opacity-30" />
         </div>
 
         <div className="p-6 space-y-3">
+          {warning && (
+            <div className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 dark:text-amber-200 dark:bg-amber-900/30 dark:border-amber-800/50">
+              ⚠ {warning}
+            </div>
+          )}
           <div className="text-center">
             <p className="text-3xl font-black text-primary">
               {formatSAR(grandTotal)}
               <span className="text-base text-muted-foreground font-bold mr-1">ر.س</span>
             </p>
             <p className="text-[11px] text-muted-foreground mt-1 font-mono">
-              فاتورة #{Math.floor(Date.now() / 1000).toString().slice(-8)}
+              فاتورة #{invoice?.docNumber || invoice?.id || "—"}
             </p>
           </div>
 
@@ -735,7 +1039,7 @@ function ReceiptModal(props: {
               فاتورة جديدة
             </button>
             <button
-              onClick={onClose}
+              onClick={() => window.print()}
               className="h-11 rounded-xl bg-primary text-primary-foreground font-bold text-sm inline-flex items-center justify-center gap-1.5 hover-elevate active-elevate-2"
             >
               <Receipt className="w-4 h-4" />

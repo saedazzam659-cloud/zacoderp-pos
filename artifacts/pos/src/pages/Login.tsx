@@ -21,12 +21,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-
-const branches = [
-  { id: "main", nameAr: "الفرع الرئيسي", nameEn: "Main Branch", city: "الرياض" },
-  { id: "jeddah", nameAr: "فرع جدة", nameEn: "Jeddah Branch", city: "جدة" },
-  { id: "dammam", nameAr: "فرع الدمام", nameEn: "Dammam Branch", city: "الدمام" },
-];
+import {
+  api,
+  setToken,
+  setStoredUser,
+  getToken,
+  type Branch,
+} from "@/lib/api";
 
 const features = [
   {
@@ -56,7 +57,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
-  const [branchId, setBranchId] = useState("main");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [online, setOnline] = useState(
@@ -80,24 +82,53 @@ export default function LoginPage() {
     };
   }, []);
 
+  // If already logged in, jump straight to cashier.
+  useEffect(() => {
+    if (getToken()) navigate("/pos");
+  }, [navigate]);
+
+  async function loadBranchesFor(companyId: number) {
+    try {
+      const list = await api.getBranches(companyId);
+      setBranches(list);
+      if (list.length && branchId == null) setBranchId(list[0].id);
+      if (list.length) {
+        localStorage.setItem("pos_branch_id", String(list[0].id));
+      }
+    } catch {
+      // Branches are optional; silently ignore.
+    }
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     if (pinMode) {
-      if (pin.length !== 4) {
-        setError("الرجاء إدخال رمز مكوّن من 4 أرقام");
-        return;
-      }
-    } else {
-      if (!username || !password) {
-        setError("الرجاء إدخال اسم المستخدم وكلمة المرور");
-        return;
-      }
+      setError("الدخول برمز PIN غير مفعّل بعد، فضلًا استخدم اسم المستخدم.");
+      return;
+    }
+    if (!username || !password) {
+      setError("الرجاء إدخال اسم المستخدم وكلمة المرور");
+      return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 900));
-    setLoading(false);
-    navigate("/pos");
+    try {
+      const res = await api.login(username.trim(), password);
+      setToken(res.token);
+      setStoredUser(res.user);
+      if (res.user.companyId) {
+        localStorage.setItem("pos_company_id", String(res.user.companyId));
+        await loadBranchesFor(res.user.companyId);
+      }
+      if (branchId) {
+        localStorage.setItem("pos_branch_id", String(branchId));
+      }
+      navigate("/pos");
+    } catch (err: any) {
+      setError(err?.message || "فشل تسجيل الدخول");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const pressKey = (k: string) => {
@@ -300,33 +331,41 @@ export default function LoginPage() {
                 </p>
 
                 <form onSubmit={handleLogin} className="space-y-4">
-                  {/* Branch selector */}
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">
-                      الفرع
-                    </Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {branches.map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => setBranchId(b.id)}
-                          className={`text-right rounded-xl border p-2.5 transition-all hover-elevate active-elevate-2 ${
-                            branchId === b.id
-                              ? "border-primary bg-primary/5 ring-2 ring-primary/30"
-                              : "border-border bg-card"
-                          }`}
-                        >
-                          <p className="text-[11px] text-muted-foreground leading-none">
-                            {b.city}
-                          </p>
-                          <p className="text-xs font-bold mt-1 leading-tight">
-                            {b.nameAr}
-                          </p>
-                        </button>
-                      ))}
+                  {/* Branch selector — shows after first successful login when branches exist */}
+                  {branches.length > 0 && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-muted-foreground">
+                        الفرع
+                      </Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {branches.slice(0, 6).map((b) => (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => {
+                              setBranchId(b.id);
+                              localStorage.setItem(
+                                "pos_branch_id",
+                                String(b.id),
+                              );
+                            }}
+                            className={`text-right rounded-xl border p-2.5 transition-all hover-elevate active-elevate-2 ${
+                              branchId === b.id
+                                ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                                : "border-border bg-card"
+                            }`}
+                          >
+                            <p className="text-[11px] text-muted-foreground leading-none">
+                              {b.city || b.code}
+                            </p>
+                            <p className="text-xs font-bold mt-1 leading-tight">
+                              {b.nameAr}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <AnimatePresence mode="wait">
                     {!pinMode ? (
@@ -349,7 +388,7 @@ export default function LoginPage() {
                               dir="ltr"
                               value={username}
                               onChange={(e) => setUsername(e.target.value)}
-                              placeholder="cashier01"
+                              placeholder="superadmin"
                               className="h-12 pr-10 text-base font-medium"
                               autoComplete="username"
                             />
