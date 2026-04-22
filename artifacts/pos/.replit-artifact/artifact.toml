@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/pos/"
+title = "نقاط البيع - POS"
+version = "1.0.0"
+id = "artifacts/pos"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/pos/" ]
+localPort = 24730
+
+[services.development]
+run = "pnpm --filter @workspace/pos run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pos", "run", "build" ]
+publicDir = "artifacts/pos/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24730"
+BASE_PATH = "/pos/"
