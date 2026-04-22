@@ -58,6 +58,7 @@ const salesSubNav = [
   { name: "مرتجعات المبيعات",    href: "/sales/returns",      icon: RotateCcw       },
   { name: "تحصيل العملاء",        href: "/sales/settlements",  icon: ArrowDownCircle },
   { name: "جسر ZATCA",            href: "/zatca-bridge",       icon: Link2           },
+  { name: "تقرير فواتير ZATCA",   href: "/zatca-report",       icon: BarChart3       },
 ];
 const companySystemNav: { name: string; href: string; icon: any; permKey?: string }[] = [];
 
