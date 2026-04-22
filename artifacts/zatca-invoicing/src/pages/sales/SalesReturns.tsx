@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useEnterNavContainer } from "@/lib/enterNav";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -69,6 +70,7 @@ export default function SalesReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
 
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-returns", cid],
@@ -582,7 +584,7 @@ export default function SalesReturns() {
             </TabsContent>
 
             <TabsContent value="lines" className="mt-0 space-y-5">
-            <div className="space-y-3">
+            <div data-enter-nav-container="lines" className="space-y-3">
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
               {lines.map(l => (
                 <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">

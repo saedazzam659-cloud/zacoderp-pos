@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -103,6 +104,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [docDiscount, setDocDiscount]   = useState("0");
   const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
+  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
 
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");
@@ -592,7 +594,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
           <TabsContent value="lines" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-3">
-              <div className="space-y-3">
+              <div data-enter-nav-container="lines" className="space-y-3">
                 {lines.map(l => (
                   <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
                     {/* Row 1 */}

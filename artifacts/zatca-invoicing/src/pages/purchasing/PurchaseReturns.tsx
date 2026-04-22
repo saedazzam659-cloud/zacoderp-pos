@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useEnterNavContainer } from "@/lib/enterNav";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -63,6 +64,7 @@ export default function PurchaseReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
   const [printData, setPrintData] = useState<any>(null);
 
   // ── Lookups ─────────────────────────────────────────────
@@ -725,7 +727,7 @@ export default function PurchaseReturns() {
 
             <TabsContent value="lines" className="mt-0 space-y-5">
             {/* Lines */}
-            <div className="space-y-3">
+            <div data-enter-nav-container="lines" className="space-y-3">
               <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
               {lines.map(l => (
                 <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
