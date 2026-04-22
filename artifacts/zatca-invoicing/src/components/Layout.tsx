@@ -10,7 +10,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -1017,6 +1017,7 @@ function TopBar({
   onLogout: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const [, navigate] = useLocation();
   const crumbs = useMemo(() => getBreadcrumbs(location, t), [location, t, i18n.language]);
 
   return (
@@ -1044,6 +1045,24 @@ function TopBar({
 
         {/* Right cluster */}
         <div className="flex items-center gap-1">
+          {/* Quick links to documents */}
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.salesInvoices")}
+            onClick={() => navigate("/sales/invoices")}>
+            <ShoppingBag className="h-[18px] w-[18px]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.salesReturns")}
+            onClick={() => navigate("/sales/returns")}>
+            <Undo2 className="h-[18px] w-[18px]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.purchaseInvoices")}
+            onClick={() => navigate("/purchasing/invoices")}>
+            <ShoppingCart className="h-[18px] w-[18px]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.purchaseReturns")}
+            onClick={() => navigate("/purchasing/returns")}>
+            <RotateCcw className="h-[18px] w-[18px]" />
+          </Button>
+          <div className="h-5 w-px bg-border mx-1" />
           <LanguageSwitcher variant="compact" />
           <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
             <HelpCircle className="h-[18px] w-[18px]" />
