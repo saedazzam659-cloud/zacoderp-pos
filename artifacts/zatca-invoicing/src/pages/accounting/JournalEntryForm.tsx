@@ -602,25 +602,27 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           {/* ── Tab 2: Lines ──────────────────────────────── */}
           <TabsContent value="lines" className="mt-0">
             <CardContent className="p-0">
-              {/* Add line + column headers */}
-              <div className="flex items-center justify-between px-4 py-2.5 border-b bg-muted/10">
-                <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 flex-1 text-[11px] font-semibold text-muted-foreground">
-                  <span></span>
-                  <span>الحساب</span>
-                  <span>مدين</span>
-                  <span>دائن</span>
-                  <span>البيان</span>
-                  <span>مركز التكلفة</span>
-                  <span></span>
-                </div>
+              {/* Toolbar */}
+              <div className="flex items-center justify-end px-4 py-2 border-b bg-muted/10">
                 <Button
                   variant="outline" size="sm"
                   onClick={addLine}
-                  className="h-7 gap-1 text-xs mr-2 shrink-0"
+                  className="h-7 gap-1 text-xs shrink-0"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   إضافة سطر
                 </Button>
+              </div>
+
+              {/* Column headers — same grid template as line rows */}
+              <div className="grid grid-cols-[32px_2fr_1fr_1fr_1.5fr_1.2fr_32px] gap-2 px-4 py-2 border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+                <span />
+                <span>الحساب</span>
+                <span>مدين</span>
+                <span>دائن</span>
+                <span>البيان</span>
+                <span>مركز التكلفة</span>
+                <span />
               </div>
 
               {/* Lines */}
