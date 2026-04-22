@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Eye,
@@ -64,6 +65,7 @@ export default function LoginPage() {
   const [pinMode, setPinMode] = useState(false);
   const [pin, setPin] = useState("");
   const [time, setTime] = useState(new Date());
+  const [, navigate] = useLocation();
 
   useEffect(() => {
     const onOnline = () => setOnline(true);
@@ -93,9 +95,9 @@ export default function LoginPage() {
       }
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 1100));
+    await new Promise((r) => setTimeout(r, 900));
     setLoading(false);
-    setError("لم يتم ربط الخادم بعد — هذه شاشة عرض تجريبية");
+    navigate("/pos");
   };
 
   const pressKey = (k: string) => {
