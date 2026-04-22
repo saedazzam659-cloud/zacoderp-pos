@@ -67,7 +67,13 @@ export default function PurchaseReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
-  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
+  const [focusLineId, setFocusLineId] = useState<string>("");
+  const addLine = () => {
+    const l = newLine();
+    setLines(p => [...p, l]);
+    setFocusLineId(l._id);
+  };
+  useEnterNavContainer({ onAppend: () => addLine() });
   const [printData, setPrintData] = useState<any>(null);
 
   // ── Lookups ─────────────────────────────────────────────
@@ -778,6 +784,7 @@ export default function PurchaseReturns() {
                         value={l.itemId}
                         onValueChange={v => selectItem(l._id, v)}
                         placeholder="اختر صنف..."
+                        autoFocus={l._id === focusLineId}
                       />
                     ) : (
                       <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
@@ -839,7 +846,7 @@ export default function PurchaseReturns() {
               ))}
 
               <Button type="button" variant="outline" size="sm" className="gap-2"
-                onClick={() => setLines(p => [...p, newLine()])}>
+                onClick={addLine}>
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
             </div>

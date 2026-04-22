@@ -103,8 +103,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [notes,     setNotes]           = useState("");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [docDiscount, setDocDiscount]   = useState("0");
-  const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
-  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
+  const [lines,     setLines]           = useState<DocLine[]>(() => {
+    const l = newLine();
+    return [l];
+  });
+  const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
+  const addLine = () => {
+    const l = newLine();
+    setLines(p => [...p, l]);
+    setFocusLineId(l._id);
+  };
+  useEnterNavContainer({ onAppend: () => addLine() });
 
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");
@@ -628,7 +637,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       }}
                     >
                       {inventoryItems.length > 0 ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." />
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." autoFocus={l._id === focusLineId} />
                       ) : (
                         <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -691,7 +700,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 ))}
               </div>
 
-              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
 

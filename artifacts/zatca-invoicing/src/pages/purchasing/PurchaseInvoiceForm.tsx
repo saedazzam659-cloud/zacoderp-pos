@@ -93,7 +93,13 @@ export default function PurchaseInvoiceForm() {
   const [docDiscount,  setDocDiscount]  = useState("0");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [lines,        setLines]        = useState<InvoiceLine[]>([newLine()]);
-  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
+  const [focusLineId, setFocusLineId] = useState<string>("");
+  const addLine = () => {
+    const l = newLine();
+    setLines(p => [...p, l]);
+    setFocusLineId(l._id);
+  };
+  useEnterNavContainer({ onAppend: () => addLine() });
 
   // Accounting accounts (used to build the journal entry on post)
   const [inventoryAccountId, setInventoryAccountId] = useState("");
@@ -769,6 +775,7 @@ export default function PurchaseInvoiceForm() {
                           value={l.itemId}
                           onValueChange={v => selectItem(l._id, v)}
                           placeholder="اختر أو ابحث عن صنف..."
+                          autoFocus={l._id === focusLineId}
                         />
                       ) : (
                         <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
@@ -833,7 +840,7 @@ export default function PurchaseInvoiceForm() {
                 ))}
               </div>
 
-              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
 

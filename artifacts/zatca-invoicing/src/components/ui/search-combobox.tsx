@@ -40,6 +40,7 @@ interface SearchComboboxProps {
   className?: string;
   disabled?: boolean;
   grouped?: boolean;
+  autoFocus?: boolean;
   renderSelected?: (item: ComboboxItem) => React.ReactNode;
   renderItem?: (item: ComboboxItem, selected: boolean) => React.ReactNode;
 }
@@ -54,11 +55,22 @@ export function SearchCombobox({
   className,
   disabled,
   grouped,
+  autoFocus,
   renderSelected,
   renderItem,
 }: SearchComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+
+  React.useEffect(() => {
+    if (!autoFocus) return;
+    const t = setTimeout(() => {
+      triggerRef.current?.focus();
+      setOpen(true);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [autoFocus]);
 
   const selectedItem = items.find(i => i.value === value);
 
@@ -137,6 +149,7 @@ export function SearchCombobox({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          ref={triggerRef}
           variant="outline"
           role="combobox"
           aria-expanded={open}

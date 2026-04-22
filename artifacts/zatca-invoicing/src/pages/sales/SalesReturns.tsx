@@ -73,7 +73,13 @@ export default function SalesReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
-  useEnterNavContainer({ onAppend: () => setLines(p => [...p, newLine()]) });
+  const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
+  const addLine = () => {
+    const l = newLine();
+    setLines(p => [...p, l]);
+    setFocusLineId(l._id);
+  };
+  useEnterNavContainer({ onAppend: () => addLine() });
 
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-returns", cid],
@@ -630,7 +636,7 @@ export default function SalesReturns() {
                 <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
                     {inventoryItems.length > 0 ? (
-                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." />
+                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." autoFocus={l._id === focusLineId} />
                     ) : (
                       <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />
@@ -690,7 +696,7 @@ export default function SalesReturns() {
                 </div>
               ))}
 
-              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setLines(p => [...p, newLine()])}>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
             </div>
