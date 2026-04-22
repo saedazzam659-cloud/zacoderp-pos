@@ -177,6 +177,19 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - AI endpoint `POST /api/ai/suggest-transfer-accounts`: picks the best inventory accounts from the company's chart of accounts (asset+posting only). Graceful rule-based fallback when AI unavailable or any runtime exception.
 - Frontend (`StockTransfer.tsx`): two `AccountCombobox` (filtered to assets), an "اقتراح بالذكاء الاصطناعي" button, and a live JE preview that mirrors backend behavior (including warehouse-account fallback indicator).
 
+## Stock Adjustment — Auto Journal Entry + AI Account Suggestion
+- Schema (`stock_adjustments`): added `inventory_account_id`, `adjustment_account_id`, `journal_entry_id` (legacy `account_id` retained).
+- Backend `POST /api/inventory/stock-adjustments/:id/post`:
+  - Atomic claim (UPDATE … WHERE status='draft') prevents double-post.
+  - Computes net direction from items: net increase → DR inventory / CR adjustment (gain); net decrease → DR adjustment / CR inventory (loss).
+  - Total per side = Σ(|qty| × costPrice), netted across lines so a balanced 2-line JE is created.
+  - Falls back to `warehouses.account_id` when `inventory_account_id` is not set. Skips JE when accounts equal/missing or amount = 0.
+- Multi-tenant guard: `assertCompanyOwned()` validates warehouse + account IDs against `companyId` on create/update.
+- AI endpoint `POST /api/ai/suggest-adjustment-accounts`: classifies reason + items as increase/decrease, picks an asset account for inventory and either an expense (loss) or revenue (gain) account for the contra side. Note: PG enum is `revenue` (income alias also accepted). Graceful rule-based fallback for missing AI/empty pool/runtime errors.
+- Frontend (`StockAdjustment.tsx`):
+  - Two-tab layout: "معلومات التسوية والقيد المحاسبي" + "الأصناف" (with item count badge).
+  - Two `AccountCombobox` (asset / expense+revenue), AI suggestion button, live JE preview that detects net direction and shows DR/CR with warehouse-account fallback indicator.
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

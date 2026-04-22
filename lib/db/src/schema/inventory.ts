@@ -164,6 +164,12 @@ export const stockAdjustmentsTable = pgTable("stock_adjustments", {
   adjustmentDate:   date("adjustment_date").notNull(),
   warehouseId:      integer("warehouse_id").notNull().references(() => warehousesTable.id),
   accountId:        integer("account_id").references(() => accountsTable.id),
+  // Inventory account = the warehouse-side asset account (debit on increase / credit on decrease)
+  inventoryAccountId:  integer("inventory_account_id").references(() => accountsTable.id),
+  // Adjustment account = expense/income contra account (loss for shrinkage, gain for surplus)
+  adjustmentAccountId: integer("adjustment_account_id").references(() => accountsTable.id),
+  // Linked JE id created on post
+  journalEntryId:      integer("journal_entry_id"),
   reason:           text("reason"),
   status:           docStatusEnum("status").default("draft").notNull(),
   notes:            text("notes"),

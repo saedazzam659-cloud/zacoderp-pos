@@ -320,4 +320,162 @@ ${itemsSummary}
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// Suggest accounts for a Stock Adjustment.
+// Picks (a) inventory account = warehouse-side asset, (b) adjustment account = expense (loss) or income (gain).
+// Falls back to deterministic rule-based picks when AI unavailable or any runtime error.
+router.post("/suggest-adjustment-accounts", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req as any);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const { warehouseId, reason = "", items = [], notes = "", direction = "auto" } = req.body || {};
+    if (!warehouseId) { res.status(400).json({ error: "يجب تحديد المخزن" }); return; }
+
+    const [wh] = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, Number(warehouseId)), eq(warehousesTable.companyId, cid)));
+    if (!wh) { res.status(404).json({ error: "المخزن غير موجود" }); return; }
+
+    const accounts = await db.select({
+      id: accountsTable.id, code: accountsTable.code,
+      nameAr: accountsTable.nameAr, nameEn: accountsTable.nameEn,
+      accountType: accountsTable.accountType, isPosting: accountsTable.isPosting,
+    }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+
+    const assetPosting   = accounts.filter(a => a.accountType === "asset"    && a.isPosting);
+    const expensePosting = accounts.filter(a => a.accountType === "expense"  && a.isPosting);
+    const incomePosting  = accounts.filter(a => (a.accountType === "revenue" || a.accountType === "income") && a.isPosting);
+
+    // Net direction from items: + means net increase (gain) → income; - means net decrease (loss) → expense
+    const netQty = (Array.isArray(items) ? items : []).reduce((s: number, it: any) => s + Number(it.qty || 0), 0);
+    const dir: "increase" | "decrease" =
+      direction === "increase" ? "increase" :
+      direction === "decrease" ? "decrease" :
+      (netQty >= 0 ? "increase" : "decrease");
+
+    const findByKeywords = (pool: typeof accounts, kw: string[]) =>
+      pool.find(a => {
+        const t = `${a.nameAr ?? ""} ${a.nameEn ?? ""} ${a.code ?? ""}`.toLowerCase();
+        return kw.some(k => t.includes(k.toLowerCase()));
+      });
+
+    const reasonLower = `${reason} ${notes}`.toLowerCase();
+    const isShrinkage = /(تالف|كسر|فاقد|عجز|تلف|خسار|shrink|damage|loss)/i.test(reasonLower);
+    const isSurplus   = /(فائض|زياد|هبة|مكاف|surplus|gain)/i.test(reasonLower);
+
+    const buildFallback = () => {
+      const invAcc =
+        (wh.accountId && accounts.find(a => a.id === wh.accountId)) ||
+        findByKeywords(assetPosting, [wh.nameAr ?? "", wh.code ?? ""]) ||
+        findByKeywords(assetPosting, ["مخزون", "بضاعة", "inventory", "stock"]) ||
+        assetPosting[0];
+
+      // Pick the contra account based on direction & reason hints.
+      let adjPool = dir === "increase" ? incomePosting : expensePosting;
+      if (isShrinkage) adjPool = expensePosting;
+      if (isSurplus)   adjPool = incomePosting;
+
+      const adjKw = isShrinkage
+        ? ["تالف", "كسر", "فاقد", "عجز", "خسار", "shrinkage", "loss", "damage"]
+        : isSurplus
+        ? ["فائض", "زياد", "هبة", "مكاف", "surplus", "gain"]
+        : (dir === "increase" ? ["فائض", "زياد", "إيراد", "income", "gain"] : ["تسوي", "خسار", "expense", "loss"]);
+
+      const adjAcc =
+        findByKeywords(adjPool, adjKw) ||
+        findByKeywords(adjPool, ["تسوي", "adjust"]) ||
+        adjPool[0] ||
+        // Last resort — any expense (or any income) account
+        (dir === "increase" ? incomePosting[0] : expensePosting[0]);
+
+      const label = (a: any) => a ? `${a.code} - ${a.nameAr}` : "";
+      return {
+        inventoryAccountId:    invAcc?.id ?? null,
+        inventoryAccountLabel: label(invAcc),
+        adjustmentAccountId:    adjAcc?.id ?? null,
+        adjustmentAccountLabel: label(adjAcc),
+        direction: dir,
+        reasoning: invAcc && adjAcc
+          ? `تم اختيار حساب «${label(invAcc)}» للمخزون و«${label(adjAcc)}» كحساب تسوية ${dir === "increase" ? "للفائض" : "للنقص/التالف"} بناءً على المخزن وسبب التسوية.`
+          : "لم يتم العثور على حسابات مناسبة. الرجاء إنشاء حسابات أصول (مخزون) ومصروفات/إيرادات (تسويات) أولاً.",
+        source: "rules" as const,
+      };
+    };
+
+    if (!OPENAI_BASE || !OPENAI_KEY || assetPosting.length === 0 || (expensePosting.length === 0 && incomePosting.length === 0)) {
+      res.json(buildFallback());
+      return;
+    }
+
+    try {
+      const fmtList = (pool: typeof accounts) => pool.map(a =>
+        `{ "id": ${a.id}, "code": "${a.code}", "name": "${a.nameAr}${a.nameEn ? " / " + a.nameEn : ""}", "type": "${a.accountType}" }`
+      ).join(",\n");
+      const candidates = [...assetPosting, ...expensePosting, ...incomePosting];
+      const itemsSummary = Array.isArray(items) && items.length
+        ? items.slice(0, 20).map((it: any) => `- ${it.nameAr || it.name || "صنف"} × ${it.qty || 0}`).join("\n")
+        : "لا توجد بنود مفصّلة";
+
+      const userPrompt = `أنت محاسب سعودي خبير. اختر الحسابين الأنسب لقيد تسوية مخزنية:
+- المخزن: ${wh.code} - ${wh.nameAr}${wh.city ? " (" + wh.city + ")" : ""}
+- سبب التسوية: ${reason || "—"}
+- ملاحظات: ${notes || "—"}
+- اتجاه التسوية الإجمالي: ${dir === "increase" ? "زيادة (فائض)" : "نقص (عجز/تالف)"}
+- بنود التسوية:
+${itemsSummary}
+
+دليل الحسابات (ترحيل فقط) — أصول + مصروفات + إيرادات:
+[${fmtList(candidates)}]
+
+قواعد:
+1. inventoryAccountId = حساب أصل (مخزون) — يفضّل المرتبط بالمخزن.
+2. adjustmentAccountId = حساب مصروف إن كان عجز/تالف، أو حساب إيراد إن كان فائض/هبة.
+3. يجب أن يكونا مختلفين، ومن القائمة فقط (لا تخترع IDs).
+4. أعد فقط ID موجود في القائمة.
+
+أعد JSON فقط:
+{ "inventoryAccountId": <id>, "adjustmentAccountId": <id>, "reasoning": "شرح موجز بالعربية" }`;
+
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 800,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي. ترد بـ JSON صالح فقط." },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(buildFallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(buildFallback()); return; }
+
+      const invId = Number(parsed?.inventoryAccountId);
+      const adjId = Number(parsed?.adjustmentAccountId);
+      const invAcc = assetPosting.find(a => a.id === invId);
+      const adjAcc = [...expensePosting, ...incomePosting].find(a => a.id === adjId);
+      if (!invAcc || !adjAcc) { res.json(buildFallback()); return; }
+      res.json({
+        inventoryAccountId: invAcc.id,
+        inventoryAccountLabel: `${invAcc.code} - ${invAcc.nameAr}`,
+        adjustmentAccountId: adjAcc.id,
+        adjustmentAccountLabel: `${adjAcc.code} - ${adjAcc.nameAr}`,
+        direction: dir,
+        reasoning: String(parsed?.reasoning || "").trim() || "اقتراح تلقائي.",
+        source: "ai" as const,
+      });
+    } catch {
+      res.json(buildFallback());
+      return;
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 export default router;

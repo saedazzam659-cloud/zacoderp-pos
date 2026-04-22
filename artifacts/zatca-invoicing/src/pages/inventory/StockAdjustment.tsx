@@ -9,9 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, SlidersHorizontal, Search, X, Send,
-  ChevronDown, ChevronUp, Zap,
+  ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -28,6 +29,8 @@ const EMPTY_FORM = {
   adjustmentDate: new Date().toISOString().slice(0, 10),
   warehouseId: "",
   accountId: "",
+  inventoryAccountId: "",
+  adjustmentAccountId: "",
   reason: REASONS[0],
   notes: "",
 };
@@ -35,8 +38,10 @@ const newLine = () => ({ itemId: "", unitId: "", qty: "0", costPrice: "0", notes
 
 export default function StockAdjustment() {
   const { fmt, fmtQty } = useFmt();
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiReasoning, setAiReasoning] = useState<string>("");
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -184,6 +189,8 @@ export default function StockAdjustment() {
       ...form,
       warehouseId: Number(form.warehouseId),
       accountId: form.accountId ? Number(form.accountId) : null,
+      inventoryAccountId:  form.inventoryAccountId  ? Number(form.inventoryAccountId)  : null,
+      adjustmentAccountId: form.adjustmentAccountId ? Number(form.adjustmentAccountId) : null,
       items: validLines.map(l => ({
         itemId: Number(l.itemId),
         unitId: l.unitId ? Number(l.unitId) : null,
@@ -250,7 +257,19 @@ export default function StockAdjustment() {
           saveDisabled={!form.warehouseId || !form.adjustmentDate}
           saveLabel="حفظ التسوية"
         >
-          <div className="space-y-5">
+          <Tabs defaultValue="info" className="w-full">
+            <TabsList className="w-full grid grid-cols-2 mb-4">
+              <TabsTrigger value="info">معلومات التسوية والقيد المحاسبي</TabsTrigger>
+              <TabsTrigger value="items">
+                الأصناف
+                {lines.filter(l => l.itemId).length > 0 && (
+                  <span className="mr-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
+                    {lines.filter(l => l.itemId).length}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="info" className="space-y-5 mt-0">
             <FormSection title="معلومات الحركة">
               <FormGrid cols={2}>
                 <Field label="رقم التسوية"><Input placeholder="ADJ-001 (تلقائي)" dir="ltr" className="text-left" value={form.adjustmentNumber} onChange={e => setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value }))} /></Field>
@@ -265,14 +284,162 @@ export default function StockAdjustment() {
               </FormGrid>
             </FormSection>
 
-            <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
-              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
-              <div className="max-w-xs">
-                <Label className="text-xs font-medium text-foreground/80">الحساب المحاسبي</Label>
-                <AccountCombobox value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="— اختر الحساب —" grouped={false} />
-              </div>
-            </div>
+            <FormSection title="القيد المحاسبي التلقائي">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل:
+                    <b className="text-blue-700"> زيادة المخزون</b> = مدين حساب المخزون / دائن حساب التسوية،
+                    <b className="text-rose-700"> نقص المخزون</b> = مدين حساب التسوية / دائن حساب المخزون.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50 shrink-0"
+                    disabled={!form.warehouseId || aiLoading}
+                    onClick={async () => {
+                      setAiLoading(true);
+                      setAiReasoning("");
+                      try {
+                        const apiBase = import.meta.env.VITE_API_URL ?? "";
+                        const itemsPayload = lines
+                          .filter(l => l.itemId)
+                          .map(l => {
+                            const it: any = (items as any[]).find((x: any) => String(x.id) === String(l.itemId));
+                            return { nameAr: it?.nameAr ?? "", qty: Number(l.qty || 0) };
+                          });
+                        const r = await fetch(`${apiBase}/api/ai/suggest-adjustment-accounts`, {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                          },
+                          body: JSON.stringify({
+                            warehouseId: Number(form.warehouseId),
+                            reason: form.reason,
+                            notes: form.notes,
+                            items: itemsPayload,
+                          }),
+                        });
+                        const j = await r.json();
+                        if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
+                        if (j.inventoryAccountId && j.adjustmentAccountId) {
+                          setForm((p: any) => ({
+                            ...p,
+                            inventoryAccountId:  String(j.inventoryAccountId),
+                            adjustmentAccountId: String(j.adjustmentAccountId),
+                          }));
+                          setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
+                          toast({ title: "تم اقتراح الحسابات", description: `${j.inventoryAccountLabel} ⇄ ${j.adjustmentAccountLabel}` });
+                        } else {
+                          throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
+                        }
+                      } catch (e: any) {
+                        toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+                      } finally {
+                        setAiLoading(false);
+                      }
+                    }}
+                  >
+                    {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    اقتراح بالذكاء الاصطناعي
+                  </Button>
+                </div>
 
+                <FormGrid cols={2}>
+                  <Field label="حساب المخزون (أصول)">
+                    <AccountCombobox value={form.inventoryAccountId} onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))} placeholder="— اختر حساب المخزون —" filterTypes={["asset"]} grouped={false} />
+                  </Field>
+                  <Field label="حساب التسوية (مصروف / إيراد)">
+                    <AccountCombobox value={form.adjustmentAccountId} onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))} placeholder="— اختر حساب التسوية —" filterTypes={["expense", "revenue", "income"]} grouped={false} />
+                  </Field>
+                </FormGrid>
+
+                {aiReasoning && (
+                  <div className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 leading-relaxed">
+                    <Sparkles className="h-3 w-3 inline ml-1" />{aiReasoning}
+                  </div>
+                )}
+
+                {/* JE preview — mirrors backend net-direction logic */}
+                {(() => {
+                  const wh: any = (warehouses as any[]).find((w: any) => String(w.id) === form.warehouseId);
+                  const invAccId = form.inventoryAccountId ? Number(form.inventoryAccountId) : (wh?.accountId ?? null);
+                  const adjAccId = form.adjustmentAccountId ? Number(form.adjustmentAccountId) : null;
+                  let netInc = 0, netDec = 0;
+                  for (const l of lines) {
+                    const amt = Math.abs(Number(l.qty || 0)) * Number(l.costPrice || 0);
+                    if (Number(l.qty || 0) > 0) netInc += amt;
+                    else if (Number(l.qty || 0) < 0) netDec += amt;
+                  }
+                  const debit = Math.max(0, netInc - netDec);
+                  const credit = Math.max(0, netDec - netInc);
+                  if (debit + credit <= 0) return null;
+                  if (!invAccId || !adjAccId) {
+                    return (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                        لن يتم إنشاء قيد محاسبي — اختر حساب المخزون وحساب التسوية أو اربط المخزن بحساب افتراضي.
+                      </div>
+                    );
+                  }
+                  if (invAccId === adjAccId) {
+                    return (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                        الحسابان متطابقان — لن يتم إنشاء قيد.
+                      </div>
+                    );
+                  }
+                  const invSrc = form.inventoryAccountId ? "اختيار يدوي" : "حساب المخزن الافتراضي";
+                  const isInc = debit > 0;
+                  const amount = isInc ? debit : credit;
+                  return (
+                    <div className="rounded-md border border-blue-200 bg-white overflow-hidden">
+                      <div className="px-3 py-1.5 bg-blue-100/50 text-[11px] font-semibold text-blue-900">
+                        معاينة القيد المحاسبي — {isInc ? "صافي زيادة (فائض)" : "صافي نقص (عجز/تالف)"}
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/30 border-b">
+                          <tr><th className="px-2 py-1 text-right font-medium">الحساب</th><th className="px-2 py-1 text-left font-medium w-28">مدين</th><th className="px-2 py-1 text-left font-medium w-28">دائن</th></tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {isInc ? (
+                            <>
+                              <tr>
+                                <td className="px-2 py-1.5 text-blue-700">حساب المخزون <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
+                                <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                              </tr>
+                              <tr>
+                                <td className="px-2 py-1.5 text-rose-700">حساب التسوية (إيراد فائض)</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
+                              </tr>
+                            </>
+                          ) : (
+                            <>
+                              <tr>
+                                <td className="px-2 py-1.5 text-blue-700">حساب التسوية (مصروف عجز/تالف)</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                              </tr>
+                              <tr>
+                                <td className="px-2 py-1.5 text-rose-700">حساب المخزون <span className="text-[10px] text-muted-foreground">({invSrc})</span></td>
+                                <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                                <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(amount)}</td>
+                              </tr>
+                            </>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+            </FormSection>
+            </TabsContent>
+
+            <TabsContent value="items" className="space-y-3 mt-0">
             {/* Line items */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -411,7 +578,8 @@ export default function StockAdjustment() {
                 اختيار الصنف يملأ الوحدة والتكلفة تلقائياً — يمكن تعديل التكلفة يدوياً
               </p>
             </div>
-          </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
