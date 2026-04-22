@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Banknote, FileSpreadsheet, Sparkles, Calculator, CheckCircle2, Trash2, Loader2, Eye, Save, Receipt, X } from "lucide-react";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   draft:  { label: "مسودة",   cls: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -104,10 +105,13 @@ export default function Payroll() {
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">الشهر</label>
-              <select value={month} onChange={e => setMonth(Number(e.target.value))}
-                className="h-9 rounded-md border bg-background px-2" data-testid="month-input">
-                {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-              </select>
+              <SearchCombobox
+                items={MONTHS.map((m, i) => ({ value: String(i + 1), label: m }))}
+                value={String(month)}
+                onValueChange={(v) => setMonth(Number(v))}
+                placeholder="الشهر"
+                className="w-32"
+              />
             </div>
             <Button onClick={() => previewMut.mutate()} disabled={previewMut.isPending} data-testid="btn-preview">
               {previewMut.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Calculator className="size-4 me-1" />}

@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Plus, Pencil, Trash2, Search, X, UserCog, BadgeAlert,
@@ -187,20 +188,32 @@ export default function Employees() {
                   <FormGrid>
                     <Field label="كود الموظف"><Input value={editing.code} onChange={e => setF("code", e.target.value)} placeholder="تلقائي عند الترك فارغاً" /></Field>
                     <Field label="الحالة">
-                      <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editing.status} onChange={e => setF("status", e.target.value)}>
-                        <option value="active">نشط</option>
-                        <option value="vacation">إجازة</option>
-                        <option value="suspended">موقوف</option>
-                        <option value="terminated">خروج نهائي</option>
-                      </select>
+                      <SearchCombobox
+                        items={[
+                          { value: "active", label: "نشط" },
+                          { value: "vacation", label: "إجازة" },
+                          { value: "suspended", label: "موقوف" },
+                          { value: "terminated", label: "خروج نهائي" },
+                        ]}
+                        value={editing.status}
+                        onValueChange={(v) => setF("status", v)}
+                        placeholder="اختر الحالة"
+                        className="w-full"
+                      />
                     </Field>
                     <Field label="الاسم بالعربي" required><Input value={editing.nameAr} onChange={e => setF("nameAr", e.target.value)} /></Field>
                     <Field label="الاسم بالإنجليزي"><Input value={editing.nameEn} onChange={e => setF("nameEn", e.target.value)} /></Field>
                     <Field label="نوع الهوية">
-                      <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editing.idType} onChange={e => setF("idType", e.target.value)}>
-                        <option value="iqama">إقامة</option>
-                        <option value="national">هوية وطنية</option>
-                      </select>
+                      <SearchCombobox
+                        items={[
+                          { value: "iqama", label: "إقامة" },
+                          { value: "national", label: "هوية وطنية" },
+                        ]}
+                        value={editing.idType}
+                        onValueChange={(v) => setF("idType", v)}
+                        placeholder="نوع الهوية"
+                        className="w-full"
+                      />
                     </Field>
                     <Field label="رقم الهوية / الإقامة"><Input value={editing.idNumber} onChange={e => setF("idNumber", e.target.value)} /></Field>
                     <Field label="تاريخ انتهاء الإقامة"><Input type="date" value={editing.iqamaExpiry || ""} onChange={e => setF("iqamaExpiry", e.target.value)} /></Field>
@@ -210,10 +223,16 @@ export default function Employees() {
                     <Field label="رقم الجوال"><Input value={editing.mobile} onChange={e => setF("mobile", e.target.value)} dir="ltr" /></Field>
                     <Field label="البريد الإلكتروني"><Input type="email" value={editing.email} onChange={e => setF("email", e.target.value)} dir="ltr" /></Field>
                     <Field label="الجنس">
-                      <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editing.gender} onChange={e => setF("gender", e.target.value)}>
-                        <option value="male">ذكر</option>
-                        <option value="female">أنثى</option>
-                      </select>
+                      <SearchCombobox
+                        items={[
+                          { value: "male", label: "ذكر" },
+                          { value: "female", label: "أنثى" },
+                        ]}
+                        value={editing.gender}
+                        onValueChange={(v) => setF("gender", v)}
+                        placeholder="الجنس"
+                        className="w-full"
+                      />
                     </Field>
                     <Field label="تاريخ الميلاد"><Input type="date" value={editing.birthDate || ""} onChange={e => setF("birthDate", e.target.value)} /></Field>
                     <Field label="ملاحظات" className="md:col-span-2"><Textarea rows={2} value={editing.notes} onChange={e => setF("notes", e.target.value)} /></Field>

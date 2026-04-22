@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Calculator, Sparkles, Loader2, ScrollText, Printer } from "lucide-react";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 
 export default function EndOfService() {
   const { toast } = useToast();
@@ -50,21 +51,30 @@ export default function EndOfService() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">الموظف</label>
-            <select value={empId} onChange={e => { setEmpId(e.target.value ? Number(e.target.value) : ""); setCalc(null); setExplain(""); }}
-              className="h-9 w-full rounded-md border bg-background px-2" data-testid="eos-emp">
-              <option value="">— اختر موظفاً —</option>
-              {employees.map((e: any) => (
-                <option key={e.id} value={e.id}>{e.code} — {e.nameAr}{e.hireDate ? "" : " (لا يوجد تاريخ تعيين)"}</option>
-              ))}
-            </select>
+            <SearchCombobox
+              items={employees.map((e: any) => ({
+                value: String(e.id), code: e.code, label: e.nameAr,
+                description: e.hireDate ? `تاريخ التعيين: ${e.hireDate}` : "⚠ لا يوجد تاريخ تعيين",
+              }))}
+              value={empId ? String(empId) : ""}
+              onValueChange={(v) => { setEmpId(v ? Number(v) : ""); setCalc(null); setExplain(""); }}
+              placeholder="— اختر موظفاً —"
+              searchPlaceholder="ابحث بالاسم أو الكود…"
+              className="w-full"
+            />
           </div>
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">سبب إنهاء الخدمة</label>
-            <select value={reason} onChange={e => { setReason(e.target.value as any); setCalc(null); setExplain(""); }}
-              className="h-9 w-full rounded-md border bg-background px-2" data-testid="eos-reason">
-              <option value="resignation">استقالة الموظف (المادة 85)</option>
-              <option value="termination">إنهاء من صاحب العمل (المادة 84 — كاملة)</option>
-            </select>
+            <SearchCombobox
+              items={[
+                { value: "resignation", label: "استقالة الموظف", description: "تطبيق المادة 85 — نسبة جزئية" },
+                { value: "termination", label: "إنهاء من صاحب العمل", description: "تطبيق المادة 84 — مكافأة كاملة" },
+              ]}
+              value={reason}
+              onValueChange={(v) => { setReason(v as any); setCalc(null); setExplain(""); }}
+              placeholder="اختر السبب"
+              className="w-full"
+            />
           </div>
           <div className="flex items-end">
             <Button onClick={() => calcMut.mutate()} disabled={!empId || calcMut.isPending} className="w-full" data-testid="btn-calc-eos">

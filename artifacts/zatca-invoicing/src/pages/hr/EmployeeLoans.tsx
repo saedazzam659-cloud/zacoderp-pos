@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Wallet, Plus, Trash2, X, Loader2, CheckCircle2 } from "lucide-react";
 
 const TYPES: Record<string, string> = { loan: "سلفة", advance: "عُهدة", penalty: "خصم", other: "أخرى" };
@@ -114,19 +115,25 @@ export default function EmployeeLoans() {
         >
           <FormGrid>
             <Field label="الموظف *">
-              <select value={form.employeeId} onChange={e => setForm({ ...form, employeeId: e.target.value })}
-                className="h-9 w-full rounded-md border bg-background px-2" data-testid="loan-emp">
-                <option value="">— اختر —</option>
-                {employees.filter((e: any) => e.status === "active").map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.code} — {e.nameAr}</option>
-                ))}
-              </select>
+              <SearchCombobox
+                items={employees.filter((e: any) => e.status === "active").map((e: any) => ({
+                  value: String(e.id), code: e.code, label: e.nameAr,
+                  description: e.jobTitle || e.department || undefined,
+                }))}
+                value={form.employeeId ? String(form.employeeId) : ""}
+                onValueChange={(v) => setForm({ ...form, employeeId: v })}
+                placeholder="— اختر موظفاً —"
+                searchPlaceholder="ابحث بالاسم أو الكود…"
+                className="w-full"
+              />
             </Field>
             <Field label="نوع *">
-              <select value={form.loanType} onChange={e => setForm({ ...form, loanType: e.target.value })}
-                className="h-9 w-full rounded-md border bg-background px-2" data-testid="loan-type">
-                {Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
+              <SearchCombobox
+                items={Object.entries(TYPES).map(([k, v]) => ({ value: k, label: v }))}
+                value={form.loanType}
+                onValueChange={(v) => setForm({ ...form, loanType: v })}
+                placeholder="اختر النوع"
+              />
             </Field>
             <Field label="التاريخ *">
               <Input type="date" value={form.loanDate} onChange={e => setForm({ ...form, loanDate: e.target.value })} data-testid="loan-date" />

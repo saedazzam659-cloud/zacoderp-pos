@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ArrowRight, FileSignature, Plus, Pencil, Trash2, RefreshCcw,
@@ -240,10 +241,16 @@ export default function EmployeeContracts() {
               <FormGrid>
                 <Field label="رقم العقد"><Input value={editingC.contractNumber} onChange={e => setCF("contractNumber", e.target.value)} placeholder="تلقائي" /></Field>
                 <Field label="نوع العقد">
-                  <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editingC.contractType} onChange={e => setCF("contractType", e.target.value)}>
-                    <option value="fixed">محدد المدة</option>
-                    <option value="unlimited">غير محدد المدة</option>
-                  </select>
+                  <SearchCombobox
+                    items={[
+                      { value: "fixed", label: "محدد المدة" },
+                      { value: "unlimited", label: "غير محدد المدة" },
+                    ]}
+                    value={editingC.contractType}
+                    onValueChange={(v) => setCF("contractType", v)}
+                    placeholder="نوع العقد"
+                    className="w-full"
+                  />
                 </Field>
                 <Field label="تاريخ البداية" required><Input type="date" value={editingC.startDate} onChange={e => setCF("startDate", e.target.value)} /></Field>
                 <Field label="تاريخ النهاية"><Input type="date" value={editingC.endDate || ""} onChange={e => setCF("endDate", e.target.value)} /></Field>
@@ -339,15 +346,26 @@ export default function EmployeeContracts() {
             >
               <FormGrid>
                 <Field label="نوع الإجازة">
-                  <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editingL.leaveType} onChange={e => setLF("leaveType", e.target.value)}>
-                    {Object.entries(LEAVE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                  </select>
+                  <SearchCombobox
+                    items={Object.entries(LEAVE_LABEL).map(([v, l]) => ({ value: v, label: l as string }))}
+                    value={editingL.leaveType}
+                    onValueChange={(v) => setLF("leaveType", v)}
+                    placeholder="نوع الإجازة"
+                    searchPlaceholder="ابحث…"
+                    className="w-full"
+                  />
                 </Field>
                 <Field label="مدفوعة الأجر">
-                  <select className="w-full h-9 rounded-md border bg-background px-3 text-sm" value={editingL.paid ? "1" : "0"} onChange={e => setLF("paid", e.target.value === "1")}>
-                    <option value="1">نعم</option>
-                    <option value="0">لا</option>
-                  </select>
+                  <SearchCombobox
+                    items={[
+                      { value: "1", label: "نعم — مدفوعة" },
+                      { value: "0", label: "لا — بدون أجر" },
+                    ]}
+                    value={editingL.paid ? "1" : "0"}
+                    onValueChange={(v) => setLF("paid", v === "1")}
+                    placeholder="—"
+                    className="w-full"
+                  />
                 </Field>
                 <Field label="من تاريخ" required><Input type="date" value={editingL.startDate} onChange={e => { const v = e.target.value; setLF("startDate", v); const days = Math.max(1, Math.ceil((new Date(editingL.endDate).getTime() - new Date(v).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
                 <Field label="إلى تاريخ" required><Input type="date" value={editingL.endDate} onChange={e => { const v = e.target.value; setLF("endDate", v); const days = Math.max(1, Math.ceil((new Date(v).getTime() - new Date(editingL.startDate).getTime()) / 86400000) + 1); if (!isNaN(days)) setLF("days", days); }} /></Field>
