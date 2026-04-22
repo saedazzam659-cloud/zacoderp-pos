@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard } from "lucide-react";
+import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", notes: "", isActive: true };
@@ -59,7 +59,12 @@ export default function BankAccounts() {
       const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };
       const url  = editing ? `${API}/api/bank-accounts/${editing.id}` : `${API}/api/bank-accounts`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || "حدث خطأ");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -68,8 +73,16 @@ export default function BankAccounts() {
       qc.invalidateQueries({ queryKey: ["bank-accounts-bal"] });
       setPanel(false);
     },
-    onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "تعذّر الحفظ", description: e?.message || "حدث خطأ", variant: "destructive" }),
   });
+
+  // Soft warnings (do not block save — backend still enforces uniqueness)
+  const dupCode = form.code.trim() && (banks as any[]).some((b: any) =>
+    b.code?.trim().toLowerCase() === form.code.trim().toLowerCase() && b.id !== editing?.id);
+  const dupIban = form.iban.trim() && (banks as any[]).some((b: any) =>
+    b.iban?.trim() === form.iban.trim() && b.id !== editing?.id);
+  const dupAccount = acctId && (banks as any[]).some((b: any) =>
+    b.accountId === parseInt(acctId) && b.id !== editing?.id);
 
   const delMut = useMutation({
     mutationFn: async (id: number) => fetch(`${API}/api/bank-accounts/${id}`, { method: "DELETE", headers: h }),
@@ -116,6 +129,16 @@ export default function BankAccounts() {
           saving={saveMut.isPending}
           saveDisabled={!form.nameAr || !form.code}
         >
+          {(dupCode || dupIban || dupAccount) && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                {dupCode && <p>تنبيه: الكود <strong>{form.code}</strong> مستخدم بالفعل لحساب بنكي آخر.</p>}
+                {dupIban && <p>تنبيه: رقم IBAN مستخدم بالفعل لحساب آخر.</p>}
+                {dupAccount && <p>تنبيه: هذا الحساب مرتبط مسبقاً بحساب بنكي آخر.</p>}
+              </div>
+            </div>
+          )}
           <FormGrid>
             <Field label="الكود" required><Input placeholder="B001" {...f("code")} /></Field>
             <Field label="الاسم العربي" required><Input placeholder="بنك الرياض" {...f("nameAr")} /></Field>

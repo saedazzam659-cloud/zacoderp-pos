@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { branchesApi } from "@/lib/branchesApi";
+import { parseError } from "@/lib/parseError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,9 +68,10 @@ export default function Branches() {
     qc.invalidateQueries({ queryKey: ["regions"] });
   };
 
-  const createMut = useMutation({ mutationFn: branchesApi.createBranch, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة الفرع" }); } });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateBranch(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل الفرع" }); } });
-  const deleteMut = useMutation({ mutationFn: branchesApi.deleteBranch, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
+  const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
+  const createMut = useMutation({ mutationFn: branchesApi.createBranch, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة الفرع" }); }, onError: errToast("تعذّر حفظ الفرع") });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateBranch(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل الفرع" }); }, onError: errToast("تعذّر تعديل الفرع") });
+  const deleteMut = useMutation({ mutationFn: branchesApi.deleteBranch, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: errToast("تعذّر الحذف") });
 
   function reset() { setForm(EMPTY_BRANCH); setEditId(null); setShowForm(false); setActiveTab("basic"); }
   function handleEdit(b: any) {

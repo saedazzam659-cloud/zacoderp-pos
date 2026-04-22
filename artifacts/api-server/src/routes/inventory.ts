@@ -81,6 +81,16 @@ router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, accountId } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
+  const existing = await db.select().from(warehousesTable).where(eq(warehousesTable.companyId, cid));
+  if (existing.some(w => w.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمخزن آخر` }); return;
+  }
+  if (existing.some(w => w.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمخزن آخر` }); return;
+  }
+  if (accountId && existing.some(w => w.accountId === Number(accountId))) {
+    res.status(409).json({ error: "هذا الحساب مرتبط بمخزن آخر — اختر حساباً آخر" }); return;
+  }
   const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: accountId ? Number(accountId) : null }).returning();
   res.status(201).json(row);
 });
@@ -89,6 +99,16 @@ router.put("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, isActive, accountId } = req.body;
+  const others = await db.select().from(warehousesTable).where(eq(warehousesTable.companyId, cid));
+  if (code && others.some(w => w.id !== id && w.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمخزن آخر` }); return;
+  }
+  if (nameAr && others.some(w => w.id !== id && w.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمخزن آخر` }); return;
+  }
+  if (accountId && others.some(w => w.id !== id && w.accountId === Number(accountId))) {
+    res.status(409).json({ error: "هذا الحساب مرتبط بمخزن آخر — اختر حساباً آخر" }); return;
+  }
   const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
@@ -116,6 +136,13 @@ router.post("/item-groups", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المجموعة مطلوبان" }); return; }
+  const existing = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  if (existing.some(g => g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
+  }
+  if (existing.some(g => g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` }); return;
+  }
   const [row] = await db.insert(itemGroupsTable).values({ companyId: cid, code, nameAr, nameEn }).returning();
   res.status(201).json(row);
 });
@@ -124,6 +151,13 @@ router.put("/item-groups/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { code, nameAr, nameEn } = req.body;
+  const others = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
+  if (code && others.some(g => g.id !== id && g.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمجموعة أخرى` }); return;
+  }
+  if (nameAr && others.some(g => g.id !== id && g.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمجموعة أخرى` }); return;
+  }
   const [row] = await db.update(itemGroupsTable).set({ code, nameAr, nameEn }).where(and(eq(itemGroupsTable.id, id), eq(itemGroupsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
@@ -150,6 +184,13 @@ router.post("/units", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn, conversionFactor } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الوحدة مطلوبان" }); return; }
+  const existing = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
+  if (existing.some(u => u.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لوحدة أخرى` }); return;
+  }
+  if (existing.some(u => u.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لوحدة أخرى` }); return;
+  }
   const [row] = await db.insert(unitsTable).values({ companyId: cid, code, nameAr, nameEn, conversionFactor: conversionFactor || "1" }).returning();
   res.status(201).json(row);
 });
@@ -158,6 +199,13 @@ router.put("/units/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { code, nameAr, nameEn, conversionFactor } = req.body;
+  const others = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
+  if (code && others.some(u => u.id !== id && u.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لوحدة أخرى` }); return;
+  }
+  if (nameAr && others.some(u => u.id !== id && u.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لوحدة أخرى` }); return;
+  }
   const [row] = await db.update(unitsTable).set({ code, nameAr, nameEn, conversionFactor: conversionFactor || "1" }).where(and(eq(unitsTable.id, id), eq(unitsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
@@ -210,6 +258,16 @@ router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
+  const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
+  if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
+  }
+  if (existing.some(i => i.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لصنف آخر` }); return;
+  }
+  if (barcode && existing.some(i => i.barcode?.trim() === String(barcode).trim())) {
+    res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
+  }
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || "stock", groupId: groupId || null, unitId: unitId || null,
@@ -224,6 +282,16 @@ router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
   const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status } = req.body;
+  const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
+  if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
+  }
+  if (nameAr && others.some(i => i.id !== id && i.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لصنف آخر` }); return;
+  }
+  if (barcode && others.some(i => i.id !== id && i.barcode?.trim() === String(barcode).trim())) {
+    res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
+  }
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
     groupId: groupId || null, unitId: unitId || null,

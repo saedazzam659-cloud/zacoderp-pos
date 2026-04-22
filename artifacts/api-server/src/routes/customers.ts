@@ -83,6 +83,21 @@ router.post("/", async (req, res) => {
   const data = parsed.data;
   // Lock companyId to the authenticated user's company (non-superadmin)
   const effectiveCompanyId = resolveCompanyId(req, data.companyId) ?? data.companyId;
+
+  const existing = await db.select().from(customersTable).where(eq(customersTable.companyId, effectiveCompanyId));
+  if (data.vatNumber && existing.some(c => c.vatNumber?.trim() === data.vatNumber!.trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${data.vatNumber}" مستخدم لعميل آخر` });
+    return;
+  }
+  if (data.crNumber && existing.some(c => c.crNumber?.trim() === data.crNumber!.trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لعميل آخر` });
+    return;
+  }
+  if (data.nameAr && existing.some(c => c.nameAr?.trim().toLowerCase() === data.nameAr.trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${data.nameAr}" مسجَّل بالفعل لعميل آخر` });
+    return;
+  }
+
   const [customer] = await db.insert(customersTable).values({
     companyId: effectiveCompanyId,
     nameAr: data.nameAr,
@@ -122,6 +137,22 @@ router.put("/:id", async (req, res) => {
 
   const parsed = UpdateCustomerBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input", details: parsed.error.issues }); return; }
+  const d = parsed.data as any;
+
+  const others = await db.select().from(customersTable).where(eq(customersTable.companyId, existing.companyId));
+  if (d.vatNumber && others.some(c => c.id !== id && c.vatNumber?.trim() === String(d.vatNumber).trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${d.vatNumber}" مستخدم لعميل آخر` });
+    return;
+  }
+  if (d.crNumber && others.some(c => c.id !== id && c.crNumber?.trim() === String(d.crNumber).trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${d.crNumber}" مستخدم لعميل آخر` });
+    return;
+  }
+  if (d.nameAr && others.some(c => c.id !== id && c.nameAr?.trim().toLowerCase() === String(d.nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${d.nameAr}" مسجَّل بالفعل لعميل آخر` });
+    return;
+  }
+
   const [customer] = await db.update(customersTable).set(parsed.data).where(eq(customersTable.id, id)).returning();
   res.json(customer);
 });

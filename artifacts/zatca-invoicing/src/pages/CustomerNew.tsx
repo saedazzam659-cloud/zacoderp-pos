@@ -132,9 +132,9 @@ export default function CustomerNew() {
           queryClient.invalidateQueries({ queryKey: [`/api/customers/${editingId}`] });
           setLocation("/customers");
         },
-        onError: () => toast({
-          title: "حدث خطأ",
-          description: "لم نتمكن من تحديث العميل.",
+        onError: (e: any) => toast({
+          title: "تعذّر تحديث العميل",
+          description: e?.response?.data?.error || e?.message || "لم نتمكن من تحديث العميل.",
           variant: "destructive",
         }),
       });
@@ -146,9 +146,9 @@ export default function CustomerNew() {
         queryClient.invalidateQueries({ queryKey: ["customers"] });
         setLocation("/customers");
       },
-      onError: () => toast({
-        title: "حدث خطأ",
-        description: "لم نتمكن من إضافة العميل.",
+      onError: (e: any) => toast({
+        title: "تعذّر إضافة العميل",
+        description: e?.response?.data?.error || e?.message || "لم نتمكن من إضافة العميل.",
         variant: "destructive",
       }),
     });

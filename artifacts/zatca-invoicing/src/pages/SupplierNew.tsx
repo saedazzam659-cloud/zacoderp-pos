@@ -49,7 +49,12 @@ export default function SupplierNew() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ ...values, companyId: user?.companyId, accountId: accountId ? Number(accountId) : null }),
       });
-      if (!res.ok) throw new Error("فشل الحفظ");
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || "فشل الحفظ");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -57,7 +62,7 @@ export default function SupplierNew() {
       queryClient.invalidateQueries({ queryKey: ["suppliers"] });
       setLocation("/suppliers");
     },
-    onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "تعذّر إضافة المورد", description: e?.message || "حدث خطأ", variant: "destructive" }),
   });
 
   const [accountId, setAccountId] = useState("");

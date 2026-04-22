@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
+import { parseError } from "@/lib/parseError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,9 +31,10 @@ export default function ItemGroups() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["item-groups"] });
-  const createMut = useMutation({ mutationFn: inventoryApi.createItemGroup, onSuccess: () => { invalidate(); reset(); toast({ title: "تم الحفظ" }); } });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItemGroup(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم التعديل" }); } });
-  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItemGroup, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
+  const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
+  const createMut = useMutation({ mutationFn: inventoryApi.createItemGroup, onSuccess: () => { invalidate(); reset(); toast({ title: "تم الحفظ" }); }, onError: errToast("تعذّر حفظ المجموعة") });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItemGroup(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم التعديل" }); }, onError: errToast("تعذّر تعديل المجموعة") });
+  const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItemGroup, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: errToast("تعذّر الحذف") });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveTab("basic"); }
   function handleEdit(g: any) {

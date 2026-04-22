@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { parseError } from "@/lib/parseError";
 import { useAuth } from "@/contexts/AuthContext";
 import { branchesApi } from "@/lib/branchesApi";
 import { Button } from "@/components/ui/button";
@@ -49,9 +50,10 @@ export default function Regions() {
     qc.invalidateQueries({ queryKey: ["branches"] });
   };
 
-  const createMut = useMutation({ mutationFn: branchesApi.createRegion, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة المنطقة" }); } });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateRegion(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل المنطقة" }); } });
-  const deleteMut = useMutation({ mutationFn: branchesApi.deleteRegion, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: (e: any) => toast({ title: e.message, variant: "destructive" }) });
+  const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
+  const createMut = useMutation({ mutationFn: branchesApi.createRegion, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة المنطقة" }); }, onError: errToast("تعذّر حفظ المنطقة") });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateRegion(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل المنطقة" }); }, onError: errToast("تعذّر تعديل المنطقة") });
+  const deleteMut = useMutation({ mutationFn: branchesApi.deleteRegion, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: errToast("تعذّر الحذف") });
 
   function reset() { setForm(EMPTY_REGION); setEditId(null); setShowForm(false); }
   function handleEdit(r: any) { setForm({ ...r }); setEditId(r.id); setShowForm(true); }

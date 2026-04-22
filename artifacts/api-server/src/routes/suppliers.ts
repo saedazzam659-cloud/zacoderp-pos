@@ -76,6 +76,25 @@ router.post("/", async (req, res) => {
   if (!data.nameAr) { res.status(400).json({ error: "اسم المورد مطلوب" }); return; }
   const companyId = resolveCompanyId(req, data.companyId ? parseInt(data.companyId) : undefined);
   if (!companyId) { res.status(400).json({ error: "معرّف الشركة مطلوب" }); return; }
+
+  const existing = await db.select().from(suppliersTable).where(eq(suppliersTable.companyId, companyId));
+  if (existing.some(s => s.nameAr?.trim().toLowerCase() === String(data.nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${data.nameAr}" مسجَّل بالفعل لمورد آخر` });
+    return;
+  }
+  if (data.vatNumber && existing.some(s => s.vatNumber?.trim() === String(data.vatNumber).trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${data.vatNumber}" مستخدم لمورد آخر` });
+    return;
+  }
+  if (data.crNumber && existing.some(s => s.crNumber?.trim() === String(data.crNumber).trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لمورد آخر` });
+    return;
+  }
+  if (data.accountId && existing.some(s => s.accountId === Number(data.accountId))) {
+    res.status(409).json({ error: "هذا الحساب مرتبط بمورد آخر — اختر حساباً آخر" });
+    return;
+  }
+
   const [supplier] = await db.insert(suppliersTable).values({
     companyId,
     nameAr: data.nameAr,
@@ -111,6 +130,25 @@ router.put("/:id", async (req, res) => {
   const companyId = resolveCompanyId(req, existing.companyId);
   if (companyId && existing.companyId !== companyId) { res.status(403).json({ error: "غير مصرح" }); return; }
   const data = req.body;
+
+  const others = await db.select().from(suppliersTable).where(eq(suppliersTable.companyId, existing.companyId));
+  if (data.nameAr && others.some(s => s.id !== id && s.nameAr?.trim().toLowerCase() === String(data.nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${data.nameAr}" مسجَّل بالفعل لمورد آخر` });
+    return;
+  }
+  if (data.vatNumber && others.some(s => s.id !== id && s.vatNumber?.trim() === String(data.vatNumber).trim())) {
+    res.status(409).json({ error: `الرقم الضريبي "${data.vatNumber}" مستخدم لمورد آخر` });
+    return;
+  }
+  if (data.crNumber && others.some(s => s.id !== id && s.crNumber?.trim() === String(data.crNumber).trim())) {
+    res.status(409).json({ error: `رقم السجل التجاري "${data.crNumber}" مستخدم لمورد آخر` });
+    return;
+  }
+  if (data.accountId && others.some(s => s.id !== id && s.accountId === Number(data.accountId))) {
+    res.status(409).json({ error: "هذا الحساب مرتبط بمورد آخر — اختر حساباً آخر" });
+    return;
+  }
+
   const [supplier] = await db.update(suppliersTable).set({
     nameAr: data.nameAr,
     nameEn: data.nameEn ?? null,

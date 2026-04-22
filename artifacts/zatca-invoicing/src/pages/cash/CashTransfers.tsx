@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,7 @@ export default function CashTransfers() {
       return res.json();
     },
     onSuccess: () => { toast({ title: editing ? "تم التحديث" : "تم إنشاء التحويل" }); qc.invalidateQueries({ queryKey: ["cash-transfers"] }); setPanel(false); },
-    onError: (e: any) => toast({ title: e.message || "حدث خطأ", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "تعذّر حفظ التحويل", description: parseError(e), variant: "destructive" }),
   });
 
   const postMut = useMutation({

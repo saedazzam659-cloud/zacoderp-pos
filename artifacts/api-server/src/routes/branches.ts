@@ -49,6 +49,13 @@ router.post("/regions", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { code, nameAr, nameEn, notes } = req.body;
     if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const existing = await db.select().from(regionsTable).where(eq(regionsTable.companyId, cid));
+    if (existing.some(r => r.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمنطقة أخرى` }); return;
+    }
+    if (existing.some(r => r.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+      res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمنطقة أخرى` }); return;
+    }
     const [row] = await db.insert(regionsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null, notes: notes || null,
     }).returning();
@@ -62,6 +69,13 @@ router.put("/regions/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
     const { code, nameAr, nameEn, notes } = req.body;
+    const others = await db.select().from(regionsTable).where(eq(regionsTable.companyId, cid));
+    if (code && others.some(r => r.id !== id && r.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمنطقة أخرى` }); return;
+    }
+    if (nameAr && others.some(r => r.id !== id && r.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+      res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لمنطقة أخرى` }); return;
+    }
     const [row] = await db.update(regionsTable).set({
       code, nameAr, nameEn: nameEn || null, notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(regionsTable.id, id), eq(regionsTable.companyId, cid))).returning();
@@ -126,6 +140,13 @@ router.post("/branches", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { code, nameAr, nameEn, regionId, city, address, phone, email, isMain, status, notes } = req.body;
     if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const existing = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
+    if (existing.some(b => b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لفرع آخر` }); return;
+    }
+    if (existing.some(b => b.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+      res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لفرع آخر` }); return;
+    }
     // if isMain, unset other main branches
     if (isMain) {
       await db.update(branchesTable).set({ isMain: false })
@@ -150,6 +171,13 @@ router.put("/branches/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
     const { code, nameAr, nameEn, regionId, city, address, phone, email, isMain, status, notes } = req.body;
+    const others = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
+    if (code && others.some(b => b.id !== id && b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+      res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لفرع آخر` }); return;
+    }
+    if (nameAr && others.some(b => b.id !== id && b.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+      res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لفرع آخر` }); return;
+    }
     if (isMain) {
       await db.update(branchesTable).set({ isMain: false })
         .where(and(eq(branchesTable.companyId, cid)));

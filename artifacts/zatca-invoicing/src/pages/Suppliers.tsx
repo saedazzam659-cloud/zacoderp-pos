@@ -132,7 +132,12 @@ export default function Suppliers() {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
-      if (!res.ok) throw new Error(t("pages.suppliers.updateFailed"));
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || t("pages.suppliers.updateFailed"));
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -140,7 +145,7 @@ export default function Suppliers() {
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       setEditSup(null);
     },
-    onError: () => toast({ title: t("pages.suppliers.updateError"), variant: "destructive" }),
+    onError: (e: any) => toast({ title: t("pages.suppliers.updateError"), description: e?.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
