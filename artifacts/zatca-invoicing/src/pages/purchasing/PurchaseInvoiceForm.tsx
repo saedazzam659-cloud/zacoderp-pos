@@ -176,6 +176,13 @@ export default function PurchaseInvoiceForm() {
     setBranchId(String(defaultBranch.id));
   }, [isNew, defaultBranch?.id]);
 
+  const defaultWarehouse = (warehouses as any[])[0];
+  const hasEmptyWarehouse = lines.some(l => !l.warehouseId);
+  useEffect(() => {
+    if (!defaultWarehouse || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
+  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+
   // ── Supplier balances (for credit payment) ───────────────
   const { data: supplierBalances = [] } = useQuery<any[]>({
     queryKey: ["supplier-balances", cid],

@@ -151,6 +151,13 @@ export default function PurchaseReturns() {
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
   }, [showForm, defaultBranch?.id]);
 
+  const defaultWarehouse = (warehouses as any[])[0];
+  const hasEmptyWarehouse = lines.some((l: any) => !l.warehouseId);
+  useEffect(() => {
+    if (!defaultWarehouse || !hasEmptyWarehouse) return;
+    setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
+  }, [defaultWarehouse?.id, hasEmptyWarehouse]);
+
   // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
