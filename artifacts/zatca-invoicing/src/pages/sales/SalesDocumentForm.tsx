@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
+import { useFormatters } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,10 +18,9 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface DocLine {
@@ -80,6 +81,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
+  const { t } = useTranslation();
+  const { fmt, isRtl } = useFormatters();
+  const BackIcon = isRtl ? ArrowRight : ArrowLeft;
   const qc = useQueryClient();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -334,7 +338,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
         })) : [newLine()]);
-        toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
+        toast({ title: t("salesDocForm.toastDuplicated") });
         const url = new URL(window.location.href);
         url.searchParams.delete("from");
         window.history.replaceState({}, "", url.toString());
@@ -437,14 +441,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
 
-      // Auto-post (ترحيل) immediately after save for invoices only (not quotations)
+      // Auto-post immediately after save for invoices only (not quotations)
       if (isInvoice && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
         });
         const postJson = await postRes.json().catch(() => ({}));
         if (!postRes.ok) {
-          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${postJson.error || postRes.statusText}`);
+          throw new Error(postJson.error || postRes.statusText);
         }
         return postJson;
       }
@@ -453,8 +457,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : "sales-quotations"] });
       toast({ title: isNew
-        ? (isInvoice ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم إنشاء العرض")
-        : (isInvoice ? "✓ تم الحفظ والترحيل" : "✓ تم الحفظ") });
+        ? (isInvoice ? t("salesDocForm.toastInvoiceCreated") : t("salesDocForm.toastQuotationCreated"))
+        : (isInvoice ? t("salesDocForm.toastInvoiceSaved")  : t("salesDocForm.toastQuotationSaved")) });
       navigate(basePath);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -488,31 +492,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     saveMut.mutate(base);
   }
 
-  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
+  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">{t("common.loadingShort")}</div>;
 
   const customerComboItems = [
-    { value: "", label: "— بدون عميل —" },
+    { value: "", label: t("salesDocForm.noCustomer") },
     ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
   ];
   const itemComboItems = [
-    { value: "", label: "— اختر صنف —" },
+    { value: "", label: t("salesDocForm.selectItem") },
     ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr })),
   ];
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
   const Icon  = isInvoice ? ShoppingBag : FileSignature;
   const title = isNew
-    ? (isInvoice ? "فاتورة مبيعات جديدة" : "عرض سعر جديد")
-    : (isInvoice ? `تعديل الفاتورة #${editId}` : `تعديل عرض السعر #${editId}`);
+    ? (isInvoice ? t("salesDocForm.newInvoice") : t("salesDocForm.newQuotation"))
+    : (isInvoice ? t("salesDocForm.editInvoice", { id: editId }) : t("salesDocForm.editQuotation", { id: editId }));
   const subtitle = isInvoice
-    ? "إنشاء فاتورة مبيعات — عند الترحيل يُخصم رصيد المخزون تلقائياً"
-    : "إنشاء عرض سعر للعميل — لا يؤثر على المخزون";
+    ? t("salesDocForm.subtitleInvoice")
+    : t("salesDocForm.subtitleQuotation");
 
   return (
-    <div className="space-y-5 max-w-6xl mx-auto" dir="rtl">
+    <div className="space-y-5 max-w-6xl mx-auto">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
-          <ArrowRight className="h-4 w-4" />
+          <BackIcon className="h-4 w-4" />
         </Button>
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
@@ -525,26 +529,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
                 {activeTab === "header"
-                  ? "أدخل بيانات المستند الرأسية"
-                  : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount)}`}
+                  ? t("salesDocForm.headerHint")
+                  : t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
               </p>
               <TabsList className="h-8 bg-background border gap-1">
                 {isInvoice && (
                   <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <Calculator className="h-3.5 w-3.5" />حسابات القيد
+                    <Calculator className="h-3.5 w-3.5" />{t("salesDocForm.tabAccounts")}
                   </TabsTrigger>
                 )}
                 <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+                  <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
                 </TabsTrigger>
                 <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemName).length})
+                  <ListOrdered className="h-3.5 w-3.5" />{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -554,31 +558,31 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <CardContent className="pt-5 pb-5 space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{isInvoice ? "رقم الفاتورة" : "رقم العرض"}</Label>
-                  <Input className="h-9 text-sm" placeholder="تلقائي" dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
+                  <Input className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">التاريخ *</Label>
+                  <Label className="text-xs">{t("salesDocForm.date")}</Label>
                   <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
                 </div>
                 {!isInvoice && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">صالح حتى</Label>
+                    <Label className="text-xs">{t("salesDocForm.validUntil")}</Label>
                     <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
                   </div>
                 )}
                 <div className="space-y-1.5">
-                  <Label className="text-xs">العميل</Label>
-                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder="العميل..." />
+                  <Label className="text-xs">{t("salesDocForm.customer")}</Label>
+                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
                 </div>
                 {isInvoice && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">الفرع</Label>
+                    <Label className="text-xs">{t("salesDocForm.branch")}</Label>
                     <Select value={branchId || undefined} onValueChange={setBranchId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(branches as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? ` (${t("common.main")})` : ""}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -586,22 +590,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
                 {isInvoice && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">نوع الدفع</Label>
+                    <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
                     <Select value={paymentType} onValueChange={setPaymentType}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="credit">آجل</SelectItem>
-                        <SelectItem value="cash">نقدي</SelectItem>
-                        <SelectItem value="bank">بنكي</SelectItem>
+                        <SelectItem value="credit">{t("salesDocForm.paymentCredit")}</SelectItem>
+                        <SelectItem value="cash">{t("salesDocForm.paymentCash")}</SelectItem>
+                        <SelectItem value="bank">{t("salesDocForm.paymentBank")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 )}
                 {isInvoice && paymentType === "cash" && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">الخزنة *</Label>
+                    <Label className="text-xs">{t("salesDocForm.cashBox")}</Label>
                     <Select value={cashBoxId || undefined} onValueChange={setCashBoxId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الخزنة..." /></SelectTrigger>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.cashBoxPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(cashBoxes as any[]).map((b: any) => (
                           <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
@@ -612,9 +616,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 )}
                 {isInvoice && paymentType === "bank" && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">الحساب البنكي *</Label>
+                    <Label className="text-xs">{t("salesDocForm.bankAccount")}</Label>
                     <Select value={bankAccountId || undefined} onValueChange={setBankAccountId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الحساب البنكي..." /></SelectTrigger>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.bankAccountPlaceholder")} /></SelectTrigger>
                       <SelectContent>
                         {(bankAccounts as any[]).map((b: any) => (
                           <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
@@ -624,7 +628,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                 )}
                 <div className="space-y-1.5">
-                  <Label className="text-xs">العملة</Label>
+                  <Label className="text-xs">{t("salesDocForm.currency")}</Label>
                   {currencies.length > 0 ? (
                     <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
@@ -639,14 +643,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">سعر الصرف</Label>
+                  <Label className="text-xs">{t("salesDocForm.exchangeRate")}</Label>
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs">ملاحظات</Label>
+                <Label className="text-xs">{t("salesDocForm.notes")}</Label>
                 <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
             </CardContent>
@@ -658,32 +662,32 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
                   <div className="flex items-center gap-2 text-blue-900">
                     <Calculator className="h-4 w-4" />
-                    <span className="text-sm font-semibold">حسابات القيد المحاسبي (ترحيل)</span>
+                    <span className="text-sm font-semibold">{t("salesDocForm.accountsCardTitle")}</span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="space-y-1">
-                      <Label className="text-xs">حساب إيراد المبيعات <span className="text-destructive">*</span></Label>
+                      <Label className="text-xs">{t("salesDocForm.salesAccount")} <span className="text-destructive">*</span></Label>
                       <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
-                        placeholder="اختر حساب الإيراد..." filterTypes={["revenue"]} allowEmpty={false} />
+                        placeholder={t("salesDocForm.salesAccountPlaceholder")} filterTypes={["revenue"]} allowEmpty={false} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">حساب تكلفة البضاعة المباعة <span className="text-destructive">*</span></Label>
+                      <Label className="text-xs">{t("salesDocForm.cogsAccount")} <span className="text-destructive">*</span></Label>
                       <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
-                        placeholder="اختر حساب COGS..." filterTypes={["expense"]} allowEmpty={false} />
+                        placeholder={t("salesDocForm.cogsAccountPlaceholder")} filterTypes={["expense"]} allowEmpty={false} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">حساب ضريبة المخرجات (VAT)</Label>
+                      <Label className="text-xs">{t("salesDocForm.vatAccount")}</Label>
                       <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
-                        placeholder="اختر حساب ضريبة المخرجات..." filterTypes={["liability"]} />
+                        placeholder={t("salesDocForm.vatAccountPlaceholder")} filterTypes={["liability"]} />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">حساب الخصم المسموح به</Label>
+                      <Label className="text-xs">{t("salesDocForm.discountAccount")}</Label>
                       <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
-                        placeholder="اختر حساب الخصم المسموح به..." filterTypes={["expense"]} />
+                        placeholder={t("salesDocForm.discountAccountPlaceholder")} filterTypes={["expense"]} />
                     </div>
                   </div>
                   <p className="text-[11px] text-blue-900/70">
-                    مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
+                    {t("salesDocForm.accountsHelp")}
                   </p>
                 </div>
               </CardContent>
@@ -697,13 +701,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   const gridCols = isInvoice
                     ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
                     : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto";
+                  const totalLabel = t("salesDocForm.colTotal");
                   const headers = isInvoice
-                    ? ["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "سعر البيع", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""]
-                    : ["الصنف", "كود الصنف", "الوحدة", "الكمية", "سعر البيع", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""];
+                    ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
+                    : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
                   return (
                     <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: gridCols }}>
                       {headers.map((h, i) => (
-                        <p key={i} className={cn("text-[10px]", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
+                        <p key={i} className={cn("text-[10px]", h === totalLabel ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
                       ))}
                     </div>
                   );
@@ -719,18 +724,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       }}
                     >
                       {inventoryItems.length > 0 ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." autoFocus={l._id === focusLineId} />
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} autoFocus={l._id === focusLineId} />
                       ) : (
-                        <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                        <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {isInvoice && (
                         warehouses.length > 0 ? (
                           <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
                             <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                              <SelectValue placeholder="اختر مستودع..." />
+                              <SelectValue placeholder={t("salesDocForm.warehousePlaceholder")} />
                             </SelectTrigger>
                             <SelectContent>
                               {warehouses.map((w: any) => (
@@ -752,13 +757,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                           : unitItems;
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={t("salesDocForm.colUnit")} /></SelectTrigger>
                             <SelectContent>
                               {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         ) : (
-                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                          <Input className="h-8 text-xs" placeholder={t("salesDocForm.colUnit")} value={l.unit}
                             onChange={e => updateLine(l._id, "unit", e.target.value)} />
                         );
                       })()}
@@ -783,7 +788,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               </div>
 
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
-                <Plus className="h-4 w-4" />إضافة صنف
+                <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}
               </Button>
 
               <div className="mt-5 flex flex-wrap justify-between gap-4">
@@ -801,38 +806,38 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     onChange={e => setPriceIncludesVat(e.target.checked)}
                   />
                   <div className="space-y-0.5">
-                    <p className="text-xs font-semibold">السعر شامل الضريبة</p>
+                    <p className="text-xs font-semibold">{t("salesDocForm.priceInclusiveTitle")}</p>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
                       {priceIncludesVat
-                        ? "السعر المُدخل يتضمن الضريبة — يستخرج النظام قيمة الضريبة من المبلغ"
-                        : "السعر المُدخل بدون ضريبة — يضيف النظام الضريبة فوق المبلغ"}
+                        ? t("salesDocForm.priceInclusiveYes")
+                        : t("salesDocForm.priceInclusiveNo")}
                     </p>
                   </div>
                 </label>
 
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
-                    <span>طريقة الحساب</span>
+                    <span>{t("salesDocForm.calcMethod")}</span>
                     <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                      {priceIncludesVat ? "شامل الضريبة" : "غير شامل الضريبة"}
+                      {priceIncludesVat ? t("salesDocForm.calcInclusive") : t("salesDocForm.calcExclusive")}
                     </span>
                   </div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">الصافي (قبل الضريبة)</span><span className="font-mono">{fmt(subtotal)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.subtotalLabel")}</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t("salesDocForm.vatLabel")}</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
                   {lineDiscountTotal > 0 && (
                     <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
-                      <span className="text-muted-foreground">خصم الأصناف</span>
+                      <span className="text-muted-foreground">{t("salesDocForm.lineDiscountTotal")}</span>
                       <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                     </div>
                   )}
                   <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
-                    <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
+                    <span>{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
                     <span className="font-mono text-primary">{fmt(totalAmount)}</span>
                   </div>
                   {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
                     <p className="text-[10px] text-muted-foreground border-t pt-1">
-                      المكافئ بـ {defaultCurrency?.code ?? "SAR"}: {fmt(totalAmount / Number(exchangeRate))}
+                      {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount / Number(exchangeRate)) })}
                     </p>
                   )}
                 </div>
@@ -843,9 +848,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       </Tabs>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => navigate(basePath)}>إلغاء</Button>
+        <Button variant="outline" onClick={() => navigate(basePath)}>{t("common.cancel")}</Button>
         <Button onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? "جاري الحفظ..." : isNew ? (isInvoice ? "حفظ الفاتورة" : "حفظ العرض") : "حفظ التعديل"}
+          {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
         </Button>
       </div>
     </div>
