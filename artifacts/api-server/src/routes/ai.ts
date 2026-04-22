@@ -817,4 +817,261 @@ router.post("/suggest-payment-account", async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// HR — AI helpers: parse Iqama/ID text, suggest contract terms, suggest leave policy
+// ═══════════════════════════════════════════════════════════════════
+
+router.post("/parse-employee-id", async (req, res) => {
+  try {
+    const { text } = req.body as { text?: string };
+    if (!text || !String(text).trim()) {
+      res.status(400).json({ error: "النص مطلوب" }); return;
+    }
+
+    function fallback() {
+      const out: any = { source: "fallback" };
+      const idMatch = String(text).match(/\b([12]\d{9})\b/);
+      if (idMatch) {
+        out.idNumber = idMatch[1];
+        out.idType = idMatch[1].startsWith("1") ? "national" : "iqama";
+      }
+      const dateMatches = Array.from(String(text).matchAll(/(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})|(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/g));
+      if (dateMatches.length) {
+        const m = dateMatches[0];
+        if (m[1]) out.iqamaExpiry = `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
+        else out.iqamaExpiry = `${m[6]}-${String(m[5]).padStart(2,"0")}-${String(m[4]).padStart(2,"0")}`;
+      }
+      const phone = String(text).match(/\b(?:\+?966|0)?5\d{8}\b/);
+      if (phone) out.mobile = phone[0];
+      return out;
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 800,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت مساعد لاستخراج بيانات الهوية/الإقامة السعودية من نص حر. ترد بـ JSON فقط." },
+            { role: "user", content: `استخرج من النص التالي بيانات الموظف:
+- nameAr: الاسم بالعربي
+- nameEn: الاسم بالإنجليزي (إن وُجد)
+- idType: "iqama" إن بدأ الرقم بـ 2، أو "national" إن بدأ بـ 1
+- idNumber: رقم الهوية/الإقامة (10 أرقام)
+- iqamaExpiry: تاريخ انتهاء الإقامة بصيغة YYYY-MM-DD
+- nationality: الجنسية
+- profession: المهنة
+- sponsor: الكفيل
+- mobile: رقم الجوال (إن وُجد)
+- birthDate: تاريخ الميلاد بصيغة YYYY-MM-DD (إن وُجد)
+- gender: "male" أو "female" (إن أمكن استنتاجه)
+
+أعد JSON فقط بهذه المفاتيح، اترك الحقول غير المعروفة فارغة (لا تخترع).
+
+النص:
+${text}` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(fallback()); return; }
+      const allowed = ["nameAr","nameEn","idType","idNumber","iqamaExpiry","nationality","profession","sponsor","mobile","birthDate","gender"];
+      const out: any = { source: "ai" };
+      for (const k of allowed) if (parsed[k]) out[k] = parsed[k];
+      res.json(out);
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+router.post("/suggest-contract-terms", async (req, res) => {
+  try {
+    const { jobTitle, nationality, basicSalary, contractType } = req.body as any;
+    const title = String(jobTitle || "").trim();
+    const nat = String(nationality || "").trim();
+    const cType = contractType === "unlimited" ? "غير محدد المدة" : "محدد المدة";
+
+    function fallback() {
+      const t = title.toLowerCase();
+      const guess = (lo: number, hi: number) => Math.round((lo + hi) / 2);
+      let basic = Number(basicSalary) > 0 ? Number(basicSalary) : guess(3000, 8000);
+      if (/(محاسب|accountant)/i.test(t))                 basic = Number(basicSalary) || guess(5000, 9000);
+      else if (/(مهندس|engineer)/i.test(t))              basic = Number(basicSalary) || guess(8000, 14000);
+      else if (/(مدير|manager|director)/i.test(t))       basic = Number(basicSalary) || guess(12000, 20000);
+      else if (/(مبيعات|sales|بائع)/i.test(t))           basic = Number(basicSalary) || guess(4000, 8000);
+      else if (/(سائق|driver)/i.test(t))                 basic = Number(basicSalary) || guess(2500, 4000);
+      else if (/(عامل|worker|labor)/i.test(t))           basic = Number(basicSalary) || guess(1500, 2500);
+      else if (/(سكرتير|secretary|إداري)/i.test(t))      basic = Number(basicSalary) || guess(3500, 6000);
+      else if (/(مطور|developer|programmer|مبرمج)/i.test(t)) basic = Number(basicSalary) || guess(9000, 16000);
+
+      const housing = Math.round(basic * 0.25);
+      const transport = Math.round(basic * 0.10);
+      return {
+        source: "fallback",
+        basicSalary: basic,
+        housingAllow: housing,
+        transportAllow: transport,
+        otherAllow: 0,
+        workingHours: 8,
+        probationDays: 90,
+        noticePeriod: 60,
+        vacationDays: 21,
+        terms: `عقد عمل ${cType} وفق نظام العمل السعودي.
+• ساعات العمل: 8 ساعات يومياً، 6 أيام أسبوعياً.
+• فترة التجربة: 90 يوماً.
+• فترة الإشعار للإنهاء: 60 يوماً.
+• الإجازة السنوية: 21 يوماً مدفوعة الأجر.
+• تأمين طبي وفق مستوى الشركة.
+• تذكرة سفر سنوية للموظف غير السعودي.
+• مكافأة نهاية الخدمة وفق المادة (84) من نظام العمل.`,
+        reasoning: `تقدير مبدئي للوظيفة "${title}" بناءً على متوسط السوق السعودي.`,
+      };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 1200,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت خبير موارد بشرية في السوق السعودي ملمّ بنظام العمل السعودي. ترد بـ JSON صالح فقط." },
+            { role: "user", content: `اقترح بنود عقد عمل لموظف:
+- الوظيفة: ${title || "غير محددة"}
+- الجنسية: ${nat || "غير محددة"}
+- نوع العقد: ${cType}
+- الراتب الأساسي المطلوب (إن وُجد): ${basicSalary || "اقترح أنت"}
+
+أعد JSON فقط:
+{
+  "basicSalary": <رقم — متوسط السوق السعودي للوظيفة>,
+  "housingAllow": <عادة 25% من الأساسي>,
+  "transportAllow": <عادة 10% من الأساسي>,
+  "otherAllow": <0 افتراضياً>,
+  "workingHours": 8,
+  "probationDays": 90,
+  "noticePeriod": 60,
+  "vacationDays": 21,
+  "terms": "نص بنود العقد بالعربية وفق نظام العمل السعودي (نقاط مرقمة موجزة)",
+  "reasoning": "شرح موجز بالعربية لأسباب التقدير"
+}` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(fallback()); return; }
+      res.json({
+        source: "ai",
+        basicSalary: Number(parsed.basicSalary) || 0,
+        housingAllow: Number(parsed.housingAllow) || 0,
+        transportAllow: Number(parsed.transportAllow) || 0,
+        otherAllow: Number(parsed.otherAllow) || 0,
+        workingHours: Number(parsed.workingHours) || 8,
+        probationDays: Number(parsed.probationDays) || 90,
+        noticePeriod: Number(parsed.noticePeriod) || 60,
+        vacationDays: Number(parsed.vacationDays) || 21,
+        terms: String(parsed.terms || "").trim(),
+        reasoning: String(parsed.reasoning || "").trim() || "اقتراح تلقائي.",
+      });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+router.post("/suggest-leave-policy", async (req, res) => {
+  try {
+    const { reason, leaveType, days } = req.body as any;
+    const r0 = String(reason || "").toLowerCase();
+
+    function fallback() {
+      let type = leaveType || "annual";
+      let paid = true;
+      let advice = "إجازة اعتيادية مدفوعة الأجر تُخصم من الرصيد السنوي (21 يوم).";
+      if (/(مرض|مستشفى|sick|ill)/i.test(r0)) {
+        type = "sick"; paid = true;
+        advice = "إجازة مرضية: 30 يوم بأجر كامل + 60 يوم بـ75% + 30 يوم بدون أجر (المادة 117).";
+      } else if (/(زواج|marriage)/i.test(r0)) {
+        type = "marriage"; paid = true;
+        advice = "إجازة زواج: 5 أيام مدفوعة الأجر (المادة 113).";
+      } else if (/(وفا|عزاء|moarn|death)/i.test(r0)) {
+        type = "bereavement"; paid = true;
+        advice = "إجازة وفاة: 5 أيام مدفوعة الأجر للزوج/الأقارب من الدرجة الأولى (المادة 113).";
+      } else if (/(ولادة|إنجاب|أبو|paternity)/i.test(r0)) {
+        type = "paternity"; paid = true;
+        advice = "إجازة ولادة (للأب): 3 أيام مدفوعة الأجر (المادة 113).";
+      } else if (/(أمومة|maternity)/i.test(r0)) {
+        type = "maternity"; paid = true;
+        advice = "إجازة أمومة: 10 أسابيع (4 قبل الولادة + 6 بعدها) بأجر كامل (المادة 151).";
+      } else if (/(حج|عمرة|hajj)/i.test(r0)) {
+        type = "hajj"; paid = true;
+        advice = "إجازة حج: حتى 15 يوم بأجر كامل مرة واحدة طوال الخدمة (المادة 114).";
+      } else if (/(دراسة|امتحان|study|exam)/i.test(r0)) {
+        type = "study"; paid = true;
+        advice = "إجازة لأداء امتحان: تُخصم من الرصيد السنوي (المادة 115).";
+      } else if (/(بدون|غير مدفوع|unpaid)/i.test(r0)) {
+        type = "unpaid"; paid = false;
+        advice = "إجازة بدون أجر بموافقة صاحب العمل، لا تُحتسب ضمن مدة الخدمة الفعلية.";
+      }
+      return { source: "fallback", leaveType: type, paid, advice };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 600,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت خبير في نظام العمل السعودي. ترد بـ JSON صالح فقط." },
+            { role: "user", content: `موظف يطلب إجازة:
+- السبب: ${reason || "غير مذكور"}
+- النوع المختار: ${leaveType || "غير محدد"}
+- المدة (أيام): ${days || "غير محددة"}
+
+اقترح:
+- leaveType: نوع الإجازة المناسب من: annual, sick, marriage, bereavement, paternity, maternity, hajj, study, unpaid
+- paid: true/false (هل مدفوعة الأجر؟)
+- advice: نصيحة موجزة بالعربية تشمل المرجع من نظام العمل السعودي إن أمكن
+
+أعد JSON فقط بهذه المفاتيح.` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(fallback()); return; }
+      res.json({
+        source: "ai",
+        leaveType: parsed.leaveType || "annual",
+        paid: parsed.paid !== false,
+        advice: String(parsed.advice || "").trim() || "—",
+      });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 export default router;

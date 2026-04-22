@@ -10,7 +10,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
-  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink,
+  ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,9 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
 ];
-const companyBusinessNav: NavDef[] = [];
+const companyBusinessNav: NavDef[] = [
+  { nameKey: "nav.hrEmployees", href: "/hr/employees", icon: UserCog },
+];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon },

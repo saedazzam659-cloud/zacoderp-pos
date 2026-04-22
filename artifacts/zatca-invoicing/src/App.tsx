@@ -31,6 +31,9 @@ import MenuPermissions from "@/pages/MenuPermissions";
 import LicenseManagement from "@/pages/LicenseManagement";
 import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
+// HR
+import Employees from "@/pages/hr/Employees";
+import EmployeeContracts from "@/pages/hr/EmployeeContracts";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -188,6 +191,10 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
             {!isSuperAdmin && user?.role === "admin" && <Route path="/users" component={Users} />}
             {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
+
+            {/* HR routes */}
+            {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
+            {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
 
             {/* Inventory routes */}
             {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}

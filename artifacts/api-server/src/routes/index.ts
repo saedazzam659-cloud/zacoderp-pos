@@ -30,6 +30,7 @@ import aiRouter from "./ai";
 import usersRouter from "./users";
 import fiscalPeriodsRouter from "./fiscal-periods";
 import costCentersRouter from "./cost-centers";
+import employeesRouter from "./employees";
 
 const router: IRouter = Router();
 
@@ -62,6 +63,7 @@ router.use("/ai",                 aiRouter);
 router.use("/users",              usersRouter);
 router.use("/fiscal",             fiscalPeriodsRouter);
 router.use("/cost-centers",       costCentersRouter);
+router.use("/employees",          employeesRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 
