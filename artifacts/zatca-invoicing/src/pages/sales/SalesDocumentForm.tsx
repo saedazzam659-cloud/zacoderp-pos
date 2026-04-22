@@ -98,6 +98,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
   const [cashBoxId, setCashBoxId]       = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
@@ -189,6 +190,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, { headers: authH }); return r.json(); },
+    enabled: !!cid,
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
@@ -246,6 +252,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (isInvoice) setBranchId(existing.branchId ? String(existing.branchId) : "");
     if (isInvoice) setPaymentType(existing.paymentType ?? "credit");
     if (isInvoice) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
+    if (isInvoice) setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
@@ -297,6 +304,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         if (isInvoice) setBranchId(src.branchId ? String(src.branchId) : "");
         if (isInvoice) setPaymentType(src.paymentType ?? "credit");
         if (isInvoice) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
+        if (isInvoice) setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
         setCurrencyCode(src.currencyCode ?? "SAR");
         setExchangeRate(String(src.exchangeRate ?? "1"));
         setNotes(src.notes ?? "");
@@ -465,6 +473,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.invoiceDate = docDate;
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
+      base.bankAccountId = paymentType === "bank" ? (bankAccountId || null) : null;
       base.branchId = branchId || null;
       base.cogsAccountId      = cogsAccountId      ? Number(cogsAccountId)      : null;
       base.inventoryAccountId = inventoryAccountId ? Number(inventoryAccountId) : null;
@@ -582,6 +591,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectContent>
                         <SelectItem value="credit">آجل</SelectItem>
                         <SelectItem value="cash">نقدي</SelectItem>
+                        <SelectItem value="bank">بنكي</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -593,6 +603,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الخزنة..." /></SelectTrigger>
                       <SelectContent>
                         {(cashBoxes as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {isInvoice && paymentType === "bank" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">الحساب البنكي *</Label>
+                    <Select value={bankAccountId || undefined} onValueChange={setBankAccountId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الحساب البنكي..." /></SelectTrigger>
+                      <SelectContent>
+                        {(bankAccounts as any[]).map((b: any) => (
                           <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
                         ))}
                       </SelectContent>

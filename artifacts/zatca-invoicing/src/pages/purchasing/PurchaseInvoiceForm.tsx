@@ -85,6 +85,7 @@ export default function PurchaseInvoiceForm() {
   const [branchId,     setBranchId]     = useState("");
   const [paymentType,  setPaymentType]  = useState("credit");
   const [cashBoxId,    setCashBoxId]    = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [currencyCode, setCurrencyCode] = useState("");
   const [exchangeRate, setExchangeRate] = useState("1");
   const [lcId,         setLcId]         = useState("");
@@ -212,6 +213,16 @@ export default function PurchaseInvoiceForm() {
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user && !!cid && paymentType === "cash",
   });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && paymentType === "bank",
+  });
+  const { data: bankAccountBalances = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts-bal", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && paymentType === "bank",
+  });
 
   // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
@@ -261,6 +272,7 @@ export default function PurchaseInvoiceForm() {
     setBranchId(existing.branchId ? String(existing.branchId) : "");
     setPaymentType(existing.paymentType ?? "credit");
     setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
+    setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setLcId(existing.lcId ? String(existing.lcId) : "");
@@ -312,6 +324,7 @@ export default function PurchaseInvoiceForm() {
         setBranchId(src.branchId ? String(src.branchId) : "");
         setPaymentType(src.paymentType ?? "credit");
         setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
+        setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
         setCurrencyCode(src.currencyCode ?? "SAR");
         setExchangeRate(String(src.exchangeRate ?? "1"));
         setLcId(src.lcId ? String(src.lcId) : "");
@@ -483,6 +496,7 @@ export default function PurchaseInvoiceForm() {
       docNumber: docNumber || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
+      bankAccountId: paymentType === "bank" ? (bankAccountId || null) : null,
       currencyCode,
       exchangeRate, lcId: lcId || null, distributionMethod: distMethod,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -589,7 +603,7 @@ export default function PurchaseInvoiceForm() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">نوع الدفع *</Label>
-                  <Select value={paymentType} onValueChange={(v) => { setPaymentType(v); if (v === "credit") setCashBoxId(""); }}>
+                  <Select value={paymentType} onValueChange={(v) => { setPaymentType(v); if (v !== "cash") setCashBoxId(""); if (v !== "bank") setBankAccountId(""); }}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="credit">
@@ -597,6 +611,9 @@ export default function PurchaseInvoiceForm() {
                       </SelectItem>
                       <SelectItem value="cash">
                         <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />نقدي (من الخزنة)</span>
+                      </SelectItem>
+                      <SelectItem value="bank">
+                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />بنكي (من حساب بنكي)</span>
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -650,8 +667,61 @@ export default function PurchaseInvoiceForm() {
                 </div>
               </div>
 
-              {/* Payment link: supplier (credit) or cash box (cash) */}
-              {paymentType === "credit" ? (
+              {/* Payment link: supplier (credit), cash box (cash), or bank (bank) */}
+              {paymentType === "bank" ? (
+                (() => {
+                  const balMap: Record<number, number> = Object.fromEntries(
+                    (bankAccountBalances as any[]).map((b: any) => [b.bankAccountId, Number(b.balance)])
+                  );
+                  const activeBanks = (bankAccounts as any[]).filter((b: any) => b.isActive !== false);
+                  const items = [
+                    { value: "", label: "— اختر الحساب البنكي —" },
+                    ...activeBanks.map((b: any) => ({
+                      value: String(b.id),
+                      label: `${b.nameAr ?? b.nameEn ?? `#${b.id}`} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${currencyCode}`,
+                    })),
+                  ];
+                  const sel = activeBanks.find((b: any) => String(b.id) === bankAccountId);
+                  const bal = sel ? (balMap[sel.id] ?? 0) : 0;
+                  const totalDue = totalAmount + totalExpLoaded;
+                  const remaining = bal - totalDue;
+                  const insufficient = !!sel && remaining < 0;
+                  return (
+                    <div className="space-y-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">الحساب البنكي *</Label>
+                        <SearchCombobox items={items} value={bankAccountId} onValueChange={setBankAccountId} placeholder="اختر الحساب البنكي..." />
+                      </div>
+                      <div className={cn(
+                        "rounded-lg border p-3 flex items-start gap-3",
+                        !bankAccountId ? "bg-amber-50 border-amber-200 text-amber-800" :
+                        insufficient ? "bg-red-50 border-red-200 text-red-800" :
+                        "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      )}>
+                        <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
+                        {!bankAccountId ? (
+                          <div className="text-xs">
+                            <p className="font-semibold">الدفع بنكي — اختر الحساب البنكي لخصم المبلغ منه</p>
+                            <p className="opacity-80 mt-0.5">عند ترحيل الفاتورة سيتم خصم القيمة من رصيد الحساب البنكي المختار.</p>
+                          </div>
+                        ) : (
+                          <div className="text-xs flex-1">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                              <span className="font-semibold">الحساب: <strong>{sel?.nameAr ?? sel?.nameEn}</strong></span>
+                              <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />الرصيد: <strong className="font-mono">{fmt(bal)}</strong></span>
+                              <span className="flex items-center gap-1"><TrendingDown className="h-3 w-3" />المسحوب: <strong className="font-mono">{fmt(totalDue)}</strong></span>
+                              <span className="flex items-center gap-1 border-r pr-3 mr-1">المتبقي: <strong className="font-mono">{fmt(remaining)}</strong></span>
+                            </div>
+                            {insufficient && (
+                              <p className="mt-1.5 text-[11px] font-semibold">⚠ الرصيد غير كافٍ</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : paymentType === "credit" ? (
                 (() => {
                   const sup = suppliers.find((s: any) => String(s.id) === supplierId);
                   const balRow = supplierBalances.find((b: any) => b.supplierId === Number(supplierId));

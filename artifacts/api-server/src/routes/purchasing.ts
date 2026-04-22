@@ -5,7 +5,7 @@ import {
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
-  cashBoxesTable, journalEntriesTable, journalEntryLinesTable,
+  cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
   stockBalanceTable, stockLedgerTable, warehousesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
@@ -67,6 +67,12 @@ async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undef
   const [cb] = await db.select().from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
   return cb?.accountId ?? null;
+}
+async function getBankAccountAccountId(cid: number, bankAccountId: number | null | undefined): Promise<number | null> {
+  if (!bankAccountId) return null;
+  const [ba] = await db.select().from(bankAccountsTable)
+    .where(and(eq(bankAccountsTable.id, bankAccountId), eq(bankAccountsTable.companyId, cid)));
+  return ba?.accountId ?? null;
 }
 async function getSupplierAccountId(cid: number, supplierId: number | null | undefined): Promise<number | null> {
   if (!supplierId) return null;
@@ -278,13 +284,14 @@ router.get("/purchase-invoices/:id", async (req, res) => {
 router.post("/purchase-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.insert(purchaseInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
@@ -292,6 +299,7 @@ router.post("/purchase-invoices", async (req, res) => {
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       lcId: lcId ? Number(lcId) : null,
@@ -335,12 +343,13 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
     const [inv] = await db.update(purchaseInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
@@ -348,6 +357,7 @@ router.put("/purchase-invoices/:id", async (req, res) => {
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       lcId: lcId ? Number(lcId) : null,
@@ -453,14 +463,15 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const totalAmount    = Number(inv.totalAmount    || 0);
     const inventoryDebit = totalAmount - vatAmount + discountAmount;
 
-    const counterpartyAccountId = inv.paymentType === "cash"
-      ? await getCashBoxAccountId(cid, inv.cashBoxId)
+    const counterpartyAccountId =
+      inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
+      : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getSupplierAccountId(cid, inv.supplierId);
 
     const missing: string[] = [];
     if (vatAmount > 0 && !inv.taxAccountId) missing.push("حساب الضرائب");
     if (discountAmount > 0 && !inv.discountAccountId) missing.push("حساب الخصم المكتسب");
-    if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : inv.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
@@ -513,7 +524,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
             };
           }),
         { accountId: inv.taxAccountId,       debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
-        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : "مستحقات المورد" },
+        { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
         { accountId: inv.discountAccountId,  credit: discountAmount, description: "خصم مكتسب" },
       ],
     });
@@ -629,12 +640,13 @@ router.get("/purchase-returns/:id", async (req, res) => {
 router.post("/purchase-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
+    const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     const [ret] = await db.insert(purchaseReturnsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
@@ -643,6 +655,7 @@ router.post("/purchase-returns", async (req, res) => {
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: String(totalAmount || "0"),
@@ -678,7 +691,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId,
+    const { docNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
@@ -687,6 +700,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
     if (existing.status === "posted") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
     const [ret] = await db.update(purchaseReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
@@ -695,6 +709,7 @@ router.put("/purchase-returns/:id", async (req, res) => {
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: String(totalAmount || "0"),
@@ -806,14 +821,15 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const discountAmount = Number((ret as any).discountAmount || 0);
     const subtotal       = totalAmount - vatAmount + discountAmount;
 
-    const counterpartyAccountId = ret.paymentType === "cash"
-      ? await getCashBoxAccountId(cid, ret.cashBoxId)
+    const counterpartyAccountId =
+      ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
+      : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getSupplierAccountId(cid, ret.supplierId);
 
     const missing: string[] = [];
     if (vatAmount > 0 && !(ret as any).taxAccountId) missing.push("حساب الضرائب");
     if (discountAmount > 0 && !(ret as any).discountAccountId) missing.push("حساب الخصم المكتسب");
-    if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : "حساب المورد");
+    if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : ret.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
@@ -852,7 +868,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       entryType:    "purchase_return",
       exchangeRate: ret.exchangeRate,
       lines: [
-        { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : "تخفيض رصيد المورد" },
+        { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
         { accountId: (ret as any).discountAccountId,  debit:  discountAmount, description: "إلغاء خصم مكتسب" },
         // Inventory: one credit line per warehouse using its own GL account
         ...Object.entries(inventoryCreditByWh)

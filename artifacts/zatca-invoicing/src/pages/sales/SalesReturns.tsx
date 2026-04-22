@@ -48,7 +48,7 @@ function newLine(): ReturnLine {
 
 const EMPTY = {
   docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
-  paymentType: "credit", cashBoxId: "",
+  paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   priceIncludesVat: false,
   cogsAccountId: "", inventoryAccountId: "", salesAccountId: "", taxAccountId: "", discountAccountId: "",
@@ -142,6 +142,10 @@ export default function SalesReturns() {
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/cash-boxes?companyId=${cid}` : `${API}/api/cash-boxes`, { headers: authH }); return r.json(); },
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
@@ -292,6 +296,7 @@ export default function SalesReturns() {
         exchangeRate: String(r.exchangeRate ?? "1"),
         paymentType: r.paymentType ?? "credit",
         cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "",
+        bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "",
         discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
         notes: r.notes ?? "",
         priceIncludesVat: !!r.priceIncludesVat,
@@ -341,6 +346,7 @@ export default function SalesReturns() {
         exchangeRate: String(r.exchangeRate ?? "1"),
         paymentType: r.paymentType ?? "credit",
         cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "",
+        bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "",
         discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
         notes: r.notes ?? "",
         priceIncludesVat: !!r.priceIncludesVat,
@@ -400,6 +406,7 @@ export default function SalesReturns() {
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `SI-${inv.id}`}`,
           paymentType: "credit",
           cashBoxId: "",
+          bankAccountId: "",
           priceIncludesVat: !!inv.priceIncludesVat,
           cogsAccountId:      inv.cogsAccountId      ? String(inv.cogsAccountId)      : "",
           inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
@@ -536,6 +543,7 @@ export default function SalesReturns() {
       invoiceId:  form.invoiceId  || null,
       paymentType: form.paymentType || "credit",
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
+      bankAccountId: form.paymentType === "bank" ? (form.bankAccountId || null) : null,
       totalAmount: totalAmount.toFixed(2),
       vatAmount:   vatAmount.toFixed(2),
       discountAmount: docDiscountAmt.toFixed(2),
@@ -626,6 +634,7 @@ export default function SalesReturns() {
                   <SelectContent>
                     <SelectItem value="credit">آجل (على الحساب)</SelectItem>
                     <SelectItem value="cash">نقدي (رد للعميل)</SelectItem>
+                    <SelectItem value="bank">بنكي (رد للعميل)</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -635,6 +644,18 @@ export default function SalesReturns() {
                     <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الخزنة..." /></SelectTrigger>
                     <SelectContent>
                       {(cashBoxes as any[]).map((b: any) => (
+                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+              {form.paymentType === "bank" && (
+                <Field label="الحساب البنكي" required>
+                  <Select value={form.bankAccountId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, bankAccountId: v }))}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الحساب البنكي..." /></SelectTrigger>
+                    <SelectContent>
+                      {(bankAccounts as any[]).map((b: any) => (
                         <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
                       ))}
                     </SelectContent>

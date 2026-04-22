@@ -48,7 +48,7 @@ function newLine(): ReturnLine {
 
 const EMPTY = {
   docNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
-  paymentType: "credit", cashBoxId: "",
+  paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
   priceIncludesVat: false,
@@ -150,6 +150,16 @@ export default function PurchaseReturns() {
     queryKey: ["cash-boxes-bal", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user && !!cid && form.paymentType === "cash",
+  });
+  const { data: bankAccounts = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && form.paymentType === "bank",
+  });
+  const { data: bankAccountBalances = [] } = useQuery<any[]>({
+    queryKey: ["bank-accounts-bal", cid],
+    queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
+    enabled: !!user && !!cid && form.paymentType === "bank",
   });
 
   // ── Branches ─────────────────────────────────────────────
@@ -265,6 +275,7 @@ export default function PurchaseReturns() {
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
         paymentType:  full.paymentType ?? "credit",
         cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
+        bankAccountId: full.bankAccountId ? String(full.bankAccountId) : "",
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
         notes:        full.notes ?? "",
@@ -310,6 +321,7 @@ export default function PurchaseReturns() {
         invoiceId:    full.invoiceId  ? String(full.invoiceId)  : "",
         paymentType:  full.paymentType ?? "credit",
         cashBoxId:    full.cashBoxId  ? String(full.cashBoxId)  : "",
+        bankAccountId: full.bankAccountId ? String(full.bankAccountId) : "",
         currencyCode: full.currencyCode ?? "",
         exchangeRate: full.exchangeRate ? String(full.exchangeRate) : "1",
         notes:        full.notes ?? "",
@@ -407,6 +419,7 @@ export default function PurchaseReturns() {
           invoiceId:  String(inv.id),
           paymentType: inv.paymentType ?? "credit",
           cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
+          bankAccountId: inv.bankAccountId ? String(inv.bankAccountId) : "",
           currencyCode:  inv.currencyCode  ?? defaultCurrency?.code ?? "",
           exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
           notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
@@ -547,6 +560,7 @@ export default function PurchaseReturns() {
       supplierId: form.supplierId || null,
       invoiceId:  form.invoiceId  || null,
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
+      bankAccountId: form.paymentType === "bank" ? (form.bankAccountId || null) : null,
       inventoryAccountId: form.inventoryAccountId ? Number(form.inventoryAccountId) : null,
       taxAccountId:       form.taxAccountId       ? Number(form.taxAccountId)       : null,
       discountAccountId:  form.discountAccountId  ? Number(form.discountAccountId)  : null,
@@ -661,7 +675,7 @@ export default function PurchaseReturns() {
               <Field label="نوع التسوية" required>
                 <Select
                   value={form.paymentType}
-                  onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v, cashBoxId: v === "credit" ? "" : p.cashBoxId }))}
+                  onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v, cashBoxId: v === "cash" ? p.cashBoxId : "", bankAccountId: v === "bank" ? p.bankAccountId : "" }))}
                 >
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -671,14 +685,65 @@ export default function PurchaseReturns() {
                     <SelectItem value="cash">
                       <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />نقدي (استرداد للخزنة)</span>
                     </SelectItem>
+                    <SelectItem value="bank">
+                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />بنكي (استرداد لحساب بنكي)</span>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
               <Field label="ملاحظات" className="md:col-span-3"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 
-            {/* Payment link panel: credit (supplier) or cash (cash box) */}
-            {form.paymentType === "credit" ? (
+            {/* Payment link panel: credit (supplier), cash (cash box), or bank (bank account) */}
+            {form.paymentType === "bank" ? (
+              (() => {
+                const balMap: Record<number, number> = Object.fromEntries(
+                  (bankAccountBalances as any[]).map((b: any) => [b.bankAccountId, Number(b.balance)])
+                );
+                const activeBanks = (bankAccounts as any[]).filter((b: any) => b.isActive !== false);
+                const items = [
+                  { value: "", label: "— اختر الحساب البنكي —" },
+                  ...activeBanks.map((b: any) => ({
+                    value: String(b.id),
+                    label: `${b.nameAr ?? b.nameEn ?? `#${b.id}`} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
+                  })),
+                ];
+                const sel = activeBanks.find((b: any) => String(b.id) === form.bankAccountId);
+                const bal = sel ? (balMap[sel.id] ?? 0) : 0;
+                const newBal = bal + totalAmount;
+                return (
+                  <div className="space-y-2">
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <Field label="الحساب البنكي" required>
+                        <SearchCombobox items={items} value={form.bankAccountId} onValueChange={v => setForm((p: any) => ({ ...p, bankAccountId: v }))} placeholder="اختر الحساب البنكي..." />
+                      </Field>
+                    </div>
+                    <div className={cn(
+                      "rounded-lg border p-3 flex items-start gap-3",
+                      !form.bankAccountId ? "bg-amber-50 border-amber-200 text-amber-800" :
+                      "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    )}>
+                      <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
+                      {!form.bankAccountId ? (
+                        <div className="text-xs">
+                          <p className="font-semibold">استرداد بنكي — اختر الحساب البنكي لإيداع المبلغ المُسترد</p>
+                          <p className="opacity-80 mt-0.5">عند ترحيل المرتجع سيتم إضافة قيمته إلى رصيد الحساب البنكي.</p>
+                        </div>
+                      ) : (
+                        <div className="text-xs flex-1">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <span className="font-semibold">الحساب: <strong>{sel?.nameAr ?? sel?.nameEn}</strong></span>
+                            <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />الرصيد: <strong className="font-mono">{fmt(bal)}</strong></span>
+                            <span className="flex items-center gap-1">+ المُسترد: <strong className="font-mono">{fmt(totalAmount)}</strong></span>
+                            <span className="flex items-center gap-1 border-r pr-3 mr-1">الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : form.paymentType === "credit" ? (
               (() => {
                 const sup = suppliers.find((s: any) => String(s.id) === form.supplierId);
                 const balRow = (supplierBalances as any[]).find((b: any) => b.supplierId === Number(form.supplierId));

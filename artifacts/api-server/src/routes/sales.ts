@@ -5,7 +5,7 @@ import {
   salesReturnsTable, salesReturnLinesTable,
   salesQuotationsTable, salesQuotationLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
-  customersTable, cashBoxesTable, warehousesTable,
+  customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
@@ -61,6 +61,12 @@ async function getCashBoxAccountId(cid: number, cashBoxId: number | null | undef
   const [cb] = await db.select().from(cashBoxesTable)
     .where(and(eq(cashBoxesTable.id, cashBoxId), eq(cashBoxesTable.companyId, cid)));
   return cb?.accountId ?? null;
+}
+async function getBankAccountAccountId(cid: number, bankAccountId: number | null | undefined): Promise<number | null> {
+  if (!bankAccountId) return null;
+  const [ba] = await db.select().from(bankAccountsTable)
+    .where(and(eq(bankAccountsTable.id, bankAccountId), eq(bankAccountsTable.companyId, cid)));
+  return ba?.accountId ?? null;
 }
 
 /** Map a list of warehouse IDs (used by an invoice) to their {accountId, allowNegative, name}. */
@@ -171,12 +177,13 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
 router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
@@ -184,6 +191,7 @@ router.post("/sales-invoices", async (req, res) => {
       customerId: customerId ? Number(customerId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: totals.subtotal, vatAmount: totals.vatAmount,
@@ -208,11 +216,12 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
@@ -220,6 +229,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       customerId: customerId ? Number(customerId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       subtotal: totals.subtotal, vatAmount: totals.vatAmount,
@@ -341,12 +351,14 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const discountAmt = Number(inv.discountAmount || 0);
     const totalAmt    = Number(inv.totalAmount || 0);
 
-    const partyAccountId = inv.paymentType === "cash"
-      ? await getCashBoxAccountId(cid, inv.cashBoxId)
+    const partyAccountId =
+      inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
+      : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getCustomerAccountId(cid, inv.customerId);
     if (!partyAccountId) {
-      res.status(400).json({ error: inv.paymentType === "cash"
-        ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+      res.status(400).json({ error:
+        inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+        : inv.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
         : "العميل لا يحتوي على حساب محاسبي مرتبط (حساب الذمم المدينة)" });
       return;
     }
@@ -368,7 +380,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
       lines: [
         // Debits
-        { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : "ذمم العميل" },
+        { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
         { accountId: inv.discountAccountId, debit: discountAmt, description: "خصم مسموح به" },
         { accountId: inv.cogsAccountId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
         // Credits
@@ -407,6 +419,21 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         refType: "sales_invoice",
         refNumber: inv.docNumber || String(inv.id),
         description: `قبض نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
+      });
+    } else if (inv.paymentType === "bank" && (inv as any).bankAccountId) {
+      await createPostedReceiptVoucher({
+        companyId: cid,
+        branchId: inv.branchId,
+        date: inv.invoiceDate,
+        bankAccountId: (inv as any).bankAccountId,
+        paymentType: "bank",
+        entityType: "customer",
+        entityId: inv.customerId,
+        amount: inv.totalAmount,
+        exchangeRate: inv.exchangeRate,
+        refType: "sales_invoice",
+        refNumber: inv.docNumber || String(inv.id),
+        description: `قبض بنكي للفاتورة رقم ${inv.docNumber || inv.id}`,
       });
     }
 
@@ -512,12 +539,13 @@ router.get("/sales-returns/:id", async (req, res) => {
 router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR     = Math.max(0, Math.min(grossR, Number(discountAmount) || 0));
     const totalR    = grossR - discR;
@@ -528,6 +556,7 @@ router.post("/sales-returns", async (req, res) => {
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: totalR.toFixed(2),
@@ -570,12 +599,13 @@ router.put("/sales-returns/:id", async (req, res) => {
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
 
-    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, currencyCode, exchangeRate,
+    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
+    if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
     const grossR2 = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR2  = Math.max(0, Math.min(grossR2, Number(discountAmount) || 0));
     const totalR2 = grossR2 - discR2;
@@ -587,6 +617,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId: pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
       totalAmount: totalR2.toFixed(2),
@@ -714,12 +745,14 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     const vatAmt      = Number(ret.vatAmount || 0);
     const subtotalAmt = totalAmt - vatAmt; // returns table has no separate subtotal field
 
-    const partyAccountId = ret.paymentType === "cash"
-      ? await getCashBoxAccountId(cid, ret.cashBoxId)
+    const partyAccountId =
+      ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
+      : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getCustomerAccountId(cid, ret.customerId);
     if (!partyAccountId) {
-      res.status(400).json({ error: ret.paymentType === "cash"
-        ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+      res.status(400).json({ error:
+        ret.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
+        : ret.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
         : "العميل لا يحتوي على حساب محاسبي مرتبط" });
       return;
     }
@@ -751,7 +784,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
             };
           }),
         // Credits (reversed)
-        { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : "تخفيض ذمم العميل" },
+        { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
         { accountId: ret.cogsAccountId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
       ],
     });
@@ -775,6 +808,21 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         refType: "sales_return",
         refNumber: ret.docNumber || String(ret.id),
         description: `رد نقدي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
+      });
+    } else if (ret.paymentType === "bank" && (ret as any).bankAccountId) {
+      await createPostedPaymentVoucher({
+        companyId: cid,
+        branchId: ret.branchId,
+        date: ret.returnDate,
+        bankAccountId: (ret as any).bankAccountId,
+        paymentType: "bank",
+        entityType: "customer",
+        entityId: ret.customerId,
+        amount: ret.totalAmount,
+        exchangeRate: ret.exchangeRate,
+        refType: "sales_return",
+        refNumber: ret.docNumber || String(ret.id),
+        description: `رد بنكي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
       });
     }
 
