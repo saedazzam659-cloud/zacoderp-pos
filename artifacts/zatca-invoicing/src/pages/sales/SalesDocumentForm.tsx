@@ -603,9 +603,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <CardContent className="pt-5 pb-5 space-y-3">
               <div data-enter-nav-container="lines" className="space-y-3">
                 {lines.map(l => (
-                  <div key={l._id} className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                    {/* Row 1 */}
-                    <div className="grid gap-2" style={{ gridTemplateColumns: "3fr 1.2fr 1fr 1fr 0.8fr 0.8fr auto" }}>
+                  <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
+                    <div
+                      className="grid gap-1.5 items-end"
+                      style={{
+                        gridTemplateColumns: isInvoice
+                          ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
+                          : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto",
+                      }}
+                    >
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">الصنف</p>
                         {inventoryItems.length > 0 ? (
@@ -615,6 +621,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                             onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                         )}
                       </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">كود الصنف</p>
+                        <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      </div>
+                      {isInvoice && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] text-muted-foreground">المستودع</p>
+                          {warehouses.length > 0 ? (
+                            <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                              <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                                <SelectValue placeholder="اختر مستودع..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {warehouses.map((w: any) => (
+                                  <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input className="h-8 text-xs" placeholder="—" readOnly />
+                          )}
+                        </div>
+                      )}
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">الوحدة</p>
                         {(() => {
@@ -658,52 +688,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                           onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
                       </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-semibold text-primary">الإجمالي</p>
+                        <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">ملاحظات</p>
+                        <Input className="h-8 text-xs" value={l.notes}
+                          onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      </div>
                       <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
                         onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
-                    </div>
-                    {/* Row 2 */}
-                    <div className="grid gap-2" style={{ gridTemplateColumns: isInvoice ? "1.8fr 1.2fr 2fr 1fr auto" : "1.2fr 3fr 1fr auto" }}>
-                      {isInvoice && (
-                        <div className="space-y-1">
-                          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                            المستودع
-                            {!l.warehouseId && l.itemId && (
-                              <span className="text-amber-600 text-[9px]">⚠ مطلوب لخصم المخزون</span>
-                            )}
-                          </p>
-                          {warehouses.length > 0 ? (
-                            <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
-                              <SelectTrigger className={cn("h-7 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                                <SelectValue placeholder="اختر مستودع..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {warehouses.map((w: any) => (
-                                  <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Input className="h-7 text-xs" placeholder="—" readOnly />
-                          )}
-                        </div>
-                      )}
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">كود الصنف</p>
-                        <Input className="h-7 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
-                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">ملاحظات</p>
-                        <Input className="h-7 text-xs" value={l.notes}
-                          onChange={e => updateLine(l._id, "notes", e.target.value)} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground font-semibold text-primary">الإجمالي</p>
-                        <Input className="h-7 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
-                      </div>
-                      <div />
                     </div>
                   </div>
                 ))}
