@@ -21,10 +21,13 @@ const VO:  Action[] = ["view"];
 
 export const PERMISSION_MODULES: ModuleDef[] = [
   // ─── Dashboard / general ─────────────────────────────────────────
-  { key: "dashboard",         label: "اللوحة الرئيسية",          group: "عام",      actions: VO },
-  { key: "general_settings",  label: "الإعدادات العامة",         group: "عام",      actions: ["view", "edit"] },
-  { key: "branches",          label: "الفروع والمناطق",          group: "عام",      actions: VC },
-  { key: "users",             label: "المستخدمون والصلاحيات",   group: "عام",      actions: VC },
+  { key: "dashboard",         label: "لوحة التحكم",              group: "لوحة التحكم", actions: VO },
+  { key: "regions",           label: "المناطق الجغرافية",        group: "لوحة التحكم", actions: VC },
+  { key: "branches",          label: "الفروع",                   group: "لوحة التحكم", actions: VC },
+  { key: "zatca_setup",       label: "ربط ZATCA",                group: "لوحة التحكم", actions: ["view", "edit"] },
+  { key: "general_settings",  label: "الإعدادات العامة",         group: "لوحة التحكم", actions: ["view", "edit"] },
+  { key: "users",             label: "المستخدمون والصلاحيات",   group: "لوحة التحكم", actions: VC },
+  { key: "currencies",        label: "العملات والتحويل",         group: "لوحة التحكم", actions: VC },
 
   // ─── Sales ───────────────────────────────────────────────────────
   { key: "customers",         label: "العملاء",                  group: "المبيعات", actions: VC },
