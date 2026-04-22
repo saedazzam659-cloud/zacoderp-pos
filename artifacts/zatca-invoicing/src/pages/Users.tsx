@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +15,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
   CheckCircle2, XCircle, Loader2, X, Save, Check,
@@ -56,6 +59,8 @@ const emptyForm = () => ({
 });
 
 export default function Users() {
+  const { t } = useTranslation();
+  const { isRtl } = useFormatters();
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -163,7 +168,7 @@ export default function Users() {
           body: JSON.stringify(body),
         });
         const data = await r.json();
-        if (!r.ok) throw new Error(data?.error || "فشل الحفظ");
+        if (!r.ok) throw new Error(data?.error || t("users.errSaveFailed"));
         return data;
       } else {
         if (form.password) body.password = form.password;
@@ -173,16 +178,16 @@ export default function Users() {
           body: JSON.stringify(body),
         });
         const data = await r.json();
-        if (!r.ok) throw new Error(data?.error || "فشل التحديث");
+        if (!r.ok) throw new Error(data?.error || t("users.errUpdateFailed"));
         return data;
       }
     },
     onSuccess: () => {
-      toast({ title: "تم الحفظ", description: editingId == null ? "تم إضافة المستخدم" : "تم تحديث المستخدم" });
+      toast({ title: t("users.savedTitle"), description: editingId == null ? t("users.savedAdd") : t("users.savedUpdate") });
       qc.invalidateQueries({ queryKey: ["users", cid] });
       closeForm();
     },
-    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: t("users.error"), description: e.message, variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
@@ -192,14 +197,14 @@ export default function Users() {
         headers: authH,
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data?.error || "فشل الحذف");
+      if (!r.ok) throw new Error(data?.error || t("users.errDeleteFailed"));
     },
     onSuccess: () => {
-      toast({ title: "تم الحذف" });
+      toast({ title: t("users.deleted") });
       qc.invalidateQueries({ queryKey: ["users", cid] });
       setConfirmDeleteId(null);
     },
-    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: t("users.error"), description: e.message, variant: "destructive" }),
   });
 
   const togglePerm = (modKey: string, action: Action, val: boolean) => {
@@ -229,7 +234,7 @@ export default function Users() {
   };
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
@@ -237,32 +242,30 @@ export default function Users() {
             <UsersIcon className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">المستخدمون</h1>
-            <p className="text-sm text-muted-foreground">
-              إضافة وتعديل المستخدمين وتحديد صلاحياتهم وفروعهم
-            </p>
+            <h1 className="text-2xl font-bold">{t("users.title")}</h1>
+            <p className="text-sm text-muted-foreground">{t("users.subtitle")}</p>
           </div>
         </div>
         {!openForm && (
-          <Button onClick={openCreate} className="gap-2 bg-gradient-to-l from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700">
+          <Button onClick={openCreate} className={cn("gap-2 hover:from-cyan-700 hover:to-blue-700", isRtl ? "bg-gradient-to-l from-cyan-600 to-blue-600" : "bg-gradient-to-r from-cyan-600 to-blue-600")}>
             <Plus className="h-4 w-4" />
-            إضافة مستخدم جديد
+            {t("users.addUser")}
           </Button>
         )}
       </div>
 
-      {/* ─── Inline Form (replaces popup) ─────────────────── */}
+      {/* ─── Inline Form ─────────────────── */}
       {openForm && (
         <Card id="user-form-card" className="border-2 border-blue-200 dark:border-blue-900 shadow-lg">
-          <CardHeader className="bg-gradient-to-l from-blue-50 to-cyan-50 dark:from-blue-950/40 dark:to-cyan-950/40 border-b">
+          <CardHeader className={cn("border-b", isRtl ? "bg-gradient-to-l from-blue-50 to-cyan-50 dark:from-blue-950/40 dark:to-cyan-950/40" : "bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950/40 dark:to-cyan-950/40")}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <CardTitle className="flex items-center gap-2 text-lg">
                 {editingId == null ? <Plus className="h-5 w-5 text-blue-600" /> : <Pencil className="h-5 w-5 text-blue-600" />}
-                {editingId == null ? "إضافة مستخدم جديد" : `تعديل: ${form.nameAr || form.username}`}
+                {editingId == null ? t("users.addUser") : t("users.editing", { name: form.nameAr || form.username })}
               </CardTitle>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={closeForm} className="gap-1">
-                  <X className="h-4 w-4" /> إلغاء
+                  <X className="h-4 w-4" /> {t("users.cancel")}
                 </Button>
                 <Button
                   onClick={() => saveMut.mutate()}
@@ -274,40 +277,38 @@ export default function Users() {
                   className="bg-blue-600 hover:bg-blue-700 gap-1"
                 >
                   {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {editingId == null ? "إنشاء المستخدم" : "حفظ التعديلات"}
+                  {editingId == null ? t("users.createUser") : t("users.saveChanges")}
                 </Button>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              املأ البيانات الأساسية، اختر الفروع، وحدّد الصلاحيات لكل شاشة.
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">{t("users.formHint")}</p>
           </CardHeader>
 
           <CardContent className="pt-5">
-            <Tabs defaultValue="info" className="w-full">
+            <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="info">البيانات الأساسية</TabsTrigger>
-                <TabsTrigger value="branches">الفروع ({form.branchIds.length})</TabsTrigger>
-                <TabsTrigger value="permissions">الصلاحيات</TabsTrigger>
+                <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
+                <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
+                <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
               </TabsList>
 
-              {/* ─── Info Tab ───────────────────────────── */}
+              {/* Info Tab */}
               <TabsContent value="info" className="space-y-4 pt-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <Label>الكود</Label>
+                    <Label>{t("users.code")}</Label>
                     <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="EMP-001" />
                   </div>
                   <div>
-                    <Label>الاسم بالعربية</Label>
+                    <Label>{t("users.nameAr")}</Label>
                     <Input value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} placeholder="محمد أحمد" />
                   </div>
                   <div>
-                    <Label>English Name</Label>
+                    <Label>{t("users.nameEn")}</Label>
                     <Input value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} placeholder="Mohamed Ahmed" />
                   </div>
                   <div>
-                    <Label>اسم المستخدم *</Label>
+                    <Label>{t("users.username")}</Label>
                     <Input
                       value={form.username}
                       onChange={(e) => setForm({ ...form, username: e.target.value })}
@@ -317,58 +318,56 @@ export default function Users() {
                     />
                   </div>
                   <div>
-                    <Label>البريد الإلكتروني</Label>
+                    <Label>{t("users.email")}</Label>
                     <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@company.com" />
                   </div>
                   <div>
                     <Label className="flex items-center gap-1">
                       <KeyRound className="h-3 w-3" />
-                      {editingId == null ? "كلمة المرور *" : "كلمة مرور جديدة (اختياري)"}
+                      {editingId == null ? t("users.passwordNew") : t("users.passwordEdit")}
                     </Label>
                     <Input
                       type="password"
                       value={form.password}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
-                      placeholder={editingId == null ? "6 أحرف على الأقل" : "اتركها فارغة لعدم التغيير"}
+                      placeholder={editingId == null ? t("users.passwordPlaceholderNew") : t("users.passwordPlaceholderEdit")}
                       autoComplete="new-password"
                     />
                   </div>
                   <div>
-                    <Label>الدور</Label>
+                    <Label>{t("users.role")}</Label>
                     <select
                       value={form.role}
                       onChange={(e) => setForm({ ...form, role: e.target.value as any })}
                       className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
                     >
-                      <option value="user">مستخدم (يستخدم الصلاحيات أدناه)</option>
-                      <option value="admin">مدير الشركة (صلاحيات كاملة)</option>
+                      <option value="user">{t("users.roleUser")}</option>
+                      <option value="admin">{t("users.roleAdmin")}</option>
                     </select>
                   </div>
                   <div className="flex items-end gap-3 pb-2">
                     <Switch checked={form.isActive} onCheckedChange={(v) => setForm({ ...form, isActive: v })} />
-                    <Label>الحساب نشط</Label>
+                    <Label>{t("users.isActive")}</Label>
                   </div>
                 </div>
               </TabsContent>
 
-              {/* ─── Branches Tab ───────────────────────── */}
+              {/* Branches Tab */}
               <TabsContent value="branches" className="space-y-3 pt-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="text-sm text-muted-foreground">
-                    حدّد الفروع التي يستطيع المستخدم الوصول إليها. اتركها فارغة للسماح بكل الفروع.
-                  </div>
+                  <div className="text-sm text-muted-foreground">{t("users.branchesHint")}</div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: branches.map(b => b.id) })}>
-                      تحديد الكل
+                      {t("users.selectAll")}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: [] })}>
-                      مسح الكل
+                      {t("users.clearAll")}
                     </Button>
                   </div>
                 </div>
                 {branches.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground border rounded-lg">
-                    لا توجد فروع. أضف فروعاً من شاشة "الفروع" أولاً.
+                    {t("users.noBranchesYet")}
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -403,18 +402,18 @@ export default function Users() {
                 )}
               </TabsContent>
 
-              {/* ─── Permissions Tab ────────────────────── */}
+              {/* Permissions Tab */}
               <TabsContent value="permissions" className="space-y-4 pt-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="text-sm text-muted-foreground flex items-center gap-2">
                     <Shield className="h-4 w-4 text-indigo-600" />
-                    حدّد ما يستطيع المستخدم فعله في كل شاشة.
-                    {form.role === "admin" && <span className="text-amber-600 font-semibold">(دور المدير: كل الصلاحيات تلقائياً)</span>}
+                    {t("users.permsHint")}
+                    {form.role === "admin" && <span className="text-amber-600 font-semibold">{t("users.adminNote")}</span>}
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>كل الصلاحيات</Button>
-                    <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>عرض فقط</Button>
-                    <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>لا شيء</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("full")}>{t("users.presetFull")}</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("view")}>{t("users.presetView")}</Button>
+                    <Button size="sm" variant="outline" onClick={() => applyPreset("none")}>{t("users.presetNone")}</Button>
                   </div>
                 </div>
 
@@ -424,18 +423,18 @@ export default function Users() {
                     return (
                       <div key={group} className="border rounded-lg overflow-hidden">
                         <div className="bg-muted/50 px-4 py-2 flex items-center justify-between">
-                          <div className="font-semibold text-sm">{group}</div>
+                          <div className="font-semibold text-sm">{t(group)}</div>
                           <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, true)}>تفعيل</Button>
-                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, false)}>تعطيل</Button>
+                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, true)}>{t("users.groupEnable")}</Button>
+                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setGroupAll(group, false)}>{t("users.groupDisable")}</Button>
                           </div>
                         </div>
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b">
-                              <th className="text-right p-2 font-medium">الشاشة</th>
+                              <th className="text-start p-2 font-medium">{t("users.colScreen")}</th>
                               {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => (
-                                <th key={a} className="p-2 font-medium w-16 text-center">{ACTION_LABELS[a]}</th>
+                                <th key={a} className="p-2 font-medium w-16 text-center">{t(ACTION_LABELS[a])}</th>
                               ))}
                             </tr>
                           </thead>
@@ -467,10 +466,10 @@ export default function Users() {
               </TabsContent>
             </Tabs>
 
-            {/* Bottom action bar (mirror) */}
+            {/* Bottom action bar */}
             <div className="flex justify-end gap-2 pt-5 mt-4 border-t">
               <Button variant="outline" onClick={closeForm} className="gap-1">
-                <X className="h-4 w-4" /> إلغاء
+                <X className="h-4 w-4" /> {t("users.cancel")}
               </Button>
               <Button
                 onClick={() => saveMut.mutate()}
@@ -482,7 +481,7 @@ export default function Users() {
                 className="bg-blue-600 hover:bg-blue-700 gap-1"
               >
                 {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                {editingId == null ? "إنشاء المستخدم" : "حفظ التعديلات"}
+                {editingId == null ? t("users.createUser") : t("users.saveChanges")}
               </Button>
             </div>
           </CardContent>
@@ -493,12 +492,12 @@ export default function Users() {
       <Card>
         <CardContent className="pt-5">
           <div className="relative">
-            <Search className="h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Search className={cn("h-4 w-4 absolute top-1/2 -translate-y-1/2 text-muted-foreground", isRtl ? "right-3" : "left-3")} />
             <Input
-              placeholder="بحث بالكود، الاسم، اسم المستخدم، البريد..."
+              placeholder={t("users.search")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pr-9"
+              className={isRtl ? "pr-9" : "pl-9"}
             />
           </div>
         </CardContent>
@@ -507,32 +506,32 @@ export default function Users() {
       {/* Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">قائمة المستخدمين ({filtered.length})</CardTitle>
+          <CardTitle className="text-base">{t("users.listTitle", { count: filtered.length })}</CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="text-center py-12 text-muted-foreground">
-              <Loader2 className="h-6 w-6 inline-block animate-spin ml-2" /> جاري التحميل...
+              <Loader2 className={cn("h-6 w-6 inline-block animate-spin", isRtl ? "ml-2" : "mr-2")} /> {t("users.loading")}
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <UsersIcon className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              لا يوجد مستخدمون. اضغط "إضافة مستخدم جديد" لإنشاء واحد.
+              {t("users.noUsers")}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-right">الكود</TableHead>
-                    <TableHead className="text-right">الاسم بالعربية</TableHead>
-                    <TableHead className="text-right">English Name</TableHead>
-                    <TableHead className="text-right">اسم المستخدم</TableHead>
-                    <TableHead className="text-right">البريد</TableHead>
-                    <TableHead className="text-right">الدور</TableHead>
-                    <TableHead className="text-right">الفروع</TableHead>
-                    <TableHead className="text-right">الحالة</TableHead>
-                    <TableHead className="text-right">إجراءات</TableHead>
+                    <TableHead className="text-start">{t("users.colCode")}</TableHead>
+                    <TableHead className="text-start">{t("users.colNameAr")}</TableHead>
+                    <TableHead className="text-start">{t("users.colNameEn")}</TableHead>
+                    <TableHead className="text-start">{t("users.colUsername")}</TableHead>
+                    <TableHead className="text-start">{t("users.colEmail")}</TableHead>
+                    <TableHead className="text-start">{t("users.colRole")}</TableHead>
+                    <TableHead className="text-start">{t("users.colBranches")}</TableHead>
+                    <TableHead className="text-start">{t("users.colStatus")}</TableHead>
+                    <TableHead className="text-start">{t("users.colActions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -547,32 +546,32 @@ export default function Users() {
                         <TableCell className="font-mono">{u.username}</TableCell>
                         <TableCell className="text-xs">{u.email || "—"}</TableCell>
                         <TableCell>
-                          {u.role === "superadmin" && <Badge className="bg-purple-600">مدير النظام</Badge>}
-                          {u.role === "admin" && <Badge className="bg-blue-600">مدير الشركة</Badge>}
-                          {u.role === "user" && <Badge variant="outline">مستخدم</Badge>}
+                          {u.role === "superadmin" && <Badge className="bg-purple-600">{t("users.roleSuperadmin")}</Badge>}
+                          {u.role === "admin" && <Badge className="bg-blue-600">{t("users.roleAdminBadge")}</Badge>}
+                          {u.role === "user" && <Badge variant="outline">{t("users.roleUserBadge")}</Badge>}
                         </TableCell>
                         <TableCell className="text-xs">
                           {branchNames.length === 0 ? (
-                            <span className="text-muted-foreground">— الكل —</span>
+                            <span className="text-muted-foreground">{t("users.allBranches")}</span>
                           ) : (
-                            <span className="line-clamp-1">{branchNames.join("، ")}</span>
+                            <span className="line-clamp-1">{branchNames.join(isRtl ? "، " : ", ")}</span>
                           )}
                         </TableCell>
                         <TableCell>
                           {u.isActive ? (
                             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 gap-1">
-                              <CheckCircle2 className="h-3 w-3" /> نشط
+                              <CheckCircle2 className="h-3 w-3" /> {t("users.active")}
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300 gap-1">
-                              <XCircle className="h-3 w-3" /> موقوف
+                              <XCircle className="h-3 w-3" /> {t("users.inactive")}
                             </Badge>
                           )}
                         </TableCell>
                         <TableCell>
                           {isConfirming ? (
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-red-700 font-semibold">تأكيد الحذف؟</span>
+                              <span className="text-xs text-red-700 font-semibold">{t("users.confirmDelete")}</span>
                               <Button
                                 size="sm"
                                 variant="destructive"
@@ -593,7 +592,7 @@ export default function Users() {
                             </div>
                           ) : (
                             <div className="flex gap-1">
-                              <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title="تعديل">
+                              <Button size="sm" variant="ghost" onClick={() => openEdit(u)} title={t("users.edit")}>
                                 <Pencil className="h-4 w-4" />
                               </Button>
                               <Button
@@ -601,7 +600,7 @@ export default function Users() {
                                 variant="ghost"
                                 className="text-red-600 hover:text-red-700 hover:bg-red-50"
                                 onClick={() => setConfirmDeleteId(u.id)}
-                                title="حذف"
+                                title={t("users.delete")}
                                 disabled={u.role === "superadmin" || u.id === user?.id}
                               >
                                 <Trash2 className="h-4 w-4" />

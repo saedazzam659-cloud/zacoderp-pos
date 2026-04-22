@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { branchesApi } from "@/lib/branchesApi";
 import { parseError } from "@/lib/parseError";
@@ -24,17 +26,19 @@ const EMPTY_BRANCH = {
   address: "", phone: "", email: "", isMain: false, status: "active", notes: "",
 };
 
-const STATUS_CFG: Record<string, { label: string; cls: string }> = {
-  active:   { label: "نشط",   cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  inactive: { label: "موقوف", cls: "bg-red-50 text-red-600 border-red-200" },
-};
-
 export default function Branches() {
+  const { t } = useTranslation();
+  const { isRtl } = useFormatters();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
   const search = useSearch();
+
+  const STATUS_CFG: Record<string, { label: string; cls: string }> = {
+    active:   { label: t("branches.statusActive"),   cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    inactive: { label: t("branches.statusInactive"), cls: "bg-red-50 text-red-600 border-red-200" },
+  };
 
   const [textSearch,   setTextSearch]   = useState("");
   const [regionFilter, setRegionFilter] = useState("");
@@ -69,9 +73,9 @@ export default function Branches() {
   };
 
   const errToast = (title: string) => (e: any) => toast({ title, description: parseError(e), variant: "destructive" });
-  const createMut = useMutation({ mutationFn: branchesApi.createBranch, onSuccess: () => { invalidate(); reset(); toast({ title: "تم إضافة الفرع" }); }, onError: errToast("تعذّر حفظ الفرع") });
-  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateBranch(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: "تم تعديل الفرع" }); }, onError: errToast("تعذّر تعديل الفرع") });
-  const deleteMut = useMutation({ mutationFn: branchesApi.deleteBranch, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); }, onError: errToast("تعذّر الحذف") });
+  const createMut = useMutation({ mutationFn: branchesApi.createBranch, onSuccess: () => { invalidate(); reset(); toast({ title: t("branches.addedToast") }); }, onError: errToast(t("branches.errSave")) });
+  const updateMut = useMutation({ mutationFn: ({ id, data }: any) => branchesApi.updateBranch(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("branches.updatedToast") }); }, onError: errToast(t("branches.errUpdate")) });
+  const deleteMut = useMutation({ mutationFn: branchesApi.deleteBranch, onSuccess: () => { invalidate(); toast({ title: t("branches.deletedToast") }); }, onError: errToast(t("branches.errDelete")) });
 
   function reset() { setForm(EMPTY_BRANCH); setEditId(null); setShowForm(false); setActiveTab("basic"); }
   function handleEdit(b: any) {
@@ -95,18 +99,18 @@ export default function Branches() {
   });
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Building2 className="h-6 w-6 text-primary" />الفروع</h1>
-          <p className="text-muted-foreground text-sm mt-1">إدارة جميع الفروع وتوزيعها على المناطق الجغرافية</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Building2 className="h-6 w-6 text-primary" />{t("branches.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("branches.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/org/regions">
-            <Button variant="outline" size="sm" className="gap-2"><MapPin className="h-4 w-4" />المناطق</Button>
+            <Button variant="outline" size="sm" className="gap-2"><MapPin className="h-4 w-4" />{t("branches.regionsLink")}</Button>
           </Link>
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-            <Plus className="h-4 w-4" />إضافة فرع
+            <Plus className="h-4 w-4" />{t("branches.addBranch")}
           </Button>
         </div>
       </div>
@@ -116,60 +120,60 @@ export default function Branches() {
           icon={Building2}
           title={
             <span className="flex items-center gap-2">
-              {editId ? "تعديل فرع" : "إضافة فرع جديد"}
+              {editId ? t("branches.editBranch") : t("branches.addBranchLong")}
               {form.regionId && (
                 <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 flex items-center gap-1">
-                  <MapPin className="h-3 w-3" />{regionMap[Number(form.regionId)]?.nameAr ?? "منطقة"}
+                  <MapPin className="h-3 w-3" />{regionMap[Number(form.regionId)]?.nameAr ?? t("branches.regionFallback")}
                 </span>
               )}
             </span>
           }
-          subtitle="بيانات الفرع التشغيلية ومعلومات التواصل"
+          subtitle={t("branches.formSubtitle")}
           width="4xl"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
           saveDisabled={!form.code || !form.nameAr}
-          saveLabel={editId ? "حفظ التعديل" : "إضافة الفرع"}
+          saveLabel={editId ? t("branches.saveEdit") : t("branches.save")}
         >
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
             <TabsList className="w-full h-9 mb-5">
-              <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />الأساسية</TabsTrigger>
-              <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />التواصل</TabsTrigger>
+              <TabsTrigger value="basic"   className="flex-1 text-xs gap-1"><Building2 className="h-3.5 w-3.5" />{t("branches.tabBasic")}</TabsTrigger>
+              <TabsTrigger value="contact" className="flex-1 text-xs gap-1"><Phone     className="h-3.5 w-3.5" />{t("branches.tabContact")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-0">
               <FormGrid>
-                <Field label="كود الفرع" required>
+                <Field label={t("branches.code")} required>
                   <Input placeholder="BR-01" value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
                 </Field>
-                <Field label="الاسم بالعربي" required>
+                <Field label={t("branches.nameAr")} required>
                   <Input placeholder="الفرع الرئيسي" value={form.nameAr} onChange={e => setForm((p: any) => ({ ...p, nameAr: e.target.value }))} />
                 </Field>
-                <Field label="الاسم بالإنجليزي" className="md:col-span-2">
-                  <Input placeholder="Main Branch" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                <Field label={t("branches.nameEn")} className="md:col-span-2">
+                  <Input placeholder="Main Branch" dir="ltr" className="text-start" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
                 </Field>
-                <Field label="المنطقة">
+                <Field label={t("branches.region")}>
                   <SearchCombobox
-                    items={[{ value: "", label: "— بدون منطقة —" }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr, labelEn: r.nameEn }))]}
+                    items={[{ value: "", label: t("branches.noRegion") }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr, labelEn: r.nameEn }))]}
                     value={form.regionId}
                     onValueChange={v => setForm((p: any) => ({ ...p, regionId: v }))}
-                    placeholder="— اختر المنطقة —"
+                    placeholder={t("branches.selectRegion")}
                   />
                 </Field>
-                <Field label="الحالة">
+                <Field label={t("branches.status")}>
                   <SearchCombobox
-                    items={[{ value: "active", label: "نشط" }, { value: "inactive", label: "موقوف" }]}
+                    items={[{ value: "active", label: t("branches.statusActive") }, { value: "inactive", label: t("branches.statusInactive") }]}
                     value={form.status}
                     onValueChange={v => setForm((p: any) => ({ ...p, status: v }))}
-                    placeholder="الحالة"
+                    placeholder={t("branches.status")}
                   />
                 </Field>
                 <div className="md:col-span-2 flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
                   <Switch checked={form.isMain} onCheckedChange={v => setForm((p: any) => ({ ...p, isMain: v }))} id="is-main" />
                   <div>
-                    <Label htmlFor="is-main" className="flex items-center gap-1 text-sm"><Star className="h-3.5 w-3.5 text-amber-500" />الفرع الرئيسي</Label>
-                    <p className="text-[10px] text-muted-foreground">يُلغي الرئيسي من بقية الفروع تلقائياً</p>
+                    <Label htmlFor="is-main" className="flex items-center gap-1 text-sm"><Star className="h-3.5 w-3.5 text-amber-500" />{t("branches.isMain")}</Label>
+                    <p className="text-[10px] text-muted-foreground">{t("branches.isMainHint")}</p>
                   </div>
                 </div>
               </FormGrid>
@@ -177,20 +181,20 @@ export default function Branches() {
 
             <TabsContent value="contact" className="mt-0">
               <FormGrid>
-                <Field label="المدينة">
+                <Field label={t("branches.city")}>
                   <Input placeholder="الرياض" value={form.city} onChange={e => setForm((p: any) => ({ ...p, city: e.target.value }))} />
                 </Field>
-                <Field label="رقم الهاتف">
-                  <Input placeholder="0512345678" dir="ltr" className="text-left" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
+                <Field label={t("branches.phone")}>
+                  <Input placeholder="0512345678" dir="ltr" className="text-start" value={form.phone} onChange={e => setForm((p: any) => ({ ...p, phone: e.target.value }))} />
                 </Field>
-                <Field label="البريد الإلكتروني" className="md:col-span-2">
-                  <Input type="email" placeholder="branch@company.com" dir="ltr" className="text-left" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
+                <Field label={t("branches.email")} className="md:col-span-2">
+                  <Input type="email" placeholder="branch@company.com" dir="ltr" className="text-start" value={form.email} onChange={e => setForm((p: any) => ({ ...p, email: e.target.value }))} />
                 </Field>
-                <Field label="العنوان التفصيلي" className="md:col-span-2">
+                <Field label={t("branches.address")} className="md:col-span-2">
                   <Input placeholder="شارع الملك عبدالعزيز، حي العليا" value={form.address} onChange={e => setForm((p: any) => ({ ...p, address: e.target.value }))} />
                 </Field>
-                <Field label="ملاحظات" className="md:col-span-2">
-                  <Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+                <Field label={t("branches.notes")} className="md:col-span-2">
+                  <Input placeholder={t("branches.notesPlaceholder")} value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                 </Field>
               </FormGrid>
             </TabsContent>
@@ -200,15 +204,15 @@ export default function Branches() {
 
       <div className="flex gap-3">
         <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pr-9" placeholder="بحث بالاسم أو الكود أو المدينة..." value={textSearch} onChange={e => setTextSearch(e.target.value)} />
+          <Search className={cn("absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground", isRtl ? "right-3" : "left-3")} />
+          <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("branches.search")} value={textSearch} onChange={e => setTextSearch(e.target.value)} />
         </div>
         <div className="w-52">
           <SearchCombobox
-            items={[{ value: "", label: "جميع المناطق" }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr }))]}
+            items={[{ value: "", label: t("branches.filterAllRegions") }, ...(regions as any[]).map((r: any) => ({ value: String(r.id), code: r.code, label: r.nameAr }))]}
             value={regionFilter}
             onValueChange={setRegionFilter}
-            placeholder="فلتر بالمنطقة"
+            placeholder={t("branches.filterByRegion")}
           />
         </div>
       </div>
@@ -217,14 +221,14 @@ export default function Branches() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-28">الكود</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الفرع</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المنطقة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">المدينة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">الهاتف</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20">رئيسي</th>
-              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-24">الحالة</th>
-              <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-24">إجراءات</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground w-28">{t("branches.colCode")}</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground">{t("branches.colBranch")}</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground hidden sm:table-cell">{t("branches.colRegion")}</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground hidden md:table-cell">{t("branches.colCity")}</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground hidden lg:table-cell">{t("branches.colPhone")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-20">{t("branches.colMain")}</th>
+              <th className="px-4 py-3 text-center font-semibold text-muted-foreground w-24">{t("branches.colStatus")}</th>
+              <th className="px-4 py-3 text-start font-semibold text-muted-foreground w-24">{t("branches.colActions")}</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -235,8 +239,8 @@ export default function Branches() {
                 <tr>
                   <td colSpan={8} className="py-14 text-center text-muted-foreground">
                     <Building2 className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                    <p className="font-medium">لا توجد فروع{regionFilter ? " في هذه المنطقة" : ""}</p>
-                    <Button size="sm" className="mt-4 gap-1" onClick={() => { reset(); setShowForm(true); }}><Plus className="h-4 w-4" />إضافة فرع</Button>
+                    <p className="font-medium">{regionFilter ? t("branches.noBranchesInRegion") : t("branches.noBranches")}</p>
+                    <Button size="sm" className="mt-4 gap-1" onClick={() => { reset(); setShowForm(true); }}><Plus className="h-4 w-4" />{t("branches.addBranch")}</Button>
                   </td>
                 </tr>
               )
@@ -274,7 +278,7 @@ export default function Branches() {
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary/10 hover:text-primary" onClick={() => handleEdit(b)}><Pencil className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => { if (confirm(`حذف فرع "${b.nameAr}"؟`)) deleteMut.mutate(b.id); }}>
+                            onClick={() => { if (confirm(t("branches.confirmDelete", { name: b.nameAr }))) deleteMut.mutate(b.id); }}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -286,10 +290,10 @@ export default function Branches() {
         </table>
         {!isLoading && (
           <div className="px-4 py-2 border-t bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
-            <span>{filtered.length} فرع</span>
+            <span>{t("branches.branchCount", { count: filtered.length })}</span>
             {regionFilter && (
               <button onClick={() => setRegionFilter("")} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                <X className="h-3 w-3" />إزالة فلتر المنطقة
+                <X className="h-3 w-3" />{t("branches.clearRegionFilter")}
               </button>
             )}
           </div>

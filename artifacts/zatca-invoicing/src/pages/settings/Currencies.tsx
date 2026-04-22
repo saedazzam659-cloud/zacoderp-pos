@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { currenciesApi } from "@/lib/currenciesApi";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,8 @@ const COMMON_CURRENCIES = [
 ];
 
 export default function Currencies() {
+  const { t } = useTranslation();
+  const { isRtl } = useFormatters();
   const { user } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc  = useQueryClient();
@@ -77,12 +81,14 @@ export default function Currencies() {
     enabled: !!user,
   });
 
-  const createCur  = useMutation({ mutationFn: (d: any) => currenciesApi.create({ ...d, companyId: cid }), onSuccess: () => { inv(); resetCur(); toast({ title: "تمت إضافة العملة" }); }, onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }) });
-  const updateCur  = useMutation({ mutationFn: ({ id, data }: any) => currenciesApi.update(id, data), onSuccess: () => { inv(); resetCur(); toast({ title: "تم تعديل العملة" }); }, onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }) });
-  const deleteCur  = useMutation({ mutationFn: (id: number) => currenciesApi.remove(id), onSuccess: () => { inv(); setDeleteId(null); toast({ title: "تم الحذف" }); }, onError: (e: any) => { setDeleteId(null); toast({ title: "خطأ", description: e.message, variant: "destructive" }); } });
-  const createRate = useMutation({ mutationFn: (d: any) => currenciesApi.createRate({ ...d, companyId: cid }), onSuccess: () => { inv(); resetRate(); toast({ title: "تمت إضافة معامل التحويل" }); }, onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }) });
-  const updateRate = useMutation({ mutationFn: ({ id, data }: any) => currenciesApi.updateRate(id, data), onSuccess: () => { inv(); resetRate(); toast({ title: "تم تعديل معامل التحويل" }); }, onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }) });
-  const deleteRate = useMutation({ mutationFn: (id: number) => currenciesApi.removeRate(id), onSuccess: () => { inv(); setDeleteRateId(null); toast({ title: "تم الحذف" }); } });
+  const errToast = (e: any) => toast({ title: t("currencies.errGeneric"), description: e.message, variant: "destructive" });
+
+  const createCur  = useMutation({ mutationFn: (d: any) => currenciesApi.create({ ...d, companyId: cid }), onSuccess: () => { inv(); resetCur(); toast({ title: t("currencies.addedCurrency") }); }, onError: errToast });
+  const updateCur  = useMutation({ mutationFn: ({ id, data }: any) => currenciesApi.update(id, data), onSuccess: () => { inv(); resetCur(); toast({ title: t("currencies.updatedCurrency") }); }, onError: errToast });
+  const deleteCur  = useMutation({ mutationFn: (id: number) => currenciesApi.remove(id), onSuccess: () => { inv(); setDeleteId(null); toast({ title: t("currencies.deleted") }); }, onError: (e: any) => { setDeleteId(null); errToast(e); } });
+  const createRate = useMutation({ mutationFn: (d: any) => currenciesApi.createRate({ ...d, companyId: cid }), onSuccess: () => { inv(); resetRate(); toast({ title: t("currencies.addedRate") }); }, onError: errToast });
+  const updateRate = useMutation({ mutationFn: ({ id, data }: any) => currenciesApi.updateRate(id, data), onSuccess: () => { inv(); resetRate(); toast({ title: t("currencies.updatedRate") }); }, onError: errToast });
+  const deleteRate = useMutation({ mutationFn: (id: number) => currenciesApi.removeRate(id), onSuccess: () => { inv(); setDeleteRateId(null); toast({ title: t("currencies.deleted") }); } });
 
   function resetCur()  { setCurForm(EMPTY_CUR);  setCurEditId(null);  setShowCurForm(false);  }
   function resetRate() { setRateForm(EMPTY_RATE); setRateEditId(null); setShowRateForm(false); }
@@ -98,14 +104,14 @@ export default function Currencies() {
 
   function submitCur(e: React.FormEvent) {
     e.preventDefault();
-    if (!curForm.code || !curForm.nameAr) { toast({ title: "الكود والاسم العربي مطلوبان", variant: "destructive" }); return; }
+    if (!curForm.code || !curForm.nameAr) { toast({ title: t("currencies.errCodeNameRequired"), variant: "destructive" }); return; }
     if (curEditId) updateCur.mutate({ id: curEditId, data: curForm });
     else createCur.mutate(curForm);
   }
   function submitRate(e: React.FormEvent) {
     e.preventDefault();
     if (!rateForm.fromCurrencyId || !rateForm.toCurrencyId || !rateForm.rate || !rateForm.effectiveDate) {
-      toast({ title: "جميع الحقول مطلوبة", variant: "destructive" }); return;
+      toast({ title: t("currencies.errAllRequired"), variant: "destructive" }); return;
     }
     if (rateEditId) updateRate.mutate({ id: rateEditId, data: rateForm });
     else createRate.mutate(rateForm);
@@ -119,25 +125,27 @@ export default function Currencies() {
     !search || c.code.includes(search.toUpperCase()) || c.nameAr.includes(search) || (c.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
+  const marginStartClass = isRtl ? "ml-2" : "mr-2";
+
   return (
-    <div className="p-6 space-y-5" dir="rtl">
+    <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
             <DollarSign className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-foreground">العملات ومعاملات التحويل</h1>
-            <p className="text-xs text-muted-foreground">إدارة العملات وأسعار الصرف بين العملات</p>
+            <h1 className="text-xl font-bold text-foreground">{t("currencies.title")}</h1>
+            <p className="text-xs text-muted-foreground">{t("currencies.subtitle")}</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: "إجمالي العملات",  value: currencies.length,                                      icon: DollarSign,    cls: "text-blue-500 bg-blue-50" },
-          { label: "العملة الافتراضية", value: currencies.find((c: any) => c.isDefault)?.code ?? "—", icon: Star,          cls: "text-yellow-500 bg-yellow-50" },
-          { label: "معاملات التحويل", value: rates.length,                                            icon: ArrowRightLeft, cls: "text-purple-500 bg-purple-50" },
+          { label: t("currencies.totalCurrencies"),  value: currencies.length,                                      icon: DollarSign,    cls: "text-blue-500 bg-blue-50" },
+          { label: t("currencies.defaultCurrency"),  value: currencies.find((c: any) => c.isDefault)?.code ?? "—", icon: Star,          cls: "text-yellow-500 bg-yellow-50" },
+          { label: t("currencies.totalRates"),       value: rates.length,                                            icon: ArrowRightLeft, cls: "text-purple-500 bg-purple-50" },
         ].map((s, i) => (
           <Card key={i} className="border-2">
             <CardContent className="pt-4 pb-3">
@@ -156,17 +164,17 @@ export default function Currencies() {
       {showCurForm && (
         <FormPanel
           icon={DollarSign}
-          title={curEditId ? "تعديل العملة" : "إضافة عملة جديدة"}
-          subtitle="عرّف العملة وحدّد إن كانت العملة الافتراضية للنظام"
+          title={curEditId ? t("currencies.editCurrency") : t("currencies.addCurrencyLong")}
+          subtitle={t("currencies.currencyFormSubtitle")}
           onClose={resetCur}
           onSave={() => submitCur({ preventDefault() {} } as any)}
           saving={createCur.isPending || updateCur.isPending}
           saveDisabled={!curForm.code || !curForm.nameAr}
-          saveLabel={curEditId ? "تعديل" : "إضافة"}
+          saveLabel={curEditId ? t("currencies.saveEdit") : t("currencies.save")}
         >
           {!curEditId && (
             <div className="mb-5">
-              <p className="text-[11px] font-medium text-muted-foreground mb-2">عملات شائعة — انقر للملء السريع:</p>
+              <p className="text-[11px] font-medium text-muted-foreground mb-2">{t("currencies.common")}</p>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {COMMON_CURRENCIES.map(c => {
                   const exists = currencies.some((x: any) => x.code === c.code);
@@ -185,26 +193,26 @@ export default function Currencies() {
             </div>
           )}
           <FormGrid>
-            <Field label="الكود" required>
+            <Field label={t("currencies.code")} required>
               <Input value={curForm.code} onChange={e => setCurForm((p: any) => ({ ...p, code: e.target.value.toUpperCase() }))} placeholder="SAR" className="font-mono" maxLength={5} />
             </Field>
-            <Field label="الرمز">
+            <Field label={t("currencies.symbol")}>
               <Input value={curForm.symbol} onChange={e => setCurForm((p: any) => ({ ...p, symbol: e.target.value }))} placeholder="ر.س" maxLength={5} />
             </Field>
-            <Field label="الاسم العربي" required>
+            <Field label={t("currencies.nameAr")} required>
               <Input value={curForm.nameAr} onChange={e => setCurForm((p: any) => ({ ...p, nameAr: e.target.value }))} placeholder="ريال سعودي" />
             </Field>
-            <Field label="الاسم الإنجليزي">
-              <Input value={curForm.nameEn} onChange={e => setCurForm((p: any) => ({ ...p, nameEn: e.target.value }))} placeholder="Saudi Riyal" dir="ltr" className="text-left" />
+            <Field label={t("currencies.nameEn")}>
+              <Input value={curForm.nameEn} onChange={e => setCurForm((p: any) => ({ ...p, nameEn: e.target.value }))} placeholder="Saudi Riyal" dir="ltr" className="text-start" />
             </Field>
             <div className="md:col-span-2 flex items-center gap-6 rounded-lg border bg-muted/30 px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <Switch id="isDefault" checked={curForm.isDefault} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isDefault: v }))} />
-                <Label htmlFor="isDefault" className="flex items-center gap-1 cursor-pointer text-sm"><Star className="h-3 w-3 text-yellow-500" />افتراضية</Label>
+                <Label htmlFor="isDefault" className="flex items-center gap-1 cursor-pointer text-sm"><Star className="h-3 w-3 text-yellow-500" />{t("currencies.isDefault")}</Label>
               </div>
               <div className="flex items-center gap-2">
                 <Switch id="isActive" checked={curForm.isActive} onCheckedChange={v => setCurForm((p: any) => ({ ...p, isActive: v }))} />
-                <Label htmlFor="isActive" className="flex items-center gap-1 cursor-pointer text-sm"><CheckCircle2 className="h-3 w-3 text-green-500" />نشطة</Label>
+                <Label htmlFor="isActive" className="flex items-center gap-1 cursor-pointer text-sm"><CheckCircle2 className="h-3 w-3 text-green-500" />{t("currencies.isActive")}</Label>
               </div>
             </div>
           </FormGrid>
@@ -214,37 +222,37 @@ export default function Currencies() {
       {showRateForm && (
         <FormPanel
           icon={ArrowRightLeft}
-          title={rateEditId ? "تعديل معامل التحويل" : "إضافة معامل تحويل"}
-          subtitle="حدّد سعر الصرف بين عملتين وتاريخ تطبيقه"
+          title={rateEditId ? t("currencies.editRate") : t("currencies.addRate")}
+          subtitle={t("currencies.rateFormSubtitle")}
           onClose={resetRate}
           onSave={() => submitRate({ preventDefault() {} } as any)}
           saving={createRate.isPending || updateRate.isPending}
           saveDisabled={!rateForm.fromCurrencyId || !rateForm.toCurrencyId || !rateForm.rate || !rateForm.effectiveDate}
-          saveLabel={rateEditId ? "تعديل" : "إضافة"}
+          saveLabel={rateEditId ? t("currencies.saveEdit") : t("currencies.save")}
         >
           <FormGrid>
-            <Field label="من العملة" required>
+            <Field label={t("currencies.fromCurrency")} required>
               <Select value={rateForm.fromCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, fromCurrencyId: v === "__none" ? "" : v }))}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
+                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("currencies.selectCurrency")} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">— اختر العملة —</SelectItem>
-                  {currencies.filter((c: any) => c.isActive).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
+                  <SelectItem value="__none">{t("currencies.selectCurrency")}</SelectItem>
+                  {currencies.filter((c: any) => c.isActive).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className={cn("font-bold", marginStartClass)}>{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="إلى العملة" required>
+            <Field label={t("currencies.toCurrency")} required>
               <Select value={rateForm.toCurrencyId || "__none"} onValueChange={v => setRateForm((p: any) => ({ ...p, toCurrencyId: v === "__none" ? "" : v }))}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر العملة —" /></SelectTrigger>
+                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("currencies.selectCurrency")} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">— اختر العملة —</SelectItem>
-                  {currencies.filter((c: any) => c.isActive && String(c.id) !== rateForm.fromCurrencyId).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className="font-bold ml-2">{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
+                  <SelectItem value="__none">{t("currencies.selectCurrency")}</SelectItem>
+                  {currencies.filter((c: any) => c.isActive && String(c.id) !== rateForm.fromCurrencyId).map((c: any) => (<SelectItem key={c.id} value={String(c.id)}><span className={cn("font-bold", marginStartClass)}>{c.symbol}</span> {c.nameAr} ({c.code})</SelectItem>))}
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="معامل التحويل" required>
-              <Input type="text" inputMode="decimal" value={rateForm.rate} onChange={e => { const v = e.target.value.replace(/[^0-9.]/g, ""); const parts = v.split("."); const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v; setRateForm((p: any) => ({ ...p, rate: clean })); }} placeholder="3.7500" className="h-9 text-sm font-mono text-left" />
+            <Field label={t("currencies.rate")} required>
+              <Input type="text" inputMode="decimal" value={rateForm.rate} onChange={e => { const v = e.target.value.replace(/[^0-9.]/g, ""); const parts = v.split("."); const clean = parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : v; setRateForm((p: any) => ({ ...p, rate: clean })); }} placeholder="3.7500" className="h-9 text-sm font-mono text-start" />
             </Field>
-            <Field label={<span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />تاريخ التطبيق</span>} required>
+            <Field label={<span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{t("currencies.effectiveDate")}</span>} required>
               <Input type="date" value={rateForm.effectiveDate} onChange={e => setRateForm((p: any) => ({ ...p, effectiveDate: e.target.value }))} className="h-9 text-sm" />
             </Field>
             {rateForm.fromCurrencyId && rateForm.toCurrencyId && rateForm.rate && (
@@ -256,32 +264,32 @@ export default function Currencies() {
         </FormPanel>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {activeTab === "currencies" ? `${filtered.length} عملة مسجّلة` : `${rates.length} معامل تحويل مسجّل`}
+                {activeTab === "currencies" ? t("currencies.currenciesCount", { count: filtered.length }) : t("currencies.ratesCount", { count: rates.length })}
               </p>
               <div className="flex items-center gap-2">
                 {activeTab === "currencies" && (
                   <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => { resetCur(); setShowCurForm(true); }}>
-                    <Plus className="h-3.5 w-3.5" />إضافة عملة
+                    <Plus className="h-3.5 w-3.5" />{t("currencies.addCurrency")}
                   </Button>
                 )}
                 {activeTab === "rates" && (
                   <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => { resetRate(); setShowRateForm(true); }} disabled={currencies.length < 2}>
-                    <Plus className="h-3.5 w-3.5" />إضافة معامل تحويل
+                    <Plus className="h-3.5 w-3.5" />{t("currencies.addRate")}
                   </Button>
                 )}
                 <TabsList className="h-8 bg-background border gap-1">
                   <TabsTrigger value="currencies" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <DollarSign className="h-3.5 w-3.5" />العملات
-                    {currencies.length > 0 && <span className="mr-1 bg-primary-foreground/20 rounded-full px-1.5 text-[10px] font-bold">{currencies.length}</span>}
+                    <DollarSign className="h-3.5 w-3.5" />{t("currencies.tabCurrencies")}
+                    {currencies.length > 0 && <span className={cn("bg-primary-foreground/20 rounded-full px-1.5 text-[10px] font-bold", isRtl ? "mr-1" : "ml-1")}>{currencies.length}</span>}
                   </TabsTrigger>
                   <TabsTrigger value="rates" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <ArrowRightLeft className="h-3.5 w-3.5" />معاملات التحويل
-                    {rates.length > 0 && <span className="mr-1 bg-primary-foreground/20 rounded-full px-1.5 text-[10px] font-bold">{rates.length}</span>}
+                    <ArrowRightLeft className="h-3.5 w-3.5" />{t("currencies.tabRates")}
+                    {rates.length > 0 && <span className={cn("bg-primary-foreground/20 rounded-full px-1.5 text-[10px] font-bold", isRtl ? "mr-1" : "ml-1")}>{rates.length}</span>}
                   </TabsTrigger>
                 </TabsList>
               </div>
@@ -291,28 +299,28 @@ export default function Currencies() {
           <TabsContent value="currencies" className="mt-0">
             <div className="px-4 py-3 border-b bg-muted/10">
               <div className="relative">
-                <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="ابحث بالكود أو الاسم..." className="h-8 pr-8 text-sm" />
+                <Search className={cn("absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground", isRtl ? "right-3" : "left-3")} />
+                <Input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("currencies.search")} className={cn("h-8 text-sm", isRtl ? "pr-8" : "pl-8")} />
               </div>
             </div>
             {isLoading ? (
-              <div className="py-16 text-center text-muted-foreground text-sm">جارٍ التحميل...</div>
+              <div className="py-16 text-center text-muted-foreground text-sm">{t("currencies.loading")}</div>
             ) : filtered.length === 0 ? (
               <div className="py-16 text-center space-y-2">
                 <DollarSign className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground">لا توجد عملات</p>
-                <Button variant="outline" size="sm" onClick={() => setShowCurForm(true)}><Plus className="h-3.5 w-3.5 ml-1" />إضافة عملة</Button>
+                <p className="text-sm text-muted-foreground">{t("currencies.noCurrencies")}</p>
+                <Button variant="outline" size="sm" onClick={() => setShowCurForm(true)}><Plus className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("currencies.addCurrency")}</Button>
               </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30 text-muted-foreground">
-                    <th className="px-4 py-2.5 text-right font-medium">الكود</th>
-                    <th className="px-4 py-2.5 text-right font-medium">الرمز</th>
-                    <th className="px-4 py-2.5 text-right font-medium">الاسم العربي</th>
-                    <th className="px-4 py-2.5 text-right font-medium hidden sm:table-cell">الاسم الإنجليزي</th>
-                    <th className="px-4 py-2.5 text-right font-medium">الحالة</th>
-                    <th className="px-4 py-2.5 text-center font-medium">إجراءات</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colCode")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colSymbol")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colNameAr")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium hidden sm:table-cell">{t("currencies.colNameEn")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colStatus")}</th>
+                    <th className="px-4 py-2.5 text-center font-medium">{t("currencies.colActions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -323,7 +331,7 @@ export default function Currencies() {
                           <span className="font-mono font-bold text-primary text-sm">{c.code}</span>
                           {c.isDefault && (
                             <Badge variant="outline" className="text-[9px] bg-yellow-50 text-yellow-700 border-yellow-200 gap-0.5">
-                              <Star className="h-2.5 w-2.5" />افتراضي
+                              <Star className="h-2.5 w-2.5" />{t("currencies.default")}
                             </Badge>
                           )}
                         </div>
@@ -333,7 +341,7 @@ export default function Currencies() {
                       <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{c.nameEn ?? "—"}</td>
                       <td className="px-4 py-3">
                         <Badge variant="outline" className={cn("text-[10px]", c.isActive ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-600 border-red-200")}>
-                          {c.isActive ? "نشطة" : "موقوفة"}
+                          {c.isActive ? t("currencies.active") : t("currencies.inactive")}
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
@@ -353,24 +361,24 @@ export default function Currencies() {
             {currencies.length < 2 ? (
               <div className="py-10 text-center space-y-2">
                 <ArrowRightLeft className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground">أضف عملتين على الأقل لإضافة معامل تحويل</p>
+                <p className="text-sm text-muted-foreground">{t("currencies.needTwoCurrencies")}</p>
               </div>
             ) : rates.length === 0 ? (
               <div className="py-16 text-center space-y-2">
                 <RefreshCw className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-                <p className="text-sm text-muted-foreground">لا توجد معاملات تحويل</p>
-                <Button variant="outline" size="sm" onClick={() => setShowRateForm(true)}><Plus className="h-3.5 w-3.5 ml-1" />إضافة معامل</Button>
+                <p className="text-sm text-muted-foreground">{t("currencies.noRates")}</p>
+                <Button variant="outline" size="sm" onClick={() => setShowRateForm(true)}><Plus className={cn("h-3.5 w-3.5", isRtl ? "ml-1" : "mr-1")} />{t("currencies.addRate")}</Button>
               </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30 text-muted-foreground">
-                    <th className="px-4 py-2.5 text-right font-medium">من</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colFrom")}</th>
                     <th className="px-4 py-2.5 text-center font-medium"></th>
-                    <th className="px-4 py-2.5 text-right font-medium">إلى</th>
-                    <th className="px-4 py-2.5 text-right font-medium">معامل التحويل</th>
-                    <th className="px-4 py-2.5 text-right font-medium">تاريخ التطبيق</th>
-                    <th className="px-4 py-2.5 text-center font-medium">إجراءات</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colTo")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colRate")}</th>
+                    <th className="px-4 py-2.5 text-start font-medium">{t("currencies.colEffectiveDate")}</th>
+                    <th className="px-4 py-2.5 text-center font-medium">{t("currencies.colActions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -419,27 +427,27 @@ export default function Currencies() {
 
       {/* AlertDialogs for delete confirmation */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
           <AlertDialogHeader>
-            <AlertDialogTitle>تأكيد الحذف</AlertDialogTitle>
-            <AlertDialogDescription>هل أنت متأكد من حذف هذه العملة؟</AlertDialogDescription>
+            <AlertDialogTitle>{t("currencies.confirmDeleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("currencies.confirmDeleteCurrency")}</AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-row-reverse gap-2">
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => deleteId && deleteCur.mutate(deleteId)}>حذف</AlertDialogAction>
+          <AlertDialogFooter className={cn("gap-2", isRtl && "flex-row-reverse")}>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => deleteId && deleteCur.mutate(deleteId)}>{t("common.delete")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       <AlertDialog open={deleteRateId !== null} onOpenChange={() => setDeleteRateId(null)}>
-        <AlertDialogContent dir="rtl">
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
           <AlertDialogHeader>
-            <AlertDialogTitle>تأكيد الحذف</AlertDialogTitle>
-            <AlertDialogDescription>هل أنت متأكد من حذف معامل التحويل هذا؟</AlertDialogDescription>
+            <AlertDialogTitle>{t("currencies.confirmDeleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("currencies.confirmDeleteRate")}</AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-row-reverse gap-2">
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => deleteRateId && deleteRate.mutate(deleteRateId)}>حذف</AlertDialogAction>
+          <AlertDialogFooter className={cn("gap-2", isRtl && "flex-row-reverse")}>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => deleteRateId && deleteRate.mutate(deleteRateId)}>{t("common.delete")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
