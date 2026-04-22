@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import ExportButtons from "@/components/ExportButtons";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { useFmt } from "@/hooks/use-fmt";
+import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
 import {
   Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
@@ -131,7 +131,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
             {/* Preview */}
             {form.unitId && form.conversionFactor && (
               <div className="text-xs bg-amber-50 border border-amber-100 rounded px-3 py-2 text-amber-800">
-                {t("pages.items.unitConversionPreview", { factor: Number(form.conversionFactor).toFixed(Number(form.conversionFactor) % 1 === 0 ? 0 : 4) })}
+                {t("pages.items.unitConversionPreview", { factor: trimTrailingZeros(form.conversionFactor) })}
               </div>
             )}
             <div className="flex gap-2 justify-end">
@@ -165,7 +165,7 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
               <div className="grid grid-cols-3 gap-1 text-[10px]">
                 <div className="bg-muted/50 rounded px-1.5 py-1 text-center">
                   <p className="text-muted-foreground">{t("pages.items.factor")}</p>
-                  <p className="font-bold tabular-nums">×{Number(up.conversionFactor).toFixed(Number(up.conversionFactor) % 1 === 0 ? 0 : 4)}</p>
+                  <p className="font-bold tabular-nums">×{trimTrailingZeros(up.conversionFactor)}</p>
                 </div>
                 <div className="bg-orange-50 rounded px-1.5 py-1 text-center">
                   <p className="text-orange-600">{t("pages.items.cost")}</p>

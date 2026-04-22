@@ -8,8 +8,15 @@ import { useAuth } from "@/contexts/AuthContext";
  * fmtCost(n)     — unit/avg cost prices             (max(dp, 4) for precision)
  * fmtVal(n)      — totals with Arabic locale        (dp places, no currency)
  * fmtCurrency(n) — amounts with SAR currency symbol (dp places)
+ * fmtTrim(n)     — number with trailing zeros after decimal removed (e.g. 6.5000 → 6.5, 6.000 → 6)
  * dp             — raw number of decimal places
  */
+export const trimTrailingZeros = (n: number | string | null | undefined): string => {
+  const num = Number(n ?? 0);
+  if (!Number.isFinite(num)) return "0";
+  return num.toFixed(6).replace(/\.?0+$/, "") || "0";
+};
+
 export function useFmt() {
   const { user } = useAuth();
   const dp: number = (user?.company?.decimalPlaces as number) ?? 2;
@@ -37,5 +44,7 @@ export function useFmt() {
       maximumFractionDigits: dp,
     }).format(Number(n ?? 0));
 
-  return { dp, fmt, fmtQty, fmtCost, fmtVal, fmtCurrency };
+  const fmtTrim = trimTrailingZeros;
+
+  return { dp, fmt, fmtQty, fmtCost, fmtVal, fmtCurrency, fmtTrim };
 }

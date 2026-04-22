@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight } from "lucide-react";
 
@@ -183,7 +184,7 @@ export default function Units() {
                   <td className="px-4 py-3 font-medium">{u.nameAr}</td>
                   <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{u.nameEn ?? "—"}</td>
                   <td className="px-4 py-3 hidden sm:table-cell text-center">
-                    <span className="text-xs bg-muted rounded px-2 py-0.5 tabular-nums">×{Math.trunc(Number(u.conversionFactor))}</span>
+                    <span className="text-xs bg-muted rounded px-2 py-0.5 tabular-nums">×{trimTrailingZeros(u.conversionFactor)}</span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
