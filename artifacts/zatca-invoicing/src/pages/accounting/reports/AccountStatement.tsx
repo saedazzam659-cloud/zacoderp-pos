@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -11,19 +13,11 @@ import { FileText, Search, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: number) => n.toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const EXPORT_COLS = [
-  { key: "entryDate",   header: "التاريخ",      width: 14 },
-  { key: "docNumber",   header: "رقم القيد",     width: 14 },
-  { key: "description", header: "البيان",         width: 36 },
-  { key: "debit",       header: "مدين",           width: 14 },
-  { key: "credit",      header: "دائن",           width: 14 },
-  { key: "balance",     header: "الرصيد",         width: 14 },
-];
 
 export default function AccountStatement() {
   const { user, token } = useAuth() as any;
+  const { t } = useTranslation();
+  const { fmt, isRtl } = useFormatters();
   const { toast } = useToast();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const headers = { Authorization: `Bearer ${token}` };
@@ -35,6 +29,15 @@ export default function AccountStatement() {
   const [fromDate, setFromDate]   = useState(firstOfMonth);
   const [toDate, setToDate]       = useState(today);
   const [searched, setSearched]   = useState(false);
+
+  const EXPORT_COLS = [
+    { key: "entryDate",   header: t("accountingReports.fromDate"), width: 14 },
+    { key: "docNumber",   header: t("accountStatement.docNumber"), width: 14 },
+    { key: "description", header: t("accountStatement.description"), width: 36 },
+    { key: "debit",       header: t("accountingReports.debit"), width: 14 },
+    { key: "credit",      header: t("accountingReports.credit"), width: 14 },
+    { key: "balance",     header: t("accountingReports.balance"), width: 14 },
+  ];
 
   const { data: accounts = [] } = useQuery<any[]>({
     queryKey: ["accounts", cid],
@@ -62,6 +65,7 @@ export default function AccountStatement() {
   });
 
   const selectedAccount = accounts.find((a: any) => String(a.id) === accountId);
+  const accountDisplayName = selectedAccount ? (isRtl ? selectedAccount.nameAr : (selectedAccount.nameEn || selectedAccount.nameAr)) : "";
   const totalDebit  = rows.reduce((s, r) => s + (r.debit  || 0), 0);
   const totalCredit = rows.reduce((s, r) => s + (r.credit || 0), 0);
   const finalBalance = rows.length > 0 ? rows[rows.length - 1].balance : 0;
@@ -76,21 +80,21 @@ export default function AccountStatement() {
   }));
 
   function handleSearch() {
-    if (!accountId) { toast({ title: "اختر الحساب أولاً", variant: "destructive" }); return; }
+    if (!accountId) { toast({ title: t("accountStatement.selectAccountFirst"), variant: "destructive" }); return; }
     setSearched(true);
     refetch();
   }
 
   return (
-    <div className="space-y-5" dir="rtl">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <FileText className="h-6 w-6 text-primary" />
-            كشف حساب
+            {t("accountStatement.title")}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">حركات الحساب مع الرصيد التراكمي</p>
+          <p className="text-sm text-muted-foreground mt-1">{t("accountStatement.subtitle")}</p>
         </div>
         <div className="flex gap-2">
           {rows.length > 0 && (
@@ -98,11 +102,11 @@ export default function AccountStatement() {
               <ExportButtons
                 rows={exportRows}
                 columns={EXPORT_COLS}
-                filename={`كشف-حساب-${selectedAccount?.code ?? ""}-${fromDate}`}
-                title={`كشف حساب — ${selectedAccount?.nameAr ?? ""} (${fromDate} إلى ${toDate})`}
+                filename={`${t("accountStatement.filename_prefix")}-${selectedAccount?.code ?? ""}-${fromDate}`}
+                title={t("accountStatement.title_with", { name: accountDisplayName, from: fromDate, to: toDate })}
               />
               <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
-                <Printer className="h-4 w-4" />طباعة
+                <Printer className="h-4 w-4" />{t("accountingReports.print")}
               </Button>
             </>
           )}
@@ -113,32 +117,32 @@ export default function AccountStatement() {
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
           <div className="space-y-1.5 lg:col-span-2">
-            <Label>الحساب *</Label>
+            <Label>{t("accountStatement.account")} *</Label>
             <SearchCombobox
               items={[
                 ...accounts
                   .filter((a: any) => a.isPosting)
-                  .map((a: any) => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}`, badge: a.code, badgeClass: "bg-muted text-muted-foreground border" }))
+                  .map((a: any) => ({ value: String(a.id), label: `${a.code} — ${isRtl ? a.nameAr : (a.nameEn || a.nameAr)}`, badge: a.code, badgeClass: "bg-muted text-muted-foreground border" }))
               ]}
               value={accountId}
               onValueChange={setAccountId}
-              placeholder="اختر الحساب..."
-              searchPlaceholder="ابحث بالكود أو الاسم..."
+              placeholder={t("accountStatement.selectAccount")}
+              searchPlaceholder={t("accountStatement.searchByCodeOrName")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>من تاريخ</Label>
+            <Label>{t("accountingReports.fromDate")}</Label>
             <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>إلى تاريخ</Label>
+            <Label>{t("accountingReports.toDate")}</Label>
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
           </div>
         </div>
         <div className="mt-4 flex justify-end">
           <Button className="gap-2" onClick={handleSearch} disabled={isLoading}>
             <Search className="h-4 w-4" />
-            {isLoading ? "جاري البحث..." : "عرض الكشف"}
+            {isLoading ? t("accountingReports.loading") : t("accountingReports.show_account_statement")}
           </Button>
         </div>
       </div>
@@ -146,7 +150,7 @@ export default function AccountStatement() {
       {/* Results */}
       {searched && !isLoading && rows.length === 0 && (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
-          لا توجد حركات للحساب في الفترة المحددة
+          {t("accountStatement.noMovements")}
         </div>
       )}
 
@@ -155,17 +159,17 @@ export default function AccountStatement() {
           {/* Account Info */}
           <div className="rounded-xl border bg-primary/5 p-4 flex flex-wrap gap-6">
             <div>
-              <span className="text-xs text-muted-foreground block">الحساب</span>
-              <span className="font-semibold">{selectedAccount?.code} — {selectedAccount?.nameAr}</span>
+              <span className="text-xs text-muted-foreground block">{t("accountStatement.account")}</span>
+              <span className="font-semibold">{selectedAccount?.code} — {accountDisplayName}</span>
             </div>
             <div>
-              <span className="text-xs text-muted-foreground block">الفترة</span>
-              <span className="font-semibold">{fromDate} إلى {toDate}</span>
+              <span className="text-xs text-muted-foreground block">{t("accountStatement.period")}</span>
+              <span className="font-semibold">{t("accountStatement.periodFromTo", { from: fromDate, to: toDate })}</span>
             </div>
-            <div className="mr-auto">
-              <span className="text-xs text-muted-foreground block">الرصيد الختامي</span>
+            <div className={isRtl ? "mr-auto" : "ml-auto"}>
+              <span className="text-xs text-muted-foreground block">{t("accountStatement.closingBalance")}</span>
               <span className={cn("font-bold text-lg", finalBalance >= 0 ? "text-primary" : "text-destructive")}>
-                {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? "مدين" : "دائن"}
+                {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}
               </span>
             </div>
           </div>
@@ -176,13 +180,13 @@ export default function AccountStatement() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/50 border-b">
-                    <th className="text-right px-4 py-3 font-semibold text-muted-foreground">#</th>
-                    <th className="text-right px-4 py-3 font-semibold text-muted-foreground">التاريخ</th>
-                    <th className="text-right px-4 py-3 font-semibold text-muted-foreground">رقم القيد</th>
-                    <th className="text-right px-4 py-3 font-semibold text-muted-foreground">البيان</th>
-                    <th className="text-left px-4 py-3 font-semibold text-muted-foreground">مدين</th>
-                    <th className="text-left px-4 py-3 font-semibold text-muted-foreground">دائن</th>
-                    <th className="text-left px-4 py-3 font-semibold text-muted-foreground">الرصيد</th>
+                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">#</th>
+                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.fromDate")}</th>
+                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.docNumber")}</th>
+                    <th className="text-start px-4 py-3 font-semibold text-muted-foreground">{t("accountStatement.description")}</th>
+                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.debit")}</th>
+                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.credit")}</th>
+                    <th className="text-end px-4 py-3 font-semibold text-muted-foreground">{t("accountingReports.balance")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -192,30 +196,30 @@ export default function AccountStatement() {
                       <td className="px-4 py-2.5">{r.entryDate}</td>
                       <td className="px-4 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber}</td>
                       <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">{r.description || "—"}</td>
-                      <td className="px-4 py-2.5 text-left font-mono text-blue-700">
+                      <td className="px-4 py-2.5 text-end font-mono text-blue-700">
                         {r.debit > 0 ? fmt(r.debit) : ""}
                       </td>
-                      <td className="px-4 py-2.5 text-left font-mono text-rose-700">
+                      <td className="px-4 py-2.5 text-end font-mono text-rose-700">
                         {r.credit > 0 ? fmt(r.credit) : ""}
                       </td>
-                      <td className={cn("px-4 py-2.5 text-left font-mono font-semibold",
+                      <td className={cn("px-4 py-2.5 text-end font-mono font-semibold",
                         r.balance >= 0 ? "text-primary" : "text-destructive"
                       )}>
                         {fmt(Math.abs(r.balance))}
-                        <span className="text-xs font-normal mr-1">{r.balance >= 0 ? "م" : "د"}</span>
+                        <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{r.balance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 font-semibold border-t-2">
-                    <td colSpan={4} className="px-4 py-3 text-center">الإجمالي</td>
-                    <td className="px-4 py-3 text-left font-mono text-blue-700">{fmt(totalDebit)}</td>
-                    <td className="px-4 py-3 text-left font-mono text-rose-700">{fmt(totalCredit)}</td>
-                    <td className={cn("px-4 py-3 text-left font-mono",
+                    <td colSpan={4} className="px-4 py-3 text-center">{t("accountingReports.total")}</td>
+                    <td className="px-4 py-3 text-end font-mono text-blue-700">{fmt(totalDebit)}</td>
+                    <td className="px-4 py-3 text-end font-mono text-rose-700">{fmt(totalCredit)}</td>
+                    <td className={cn("px-4 py-3 text-end font-mono",
                       finalBalance >= 0 ? "text-primary" : "text-destructive"
                     )}>
-                      {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? "مدين" : "دائن"}
+                      {fmt(Math.abs(finalBalance))} {finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}
                     </td>
                   </tr>
                 </tfoot>
