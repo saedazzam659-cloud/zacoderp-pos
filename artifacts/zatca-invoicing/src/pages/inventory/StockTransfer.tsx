@@ -12,6 +12,7 @@ import {
   CheckCircle2, Send, ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -260,7 +261,19 @@ export default function StockTransfer() {
           saveDisabled={!form.fromWarehouseId || !form.toWarehouseId || !form.transferDate}
           saveLabel="حفظ كمسودة"
         >
-          <div className="space-y-5">
+          <Tabs defaultValue="info" className="w-full">
+            <TabsList className="w-full grid grid-cols-2 mb-4">
+              <TabsTrigger value="info">معلومات الحركة والقيد المحاسبي</TabsTrigger>
+              <TabsTrigger value="items">
+                الأصناف
+                {lines.filter(l => l.itemId).length > 0 && (
+                  <span className="mr-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
+                    {lines.filter(l => l.itemId).length}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="info" className="space-y-5 mt-0">
             <FormSection title="معلومات الحركة">
               <FormGrid cols={2}>
                 <Field label="رقم الحركة"><Input placeholder="TRF-001 (تلقائي)" dir="ltr" className="text-left" value={form.transferNumber} onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))} /></Field>
@@ -402,7 +415,9 @@ export default function StockTransfer() {
                 })()}
               </div>
             </FormSection>
+            </TabsContent>
 
+            <TabsContent value="items" className="space-y-3 mt-0">
             {/* Line items */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -538,7 +553,8 @@ export default function StockTransfer() {
                 عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
               </p>
             </div>
-          </div>
+            </TabsContent>
+          </Tabs>
         </FormPanel>
       )}
 
