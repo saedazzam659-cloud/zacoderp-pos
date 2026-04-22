@@ -197,6 +197,20 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Deterministic rule-based fallback: linked-entity → keyword match → revenue, with explanatory `reasoning`. Used when AI unavailable / empty pool / runtime error.
 - Frontend (`ReceiptVouchers.tsx`): "اقتراح AI" button next to `AccountCombobox`, displays AI reasoning under the field, plus a live JE preview (DR cash/bank, CR counterparty) showing balanced amounts.
 
+## Payment Voucher — AI Counterparty Account Suggestion
+- AI endpoint `POST /api/ai/suggest-payment-account`: picks the debit-side (counterparty) account for a payment voucher; the credit side (cash/bank) is auto-resolved from cashbox/bankAccount on post.
+- Decision factors: entityType (supplier/customer/other), linked supplier.accountId / customer.accountId, description/refType keywords:
+  - فاتورة شراء → AP (liability)
+  - دفعة مقدمة لمورد → asset (advances to suppliers)
+  - رواتب/أجور → salary expense
+  - إيجار → rent expense
+  - كهرباء/ماء/اتصالات → utilities expense
+  - قرض/تمويل → loan liability
+  - مرتجع لعميل → AR (asset)
+- Pool: posting accounts of types asset + liability + expense.
+- Deterministic rule-based fallback with explanatory `reasoning` for AI-unavailable / empty-pool / runtime errors.
+- Frontend (`PaymentVouchers.tsx`): "اقتراح AI" button next to `AccountCombobox` with reasoning panel + live JE preview (DR counterparty, CR cash/bank).
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

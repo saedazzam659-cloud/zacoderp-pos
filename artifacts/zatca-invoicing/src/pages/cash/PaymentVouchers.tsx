@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
+import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Sparkles, Loader2 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -31,6 +31,8 @@ export default function PaymentVouchers() {
   const [postRow,   setPostRow]   = useState<any>(null);
   const [delRow,    setDelRow]    = useState<any>(null);
   const [unpostRow, setUnpostRow] = useState<any>(null);
+  const [aiBusy,    setAiBusy]    = useState(false);
+  const [aiReason,  setAiReason]  = useState("");
 
   const { data: vouchers = [],     isLoading } = useQuery({ queryKey: ["payment-vouchers", cid], queryFn: () => fetch(`${API}/api/payment-vouchers?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
   const { data: cashBoxes = [] }               = useQuery({ queryKey: ["cash-boxes", cid],       queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
@@ -44,9 +46,55 @@ export default function PaymentVouchers() {
   const ACCT_KEY = `pv:lastAccountId:${cid}`;
   function openAdd()  {
     const last = typeof window !== "undefined" ? localStorage.getItem(ACCT_KEY) || "" : "";
-    setEditing(null); setForm({ ...EMPTY, date: today() }); setAcctId(last); setPanel(true);
+    setEditing(null); setForm({ ...EMPTY, date: today() }); setAcctId(last); setAiReason(""); setPanel(true);
   }
-  function openEdit(r: any) { setEditing(r); setForm({ date: r.date, paymentType: r.paymentType || "cash", cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "", bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "", entityType: r.entityType || "supplier", entityId: r.entityId ? String(r.entityId) : "", entityName: r.entityName ?? "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", refType: r.refType ?? "", refNumber: r.refNumber ?? "", description: r.description ?? "", notes: r.notes ?? "" }); setAcctId(r.accountId ? String(r.accountId) : ""); setPanel(true); }
+  function openEdit(r: any) { setEditing(r); setForm({ date: r.date, paymentType: r.paymentType || "cash", cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "", bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "", entityType: r.entityType || "supplier", entityId: r.entityId ? String(r.entityId) : "", entityName: r.entityName ?? "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", refType: r.refType ?? "", refNumber: r.refNumber ?? "", description: r.description ?? "", notes: r.notes ?? "" }); setAcctId(r.accountId ? String(r.accountId) : ""); setAiReason(""); setPanel(true); }
+
+  async function suggestAccount() {
+    setAiBusy(true); setAiReason("");
+    try {
+      const res = await fetch(`${API}/api/ai/suggest-payment-account?companyId=${cid}`, {
+        method: "POST",
+        headers: { ...h, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entityType: form.entityType,
+          entityId: form.entityId ? parseInt(form.entityId) : null,
+          entityName: form.entityName,
+          description: form.description,
+          refType: form.refType,
+          refNumber: form.refNumber,
+          notes: form.notes,
+          amount: Number(form.amount || 0),
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "تعذّر الاقتراح");
+      if (j.accountId) {
+        setAcctId(String(j.accountId));
+        setAiReason(j.reasoning || "");
+        toast({ title: "تم اقتراح الحساب", description: j.accountLabel });
+      } else {
+        toast({ title: "لم يتم العثور على حساب مناسب", description: j.reasoning, variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "تعذّر الاقتراح", description: parseError(e), variant: "destructive" });
+    } finally { setAiBusy(false); }
+  }
+
+  function jePreview() {
+    const amt = Number(form.amount || 0);
+    if (!isFinite(amt) || amt <= 0) return null;
+    const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
+    const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
+    const crLabel = form.paymentType === "bank"
+      ? (ba ? `بنك: ${ba.nameAr}` : "— لم يتم اختيار البنك —")
+      : (cb ? `صندوق: ${cb.nameAr}` : "— لم يتم اختيار الخزنة —");
+    const drLabel = acctId ? "الحساب المقابل المختار" :
+      (form.entityType === "supplier" && form.entityName) ? `حساب المورد: ${form.entityName}` :
+      (form.entityType === "customer" && form.entityName) ? `حساب العميل: ${form.entityName}` :
+      "— لم يتم تحديد الحساب المقابل —";
+    return { drLabel, crLabel, amount: amt };
+  }
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -161,7 +209,14 @@ export default function PaymentVouchers() {
               </Field>
             )}
             <Field label="الحساب المقابل" className="md:col-span-2">
-              <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" grouped={false} />
+              <div className="flex gap-2 items-stretch">
+                <div className="flex-1"><AccountCombobox value={acctId} onValueChange={setAcctId} placeholder="— اختر الحساب —" grouped={false} /></div>
+                <Button type="button" variant="outline" size="sm" onClick={suggestAccount} disabled={aiBusy} className="gap-1.5 shrink-0 text-purple-700 border-purple-300 hover:bg-purple-50" title="اقتراح الحساب المقابل بالذكاء الاصطناعي">
+                  {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  اقتراح AI
+                </Button>
+              </div>
+              {aiReason && <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed bg-purple-50/50 border border-purple-100 rounded p-2">{aiReason}</p>}
             </Field>
             <Field label="المبلغ" required><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></Field>
             <Field label="سعر الصرف"><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
@@ -170,6 +225,23 @@ export default function PaymentVouchers() {
             <Field label="البيان" className="md:col-span-2"><Input placeholder="وصف المعاملة..." {...f("description")} /></Field>
             <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="..." {...f("notes")} /></Field>
           </FormGrid>
+
+          {(() => {
+            const p = jePreview();
+            if (!p) return null;
+            return (
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+                <p className="text-xs font-semibold text-blue-900 mb-2">معاينة القيد المحاسبي</p>
+                <table className="w-full text-xs">
+                  <thead><tr className="text-blue-800/70"><th className="text-right pb-1">الحساب</th><th className="text-left pb-1 pl-2">مدين</th><th className="text-left pb-1">دائن</th></tr></thead>
+                  <tbody className="font-mono">
+                    <tr className="border-t border-blue-200/60"><td className="py-1 text-right">{p.drLabel}</td><td className="text-left pl-2">{p.amount.toFixed(2)}</td><td className="text-left">—</td></tr>
+                    <tr className="border-t border-blue-200/60"><td className="py-1 text-right">{p.crLabel}</td><td className="text-left pl-2">—</td><td className="text-left">{p.amount.toFixed(2)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </FormPanel>
       )}
 
