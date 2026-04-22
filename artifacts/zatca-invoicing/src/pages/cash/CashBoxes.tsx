@@ -86,7 +86,12 @@ export default function CashBoxes() {
       const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };
       const url  = editing ? `${API}/api/cash-boxes/${editing.id}` : `${API}/api/cash-boxes`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || "حدث خطأ");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -95,8 +100,14 @@ export default function CashBoxes() {
       qc.invalidateQueries({ queryKey: ["cash-boxes-bal"] });
       setPanel(false);
     },
-    onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
+    onError: (e: any) => toast({ title: "تعذّر الحفظ", description: e?.message || "حدث خطأ", variant: "destructive" }),
   });
+
+  // ─── Soft-warning validation (does not block save) ──────────────────────────
+  const dupCode = form.code.trim() && (boxes as any[]).some((b: any) =>
+    b.code?.trim().toLowerCase() === form.code.trim().toLowerCase() && b.id !== editing?.id);
+  const dupAccount = acctId && (boxes as any[]).some((b: any) =>
+    b.accountId === parseInt(acctId) && b.id !== editing?.id);
 
   const delMut = useMutation({
     mutationFn: async (id: number) => {
@@ -154,6 +165,16 @@ export default function CashBoxes() {
           onSave={() => { if (validate()) saveMut.mutate(); }}
           saving={saveMut.isPending}
         >
+          {(dupCode || dupAccount) && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                {dupCode && <p>تنبيه: الكود <strong>{form.code}</strong> مستخدم بالفعل لخزنة أخرى. لن يُسمح بالحفظ بنفس الكود.</p>}
+                {dupAccount && <p>تنبيه: هذا الحساب مرتبط مسبقاً بخزنة أخرى. لن يُسمح بربطه بخزنتين.</p>}
+              </div>
+            </div>
+          )}
+
           <Tabs value={tab} onValueChange={v => setTab(v as "basic" | "limits")} dir="rtl">
             <TabsList className="grid grid-cols-2 w-full max-w-md mr-auto mb-5">
               <TabsTrigger value="basic" className="gap-1.5">
