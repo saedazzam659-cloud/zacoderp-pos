@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { branchesApi } from "@/lib/branchesApi";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -147,6 +148,23 @@ export default function JournalEntryForm() {
     },
     enabled: !!user,
   });
+
+  const { data: costCentersList = [] } = useQuery<any[]>({
+    queryKey: ["cost-centers", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/cost-centers?companyId=${cid}` : `${API}/api/cost-centers`;
+      const res = await fetch(url, { headers: authHeaders });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!user,
+  });
+  const costCenterOptions = [
+    { value: "", label: "— بدون مركز تكلفة —" },
+    ...costCentersList
+      .filter((c: any) => c.isActive !== false)
+      .map((c: any) => ({ value: c.code, label: `${c.code} — ${c.nameAr}` })),
+  ];
   const acctMap = new Map<number, any>(accountsList.map((a: any) => [a.id, a]));
   const acctLabel = (id: any) => {
     const a = acctMap.get(Number(id));
@@ -688,13 +706,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                       className="h-8 text-sm"
                     />
 
-                    <Input
-                      data-enter-nav="true"
+                    <SearchCombobox
+                      items={costCenterOptions}
                       value={line.costCenter}
-                      onChange={e => updateLine(line.id, "costCenter", e.target.value)}
-                      onKeyDown={handleEnterNav}
-                      placeholder="-"
-                      className="h-8 text-sm"
+                      onValueChange={(v) => updateLine(line.id, "costCenter", v)}
+                      placeholder="— مركز التكلفة —"
                     />
 
                     <Button
