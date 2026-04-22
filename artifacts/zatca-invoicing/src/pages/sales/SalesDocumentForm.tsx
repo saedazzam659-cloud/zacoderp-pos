@@ -45,13 +45,24 @@ function newLine(): DocLine {
   };
 }
 
-function calcLine(l: DocLine) {
-  const qty = Number(l.qty) || 0;
+// When `priceIncludesVat` is true, the entered unitPrice already contains VAT.
+//   gross    = qty * unitPrice * (1 - disc/100)        ← gross is the displayed line total
+//   net      = gross / (1 + vatRate/100)               ← VAT-exclusive subtotal
+//   vat      = gross - net
+// When false (default), the entered unitPrice is VAT-exclusive — VAT is added on top.
+function calcLine(l: DocLine, priceIncludesVat = false) {
+  const qty   = Number(l.qty) || 0;
   const price = Number(l.unitPrice) || 0;
-  const disc = Number(l.discount) || 0;
-  const subtotal = qty * price * (1 - disc / 100);
-  const vat = subtotal * ((Number(l.vatRate) || 0) / 100);
-  return { lineTotal: subtotal + vat, subtotal };
+  const disc  = Number(l.discount) || 0;
+  const rate  = (Number(l.vatRate) || 0) / 100;
+  const gross = qty * price * (1 - disc / 100);
+  if (priceIncludesVat) {
+    const net = rate > -1 ? gross / (1 + rate) : gross;
+    const vat = gross - net;
+    return { subtotal: net, vat, lineTotal: gross };
+  }
+  const vat = gross * rate;
+  return { subtotal: gross, vat, lineTotal: gross + vat };
 }
 
 export interface SalesDocumentFormProps {
@@ -88,6 +99,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
+  const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
 
   // Accounts used to build journal entry on posting (invoices only)
@@ -217,6 +229,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
+    setPriceIncludesVat(!!existing.priceIncludesVat);
     if (isInvoice) {
       setCogsAccountId(existing.cogsAccountId ? String(existing.cogsAccountId) : "");
       setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
@@ -246,10 +259,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
       const updated = { ...l, [field]: value };
-      const { lineTotal } = calcLine(updated);
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
   }
+
+  // Recompute every line's lineTotal whenever the inclusive/exclusive flag changes
+  useEffect(() => {
+    setLines(prev => prev.map(l => {
+      const { lineTotal } = calcLine(l, priceIncludesVat);
+      return { ...l, lineTotal: lineTotal.toFixed(2) };
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceIncludesVat]);
 
   // Cache item-specific unit prices: itemId → [{ unitId, unit:{id,nameAr}, conversionFactor, salePrice, costPrice, isBase }]
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
@@ -286,7 +308,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unitPrice: String(chosenPrice),
         vatRate:   String(item.vatRate ?? "15"),
       };
-      const { lineTotal } = calcLine(updated);
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
   }
@@ -305,13 +327,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         // If item has this unit configured, snap to its salePrice
         unitPrice: row?.salePrice != null ? String(row.salePrice) : l.unitPrice,
       };
-      const { lineTotal } = calcLine(updated);
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
   }
 
-  const subtotal    = lines.reduce((s, l) => { const { subtotal } = calcLine(l); return s + subtotal; }, 0);
-  const vatAmount   = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l); return s + (lineTotal - subtotal); }, 0);
+  const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).subtotal, 0);
+  const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).vat,      0);
   const totalAmount = subtotal + vatAmount;
 
   const saveMut = useMutation({
@@ -349,6 +371,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       customerId: customerId || null, currencyCode, exchangeRate,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
       discountAmount: "0", totalAmount: totalAmount.toFixed(2),
+      priceIncludesVat,
       notes: notes || null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
     };
@@ -671,12 +694,42 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <Plus className="h-4 w-4" />إضافة صنف
               </Button>
 
-              <div className="mt-5 flex justify-end">
+              <div className="mt-5 flex flex-wrap justify-between gap-4">
+                <label
+                  data-testid="price-includes-vat-toggle"
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-xl border-2 p-3 cursor-pointer select-none transition-colors max-w-sm",
+                    priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
+                    checked={priceIncludesVat}
+                    onChange={e => setPriceIncludesVat(e.target.checked)}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold">السعر شامل الضريبة</p>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      {priceIncludesVat
+                        ? "السعر المُدخل يتضمن الضريبة — يستخرج النظام قيمة الضريبة من المبلغ"
+                        : "السعر المُدخل بدون ضريبة — يضيف النظام الضريبة فوق المبلغ"}
+                    </p>
+                  </div>
+                </label>
+
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
-                  <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
+                    <span>طريقة الحساب</span>
+                    <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                      {priceIncludesVat ? "شامل الضريبة" : "غير شامل الضريبة"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">الصافي (قبل الضريبة)</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
-                    <span>الإجمالي</span><span className="font-mono text-primary">{fmt(totalAmount)}</span>
+                    <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
+                    <span className="font-mono text-primary">{fmt(totalAmount)}</span>
                   </div>
                   {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
                     <p className="text-[10px] text-muted-foreground border-t pt-1">

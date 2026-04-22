@@ -78,6 +78,14 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
 const router = Router();
 router.use(extractAuth);
 
+// Strict boolean parser for API boundary — accepts true|false (and "true"/"false") only.
+// Anything else becomes false (the safe default for priceIncludesVat).
+function asBool(v: any): boolean {
+  if (v === true || v === "true") return true;
+  if (v === false || v === "false" || v == null) return false;
+  return false;
+}
+
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
@@ -148,7 +156,7 @@ router.post("/sales-invoices", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines,
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
@@ -164,6 +172,7 @@ router.post("/sales-invoices", async (req, res) => {
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -183,7 +192,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines,
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
@@ -198,6 +207,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: asBool(priceIncludesVat),
       notes: notes || null, updatedAt: new Date(),
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -858,7 +868,7 @@ router.post("/sales-quotations", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
     const [q] = await db.insert(salesQuotationsTable).values({
       companyId: cid, docNumber: docNumber || null, quotationDate,
@@ -869,6 +879,7 @@ router.post("/sales-quotations", async (req, res) => {
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
     }).returning();
     if (lines?.length) {
@@ -883,7 +894,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
-            subtotal, vatAmount, discountAmount, totalAmount, notes, lines } = req.body;
+            subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
       validUntil: validUntil || null,
@@ -893,6 +904,7 @@ router.put("/sales-quotations/:id", async (req, res) => {
       subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
       discountAmount: String(discountAmount || "0"),
       totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: asBool(priceIncludesVat),
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid))).returning();
     if (!q) { res.status(404).json({ error: "العرض غير موجود" }); return; }
@@ -961,6 +973,7 @@ router.post("/sales-quotations/:id/convert", async (req, res) => {
       currencyCode: q.currencyCode, exchangeRate: q.exchangeRate,
       subtotal: q.subtotal, vatAmount: q.vatAmount,
       discountAmount: q.discountAmount, totalAmount: q.totalAmount,
+      priceIncludesVat: q.priceIncludesVat,
       status: "draft", notes: `محوّل من عرض السعر ${q.docNumber ?? `SQ-${q.id}`}`,
     }).returning();
 

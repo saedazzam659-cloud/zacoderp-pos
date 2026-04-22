@@ -139,6 +139,17 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Overlap detection uses string compare on ISO dates (TZ-safe)
 - Frontend: master-detail layout (year sidebar + year header with stats + 3-col monthly period grid with status badges and per-period actions); inline new-year form with live period count
 
+## Tax-Inclusive Pricing on Sales Documents
+- New column `priceIncludesVat` (boolean, default false) on `sales_invoices` and `sales_quotations`
+- Toggle "السعر شامل الضريبة" appears in the "الأصناف" tab footer of the sales invoice/quotation form (`SalesDocumentForm.tsx`)
+- When ON: stored unitPrice contains VAT. Form derives Net = gross/(1+rate), VAT = gross-Net, lineTotal = gross
+- When OFF (default): unitPrice is VAT-exclusive, VAT added on top (legacy behavior)
+- Toggling instantly recomputes every line total
+- Totals card shows Net (الصافي) / VAT (الضريبة) / Total (الإجمالي) breakdown with mode badge
+- API: POST/PUT /sales-invoices and /sales-quotations accept `priceIncludesVat` (parsed strictly via `asBool()`)
+- Quotation→invoice conversion (`POST /sales-quotations/:id/convert`) propagates the flag to the new invoice
+- Posting/JE generation unchanged — uses stored `subtotal` and `vatAmount` directly
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

@@ -1,5 +1,5 @@
 import {
-  pgTable, serial, text, integer, timestamp, numeric, pgEnum,
+  pgTable, serial, text, integer, timestamp, numeric, pgEnum, boolean,
 } from "drizzle-orm/pg-core";
 import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
@@ -25,6 +25,7 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   vatAmount:      numeric("vat_amount",      { precision: 15, scale: 2 }).notNull().default("0"),
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
+  priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   status:         salesInvoiceStatusEnum("status").notNull().default("draft"),
   notes:          text("notes"),
   // Accounts used to build the journal entry on posting
@@ -128,6 +129,7 @@ export const salesQuotationsTable = pgTable("sales_quotations", {
   vatAmount:      numeric("vat_amount",      { precision: 15, scale: 2 }).notNull().default("0"),
   discountAmount: numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
   totalAmount:    numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
+  priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   status:         salesQuotationStatusEnum("status").notNull().default("draft"),
   convertedInvoiceId: integer("converted_invoice_id").references(() => salesInvoicesTable.id),
   notes:          text("notes"),
