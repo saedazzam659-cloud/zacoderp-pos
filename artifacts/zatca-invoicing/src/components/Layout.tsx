@@ -36,6 +36,7 @@ const dashboardSubNav = [
   { name: "الفروع",            href: "/org/branches",         icon: BranchIcon },
   { name: "ربط ZATCA",         href: "/zatca",                 icon: Link2      },
   { name: "الإعدادات العامة",  href: "/general-settings",     icon: Sliders    },
+  { name: "المستخدمون",        href: "/users",                 icon: Users      },
   { name: "العملات والتحويل",  href: "/settings/currencies",  icon: DollarSign },
   { name: "الفواتير",          href: "/invoices",             icon: FileText   },
   { name: "الإقرار الضريبي",  href: "/vat-declaration",      icon: BarChart3  },
