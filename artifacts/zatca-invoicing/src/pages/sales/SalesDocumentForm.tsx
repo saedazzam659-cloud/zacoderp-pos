@@ -601,103 +601,88 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
           <TabsContent value="lines" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-3">
-              <div data-enter-nav-container="lines" className="space-y-3">
+              <div data-enter-nav-container="lines" className="space-y-1.5">
+                {(() => {
+                  const gridCols = isInvoice
+                    ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
+                    : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto";
+                  const headers = isInvoice
+                    ? ["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "سعر البيع", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""]
+                    : ["الصنف", "كود الصنف", "الوحدة", "الكمية", "سعر البيع", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""];
+                  return (
+                    <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: gridCols }}>
+                      {headers.map((h, i) => (
+                        <p key={i} className={cn("text-[10px]", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {lines.map(l => (
                   <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
                     <div
-                      className="grid gap-1.5 items-end"
+                      className="grid gap-1.5 items-center"
                       style={{
                         gridTemplateColumns: isInvoice
                           ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
                           : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto",
                       }}
                     >
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">الصنف</p>
-                        {inventoryItems.length > 0 ? (
-                          <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." />
-                        ) : (
-                          <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
-                            onChange={e => updateLine(l._id, "itemName", e.target.value)} />
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">كود الصنف</p>
-                        <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
-                          onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                      </div>
-                      {isInvoice && (
-                        <div className="space-y-1">
-                          <p className="text-[10px] text-muted-foreground">المستودع</p>
-                          {warehouses.length > 0 ? (
-                            <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
-                              <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                                <SelectValue placeholder="اختر مستودع..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {warehouses.map((w: any) => (
-                                  <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Input className="h-8 text-xs" placeholder="—" readOnly />
-                          )}
-                        </div>
+                      {inventoryItems.length > 0 ? (
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder="اختر صنف..." />
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                          onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">الوحدة</p>
-                        {(() => {
-                          const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                          const opts = itemUnits.length > 0
-                            ? itemUnits.map((iu: any) => ({
-                                value: String(iu.unitId),
-                                label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
-                              }))
-                            : unitItems;
-                          return units.length > 0 ? (
-                            <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
-                              <SelectContent>
-                                {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
-                              onChange={e => updateLine(l._id, "unit", e.target.value)} />
-                          );
-                        })()}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">الكمية</p>
-                        <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
-                          onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">سعر البيع</p>
-                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
-                          onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">خصم%</p>
-                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
-                          onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">ضريبة%</p>
-                        <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
-                          onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] font-semibold text-primary">الإجمالي</p>
-                        <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">ملاحظات</p>
-                        <Input className="h-8 text-xs" value={l.notes}
-                          onChange={e => updateLine(l._id, "notes", e.target.value)} />
-                      </div>
-                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive self-end"
+                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      {isInvoice && (
+                        warehouses.length > 0 ? (
+                          <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                            <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                              <SelectValue placeholder="اختر مستودع..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {warehouses.map((w: any) => (
+                                <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="—" readOnly />
+                        )
+                      )}
+                      {(() => {
+                        const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
+                        const opts = itemUnits.length > 0
+                          ? itemUnits.map((iu: any) => ({
+                              value: String(iu.unitId),
+                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                            }))
+                          : unitItems;
+                        return units.length > 0 ? (
+                          <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectContent>
+                              {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                        );
+                      })()}
+                      <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
+                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
+                        onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      <Input className="h-8 text-xs" value={l.notes}
+                        onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
                         onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
