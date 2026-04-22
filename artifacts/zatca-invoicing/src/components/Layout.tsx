@@ -565,10 +565,10 @@ function DashboardNavGroup({
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}>
-        <Link href="/" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
+        <a href="/" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
           <LayoutDashboard className="h-4 w-4 shrink-0" />
           <span>{t("nav.dashboard")}</span>
-        </Link>
+        </a>
         <button onClick={onToggle} className="px-2 py-2 rounded-lg" title={t("nav.dashboard")}>
           {open
             ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -906,9 +906,9 @@ function SidebarInner({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-              <Link href="/settings">
+              <a href="/settings" target="_blank" rel="noopener noreferrer">
                 <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
-              </Link>
+              </a>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
@@ -1109,9 +1109,9 @@ function TopBar({
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild className="gap-2 cursor-pointer">
-                <Link href="/settings">
+                <a href="/settings" target="_blank" rel="noopener noreferrer">
                   <Settings className="h-4 w-4" />{t("topbar.accountSettings")}
-                </Link>
+                </a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive gap-2">
