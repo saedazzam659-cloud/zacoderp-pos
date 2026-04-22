@@ -43,7 +43,7 @@ export default function Units() {
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteUnit, onSuccess: () => { invalidate(); toast({ title: "تم الحذف" }); } });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); }
-  function handleEdit(u: any) { setForm({ ...u, conversionFactor: u.conversionFactor ?? "1" }); setEditId(u.id); setShowForm(true); }
+  function handleEdit(u: any) { setForm({ ...u, conversionFactor: String(Math.max(1, Math.trunc(Number(u.conversionFactor) || 1))) }); setEditId(u.id); setShowForm(true); }
   function handlePreset(p: typeof PRESETS[0]) {
     setForm({ code: p.code, nameAr: p.nameAr, nameEn: p.nameEn, conversionFactor: p.conversionFactor });
     setShowForm(true);
