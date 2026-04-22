@@ -28,6 +28,7 @@ import ZatcaBridge from "@/pages/ZatcaBridge";
 import ZatcaReport from "@/pages/ZatcaReport";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
+import LicenseManagement from "@/pages/LicenseManagement";
 import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
@@ -167,6 +168,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
+            {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}

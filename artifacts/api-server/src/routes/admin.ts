@@ -143,35 +143,118 @@ router.get("/subscriptions", requireSuperAdmin, async (_req, res) => {
   res.json(rows);
 });
 
+// ─── Validation helpers ─────────────────────────────────────────────────
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ALLOWED_PLANS    = new Set(["starter", "professional", "enterprise", "custom"]);
+const ALLOWED_CYCLES   = new Set(["monthly", "yearly"]);
+const isValidISODate = (s: any): s is string =>
+  typeof s === "string" && ISO_DATE.test(s) && !isNaN(new Date(s).getTime());
+const toBoundedInt = (v: any, min: number, max: number): number | null => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  if (n < min || n > max) return null;
+  return n;
+};
+
 // PUT /api/admin/subscriptions/:id — update a subscription
 router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
   const id = parseInt(req.params.id);
-  const { plan, maxUsers, maxInvoices, billingCycle, startDate, endDate, isActive, price } = req.body;
-
-  const PLANS: Record<string, { maxUsers: number; maxInvoices: number; price: string }> = {
-    starter:      { maxUsers: 1,   maxInvoices: 50,     price: "99" },
-    professional: { maxUsers: 5,   maxInvoices: 500,    price: "299" },
-    enterprise:   { maxUsers: 999, maxInvoices: 999999, price: "899" },
-  };
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const { plan, maxUsers, maxBranches, maxWarehouses, maxInvoices, billingCycle, startDate, endDate, isActive, price } = req.body ?? {};
 
   const updates: Record<string, any> = {};
-  if (plan)          { updates.plan = plan; }
-  if (maxUsers       != null) updates.maxUsers     = maxUsers;
-  if (maxInvoices    != null) updates.maxInvoices  = maxInvoices;
-  if (billingCycle)  updates.billingCycle = billingCycle;
-  if (startDate)     updates.startDate = startDate;
-  if (endDate)       updates.endDate   = endDate;
-  if (isActive       != null) updates.isActive = isActive;
-  if (price          != null) updates.price = String(price);
-
-  // Auto-fill plan defaults if plan changed
-  if (plan && PLANS[plan] && maxUsers == null)    updates.maxUsers    = PLANS[plan].maxUsers;
-  if (plan && PLANS[plan] && maxInvoices == null) updates.maxInvoices = PLANS[plan].maxInvoices;
-  if (plan && PLANS[plan] && price == null)       updates.price       = PLANS[plan].price;
+  if (plan != null) {
+    if (!ALLOWED_PLANS.has(plan)) { res.status(400).json({ error: "باقة غير معروفة" }); return; }
+    updates.plan = plan;
+  }
+  if (billingCycle != null) {
+    if (!ALLOWED_CYCLES.has(billingCycle)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
+    updates.billingCycle = billingCycle;
+  }
+  for (const [key, val] of Object.entries({ maxUsers, maxBranches, maxWarehouses, maxInvoices })) {
+    if (val == null) continue;
+    const n = toBoundedInt(val, 0, 1_000_000);
+    if (n == null) { res.status(400).json({ error: `قيمة غير صالحة لـ ${key}` }); return; }
+    updates[key] = n;
+  }
+  if (startDate != null) {
+    if (!isValidISODate(startDate)) { res.status(400).json({ error: "تاريخ البدء غير صالح" }); return; }
+    updates.startDate = startDate;
+  }
+  if (endDate != null) {
+    if (!isValidISODate(endDate)) { res.status(400).json({ error: "تاريخ الانتهاء غير صالح" }); return; }
+    updates.endDate = endDate;
+  }
+  if (updates.startDate && updates.endDate && new Date(updates.endDate) <= new Date(updates.startDate)) {
+    res.status(400).json({ error: "تاريخ الانتهاء يجب أن يكون بعد تاريخ البدء" }); return;
+  }
+  if (isActive != null) updates.isActive = !!isActive;
+  if (price    != null) {
+    const p = Number(price);
+    if (!Number.isFinite(p) || p < 0) { res.status(400).json({ error: "سعر غير صالح" }); return; }
+    updates.price = String(p);
+  }
 
   const [updated] = await db.update(subscriptionsTable).set(updates).where(eq(subscriptionsTable.id, id)).returning();
   if (!updated) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
   res.json({ ok: true, subscription: updated });
+});
+
+// POST /api/admin/licenses — upsert a license/subscription for a company
+router.post("/licenses", requireSuperAdmin, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const companyId = toBoundedInt(body.companyId, 1, Number.MAX_SAFE_INTEGER);
+    if (companyId == null) { res.status(400).json({ error: "companyId مطلوب وصحيح" }); return; }
+
+    // Verify company exists (clean 4xx instead of FK 500)
+    const [company] = await db.select({ id: companiesTable.id }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    const plan         = body.plan          ?? "professional";
+    const billingCycle = body.billingCycle  ?? "monthly";
+    if (!ALLOWED_PLANS.has(plan))    { res.status(400).json({ error: "باقة غير معروفة" }); return; }
+    if (!ALLOWED_CYCLES.has(billingCycle)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
+
+    if (!isValidISODate(body.startDate)) { res.status(400).json({ error: "تاريخ البدء غير صالح" }); return; }
+    if (!isValidISODate(body.endDate))   { res.status(400).json({ error: "تاريخ الانتهاء غير صالح" }); return; }
+    if (new Date(body.endDate) <= new Date(body.startDate)) {
+      res.status(400).json({ error: "تاريخ الانتهاء يجب أن يكون بعد تاريخ البدء" }); return;
+    }
+
+    const maxUsers      = toBoundedInt(body.maxUsers      ?? 5,   0, 1_000_000);
+    const maxBranches   = toBoundedInt(body.maxBranches   ?? 1,   0, 1_000_000);
+    const maxWarehouses = toBoundedInt(body.maxWarehouses ?? 1,   0, 1_000_000);
+    const maxInvoices   = toBoundedInt(body.maxInvoices   ?? 500, 0, 1_000_000);
+    if ([maxUsers, maxBranches, maxWarehouses, maxInvoices].some(v => v == null)) {
+      res.status(400).json({ error: "قيم الحدود يجب أن تكون أعداد صحيحة موجبة" }); return;
+    }
+    const priceNum = Number(body.price ?? 0);
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      res.status(400).json({ error: "سعر غير صالح" }); return;
+    }
+
+    const payload = {
+      companyId, plan, billingCycle,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      isActive: body.isActive == null ? true : !!body.isActive,
+      price: String(priceNum),
+      maxUsers: maxUsers!, maxBranches: maxBranches!,
+      maxWarehouses: maxWarehouses!, maxInvoices: maxInvoices!,
+    };
+
+    const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, companyId));
+    if (existing) {
+      const [updated] = await db.update(subscriptionsTable).set(payload).where(eq(subscriptionsTable.id, existing.id)).returning();
+      res.json({ ok: true, subscription: updated, action: "updated" });
+    } else {
+      const [created] = await db.insert(subscriptionsTable).values(payload).returning();
+      res.json({ ok: true, subscription: created, action: "created" });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل الحفظ: " + (err.message ?? "خطأ غير متوقع") });
+  }
 });
 
 // POST /api/admin/seed — create superadmin (only if none exists)

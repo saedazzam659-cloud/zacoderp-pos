@@ -43,6 +43,8 @@ export const subscriptionsTable = pgTable("subscriptions", {
   companyId: integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   plan: text("plan").notNull().default("starter"),
   maxUsers: integer("max_users").notNull().default(1),
+  maxBranches: integer("max_branches").notNull().default(1),
+  maxWarehouses: integer("max_warehouses").notNull().default(1),
   maxInvoices: integer("max_invoices").notNull().default(50),
   billingCycle: text("billing_cycle").notNull().default("monthly"),
   startDate: text("start_date").notNull(),

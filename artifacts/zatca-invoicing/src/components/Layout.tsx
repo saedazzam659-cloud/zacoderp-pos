@@ -9,7 +9,7 @@ import {
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, Plus, ChevronLeft,
-  ShoppingBag, FileSignature,
+  ShoppingBag, FileSignature, KeyRound,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 const superAdminNav = [
   { name: "لوحة التحكم",       href: "/",                         icon: LayoutDashboard, exact: true },
   { name: "طلبات التسجيل",     href: "/admin/requests",            icon: Clock },
+  { name: "ترخيص النسخة",      href: "/admin/licenses",            icon: KeyRound },
   { name: "إدارة الاشتراكات",  href: "/admin/subscriptions",       icon: Package },
   { name: "إعدادات الباقات",   href: "/admin/plans",               icon: Settings2 },
   { name: "صلاحيات القوائم",   href: "/admin/menu-permissions",    icon: SlidersHorizontal },
@@ -912,6 +913,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/invoices/new":                  { label: "فاتورة جديدة",    parent: "/invoices" },
     "/settings":                      { label: "الإعدادات" },
     "/admin/requests":                { label: "طلبات التسجيل" },
+    "/admin/licenses":                { label: "ترخيص النسخة" },
     "/admin/subscriptions":           { label: "إدارة الاشتراكات" },
     "/admin/plans":                   { label: "إعدادات الباقات" },
     "/admin/menu-permissions":        { label: "صلاحيات القوائم" },
