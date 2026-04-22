@@ -1,5 +1,8 @@
 import { Router } from "express";
-import { extractAuth } from "../middleware/auth.js";
+import { db } from "@workspace/db";
+import { accountsTable, warehousesTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -176,6 +179,142 @@ ${errors.map((e, i) => `${i + 1}. [${e.code}] ${e.message}`).join("\n")}
       summary: String(parsed?.summary || "").trim() || fallback().summary,
       source: "ai" as const,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Suggest source/destination inventory accounts for a stock transfer.
+// Body: { fromWarehouseId, toWarehouseId, items?: [{nameAr, qty}], notes? }
+// Returns: { fromAccountId, fromAccountLabel, toAccountId, toAccountLabel, reasoning, source }
+// Always picks from the company's existing chart of accounts (asset/posting only).
+// Falls back to warehouse.accountId or first inventory-keyword asset account if AI unavailable.
+// ═══════════════════════════════════════════════════════════════════
+router.post("/suggest-transfer-accounts", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req as any);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const { fromWarehouseId, toWarehouseId, items = [], notes = "" } = req.body || {};
+    if (!fromWarehouseId || !toWarehouseId) {
+      res.status(400).json({ error: "يجب تحديد المخزن المصدر والمخزن الوجهة" }); return;
+    }
+
+    const [fromWh] = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, Number(fromWarehouseId)), eq(warehousesTable.companyId, cid)));
+    const [toWh]   = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, Number(toWarehouseId)),   eq(warehousesTable.companyId, cid)));
+    if (!fromWh || !toWh) { res.status(404).json({ error: "المخزن غير موجود" }); return; }
+
+    const accounts = await db.select({
+      id: accountsTable.id, code: accountsTable.code,
+      nameAr: accountsTable.nameAr, nameEn: accountsTable.nameEn,
+      accountType: accountsTable.accountType, isPosting: accountsTable.isPosting,
+    }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+
+    const assetPosting = accounts.filter(a => a.accountType === "asset" && a.isPosting);
+    const findByKeywords = (kw: string[]): typeof accounts[0] | undefined =>
+      assetPosting.find(a => {
+        const t = `${a.nameAr ?? ""} ${a.nameEn ?? ""} ${a.code ?? ""}`.toLowerCase();
+        return kw.some(k => t.includes(k.toLowerCase()));
+      });
+
+    const buildFallback = () => {
+      const fromAcc =
+        (fromWh.accountId && accounts.find(a => a.id === fromWh.accountId)) ||
+        findByKeywords([fromWh.nameAr ?? "", fromWh.code ?? ""]) ||
+        findByKeywords(["مخزون", "بضاعة", "inventory", "stock"]) ||
+        assetPosting[0];
+      const toAcc =
+        (toWh.accountId && accounts.find(a => a.id === toWh.accountId)) ||
+        findByKeywords([toWh.nameAr ?? "", toWh.code ?? ""]) ||
+        (fromAcc ? assetPosting.find(a => a.id !== fromAcc.id) : assetPosting[0]) ||
+        assetPosting[0];
+      const label = (a: any) => a ? `${a.code} - ${a.nameAr}` : "";
+      return {
+        fromAccountId:    fromAcc?.id ?? null,
+        fromAccountLabel: label(fromAcc),
+        toAccountId:      toAcc?.id ?? null,
+        toAccountLabel:   label(toAcc),
+        reasoning: fromAcc && toAcc
+          ? `تم اختيار حساب «${label(fromAcc)}» للمخزن المصدر و«${label(toAcc)}» للمخزن الوجهة بناءً على الحسابات المرتبطة بالمخازن أو أقرب حسابات المخزون في دليل الحسابات.`
+          : "لم يتم العثور على حسابات مخزون مناسبة في دليل الحسابات. الرجاء إنشاء حسابات أصول من نوع مخزون أولاً.",
+        source: "rules" as const,
+      };
+    };
+
+    if (!OPENAI_BASE || !OPENAI_KEY || assetPosting.length === 0) {
+      res.json(buildFallback());
+      return;
+    }
+
+    // Wrap AI call in its own try/catch so any network/runtime error gracefully degrades to rule-based fallback.
+    try {
+
+    const accountsList = assetPosting.map(a =>
+      `{ "id": ${a.id}, "code": "${a.code}", "name": "${a.nameAr}${a.nameEn ? " / " + a.nameEn : ""}" }`
+    ).join(",\n");
+    const itemsSummary = Array.isArray(items) && items.length
+      ? items.slice(0, 20).map((it: any) => `- ${it.nameAr || it.name || "صنف"} × ${it.qty || 0}`).join("\n")
+      : "لا توجد بنود مفصّلة";
+
+    const userPrompt = `أنت محاسب سعودي خبير. اختر من دليل الحسابات أدناه الحسابين الأنسب لقيد التحويل المخزني التالي:
+- المخزن المصدر: ${fromWh.code} - ${fromWh.nameAr}${fromWh.city ? " (" + fromWh.city + ")" : ""}
+- المخزن الوجهة: ${toWh.code} - ${toWh.nameAr}${toWh.city ? " (" + toWh.city + ")" : ""}
+- ملاحظات التحويل: ${notes || "بدون"}
+- أهم الأصناف:
+${itemsSummary}
+
+دليل الحسابات المتاح (أصول، حسابات ترحيل فقط):
+[${accountsList}]
+
+قواعد:
+1. اختر "fromAccountId" = حساب المخزون المرتبط بالمخزن المصدر (سيتم دائنه).
+2. اختر "toAccountId"   = حساب المخزون المرتبط بالمخزن الوجهة (سيتم مدينه).
+3. يجب أن يكونا مختلفين إن أمكن.
+4. أعِد فقط معرفات (id) موجودة في القائمة أعلاه. لا تخترع أرقاماً.
+
+أعد JSON فقط:
+{ "fromAccountId": <id>, "toAccountId": <id>, "reasoning": "شرح موجز بالعربية" }`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 800,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "أنت محاسب سعودي. ترد بـ JSON صالح فقط." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!r.ok) { res.json(buildFallback()); return; }
+    const data = await r.json();
+    let parsed: any;
+    try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+    catch { res.json(buildFallback()); return; }
+
+    const fromId = Number(parsed?.fromAccountId);
+    const toId   = Number(parsed?.toAccountId);
+    const fromAcc = assetPosting.find(a => a.id === fromId);
+    const toAcc   = assetPosting.find(a => a.id === toId);
+    if (!fromAcc || !toAcc) { res.json(buildFallback()); return; }
+    res.json({
+      fromAccountId: fromAcc.id,
+      fromAccountLabel: `${fromAcc.code} - ${fromAcc.nameAr}`,
+      toAccountId: toAcc.id,
+      toAccountLabel: `${toAcc.code} - ${toAcc.nameAr}`,
+      reasoning: String(parsed?.reasoning || "").trim() || "اقتراح تلقائي.",
+      source: "ai" as const,
+    });
+    } catch {
+      // Any runtime exception during AI call → graceful fallback
+      res.json(buildFallback());
+      return;
+    }
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
   }

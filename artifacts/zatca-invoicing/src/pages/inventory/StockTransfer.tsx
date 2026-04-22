@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Trash2, ArrowRightLeft, Search, X,
-  CheckCircle2, Send, ChevronDown, ChevronUp, Zap,
+  CheckCircle2, Send, ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
@@ -27,17 +27,20 @@ const EMPTY_FORM = {
   transferDate: new Date().toISOString().slice(0, 10),
   fromWarehouseId: "",
   toWarehouseId: "",
-  accountId: "",
+  fromAccountId: "",
+  toAccountId: "",
   notes: "",
 };
 const newLine = () => ({ itemId: "", unitId: "", qty: "1", costPrice: "0", conversionFactor: "1" });
 
 export default function StockTransfer() {
   const { fmt, fmtQty } = useFmt();
-  const { user } = useAuth();
+  const { user, token } = useAuth() as any;
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const qc = useQueryClient();
   const { toast } = useToast();
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiReasoning, setAiReasoning] = useState<string>("");
 
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<any>(EMPTY_FORM);
@@ -185,7 +188,8 @@ export default function StockTransfer() {
       ...form,
       fromWarehouseId: Number(form.fromWarehouseId),
       toWarehouseId:   Number(form.toWarehouseId),
-      accountId:       form.accountId ? Number(form.accountId) : null,
+      fromAccountId:   form.fromAccountId ? Number(form.fromAccountId) : null,
+      toAccountId:     form.toAccountId   ? Number(form.toAccountId)   : null,
       items: validLines.map(l => ({
         itemId: Number(l.itemId),
         unitId: l.unitId ? Number(l.unitId) : null,
@@ -271,13 +275,133 @@ export default function StockTransfer() {
               </FormGrid>
             </FormSection>
 
-            <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
-              <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">الربط المحاسبي (اختياري)</p>
-              <div className="max-w-xs">
-                <Label className="text-xs font-medium text-foreground/80">الحساب المحاسبي</Label>
-                <AccountCombobox value={form.accountId} onValueChange={v => setForm((p: any) => ({ ...p, accountId: v }))} placeholder="— اختر الحساب —" grouped={false} />
+            <FormSection title="القيد المحاسبي التلقائي">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل: <b className="text-blue-700">مدين</b> = حساب مخزن الوجهة، <b className="text-rose-700">دائن</b> = حساب مخزن المصدر.
+                    اختر الحسابات يدوياً أو دع الذكاء الاصطناعي يقترحها بناءً على الأصناف والمخازن.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50 shrink-0"
+                    disabled={!form.fromWarehouseId || !form.toWarehouseId || aiLoading}
+                    onClick={async () => {
+                      setAiLoading(true);
+                      setAiReasoning("");
+                      try {
+                        const apiBase = import.meta.env.VITE_API_URL ?? "";
+                        const itemsPayload = lines
+                          .filter(l => l.itemId)
+                          .map(l => {
+                            const it: any = (items as any[]).find((x: any) => String(x.id) === String(l.itemId));
+                            return { nameAr: it?.nameAr ?? "", qty: Number(l.qty || 0) };
+                          });
+                        const r = await fetch(`${apiBase}/api/ai/suggest-transfer-accounts`, {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                          },
+                          body: JSON.stringify({
+                            fromWarehouseId: Number(form.fromWarehouseId),
+                            toWarehouseId:   Number(form.toWarehouseId),
+                            items: itemsPayload,
+                            notes: form.notes,
+                          }),
+                        });
+                        const j = await r.json();
+                        if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
+                        if (j.fromAccountId && j.toAccountId) {
+                          setForm((p: any) => ({
+                            ...p,
+                            fromAccountId: String(j.fromAccountId),
+                            toAccountId:   String(j.toAccountId),
+                          }));
+                          setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
+                          toast({ title: "تم اقتراح الحسابات", description: `${j.fromAccountLabel} ⇄ ${j.toAccountLabel}` });
+                        } else {
+                          throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
+                        }
+                      } catch (e: any) {
+                        toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+                      } finally {
+                        setAiLoading(false);
+                      }
+                    }}
+                  >
+                    {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    اقتراح بالذكاء الاصطناعي
+                  </Button>
+                </div>
+
+                <FormGrid cols={2}>
+                  <Field label="حساب مخزن المصدر (دائن)">
+                    <AccountCombobox value={form.fromAccountId} onValueChange={v => setForm((p: any) => ({ ...p, fromAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                  </Field>
+                  <Field label="حساب مخزن الوجهة (مدين)">
+                    <AccountCombobox value={form.toAccountId} onValueChange={v => setForm((p: any) => ({ ...p, toAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                  </Field>
+                </FormGrid>
+
+                {aiReasoning && (
+                  <div className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 leading-relaxed">
+                    <Sparkles className="h-3 w-3 inline ml-1" />{aiReasoning}
+                  </div>
+                )}
+
+                {/* JE preview — reflects backend behavior: transfer-level overrides take priority,
+                    otherwise warehouse.accountId is used as fallback. */}
+                {(() => {
+                  const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0);
+                  if (total <= 0) return null;
+                  const fromWh: any = (warehouses as any[]).find((w: any) => String(w.id) === form.fromWarehouseId);
+                  const toWh:   any = (warehouses as any[]).find((w: any) => String(w.id) === form.toWarehouseId);
+                  const fromAcc = form.fromAccountId ? Number(form.fromAccountId) : (fromWh?.accountId ?? null);
+                  const toAcc   = form.toAccountId   ? Number(form.toAccountId)   : (toWh?.accountId   ?? null);
+                  const fromSrc = form.fromAccountId ? "اختيار يدوي" : (fromWh?.accountId ? "حساب المخزن الافتراضي" : null);
+                  const toSrc   = form.toAccountId   ? "اختيار يدوي" : (toWh?.accountId   ? "حساب المخزن الافتراضي" : null);
+                  if (!fromAcc || !toAcc) {
+                    return (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                        لن يتم إنشاء قيد محاسبي — اختر الحسابين أو اربط المخازن بحسابات افتراضية (سيتم تحديث المخزون فقط).
+                      </div>
+                    );
+                  }
+                  if (fromAcc === toAcc) {
+                    return (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                        الحسابان متطابقان — لن يتم إنشاء قيد (لا أثر محاسبي، يتم تحديث المخزون فقط).
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="rounded-md border border-blue-200 bg-white overflow-hidden">
+                      <div className="px-3 py-1.5 bg-blue-100/50 text-[11px] font-semibold text-blue-900">معاينة القيد المحاسبي</div>
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/30 border-b">
+                          <tr><th className="px-2 py-1 text-right font-medium">الحساب</th><th className="px-2 py-1 text-left font-medium w-28">مدين</th><th className="px-2 py-1 text-left font-medium w-28">دائن</th></tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          <tr>
+                            <td className="px-2 py-1.5 text-blue-700">حساب مخزن الوجهة {toSrc && <span className="text-[10px] text-muted-foreground">({toSrc})</span>}</td>
+                            <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(total)}</td>
+                            <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                          </tr>
+                          <tr>
+                            <td className="px-2 py-1.5 text-rose-700">حساب مخزن المصدر {fromSrc && <span className="text-[10px] text-muted-foreground">({fromSrc})</span>}</td>
+                            <td className="px-2 py-1.5 text-left tabular-nums">—</td>
+                            <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(total)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
-            </div>
+            </FormSection>
 
             {/* Line items */}
             <div>

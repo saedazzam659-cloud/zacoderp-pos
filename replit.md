@@ -167,6 +167,16 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - JE balance preserved on posting: party debit = total (gross−discount), discount account debit = discountAmount, credit sales/inventory = subtotal, credit VAT = vatAmount → balanced
 - Posting requirement: blocks with Arabic error if discount > 0 and no `discountAccountId` set
 
+## Stock Transfer — Auto Journal Entry + AI Account Suggestion
+- Schema (`stock_transfers`): added `from_account_id`, `to_account_id`, `journal_entry_id` (legacy `account_id` retained).
+- Backend `POST /api/inventory/stock-transfers/:id/post`:
+  - Atomic claim (UPDATE … WHERE status='draft') prevents double-post.
+  - Auto-creates balanced JE: DR `to_account` / CR `from_account`, total = Σ(qty × costPrice). Skips if accounts equal/missing or total = 0.
+  - Falls back to `warehouses.account_id` when transfer-level overrides are not set.
+- Multi-tenant guard: `assertCompanyOwned()` validates warehouse + account IDs against `companyId` on create/update.
+- AI endpoint `POST /api/ai/suggest-transfer-accounts`: picks the best inventory accounts from the company's chart of accounts (asset+posting only). Graceful rule-based fallback when AI unavailable or any runtime exception.
+- Frontend (`StockTransfer.tsx`): two `AccountCombobox` (filtered to assets), an "اقتراح بالذكاء الاصطناعي" button, and a live JE preview that mirrors backend behavior (including warehouse-account fallback indicator).
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

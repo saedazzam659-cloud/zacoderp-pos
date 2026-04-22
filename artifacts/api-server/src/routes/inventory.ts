@@ -6,6 +6,8 @@ import {
   stockTransfersTable, stockTransferItemsTable,
   stockAdjustmentsTable, stockAdjustmentItemsTable,
   stockCountsTable, stockCountItemsTable,
+  journalEntriesTable, journalEntryLinesTable,
+  accountsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -419,13 +421,43 @@ router.get("/stock-transfers/:id", async (req, res) => {
   res.json({ ...tr, fromWarehouse: fromWh, toWarehouse: toWh, items: lineItems.map(l => ({ ...l.li, item: l.item, unit: l.unit })) });
 });
 
+// Verify the given warehouse/account IDs belong to the company (multi-tenant guard)
+async function assertCompanyOwned(cid: number, ids: { warehouses?: number[]; accounts?: number[] }) {
+  const whIds = (ids.warehouses ?? []).filter(Boolean) as number[];
+  const accIds = (ids.accounts ?? []).filter(Boolean) as number[];
+  if (whIds.length) {
+    const rows = await db.select({ id: warehousesTable.id })
+      .from(warehousesTable)
+      .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, whIds)));
+    if (rows.length !== new Set(whIds).size) throw new Error("مخزن غير صالح أو لا ينتمي للشركة");
+  }
+  if (accIds.length) {
+    const rows = await db.select({ id: accountsTable.id })
+      .from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), inArray(accountsTable.id, accIds)));
+    if (rows.length !== new Set(accIds).size) throw new Error("حساب غير صالح أو لا ينتمي للشركة");
+  }
+}
+
 router.post("/stock-transfers", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, notes, items } = req.body;
+  const { transferNumber, transferDate, fromWarehouseId, toWarehouseId, accountId, fromAccountId, toAccountId, notes, items } = req.body;
   if (!transferDate || !fromWarehouseId || !toWarehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
+  try {
+    await assertCompanyOwned(cid, {
+      warehouses: [Number(fromWarehouseId), Number(toWarehouseId)],
+      accounts:   [accountId, fromAccountId, toAccountId].map(Number).filter(Boolean) as number[],
+    });
+  } catch (e: any) { res.status(400).json({ error: e.message }); return; }
   // Auto-number if not provided
   const num = transferNumber || `TRF-${Date.now()}`;
-  const [tr] = await db.insert(stockTransfersTable).values({ companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId, accountId: accountId || null, notes, status: "draft" }).returning();
+  const [tr] = await db.insert(stockTransfersTable).values({
+    companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId,
+    accountId: accountId || null,
+    fromAccountId: fromAccountId || null,
+    toAccountId: toAccountId || null,
+    notes, status: "draft",
+  }).returning();
   if (items?.length) {
     await db.insert(stockTransferItemsTable).values(items.map((it: any) => ({ transferId: tr.id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0) })));
   }
@@ -435,10 +467,21 @@ router.post("/stock-transfers", async (req, res) => {
 router.put("/stock-transfers/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { transferDate, fromWarehouseId, toWarehouseId, notes, items } = req.body;
+  const { transferDate, fromWarehouseId, toWarehouseId, fromAccountId, toAccountId, notes, items } = req.body;
   const [existing] = await db.select().from(stockTransfersTable).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
   if (!existing || existing.status === "posted") { res.status(400).json({ error: "لا يمكن التعديل" }); return; }
-  await db.update(stockTransfersTable).set({ transferDate, fromWarehouseId, toWarehouseId, notes, updatedAt: new Date() }).where(eq(stockTransfersTable.id, id));
+  try {
+    await assertCompanyOwned(cid, {
+      warehouses: [Number(fromWarehouseId), Number(toWarehouseId)].filter(Boolean) as number[],
+      accounts:   [fromAccountId, toAccountId].map(Number).filter(Boolean) as number[],
+    });
+  } catch (e: any) { res.status(400).json({ error: e.message }); return; }
+  await db.update(stockTransfersTable).set({
+    transferDate, fromWarehouseId, toWarehouseId,
+    fromAccountId: fromAccountId || null,
+    toAccountId: toAccountId || null,
+    notes, updatedAt: new Date(),
+  }).where(eq(stockTransfersTable.id, id));
   if (items) {
     await db.delete(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
     if (items.length) await db.insert(stockTransferItemsTable).values(items.map((it: any) => ({ transferId: id, itemId: it.itemId, unitId: it.unitId || null, qty: String(it.qty), costPrice: String(it.costPrice || 0) })));
@@ -450,9 +493,13 @@ router.put("/stock-transfers/:id", async (req, res) => {
 router.post("/stock-transfers/:id/post", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const [tr] = await db.select().from(stockTransfersTable).where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
-  if (!tr) { res.status(404).json({ error: "غير موجود" }); return; }
-  if (tr.status !== "draft") { res.status(400).json({ error: "الحركة مُرحَّلة مسبقاً" }); return; }
+  // Atomic status flip: draft → posting (claims the transfer; concurrent calls will get 0 rows)
+  const claim = await db.update(stockTransfersTable)
+    .set({ updatedAt: new Date() })
+    .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid), eq(stockTransfersTable.status, "draft")))
+    .returning();
+  if (!claim.length) { res.status(400).json({ error: "الحركة غير موجودة أو مُرحَّلة مسبقاً" }); return; }
+  const tr = claim[0];
   const lines = await db.select().from(stockTransferItemsTable).where(eq(stockTransferItemsTable.transferId, id));
   if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف" }); return; }
   // Process each line: deduct from source, add to destination
@@ -467,8 +514,39 @@ router.post("/stock-transfers/:id/post", async (req, res) => {
       { companyId: cid, itemId: line.itemId, warehouseId: tr.toWarehouseId,   txDate: tr.transferDate, txType: "transfer_in",  qty: line.qty, costPrice: line.costPrice, totalCost: String(Number(line.qty) * Number(line.costPrice)), balanceQty: String(newToBal),   refId: id, refType: "transfer" },
     ]);
   }
-  await db.update(stockTransfersTable).set({ status: "posted", updatedAt: new Date() }).where(eq(stockTransfersTable.id, id));
-  res.json({ ok: true });
+
+  // ─── Auto-generate balanced journal entry (DR: destination inventory, CR: source inventory) ───
+  // Resolve account IDs: prefer transfer-level overrides, fallback to warehouse.accountId.
+  // Always scope warehouse lookup by company (defense-in-depth multi-tenant guard).
+  let fromAcc = tr.fromAccountId;
+  let toAcc   = tr.toAccountId;
+  if (!fromAcc || !toAcc) {
+    const [fromWh] = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, tr.fromWarehouseId), eq(warehousesTable.companyId, cid)));
+    const [toWh]   = await db.select().from(warehousesTable)
+      .where(and(eq(warehousesTable.id, tr.toWarehouseId),   eq(warehousesTable.companyId, cid)));
+    fromAcc = fromAcc || (fromWh?.accountId ?? null);
+    toAcc   = toAcc   || (toWh?.accountId   ?? null);
+  }
+  let journalEntryId: number | null = null;
+  const totalAmount = lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0);
+  if (fromAcc && toAcc && fromAcc !== toAcc && totalAmount > 0) {
+    const desc = `تحويل مخزني ${tr.transferNumber}${tr.notes ? " - " + tr.notes : ""}`;
+    const [entry] = await db.insert(journalEntriesTable).values({
+      companyId: cid, docNumber: tr.transferNumber, entryDate: tr.transferDate,
+      currency: "SAR", exchangeRate: "1",
+      description: desc, entryType: "stock_transfer", status: "posted",
+    }).returning();
+    await db.insert(journalEntryLinesTable).values([
+      { entryId: entry.id, accountId: toAcc,   debit: totalAmount.toFixed(2), credit: "0.00", description: `استلام بالمخزن (${tr.transferNumber})`, sortOrder: 0 },
+      { entryId: entry.id, accountId: fromAcc, debit: "0.00", credit: totalAmount.toFixed(2), description: `صرف من المخزن (${tr.transferNumber})`, sortOrder: 1 },
+    ]);
+    journalEntryId = entry.id;
+  }
+
+  await db.update(stockTransfersTable).set({ status: "posted", journalEntryId, updatedAt: new Date() })
+    .where(and(eq(stockTransfersTable.id, id), eq(stockTransfersTable.companyId, cid)));
+  res.json({ ok: true, journalEntryId });
 });
 
 router.delete("/stock-transfers/:id", async (req, res) => {
