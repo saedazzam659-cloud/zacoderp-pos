@@ -393,7 +393,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unitId:    chosenUnitId ? String(chosenUnitId) : "",
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),
-        unitPrice: String(chosenPrice),
+        unitPrice: trimTrailingZeros(chosenPrice),
         vatRate:   String(item.vatRate ?? "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
@@ -413,7 +413,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
         // If item has this unit configured, snap to its salePrice
-        unitPrice: row?.salePrice != null ? String(row.salePrice) : l.unitPrice,
+        unitPrice: row?.salePrice != null ? trimTrailingZeros(row.salePrice) : l.unitPrice,
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };

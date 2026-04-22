@@ -408,7 +408,7 @@ export default function PurchaseInvoiceForm() {
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
         unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
-        unitPrice: String(base?.costPrice ?? item.costPrice ?? "0"),
+        unitPrice: trimTrailingZeros(base?.costPrice ?? item.costPrice ?? "0"),
         vatRate:   String(item.vatRate ?? "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
@@ -427,7 +427,7 @@ export default function PurchaseInvoiceForm() {
         unitId: newUnitId,
         unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
-        unitPrice: row?.costPrice != null ? String(row.costPrice) : l.unitPrice,
+        unitPrice: row?.costPrice != null ? trimTrailingZeros(row.costPrice) : l.unitPrice,
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
