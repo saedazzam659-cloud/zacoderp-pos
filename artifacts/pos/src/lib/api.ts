@@ -179,6 +179,20 @@ export type CreateInvoiceBody = {
   priceIncludesVat?: boolean;
   notes?: string | null;
   lines: CreateInvoiceLine[];
+  posSessionId?: number | null;
+};
+
+export type PosSession = {
+  id: number;
+  companyId: number;
+  userId: number;
+  branchId: number | null;
+  cashBoxId: number | null;
+  openingCash: string;
+  closingCash: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  status: "open" | "closed" | "force_closed";
 };
 
 export type SalesInvoice = {
@@ -221,4 +235,26 @@ export const api = {
     req<SalesInvoice>("POST", "/api/sales/sales-invoices", body),
   postSalesInvoice: (id: number) =>
     req<SalesInvoice>("PATCH", `/api/sales/sales-invoices/${id}/post`),
+
+  // POS Sessions
+  getCurrentPosSession: () =>
+    req<PosSession | null>("GET", "/api/pos-sessions/current"),
+  openPosSession: (body: { branchId?: number | null; cashBoxId?: number | null; openingCash?: number; device?: string }) =>
+    req<PosSession>("POST", "/api/pos-sessions/open", body),
+  closePosSession: (id: number, body: { closingCash?: number; notes?: string }) =>
+    req<PosSession>("POST", `/api/pos-sessions/${id}/close`, body),
 };
+
+const POS_SESSION_KEY = "zatca_pos_session_id";
+export function getPosSessionId(): number | null {
+  try {
+    const v = localStorage.getItem(POS_SESSION_KEY);
+    return v ? Number(v) : null;
+  } catch { return null; }
+}
+export function setPosSessionId(id: number | null): void {
+  try {
+    if (id == null) localStorage.removeItem(POS_SESSION_KEY);
+    else localStorage.setItem(POS_SESSION_KEY, String(id));
+  } catch {}
+}

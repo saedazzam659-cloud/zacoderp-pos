@@ -33,6 +33,8 @@ import {
   getStoredUser,
   getToken,
   clearAuth,
+  getPosSessionId,
+  setPosSessionId,
   type Item,
   type ItemGroup,
   type CashBox,
@@ -268,7 +270,12 @@ export default function CashierPage() {
   const grandTotal = afterDiscount + vatAmount;
   const itemCount = cart.reduce((n, l) => n + l.qty, 0);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const sessionId = getPosSessionId();
+    if (sessionId) {
+      try { await api.closePosSession(sessionId, {}); } catch {}
+      setPosSessionId(null);
+    }
     api.logout().catch(() => {});
     clearAuth();
     navigate("/login");
@@ -306,6 +313,27 @@ export default function CashierPage() {
       const paymentType = "cash" as const;
 
       try {
+        // Ensure we have an open POS session; reopen if missing.
+        let posSessionId = getPosSessionId();
+        if (!posSessionId) {
+          try {
+            const existing = await api.getCurrentPosSession();
+            if (existing) {
+              posSessionId = existing.id;
+            } else {
+              const opened = await api.openPosSession({
+                branchId,
+                cashBoxId: defaultCashBoxId,
+                openingCash: 0,
+                device: navigator.userAgent.slice(0, 120),
+              });
+              posSessionId = opened.id;
+            }
+            setPosSessionId(posSessionId);
+          } catch {
+            // ignore — invoice will be created without session linkage.
+          }
+        }
         const inv = await api.createSalesInvoice({
           invoiceDate: today,
           branchId,
@@ -318,6 +346,7 @@ export default function CashierPage() {
           priceIncludesVat: false,
           notes: `POS — ${methodArabic(method)}`,
           lines,
+          posSessionId,
         });
         // Try to post (creates journal entry + decrements stock).
         // If posting fails (e.g. missing accounts), keep the draft so the

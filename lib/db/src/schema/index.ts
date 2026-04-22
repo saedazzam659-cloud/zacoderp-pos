@@ -15,3 +15,4 @@ export * from "./cash";
 export * from "./fiscalPeriods";
 export * from "./costCenters";
 export * from "./hr";
+export * from "./pos";

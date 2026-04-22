@@ -25,6 +25,7 @@ import {
   api,
   setToken,
   setStoredUser,
+  setPosSessionId,
   getToken,
   type Branch,
 } from "@/lib/api";
@@ -122,6 +123,26 @@ export default function LoginPage() {
       }
       if (branchId) {
         localStorage.setItem("pos_branch_id", String(branchId));
+      }
+      try {
+        const existing = await api.getCurrentPosSession();
+        if (existing) {
+          setPosSessionId(existing.id);
+        } else {
+          const cashBoxId = (() => {
+            const v = localStorage.getItem("pos_cash_box_id");
+            return v ? Number(v) : null;
+          })();
+          const session = await api.openPosSession({
+            branchId: branchId ?? null,
+            cashBoxId,
+            openingCash: 0,
+            device: navigator.userAgent.slice(0, 120),
+          });
+          setPosSessionId(session.id);
+        }
+      } catch {
+        // Don't block login if session opening fails; cashier will retry on first sale.
       }
       navigate("/pos");
     } catch (err: any) {

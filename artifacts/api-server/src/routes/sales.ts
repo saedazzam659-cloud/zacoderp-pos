@@ -245,7 +245,8 @@ router.post("/sales-invoices", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
-            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
+            posSessionId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
@@ -265,12 +266,26 @@ router.post("/sales-invoices", async (req, res) => {
       totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
+      posSessionId: null, // set below after validation
+      createdById:  req.authUser?.id ?? null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
     }).returning();
+    // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
+    if (posSessionId) {
+      const sid = Number(posSessionId);
+      const { posSessionsTable } = await import("@workspace/db");
+      const [s] = await db.select({ id: posSessionsTable.id, companyId: posSessionsTable.companyId, status: posSessionsTable.status })
+        .from(posSessionsTable).where(eq(posSessionsTable.id, sid));
+      if (s && s.companyId === cid && s.status === "open") {
+        await db.update(salesInvoicesTable).set({ posSessionId: sid })
+          .where(eq(salesInvoicesTable.id, inv.id));
+        inv.posSessionId = sid;
+      }
+    }
     if (lines?.length) {
       await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid)));
     }

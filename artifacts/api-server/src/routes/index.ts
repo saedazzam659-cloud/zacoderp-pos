@@ -33,6 +33,7 @@ import costCentersRouter from "./cost-centers";
 import employeesRouter from "./employees";
 import hrSettingsRouter from "./hr-settings";
 import storageRouter from "./storage";
+import posSessionsRouter from "./pos-sessions";
 
 const router: IRouter = Router();
 
@@ -68,6 +69,7 @@ router.use("/cost-centers",       costCentersRouter);
 router.use("/employees",          employeesRouter);
 router.use("/hr/settings",        hrSettingsRouter);
 router.use(storageRouter);
+router.use("/pos-sessions", posSessionsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

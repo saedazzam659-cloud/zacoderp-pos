@@ -11,6 +11,7 @@ import {
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
+  Activity, MonitorSmartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
 ];
 const companyBusinessNav: NavDef[] = [
+  { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity },
   { nameKey: "nav.hrEmployees",   href: "/hr/employees",       icon: UserCog },
   { nameKey: "nav.hrContracts",   href: "/hr/contracts",       icon: FileSignature },
   { nameKey: "nav.hrAttendance",  href: "/hr/attendance",      icon: CalendarRange },

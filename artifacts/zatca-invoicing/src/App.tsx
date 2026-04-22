@@ -41,6 +41,7 @@ import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
+import PosMonitoring from "@/pages/pos/Monitoring";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -200,6 +201,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
 
             {/* HR routes */}
+            {!isSuperAdmin && <Route path="/pos-monitoring" component={PosMonitoring} />}
             {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
             {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
             {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}

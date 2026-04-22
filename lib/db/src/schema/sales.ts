@@ -44,6 +44,8 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   zatcaErrorMessages:    text("zatca_error_messages"),
   zatcaWarningMessages:  text("zatca_warning_messages"),
   zatcaAiSuggestion:     text("zatca_ai_suggestion"),
+  posSessionId:   integer("pos_session_id"),
+  createdById:    integer("created_by_id"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });

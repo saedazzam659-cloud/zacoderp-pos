@@ -1,0 +1,257 @@
+import { Router } from "express";
+import { db } from "@workspace/db";
+import {
+  posSessionsTable,
+  salesInvoicesTable,
+  cashBoxesTable,
+  branchesTable,
+  usersTable,
+} from "@workspace/db";
+import { eq, and, sql, desc, isNull, gte, lte } from "drizzle-orm";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+const router = Router();
+router.use(extractAuth);
+// Hard auth gate: every endpoint here requires a real authenticated user.
+router.use((req, res, next) => {
+  if (!req.authUser) { res.status(401).json({ error: "غير مصرّح" }); return; }
+  next();
+});
+
+// ─── GET /pos-sessions/current ────────────────────────────────────────────────
+// POS calls this on login to find an existing open session for this user.
+router.get("/current", async (req, res) => {
+  const u = req.authUser;
+  if (!u || !u.companyId) { res.status(401).json({ error: "غير مصرّح" }); return; }
+  const [row] = await db.select().from(posSessionsTable)
+    .where(and(
+      eq(posSessionsTable.companyId, u.companyId),
+      eq(posSessionsTable.userId, u.id),
+      eq(posSessionsTable.status, "open"),
+    ))
+    .orderBy(desc(posSessionsTable.openedAt))
+    .limit(1);
+  res.json(row ?? null);
+});
+
+// ─── POST /pos-sessions/open ──────────────────────────────────────────────────
+// POS opens a new session.
+router.post("/open", async (req, res) => {
+  const u = req.authUser;
+  if (!u || !u.companyId) { res.status(401).json({ error: "غير مصرّح" }); return; }
+  const { branchId, cashBoxId, openingCash, device } = req.body ?? {};
+
+  // If user already has an open session, return it instead of creating a duplicate.
+  const [existing] = await db.select().from(posSessionsTable)
+    .where(and(
+      eq(posSessionsTable.companyId, u.companyId),
+      eq(posSessionsTable.userId, u.id),
+      eq(posSessionsTable.status, "open"),
+    ))
+    .orderBy(desc(posSessionsTable.openedAt))
+    .limit(1);
+  if (existing) { res.json(existing); return; }
+
+  const [row] = await db.insert(posSessionsTable).values({
+    companyId:   u.companyId,
+    userId:      u.id,
+    branchId:    branchId ?? null,
+    cashBoxId:   cashBoxId ?? null,
+    openingCash: String(openingCash ?? "0"),
+    device:      device ?? null,
+  }).returning();
+  res.status(201).json(row);
+});
+
+// ─── POST /pos-sessions/:id/close ─────────────────────────────────────────────
+router.post("/:id/close", async (req, res) => {
+  const u = req.authUser!;
+  const id = Number(req.params.id);
+  const { closingCash, notes } = req.body ?? {};
+
+  const [s] = await db.select().from(posSessionsTable).where(eq(posSessionsTable.id, id));
+  if (!s) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }
+
+  // Tenant isolation: superadmins may close any session, otherwise the session
+  // must belong to the caller's company AND the caller must be the owning user
+  // OR an admin within that same company.
+  if (u.role !== "superadmin") {
+    if (!u.companyId || s.companyId !== u.companyId) {
+      res.status(403).json({ error: "لا تملك صلاحية إغلاق هذه الجلسة" }); return;
+    }
+    const isAdmin = u.role === "admin";
+    if (s.userId !== u.id && !isAdmin) {
+      res.status(403).json({ error: "لا تملك صلاحية إغلاق هذه الجلسة" }); return;
+    }
+  }
+  if (s.status !== "open") { res.json(s); return; }
+
+  // Compute expected cash = openingCash + sum(cash sales in this session, scoped to its company).
+  const [{ totalCash } = { totalCash: "0" }] = await db.select({
+    totalCash: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.posSessionId, id),
+    eq(salesInvoicesTable.companyId, s.companyId),
+    eq(salesInvoicesTable.status, "posted"),
+    eq(salesInvoicesTable.paymentType, "cash"),
+  ));
+  const expected = Number(s.openingCash || 0) + Number(totalCash || 0);
+  const closing = closingCash != null && closingCash !== "" ? Number(closingCash) : expected;
+  const diff = closing - expected;
+
+  const [row] = await db.update(posSessionsTable).set({
+    status:       u.id === s.userId ? "closed" : "force_closed",
+    closingCash:  String(closing.toFixed(2)),
+    expectedCash: String(expected.toFixed(2)),
+    difference:   String(diff.toFixed(2)),
+    closedAt:     new Date(),
+    closedNotes:  notes ?? null,
+  }).where(eq(posSessionsTable.id, id)).returning();
+  res.json(row);
+});
+
+// ─── GET /pos-sessions ────────────────────────────────────────────────────────
+// Admin monitoring list. Filters: status, from, to, branchId, userId.
+router.get("/", async (req, res) => {
+  const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+  const filters: any[] = [];
+  if (cid) filters.push(eq(posSessionsTable.companyId, cid));
+  const status = String(req.query.status ?? "");
+  if (status === "open" || status === "closed" || status === "force_closed") {
+    filters.push(eq(posSessionsTable.status, status));
+  }
+  if (req.query.branchId) filters.push(eq(posSessionsTable.branchId, Number(req.query.branchId)));
+  if (req.query.userId)   filters.push(eq(posSessionsTable.userId,   Number(req.query.userId)));
+  if (req.query.from)     filters.push(gte(posSessionsTable.openedAt, new Date(String(req.query.from))));
+  if (req.query.to)       filters.push(lte(posSessionsTable.openedAt, new Date(String(req.query.to) + "T23:59:59.999Z")));
+
+  const rows = await db.select({
+    s:      posSessionsTable,
+    user:   { id: usersTable.id, username: usersTable.username, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn },
+    branch: { id: branchesTable.id, nameAr: branchesTable.nameAr },
+    box:    { id: cashBoxesTable.id, nameAr: cashBoxesTable.nameAr },
+  })
+    .from(posSessionsTable)
+    .leftJoin(usersTable,    eq(posSessionsTable.userId,    usersTable.id))
+    .leftJoin(branchesTable, eq(posSessionsTable.branchId,  branchesTable.id))
+    .leftJoin(cashBoxesTable,eq(posSessionsTable.cashBoxId, cashBoxesTable.id))
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(desc(posSessionsTable.openedAt))
+    .limit(500);
+
+  // Aggregate sales totals per session.
+  const ids = rows.map(r => r.s.id);
+  const aggMap = new Map<number, { invoices: number; totalSales: number }>();
+  if (ids.length) {
+    const aggs = await db.select({
+      sid: salesInvoicesTable.posSessionId,
+      cnt: sql<number>`COUNT(*)::int`,
+      tot: sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+    }).from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.status, "posted"),
+        sql`${salesInvoicesTable.posSessionId} IN (${sql.join(ids.map(i => sql`${i}`), sql`,`)})`,
+      ))
+      .groupBy(salesInvoicesTable.posSessionId);
+    for (const a of aggs) {
+      if (a.sid != null) aggMap.set(a.sid, { invoices: Number(a.cnt), totalSales: Number(a.tot) });
+    }
+  }
+
+  res.json(rows.map(r => ({
+    ...r.s,
+    user:   r.user?.id   ? r.user   : null,
+    branch: r.branch?.id ? r.branch : null,
+    cashBox:r.box?.id    ? r.box    : null,
+    invoiceCount: aggMap.get(r.s.id)?.invoices ?? 0,
+    totalSales:   aggMap.get(r.s.id)?.totalSales ?? 0,
+  })));
+});
+
+// ─── GET /pos-sessions/:id ────────────────────────────────────────────────────
+// Session detail with its invoices.
+router.get("/:id", async (req, res) => {
+  const cid = resolveCompanyId(req);
+  const id = Number(req.params.id);
+  const [r] = await db.select({
+    s:      posSessionsTable,
+    user:   { id: usersTable.id, username: usersTable.username, nameAr: usersTable.nameAr, nameEn: usersTable.nameEn },
+    branch: { id: branchesTable.id, nameAr: branchesTable.nameAr },
+    box:    { id: cashBoxesTable.id, nameAr: cashBoxesTable.nameAr },
+  })
+    .from(posSessionsTable)
+    .leftJoin(usersTable,    eq(posSessionsTable.userId,    usersTable.id))
+    .leftJoin(branchesTable, eq(posSessionsTable.branchId,  branchesTable.id))
+    .leftJoin(cashBoxesTable,eq(posSessionsTable.cashBoxId, cashBoxesTable.id))
+    .where(and(
+      eq(posSessionsTable.id, id),
+      ...(cid ? [eq(posSessionsTable.companyId, cid)] : []),
+    ));
+  if (!r) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }
+
+  const invoices = await db.select({
+    id: salesInvoicesTable.id,
+    docNumber: salesInvoicesTable.docNumber,
+    invoiceDate: salesInvoicesTable.invoiceDate,
+    totalAmount: salesInvoicesTable.totalAmount,
+    vatAmount: salesInvoicesTable.vatAmount,
+    status: salesInvoicesTable.status,
+    paymentType: salesInvoicesTable.paymentType,
+    createdAt: salesInvoicesTable.createdAt,
+  }).from(salesInvoicesTable)
+    .where(eq(salesInvoicesTable.posSessionId, id))
+    .orderBy(desc(salesInvoicesTable.createdAt));
+
+  const totalSales = invoices.filter(i => i.status === "posted")
+    .reduce((s, i) => s + Number(i.totalAmount || 0), 0);
+
+  res.json({
+    ...r.s,
+    user:    r.user?.id   ? r.user   : null,
+    branch:  r.branch?.id ? r.branch : null,
+    cashBox: r.box?.id    ? r.box    : null,
+    invoices,
+    invoiceCount: invoices.filter(i => i.status === "posted").length,
+    totalSales,
+  });
+});
+
+// ─── GET /pos-sessions/summary/today ──────────────────────────────────────────
+// Top dashboard cards: openSessions, closedToday, totalSalesToday, invoiceCountToday.
+router.get("/summary/today", async (req, res) => {
+  const cid = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const cidFilter = cid ? [eq(posSessionsTable.companyId, cid)] : [];
+
+  const [{ openCount } = { openCount: 0 }] = await db.select({
+    openCount: sql<number>`COUNT(*)::int`,
+  }).from(posSessionsTable).where(and(eq(posSessionsTable.status, "open"), ...cidFilter));
+
+  const [{ closedToday } = { closedToday: 0 }] = await db.select({
+    closedToday: sql<number>`COUNT(*)::int`,
+  }).from(posSessionsTable).where(and(
+    eq(posSessionsTable.status, "closed"),
+    gte(posSessionsTable.closedAt, today),
+    ...cidFilter,
+  ));
+
+  const cidInv = cid ? [eq(salesInvoicesTable.companyId, cid)] : [];
+  const [{ invoiceCount, totalSales } = { invoiceCount: 0, totalSales: "0" }] = await db.select({
+    invoiceCount: sql<number>`COUNT(*)::int`,
+    totalSales:   sql<string>`COALESCE(SUM(${salesInvoicesTable.totalAmount}), 0)`,
+  }).from(salesInvoicesTable).where(and(
+    eq(salesInvoicesTable.status, "posted"),
+    sql`${salesInvoicesTable.posSessionId} IS NOT NULL`,
+    gte(salesInvoicesTable.createdAt, today),
+    ...cidInv,
+  ));
+
+  res.json({
+    openSessions: Number(openCount),
+    closedToday:  Number(closedToday),
+    invoiceCount: Number(invoiceCount),
+    totalSales:   Number(totalSales),
+  });
+});
+
+export default router;
