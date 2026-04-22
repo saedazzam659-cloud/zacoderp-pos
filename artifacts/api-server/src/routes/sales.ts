@@ -86,6 +86,22 @@ function asBool(v: any): boolean {
   return false;
 }
 
+// Clamp document-level discount server-side: must be >= 0 and <= subtotal+vat.
+// Also recompute totalAmount as gross - discount so the stored row is internally consistent.
+function clampDiscountAndTotal(subtotal: any, vatAmount: any, discountAmount: any) {
+  const sub  = Math.max(0, Number(subtotal)    || 0);
+  const vat  = Math.max(0, Number(vatAmount)   || 0);
+  const gross = sub + vat;
+  const disc = Math.max(0, Math.min(gross, Number(discountAmount) || 0));
+  const total = gross - disc;
+  return {
+    subtotal:       sub.toFixed(2),
+    vatAmount:      vat.toFixed(2),
+    discountAmount: disc.toFixed(2),
+    totalAmount:    total.toFixed(2),
+  };
+}
+
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
@@ -161,6 +177,7 @@ router.post("/sales-invoices", async (req, res) => {
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
@@ -169,9 +186,9 @@ router.post("/sales-invoices", async (req, res) => {
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
-      discountAmount: String(discountAmount || "0"),
-      totalAmount: String(totalAmount || "0"),
+      subtotal: totals.subtotal, vatAmount: totals.vatAmount,
+      discountAmount: totals.discountAmount,
+      totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
@@ -196,6 +213,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
@@ -204,9 +222,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
-      discountAmount: String(discountAmount || "0"),
-      totalAmount: String(totalAmount || "0"),
+      subtotal: totals.subtotal, vatAmount: totals.vatAmount,
+      discountAmount: totals.discountAmount,
+      totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       notes: notes || null, updatedAt: new Date(),
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
@@ -870,15 +888,16 @@ router.post("/sales-quotations", async (req, res) => {
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
     if (!quotationDate) { res.status(400).json({ error: "تاريخ العرض مطلوب" }); return; }
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.insert(salesQuotationsTable).values({
       companyId: cid, docNumber: docNumber || null, quotationDate,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
-      discountAmount: String(discountAmount || "0"),
-      totalAmount: String(totalAmount || "0"),
+      subtotal: totals.subtotal, vatAmount: totals.vatAmount,
+      discountAmount: totals.discountAmount,
+      totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
     }).returning();
@@ -895,15 +914,16 @@ router.put("/sales-quotations/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { docNumber, quotationDate, validUntil, customerId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines } = req.body;
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     const [q] = await db.update(salesQuotationsTable).set({
       docNumber: docNumber || null, quotationDate,
       validUntil: validUntil || null,
       customerId: customerId ? Number(customerId) : null,
       currencyCode: currencyCode || "SAR",
       exchangeRate: String(exchangeRate || "1"),
-      subtotal: String(subtotal || "0"), vatAmount: String(vatAmount || "0"),
-      discountAmount: String(discountAmount || "0"),
-      totalAmount: String(totalAmount || "0"),
+      subtotal: totals.subtotal, vatAmount: totals.vatAmount,
+      discountAmount: totals.discountAmount,
+      totalAmount: totals.totalAmount,
       priceIncludesVat: asBool(priceIncludesVat),
       notes: notes || null, updatedAt: new Date(),
     }).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid))).returning();

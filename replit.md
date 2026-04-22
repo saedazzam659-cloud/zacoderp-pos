@@ -150,6 +150,13 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - Quotation→invoice conversion (`POST /sales-quotations/:id/convert`) propagates the flag to the new invoice
 - Posting/JE generation unchanged — uses stored `subtotal` and `vatAmount` directly
 
+## Document-Level Discount on Sales Documents
+- Frontend: numeric input under VAT row in the totals card of `SalesDocumentForm.tsx` (data-testid `doc-discount-input`)
+- Live deduction: Net + VAT − Discount = Total (works in both inclusive and exclusive VAT modes)
+- API hardening: `clampDiscountAndTotal()` server-side clamps `discountAmount` to `[0, subtotal+vatAmount]` and recomputes `totalAmount` so stored rows are always self-consistent (verified: 99999→1150, −50→0)
+- JE balance preserved on posting: party debit = totalAmount (= gross−discount), discount account debit = discountAmount, credit sales = subtotal, credit VAT = vatAmount → balanced
+- Discount account requirement (existing): posting blocks with friendly Arabic error if discount > 0 and no `discountAccountId` set
+
 ## License Management Module
 - Route: `/admin/licenses` (superadmin only)
 - DB cols on subscriptions: maxBranches, maxWarehouses (in addition to maxUsers/maxInvoices)

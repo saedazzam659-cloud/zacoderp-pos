@@ -100,6 +100,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
+  const [docDiscount, setDocDiscount]   = useState("0");
   const [lines,     setLines]           = useState<DocLine[]>([newLine()]);
 
   // Accounts used to build journal entry on posting (invoices only)
@@ -230,6 +231,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
+    setDocDiscount(String(existing.discountAmount ?? "0"));
     if (isInvoice) {
       setCogsAccountId(existing.cogsAccountId ? String(existing.cogsAccountId) : "");
       setInventoryAccountId(existing.inventoryAccountId ? String(existing.inventoryAccountId) : "");
@@ -334,7 +336,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).subtotal, 0);
   const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).vat,      0);
-  const totalAmount = subtotal + vatAmount;
+  const grossTotal  = subtotal + vatAmount;
+  const discountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
+  const totalAmount = grossTotal - discountAmt;
 
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
@@ -370,7 +374,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       companyId: cid, docNumber: docNumber || null,
       customerId: customerId || null, currencyCode, exchangeRate,
       subtotal: subtotal.toFixed(2), vatAmount: vatAmount.toFixed(2),
-      discountAmount: "0", totalAmount: totalAmount.toFixed(2),
+      discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
       notes: notes || null,
       lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
@@ -727,6 +731,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الصافي (قبل الضريبة)</span><span className="font-mono">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">الخصم</span>
+                    <input
+                      data-testid="doc-discount-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={docDiscount}
+                      onFocus={e => e.target.select()}
+                      onChange={e => setDocDiscount(e.target.value)}
+                      className="w-28 h-7 text-left font-mono text-rose-700 bg-background border rounded px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                  </div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
                     <span className="font-mono text-primary">{fmt(totalAmount)}</span>
