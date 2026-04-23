@@ -230,6 +230,15 @@ export const api = {
   getCustomers: (companyId: number) =>
     req<Customer[]>("GET", `/api/customers?companyId=${companyId}`),
 
+  // POS payment-method → account mappings (per company)
+  getPosSettings: (companyId: number) =>
+    req<{
+      posCashCashBoxId:       number | null;
+      posCardBankAccountId:   number | null;
+      posAppleBankAccountId:  number | null;
+      posWalletBankAccountId: number | null;
+    }>("GET", `/api/companies/${companyId}/pos-settings`),
+
   // Sales
   createSalesInvoice: (body: CreateInvoiceBody) =>
     req<SalesInvoice>("POST", "/api/sales/sales-invoices", body),

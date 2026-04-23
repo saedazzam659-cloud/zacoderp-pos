@@ -336,6 +336,7 @@
     "invoices": "Invoices",
     "vatDeclaration": "VAT Declaration",
     "posMonitoring": "POS Monitoring",
+    "posSettings": "POS Settings",
     "openPos": "Open POS Cashier",
     "hrEmployees": "Human Resources",
     "hrContracts": "Contracts",

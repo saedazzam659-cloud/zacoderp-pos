@@ -42,6 +42,7 @@ import EndOfService from "@/pages/hr/EndOfService";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import PosMonitoring from "@/pages/pos/Monitoring";
+import PosSettings from "@/pages/pos/PosSettings";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 // Inventory
@@ -202,6 +203,7 @@ function AppRoutes() {
 
             {/* HR routes */}
             <Route path="/pos-monitoring" component={PosMonitoring} />
+            <Route path="/pos-settings" component={PosSettings} />
             {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
             {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
             {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}

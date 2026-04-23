@@ -48,6 +48,11 @@ export const companiesTable = pgTable("companies", {
   hrEosProvisionAccountId:       integer("hr_eos_provision_account_id"),
   hrDefaultPayCashBoxId:         integer("hr_default_pay_cashbox_id"),
   hrDefaultPayBankAccountId:     integer("hr_default_pay_bank_account_id"),
+  // POS payment-method → account mappings
+  posCashCashBoxId:          integer("pos_cash_cashbox_id"),
+  posCardBankAccountId:      integer("pos_card_bank_account_id"),
+  posAppleBankAccountId:     integer("pos_apple_bank_account_id"),
+  posWalletBankAccountId:    integer("pos_wallet_bank_account_id"),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),

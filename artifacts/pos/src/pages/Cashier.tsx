@@ -96,6 +96,12 @@ export default function CashierPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cashBoxes, setCashBoxes] = useState<CashBox[]>([]);
+  const [posSettings, setPosSettings] = useState<{
+    posCashCashBoxId:       number | null;
+    posCardBankAccountId:   number | null;
+    posAppleBankAccountId:  number | null;
+    posWalletBankAccountId: number | null;
+  } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -154,12 +160,13 @@ export default function CashierPage() {
           setLoading(false);
           return;
         }
-        const [its, grs, whs, brs, cbs] = await Promise.all([
+        const [its, grs, whs, brs, cbs, settings] = await Promise.all([
           api.getItems(cid),
           api.getItemGroups(cid).catch(() => []),
           api.getWarehouses(cid).catch(() => []),
           api.getBranches(cid).catch(() => []),
           api.getCashBoxes(cid).catch(() => []),
+          api.getPosSettings(cid).catch(() => null),
         ]);
         if (!alive) return;
         setItems(its);
@@ -167,6 +174,7 @@ export default function CashierPage() {
         setWarehouses(whs);
         setBranches(brs);
         setCashBoxes(cbs);
+        setPosSettings(settings);
       } catch (err: any) {
         if (alive) setLoadError(err?.message || "تعذّر تحميل البيانات");
       } finally {
@@ -308,9 +316,36 @@ export default function CashierPage() {
         };
       });
 
-      // POS treats card / apple / wallet as cash-equivalent into the till
-      // for v1; a future iteration can map them to specific bank accounts.
-      const paymentType = "cash" as const;
+      // Route the payment based on company POS settings (admin maps each
+      // method to a cashbox or bank account in /pos-settings on the ERP).
+      let paymentType: "cash" | "bank" = "cash";
+      let cashBoxIdForPayment: number | null = null;
+      let bankAccountIdForPayment: number | null = null;
+      if (method === "cash") {
+        paymentType = "cash";
+        cashBoxIdForPayment = posSettings?.posCashCashBoxId ?? defaultCashBoxId;
+      } else {
+        const bankId = method === "card"   ? posSettings?.posCardBankAccountId
+                     : method === "apple"  ? posSettings?.posAppleBankAccountId
+                     : method === "wallet" ? posSettings?.posWalletBankAccountId
+                     : null;
+        if (!bankId) {
+          setSubmitError(
+            `طريقة الدفع "${methodArabic(method)}" غير مربوطة بحساب بنكي. يرجى الذهاب إلى ERP → إعدادات نقاط البيع وربطها أولاً.`,
+          );
+          setSubmitting(false);
+          return;
+        }
+        paymentType = "bank";
+        bankAccountIdForPayment = bankId;
+      }
+      if (paymentType === "cash" && !cashBoxIdForPayment) {
+        setSubmitError(
+          "لم يتم تحديد صندوق نقدي للدفع النقدي. يرجى ربطه من إعدادات نقاط البيع في ERP.",
+        );
+        setSubmitting(false);
+        return;
+      }
 
       try {
         // Ensure we have an open POS session; reopen if missing.
@@ -338,7 +373,8 @@ export default function CashierPage() {
           invoiceDate: today,
           branchId,
           paymentType,
-          cashBoxId: defaultCashBoxId,
+          cashBoxId: cashBoxIdForPayment,
+          bankAccountId: bankAccountIdForPayment,
           subtotal,
           vatAmount,
           discountAmount,

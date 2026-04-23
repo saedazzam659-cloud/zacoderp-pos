@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
+import { extractAuth } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -126,6 +127,71 @@ router.patch("/:id/zatca-settings", async (req, res) => {
   }).where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "Company not found" }); return; }
   res.json(company);
+});
+
+// Authorization helper: only superadmin or an admin of this same company.
+function authorizePosSettings(req: any, res: any, id: number): boolean {
+  const u = req.authUser;
+  if (!u) { res.status(401).json({ error: "غير مصرّح" }); return false; }
+  if (u.role === "superadmin") return true;
+  if (u.role === "admin" && u.companyId === id) return true;
+  res.status(403).json({ error: "ليست لديك صلاحية لهذه العملية" });
+  return false;
+}
+
+// Coerce to a positive integer or null. Anything else → "invalid".
+function toNullableId(v: unknown): number | null | "invalid" {
+  if (v === null || v === undefined || v === "" || v === 0) return null;
+  const n = typeof v === "number" ? v : parseInt(String(v), 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return "invalid";
+  return n;
+}
+
+// GET /:id/pos-settings — current POS payment-method → account mappings.
+router.get("/:id/pos-settings", extractAuth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
+  if (!authorizePosSettings(req, res, id)) return;
+  const [c] = await db.select({
+    posCashCashBoxId:       companiesTable.posCashCashBoxId,
+    posCardBankAccountId:   companiesTable.posCardBankAccountId,
+    posAppleBankAccountId:  companiesTable.posAppleBankAccountId,
+    posWalletBankAccountId: companiesTable.posWalletBankAccountId,
+  }).from(companiesTable).where(eq(companiesTable.id, id));
+  if (!c) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  res.json(c);
+});
+
+// PATCH /:id/pos-settings — admin/superadmin sets the cashbox/bank-account for each POS method.
+router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
+  if (!authorizePosSettings(req, res, id)) return;
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  for (const key of [
+    "posCashCashBoxId",
+    "posCardBankAccountId",
+    "posAppleBankAccountId",
+    "posWalletBankAccountId",
+  ] as const) {
+    if (key in body) {
+      const v = toNullableId(body[key]);
+      if (v === "invalid") { res.status(400).json({ error: `قيمة ${key} غير صالحة` }); return; }
+      updates[key] = v;
+    }
+  }
+
+  const [company] = await db.update(companiesTable).set(updates)
+    .where(eq(companiesTable.id, id)).returning();
+  if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+  res.json({
+    posCashCashBoxId:       company.posCashCashBoxId,
+    posCardBankAccountId:   company.posCardBankAccountId,
+    posAppleBankAccountId:  company.posAppleBankAccountId,
+    posWalletBankAccountId: company.posWalletBankAccountId,
+  });
 });
 
 router.delete("/:id", async (req, res) => {
