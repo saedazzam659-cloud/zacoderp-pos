@@ -50,6 +50,10 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**Combobox Selection Now Also Advances Focus (April 2026)**
+- In the Journal Entry form, when you type an account code/name (or arrow-navigate) inside an account / cost-center combobox and press Enter, the combobox both **selects** the highlighted item AND focus moves to the next field — instead of stopping after selection.
+- Implementation: `JournalEntryForm.handleFormKeyDown` no longer bails on `e.defaultPrevented`. SearchCombobox still calls `preventDefault()` to stop default browser behaviour after a selection, but the form-level Enter handler now runs unconditionally and calls `advanceFromTarget(target)` to focus the next nav element. (Capture-phase combobox-trigger handling, IME guard, Shift+Enter-in-textarea behaviour, and last-field-saves-form behaviour are unchanged.)
+
 **Default to Main Branch (April 2026)**
 - Forms that have a branch dropdown now auto-pick the branch flagged `isMain` (fallback: first branch in the list) when creating a new record. Editing keeps whatever was saved. Pattern (matching what Sales/Purchase forms already did) added to:
   - `accounting/JournalEntryForm.tsx` (only when `isNew`).

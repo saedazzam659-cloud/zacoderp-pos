@@ -277,14 +277,14 @@ export default function JournalEntryForm() {
   }
 
   // Bubble-phase handler: advances focus on Enter for inputs, textareas
-  // and combobox-inputs. Skips when a descendant already handled Enter
-  // (defaultPrevented = combobox just selected an item — that selection
-  // already counts as the "advance" intent for the user).
+  // and combobox-inputs. We deliberately do NOT bail on
+  // `e.defaultPrevented` — when a SearchCombobox descendant just
+  // selected an item with Enter, the user still expects focus to move
+  // to the next field. So selection + advance happen together.
   function handleFormKeyDown(e: React.KeyboardEvent) {
     if (e.key !== "Enter") return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if ((e.nativeEvent as any).isComposing) return;
-    if (e.defaultPrevented) return;
 
     const target = e.target as HTMLElement;
     if (!target) return;
