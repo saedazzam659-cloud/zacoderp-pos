@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable } from "@workspace/db";
-import { eq, and, asc, count, inArray, notInArray, sql } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable } from "@workspace/db";
+import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 
@@ -508,6 +508,222 @@ router.post("/orphan-stock/cleanup", requireSuperAdmin, async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل التنظيف" });
+  }
+});
+
+// ─── AI-assisted company diagnostics (read-only) ──────────────────────────────
+// Runs a battery of data-integrity checks for one company, then asks the
+// configured LLM to write a friendly Arabic summary + prioritized recommendations.
+// IMPORTANT: This endpoint never writes data. Fixes (if any) are performed
+// elsewhere by the superadmin (e.g. orphan-stock cleanup).
+
+const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+
+type Severity = "high" | "medium" | "low";
+type CheckResult = {
+  key: string; label: string; severity: Severity;
+  count: number; samples: any[];
+};
+
+async function diagnoseCompany(companyId: number): Promise<CheckResult[]> {
+  const out: CheckResult[] = [];
+
+  // 1) Unbalanced journal entries
+  const unbalanced = await db.execute(sql`
+    SELECT je.id, je.doc_number, je.entry_date,
+           COALESCE(SUM(jel.debit), 0)::text  AS total_debit,
+           COALESCE(SUM(jel.credit), 0)::text AS total_credit
+    FROM journal_entries je
+    LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
+    WHERE je.company_id = ${companyId}
+    GROUP BY je.id, je.doc_number, je.entry_date
+    HAVING ROUND(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0), 2) <> 0
+    ORDER BY je.id DESC
+    LIMIT 50
+  `);
+  const unbRows = (unbalanced as any).rows ?? [];
+  out.push({
+    key: "unbalanced_journals", label: "قيود يومية غير متوازنة (مدين ≠ دائن)",
+    severity: "high", count: unbRows.length, samples: unbRows.slice(0, 10),
+  });
+
+  // 2) Negative stock balances
+  const neg = await db.select({
+    id: stockBalanceTable.id, itemId: stockBalanceTable.itemId,
+    warehouseId: stockBalanceTable.warehouseId, qty: stockBalanceTable.qty,
+  }).from(stockBalanceTable).where(and(
+    eq(stockBalanceTable.companyId, companyId),
+    sql`${stockBalanceTable.qty} < 0`,
+  )).limit(50);
+  out.push({
+    key: "negative_stock", label: "أرصدة مخزون سالبة",
+    severity: "high", count: neg.length, samples: neg.slice(0, 10),
+  });
+
+  // 3) Sales invoices without a journal entry (or with a stale one)
+  const salesNoJE = await db.execute(sql`
+    SELECT si.id, si.doc_number, si.invoice_date, si.total_amount
+    FROM sales_invoices si
+    WHERE si.company_id = ${companyId}
+      AND si.status = 'posted'
+      AND (si.journal_entry_id IS NULL
+           OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = si.journal_entry_id))
+    ORDER BY si.id DESC LIMIT 50
+  `);
+  const sniRows = (salesNoJE as any).rows ?? [];
+  out.push({
+    key: "sales_invoices_without_je", label: "فواتير مبيعات مرحّلة بدون قيد محاسبي",
+    severity: "high", count: sniRows.length, samples: sniRows.slice(0, 10),
+  });
+
+  // 4) Purchase invoices without a journal entry
+  const purNoJE = await db.execute(sql`
+    SELECT pi.id, pi.doc_number, pi.invoice_date, pi.total_amount
+    FROM purchase_invoices pi
+    WHERE pi.company_id = ${companyId}
+      AND pi.status = 'posted'
+      AND (pi.journal_entry_id IS NULL
+           OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = pi.journal_entry_id))
+    ORDER BY pi.id DESC LIMIT 50
+  `);
+  const pniRows = (purNoJE as any).rows ?? [];
+  out.push({
+    key: "purchase_invoices_without_je", label: "فواتير مشتريات مرحّلة بدون قيد محاسبي",
+    severity: "high", count: pniRows.length, samples: pniRows.slice(0, 10),
+  });
+
+  // 5) Orphan stock movements (re-uses cleanup detector)
+  const orphans = await getOrphanLedgerRows(companyId);
+  out.push({
+    key: "orphan_stock", label: "حركات مخزون يتيمة (مستندها محذوف)",
+    severity: "medium", count: orphans.length,
+    samples: orphans.slice(0, 10).map(o => ({
+      id: o.id, itemId: o.itemId, warehouseId: o.warehouseId,
+      refType: o.refType, refId: o.refId, qty: o.qty, txDate: o.txDate,
+    })),
+  });
+
+  // 6) Stock items without a sale price
+  const noPrice = await db.select({
+    id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, salePrice: itemsTable.salePrice,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    eq(itemsTable.itemType,  "stock" as any),
+    eq(itemsTable.status,    "active" as any),
+    sql`${itemsTable.salePrice}::numeric = 0`,
+  )).limit(50);
+  out.push({
+    key: "items_without_price", label: "أصناف مخزنية فعّالة بدون سعر بيع",
+    severity: "medium", count: noPrice.length, samples: noPrice.slice(0, 10),
+  });
+
+  // 7) Stock items without a cost
+  const noCost = await db.select({
+    id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, costPrice: itemsTable.costPrice,
+  }).from(itemsTable).where(and(
+    eq(itemsTable.companyId, companyId),
+    eq(itemsTable.itemType,  "stock" as any),
+    eq(itemsTable.status,    "active" as any),
+    sql`${itemsTable.costPrice}::numeric = 0`,
+  )).limit(50);
+  out.push({
+    key: "items_without_cost", label: "أصناف مخزنية فعّالة بدون سعر تكلفة",
+    severity: "low", count: noCost.length, samples: noCost.slice(0, 10),
+  });
+
+  // 8) Stock balance ≠ sum of ledger qty (drift)
+  const drift = await db.execute(sql`
+    SELECT sb.item_id, sb.warehouse_id,
+           sb.qty::text                              AS balance_qty,
+           COALESCE(SUM(sl.qty),0)::text             AS ledger_sum
+    FROM stock_balance sb
+    LEFT JOIN stock_ledger sl
+      ON sl.company_id   = sb.company_id
+     AND sl.item_id      = sb.item_id
+     AND sl.warehouse_id = sb.warehouse_id
+    WHERE sb.company_id = ${companyId}
+    GROUP BY sb.item_id, sb.warehouse_id, sb.qty
+    HAVING ROUND(sb.qty::numeric - COALESCE(SUM(sl.qty),0), 4) <> 0
+    LIMIT 50
+  `);
+  const driftRows = (drift as any).rows ?? [];
+  out.push({
+    key: "stock_balance_drift", label: "اختلاف بين رصيد المخزون ومجموع الحركات",
+    severity: "medium", count: driftRows.length, samples: driftRows.slice(0, 10),
+  });
+
+  return out;
+}
+
+// GET /api/admin/ai-fix/diagnose?companyId=X
+router.get("/ai-fix/diagnose", requireSuperAdmin, async (req, res) => {
+  const companyId = Number(req.query.companyId);
+  if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+  try {
+    const checks = await diagnoseCompany(companyId);
+    const totalIssues = checks.reduce((s, c) => s + c.count, 0);
+    res.json({ companyId, totalIssues, checks });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التشخيص" });
+  }
+});
+
+// POST /api/admin/ai-fix/summarize  body: { companyId, checks }
+//   Sends compact (no PII beyond ids) check summary to the LLM and returns an
+//   Arabic narrative + prioritized recommendation list. Read-only on data.
+router.post("/ai-fix/summarize", requireSuperAdmin, async (req, res) => {
+  const { companyId, checks } = (req.body ?? {}) as { companyId: number; checks: CheckResult[] };
+  if (!companyId || !Array.isArray(checks)) { res.status(400).json({ error: "companyId و checks مطلوبان" }); return; }
+  if (!OPENAI_BASE || !OPENAI_KEY) {
+    res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return;
+  }
+
+  const [company] = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn })
+    .from(companiesTable).where(eq(companiesTable.id, companyId));
+
+  // Trim payload — keep counts + small samples only
+  const compact = checks.map(c => ({
+    key: c.key, label: c.label, severity: c.severity, count: c.count,
+    samples: (c.samples ?? []).slice(0, 5),
+  }));
+
+  const userPrompt = `أنت مدقق محاسبي ومخزني خبير في نظام ERP سعودي يدعم فاتورة ZATCA.
+إليك نتائج فحص بيانات الشركة "${company?.nameAr ?? "—"}" (id=${companyId}):
+
+${JSON.stringify(compact, null, 2)}
+
+اكتب تقريراً موجزاً بالعربية الفصحى المهنية وبصيغة Markdown يتضمن:
+1. **ملخص الحالة** في فقرة واحدة (٢-٣ أسطر) عن الوضع العام للشركة.
+2. **أهم المشاكل** مرتبة حسب الخطورة (high أولاً) — لكل مشكلة: السبب المحتمل، والأثر على القوائم المالية أو المخزون.
+3. **خطوات الإصلاح المقترحة** كقائمة مرقمة عملية وموجهة لمشرف النظام، ذكر اسم الشاشة في النظام إن أمكن (مثل: "صفحة تنظيف حركات المخزون اليتيمة" للمشكلة orphan_stock، "دفتر الأستاذ / القيود اليومية" للقيود غير المتوازنة).
+4. إن لم تكن هناك مشاكل (كل العدّادات = 0)، اكتب فقرة قصيرة تؤكد سلامة البيانات.
+
+لا تختلق أرقاماً غير موجودة في المدخلات. لا تذكر تنفيذ الإصلاحات تلقائياً.`;
+
+  try {
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 2048,
+        messages: [
+          { role: "system", content: "أنت مدقق محاسبي ومخزني خبير. ترد بالعربية الفصحى وبصيغة Markdown منظمة. لا تخترع بيانات، واستخدم فقط المدخلات." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const summary = data?.choices?.[0]?.message?.content ?? "";
+    res.json({ summary });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التلخيص" });
   }
 });
 
