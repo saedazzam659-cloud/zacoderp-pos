@@ -94,14 +94,23 @@ export default function FiscalPeriods() {
     return { open, closed, perm };
   }, [periods]);
 
+  const safeJson = async (r: Response, fallbackMsg: string) => {
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      if (!r.ok) throw new Error(`${fallbackMsg} (HTTP ${r.status})`);
+      return {};
+    }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d as any)?.error || fallbackMsg);
+    return d;
+  };
+
   const createYearMut = useMutation({
     mutationFn: async (data: typeof EMPTY_YEAR) => {
       const r = await fetch(`${API}/api/fiscal/years`, {
         method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.error || t("fiscalPeriods.createFailed"));
-      return d;
+      return await safeJson(r, t("fiscalPeriods.createFailed"));
     },
     onSuccess: (d: any) => {
       toast({
@@ -121,9 +130,7 @@ export default function FiscalPeriods() {
       const r = await fetch(`${API}/api/fiscal/periods/${id}/status`, {
         method: "PATCH", headers, body: JSON.stringify({ status }),
       });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.error || t("fiscalPeriods.updateFailed"));
-      return d;
+      return await safeJson(r, t("fiscalPeriods.updateFailed"));
     },
     onSuccess: () => {
       toast({ title: t("fiscalPeriods.periodStatusUpdated") });
@@ -137,9 +144,7 @@ export default function FiscalPeriods() {
       const r = await fetch(`${API}/api/fiscal/years/${id}/status`, {
         method: "PATCH", headers, body: JSON.stringify({ status }),
       });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.error || t("fiscalPeriods.updateFailed"));
-      return d;
+      return await safeJson(r, t("fiscalPeriods.updateFailed"));
     },
     onSuccess: () => {
       toast({ title: t("fiscalPeriods.yearStatusUpdated") });
@@ -152,9 +157,7 @@ export default function FiscalPeriods() {
   const delYearMut = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API}/api/fiscal/years/${id}`, { method: "DELETE", headers });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.error || t("fiscalPeriods.deleteFailed"));
-      return d;
+      return await safeJson(r, t("fiscalPeriods.deleteFailed"));
     },
     onSuccess: () => {
       toast({ title: t("fiscalPeriods.yearDeleted") });
