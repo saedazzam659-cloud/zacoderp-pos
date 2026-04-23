@@ -27,26 +27,33 @@ export default function AccountingMappings() {
   const headers = { Authorization: `Bearer ${token}` };
   const cid = user?.companyId;
 
-  // Load mappings
-  const { data: serverMappings = [], isLoading: loadingMaps } = useQuery<MappingRow[]>({
+  // Load mappings — fail-closed: throw on non-OK so UI stays in loading/error state
+  // instead of presenting empty mappings which could be saved and wipe existing rows.
+  const { data: serverMappings = [], isLoading: loadingMaps, isError: mapsError, error: mapsErrorObj } = useQuery<MappingRow[]>({
     queryKey: ["accounting-mappings", cid],
     queryFn: async () => {
       const r = await fetch(`${API}/api/accounting-mappings?companyId=${cid}`, { headers });
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error(`فشل تحميل الربط المحاسبي (${r.status})`);
+      return r.json();
     },
     enabled: !!cid,
+    retry: 1,
   });
 
   // Load accounts for AI context
-  const { data: accounts = [] } = useQuery<any[]>({
+  const { data: accounts = [], isError: accountsError } = useQuery<any[]>({
     queryKey: ["accounts", cid],
     queryFn: async () => {
       const r = await fetch(`${API}/api/accounts?companyId=${cid}`, { headers });
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("فشل تحميل شجرة الحسابات");
+      return r.json();
     },
     enabled: !!cid,
     staleTime: 60_000,
+    retry: 1,
   });
+
+  const loadFailed = mapsError || accountsError;
 
   // Local state — keyed by `${docType}.${roleKey}`
   const [state, setState] = useState<Record<string, MappingRow>>({});
@@ -98,6 +105,7 @@ export default function AccountingMappings() {
   // Save mutation
   const saveMut = useMutation({
     mutationFn: async (docType?: string) => {
+      if (loadFailed) throw new Error("لا يمكن الحفظ قبل تحميل البيانات بنجاح");
       const items = Object.values(state).filter(r => !docType || r.documentType === docType);
       const res = await fetch(`${API}/api/accounting-mappings/bulk`, {
         method: "PUT",
@@ -206,6 +214,15 @@ export default function AccountingMappings() {
 
       {loadingMaps ? (
         <div className="text-center py-12 text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin inline" /></div>
+      ) : loadFailed ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
+          <p className="text-sm text-destructive font-medium">
+            {(mapsErrorObj as any)?.message ?? "تعذّر تحميل البيانات"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">
+            الرجاء تحديث الصفحة أو المحاولة لاحقاً. لن يتم السماح بالحفظ أثناء فشل التحميل لتفادي فقدان الإعدادات.
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {DOCUMENT_TYPES.map(doc => {
