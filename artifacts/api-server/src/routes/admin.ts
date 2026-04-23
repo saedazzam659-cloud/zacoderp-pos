@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
-import { eq, and, asc, count } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable } from "@workspace/db";
+import { eq, and, asc, count, inArray, notInArray, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 
@@ -386,6 +386,129 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
 
   if (!updated) { res.status(404).json({ error: "الباقة غير موجودة" }); return; }
   res.json({ ok: true, plan: { ...updated, features: JSON.parse(updated.features || "[]") } });
+});
+
+// ─── Orphan stock movements cleanup ───────────────────────────────────────────
+// "Orphan" = a stock_ledger entry whose ref_type points at an invoice/return doc
+// (sales_invoice | sales_return | purchase_invoice | purchase_return) but the
+// referenced source row no longer exists (the doc was deleted).
+
+const ORPHAN_REF_TYPES = ["sales_invoice", "sales_return", "purchase_invoice", "purchase_return"] as const;
+
+async function filterTrueOrphans(executor: typeof db, rows: any[]) {
+  if (!rows.length) return [];
+  const idsByType: Record<string, Set<number>> = {
+    sales_invoice: new Set(), sales_return: new Set(),
+    purchase_invoice: new Set(), purchase_return: new Set(),
+  };
+  for (const r of rows) {
+    if (r.refId != null && r.refType && idsByType[r.refType]) idsByType[r.refType].add(r.refId);
+  }
+  const existing: Record<string, Set<number>> = {
+    sales_invoice: new Set(), sales_return: new Set(),
+    purchase_invoice: new Set(), purchase_return: new Set(),
+  };
+  const checks: [string, any, any][] = [
+    ["sales_invoice",    salesInvoicesTable,    salesInvoicesTable.id],
+    ["sales_return",     salesReturnsTable,     salesReturnsTable.id],
+    ["purchase_invoice", purchaseInvoicesTable, purchaseInvoicesTable.id],
+    ["purchase_return",  purchaseReturnsTable,  purchaseReturnsTable.id],
+  ];
+  for (const [type, table, idCol] of checks) {
+    const ids = Array.from(idsByType[type]);
+    if (!ids.length) continue;
+    const found = await executor.select({ id: idCol }).from(table).where(inArray(idCol, ids));
+    for (const f of found) existing[type].add(Number(f.id));
+  }
+  return rows.filter(r => r.refType && r.refId != null && !existing[r.refType]?.has(Number(r.refId)));
+}
+
+async function getOrphanLedgerRows(companyId: number) {
+  const rows = await db.select().from(stockLedgerTable).where(and(
+    eq(stockLedgerTable.companyId, companyId),
+    inArray(stockLedgerTable.refType, ORPHAN_REF_TYPES as unknown as string[]),
+  ));
+  return filterTrueOrphans(db, rows);
+}
+
+// GET /api/admin/companies — minimal list for dropdowns
+router.get("/companies", requireSuperAdmin, async (_req, res) => {
+  const rows = await db.select({
+    id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn, status: companiesTable.status,
+  }).from(companiesTable).orderBy(asc(companiesTable.nameAr));
+  res.json(rows);
+});
+
+// GET /api/admin/orphan-stock?companyId=X — preview orphan stock ledger rows
+router.get("/orphan-stock", requireSuperAdmin, async (req, res) => {
+  const companyId = Number(req.query.companyId);
+  if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+  const orphans = await getOrphanLedgerRows(companyId);
+  res.json({
+    count: orphans.length,
+    totalQty: orphans.reduce((s, r) => s + Number(r.qty), 0),
+    orphanIds: orphans.map(o => o.id),         // full set for snapshot-bound cleanup
+    rows: orphans.slice(0, 200),               // sample for UI table
+  });
+});
+
+// POST /api/admin/orphan-stock/cleanup
+//   body: { companyId, orphanIds: number[] }
+//   - Re-validates each supplied id inside a transaction (still orphan, same company,
+//     valid refType) so a stale preview can never delete more than the user reviewed.
+//   - Aggregates qty per (item, warehouse) and applies a single atomic SQL delta to
+//     stock_balance (`qty = qty - sum`), avoiding read-modify-write races.
+//   - Deletes the orphan ledger rows in the same transaction.
+router.post("/orphan-stock/cleanup", requireSuperAdmin, async (req, res) => {
+  const companyId = Number(req.body?.companyId);
+  const suppliedIds = Array.isArray(req.body?.orphanIds)
+    ? req.body.orphanIds.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n))
+    : [];
+  if (!companyId)        { res.status(400).json({ error: "companyId مطلوب" }); return; }
+  if (!suppliedIds.length){ res.json({ ok: true, deleted: 0, balancesAdjusted: 0 }); return; }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Load only rows that match (company + supplied ids + an orphan-eligible refType)
+      const candidates = await tx.select().from(stockLedgerTable).where(and(
+        eq(stockLedgerTable.companyId, companyId),
+        inArray(stockLedgerTable.id, suppliedIds),
+        inArray(stockLedgerTable.refType, ORPHAN_REF_TYPES as unknown as string[]),
+      ));
+      const trulyOrphan = await filterTrueOrphans(tx as unknown as typeof db, candidates);
+      if (!trulyOrphan.length) return { deleted: 0, balancesAdjusted: 0 };
+
+      // Aggregate qty per (itemId, warehouseId)
+      const deltas = new Map<string, { itemId: number; warehouseId: number; sum: number }>();
+      for (const r of trulyOrphan) {
+        const key = `${r.itemId}|${r.warehouseId}`;
+        const cur = deltas.get(key) ?? { itemId: r.itemId, warehouseId: r.warehouseId, sum: 0 };
+        cur.sum += Number(r.qty);
+        deltas.set(key, cur);
+      }
+
+      // Atomic SQL delta per (item, warehouse) — no RMW, race-safe under concurrency
+      let balancesAdjusted = 0;
+      for (const { itemId, warehouseId, sum } of deltas.values()) {
+        const updated = await tx.update(stockBalanceTable)
+          .set({ qty: sql`${stockBalanceTable.qty} - ${String(sum)}`, updatedAt: new Date() })
+          .where(and(
+            eq(stockBalanceTable.companyId,   companyId),
+            eq(stockBalanceTable.itemId,      itemId),
+            eq(stockBalanceTable.warehouseId, warehouseId),
+          ))
+          .returning({ id: stockBalanceTable.id });
+        balancesAdjusted += updated.length;
+      }
+
+      await tx.delete(stockLedgerTable).where(inArray(stockLedgerTable.id, trulyOrphan.map(r => r.id)));
+      return { deleted: trulyOrphan.length, balancesAdjusted };
+    });
+
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنظيف" });
+  }
 });
 
 export default router;

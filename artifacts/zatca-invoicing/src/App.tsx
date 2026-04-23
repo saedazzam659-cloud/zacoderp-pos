@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
+import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
 import CompanyNew from "@/pages/CompanyNew";
@@ -183,6 +184,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}
