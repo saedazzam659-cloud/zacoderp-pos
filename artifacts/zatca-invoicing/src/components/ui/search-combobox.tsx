@@ -58,18 +58,8 @@ export function SearchCombobox({
   // highlight=0) and silently overwrite the field.
   const [hasNavigated, setHasNavigated] = React.useState(false);
   React.useEffect(() => { if (!open) setHasNavigated(false); }, [open]);
-  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
-
-  // Auto-grow the textarea trigger: reset to auto, then set to scrollHeight
-  // clamped by max-height (CSS). This gives a smooth expand effect and shows
-  // a vertical scrollbar once the content exceeds the cap.
-  const autosize = React.useCallback(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.max(el.scrollHeight, 36)}px`;
-  }, []);
 
   const selectedItem = items.find(i => i.value === value);
 
@@ -136,10 +126,7 @@ export function SearchCombobox({
     inputRef.current?.focus();
   };
 
-  // Keep the trigger sized to match its content whenever the displayed value changes.
-  React.useEffect(() => { autosize(); }, [displayValue, autosize]);
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (!open) setOpen(true);
@@ -150,12 +137,12 @@ export function SearchCombobox({
       setHasNavigated(true);
       setHighlight(h => Math.max(0, h - 1));
     } else if (e.key === "Enter") {
-      // Textarea would insert a newline on Enter; we always block that. Then
-      // only consume Enter as a selection when the user has actually engaged
-      // with the list (typed a query or arrowed). Otherwise re-dispatch so
-      // the parent form's navigator can advance to the next field.
-      e.preventDefault();
+      // Only consume Enter as a selection when the user has actually
+      // engaged with the list (typed a query or arrowed). Otherwise let
+      // the event bubble so the parent form's navigation handler can
+      // advance focus to the next field.
       if (open && hasNavigated && flatList[highlight]) {
+        e.preventDefault();
         handleSelect(flatList[highlight].value);
       }
     } else if (e.key === "Escape") {
@@ -209,9 +196,9 @@ export function SearchCombobox({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
         <div className={cn("relative w-full", className)}>
-          <textarea
+          <input
             ref={inputRef}
-            rows={1}
+            type="text"
             role="combobox"
             aria-expanded={open}
             aria-autocomplete="list"
@@ -221,25 +208,19 @@ export function SearchCombobox({
             onFocus={() => setOpen(true)}
             onClick={() => setOpen(true)}
             onChange={e => {
-              // Strip any stray newlines pasted into the field; this is a
-              // single-value picker, not a multi-line input.
-              const v = e.target.value.replace(/\r?\n/g, " ");
-              setSearch(v);
+              setSearch(e.target.value);
               setHasNavigated(true);
               if (!open) setOpen(true);
-              autosize();
             }}
-            onInput={autosize}
             onKeyDown={onKeyDown}
             dir="auto"
             className={cn(
-              "flex min-h-9 max-h-28 w-full resize-none overflow-y-auto rounded-md border border-input bg-background px-3 py-1.5 pe-14 text-sm leading-snug shadow-sm",
-              "transition-[height] duration-100 ease-out",
+              "flex h-9 w-full rounded-md border border-input bg-background px-3 pe-14 text-sm shadow-sm",
               "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-50"
             )}
           />
-          <div className="absolute top-1.5 end-2 flex items-center gap-1 pointer-events-none">
+          <div className="absolute inset-y-0 end-2 flex items-center gap-1 pointer-events-none">
             {selectedItem && !open && (
               <button
                 type="button"
