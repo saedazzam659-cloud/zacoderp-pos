@@ -111,8 +111,8 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <Label className="text-xs">الرقم الضريبي للعميل</Label>
+      <div className="flex items-center justify-between min-h-[1.25rem]">
+        <Label className="text-xs font-medium text-foreground/80">الرقم الضريبي للعميل</Label>
         <Button
           type="button" variant="ghost" size="sm"
           className="h-6 px-2 text-xs gap-1 text-primary hover:text-primary hover:bg-primary/10"
