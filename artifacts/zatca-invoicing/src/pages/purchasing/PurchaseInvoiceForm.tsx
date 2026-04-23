@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
@@ -109,6 +111,9 @@ export default function PurchaseInvoiceForm() {
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
+  const { containerRef, onKeyDown } = useEnterNavigation(() => handleSave());
+  const docNumberRef = useRef<HTMLInputElement>(null);
+  useAutoFocusOnMount(docNumberRef);
 
   // Accounting accounts (used to build the journal entry on post)
   const [inventoryAccountId, setInventoryAccountId] = useState("");
@@ -539,7 +544,7 @@ export default function PurchaseInvoiceForm() {
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
   return (
-    <div className="space-y-5 max-w-6xl mx-auto" dir="rtl">
+    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir="rtl">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
@@ -577,7 +582,7 @@ export default function PurchaseInvoiceForm() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">رقم الفاتورة</Label>
-                  <Input className="h-9 text-sm" placeholder="تلقائي" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                  <Input ref={docNumberRef} className="h-9 text-sm" placeholder="تلقائي" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">التاريخ *</Label>
@@ -1041,8 +1046,8 @@ export default function PurchaseInvoiceForm() {
 
       {/* Footer actions */}
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
-        <Button onClick={handleSave} disabled={saveMut.isPending}>
+        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
+        <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
           {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
         </Button>
       </div>

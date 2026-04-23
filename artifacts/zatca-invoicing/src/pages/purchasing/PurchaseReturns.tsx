@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -80,6 +82,10 @@ export default function PurchaseReturns() {
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
+  const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(
+    () => handleSubmit({ preventDefault() {} } as any),
+  );
+  const docNumberRef = useRef<HTMLInputElement>(null);
   const [printData, setPrintData] = useState<any>(null);
 
   // ── Lookups ─────────────────────────────────────────────
@@ -170,6 +176,7 @@ export default function PurchaseReturns() {
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useAutoFocusOnMount(docNumberRef, showForm);
   useEffect(() => {
     if (!showForm || !defaultBranch || form.branchId) return;
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
@@ -589,7 +596,7 @@ export default function PurchaseReturns() {
   const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, s.nameAr]));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6" dir="rtl">
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
@@ -630,7 +637,7 @@ export default function PurchaseReturns() {
 
             <TabsContent value="header" className="mt-0 space-y-4">
             <FormGrid>
-              <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
+              <Field label="رقم المرتجع"><Input ref={docNumberRef} placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد">
                 <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />

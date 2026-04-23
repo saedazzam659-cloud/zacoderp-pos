@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -88,6 +90,10 @@ export default function SalesReturns() {
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
+  const docNumberRef = useRef<HTMLInputElement>(null);
+  const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(
+    () => handleSubmit({ preventDefault() {} } as any),
+  );
 
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-returns", cid],
@@ -152,6 +158,7 @@ export default function SalesReturns() {
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  useAutoFocusOnMount(docNumberRef, showForm);
   useEffect(() => {
     if (!showForm || !defaultBranch || form.branchId) return;
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));
@@ -562,7 +569,7 @@ export default function SalesReturns() {
     s === "posted" ? t("status.posted") : t("status.draft");
 
   return (
-    <div className="space-y-6">
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -601,7 +608,7 @@ export default function SalesReturns() {
 
             <TabsContent value="header" className="mt-0 space-y-5">
             <FormGrid>
-              <Field label={t("salesReturns.returnNumber")}><Input placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
+              <Field label={t("salesReturns.returnNumber")}><Input ref={docNumberRef} placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
               <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>

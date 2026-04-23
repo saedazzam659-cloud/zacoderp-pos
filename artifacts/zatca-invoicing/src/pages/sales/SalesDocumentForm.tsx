@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
+import { useEnterNavigation } from "@/hooks/useEnterNavigation";
+import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useRoute, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -120,6 +122,9 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setFocusLineId(l._id);
   };
   useEnterNavContainer({ onAppend: () => addLine() });
+  const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
+  const docNumberRef = useRef<HTMLInputElement>(null);
+  useAutoFocusOnMount(docNumberRef);
 
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");
@@ -664,7 +669,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   );
 
   return (
-    <div className="space-y-5 max-w-6xl mx-auto">
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
           <BackIcon className="h-4 w-4" />
@@ -707,7 +712,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
-                  <Input className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                  <Input ref={docNumberRef} className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.date")}</Label>
