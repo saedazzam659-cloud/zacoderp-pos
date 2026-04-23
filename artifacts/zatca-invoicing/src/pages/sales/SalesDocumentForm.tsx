@@ -520,32 +520,28 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
   const linesSection = (
     <div className="pt-2 space-y-3">
-              <div data-enter-nav-container="lines" className="space-y-1.5">
-                {(() => {
-                  const gridCols = isInvoice
-                    ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
-                    : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto";
-                  const totalLabel = t("salesDocForm.colTotal");
-                  const headers = isInvoice
-                    ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
-                    : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
-                  return (
-                    <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: gridCols }}>
-                      {headers.map((h, i) => (
-                        <p key={i} className={cn("text-[10px]", h === totalLabel ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
-                      ))}
-                    </div>
-                  );
-                })()}
+              {(() => {
+                const gridCols = isInvoice
+                  ? "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px"
+                  : "240px 110px 120px 90px 110px 80px 80px 130px 200px 40px";
+                const totalLabel = t("salesDocForm.colTotal");
+                const headers = isInvoice
+                  ? [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colWarehouse"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""]
+                  : [t("salesDocForm.colItem"), t("salesDocForm.colItemCode"), t("salesDocForm.colUnit"), t("salesDocForm.colQty"), t("salesDocForm.colPrice"), t("salesDocForm.colDiscPct"), t("salesDocForm.colVatPct"), totalLabel, t("salesDocForm.colNotes"), ""];
+                return (
+              <div data-enter-nav-container="lines" className="rounded-xl border bg-card overflow-x-auto">
+                <div className="min-w-max">
+                <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: gridCols }}>
+                  {headers.map((h, i) => (
+                    <p key={i} className={cn("text-[11px] font-medium truncate", h === totalLabel ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
+                  ))}
+                </div>
+                <div className="divide-y">
                 {lines.map(l => (
-                  <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
+                  <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
                     <div
-                      className="grid gap-1.5 items-center"
-                      style={{
-                        gridTemplateColumns: isInvoice
-                          ? "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto"
-                          : "2.6fr 1fr 1.2fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.5fr auto",
-                      }}
+                      className="grid gap-2 items-center"
+                      style={{ gridTemplateColumns: gridCols }}
                     >
                       {inventoryItems.length > 0 ? (
                         <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} />
@@ -609,7 +605,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </div>
                   </div>
                 ))}
+                </div>
+                </div>
               </div>
+                );
+              })()}
 
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />{t("salesDocForm.addLine")}

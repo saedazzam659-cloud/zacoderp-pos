@@ -870,14 +870,20 @@ export default function PurchaseReturns() {
                 <ListOrdered className="h-4 w-4" />
                 <span>أصناف المرتجع ({lines.filter(l => l.itemId || l.itemName).length})</span>
               </div>
-              <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
+              {(() => {
+                const GRID_COLS_PR = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
+                return (
+              <div className="rounded-xl border bg-card overflow-x-auto">
+                <div className="min-w-max">
+              <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: GRID_COLS_PR }}>
                 {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "السعر", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""].map((h, i) => (
-                  <p key={i} className={cn("text-[10px]", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
+                  <p key={i} className={cn("text-[11px] font-medium truncate", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
                 ))}
               </div>
+              <div className="divide-y">
               {lines.map(l => (
-                <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
-                  <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
+                <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
+                  <div className="grid gap-2 items-center" style={{ gridTemplateColumns: GRID_COLS_PR }}>
                     {inventoryItems.length > 0 ? (
                       <SearchCombobox
                         items={itemComboItems}
@@ -943,6 +949,11 @@ export default function PurchaseReturns() {
                   </div>
                 </div>
               ))}
+              </div>
+                </div>
+              </div>
+                );
+              })()}
 
               <Button type="button" variant="outline" size="sm" className="gap-2"
                 onClick={addLine}>
