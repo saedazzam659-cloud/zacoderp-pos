@@ -1,8 +1,60 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable, accountsTable } from "@workspace/db";
+import { eq, and, sql, like, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+// Auto-create a sub-account under the "Accounts Payable — Suppliers" parent.
+// Returns the new account id, or null if no suitable parent exists.
+async function ensureSupplierAccount(companyId: number, supplierName: string): Promise<number | null> {
+  // 1) Find parent: prefer code starting with '2110', else any liability account whose name contains "موردين"/"suppli"/"payab".
+  const candidates = await db.select().from(accountsTable)
+    .where(and(
+      eq(accountsTable.companyId, companyId),
+      eq(accountsTable.accountType, "liability"),
+      or(
+        like(accountsTable.code, "2110%"),
+        like(accountsTable.nameAr, "%موردين%"),
+        like(accountsTable.nameAr, "%دائن%"),
+      ),
+    ));
+  const parent =
+    candidates.find(a => a.code.startsWith("2110")) ??
+    candidates.find(a => (a.nameAr || "").includes("موردين")) ??
+    candidates[0];
+  if (!parent) return null;
+
+  // 2) Next sequential code under this parent: "<parentCode>-NNN"
+  const siblings = await db.select({ code: accountsTable.code }).from(accountsTable)
+    .where(and(eq(accountsTable.companyId, companyId), eq(accountsTable.parentId, parent.id)));
+  const prefix = `${parent.code}-`;
+  let maxSeq = 0;
+  for (const s of siblings) {
+    if (s.code.startsWith(prefix)) {
+      const n = parseInt(s.code.slice(prefix.length), 10);
+      if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+  const newCode = `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
+
+  // 3) Create sub-account (posting) and flip parent to non-posting if needed.
+  const [created] = await db.insert(accountsTable).values({
+    companyId,
+    parentId: parent.id,
+    code: newCode,
+    nameAr: supplierName,
+    accountType: "liability",
+    reportDirection: parent.reportDirection ?? null,
+    level: (parent.level ?? 1) + 1,
+    isPosting: true,
+    isActive: true,
+  }).returning();
+
+  if (parent.isPosting) {
+    await db.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
+  }
+  return created?.id ?? null;
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -95,6 +147,17 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Auto-create a sub-account under the suppliers parent if none was provided.
+  let accountId: number | null = data.accountId ? Number(data.accountId) : null;
+  if (!accountId) {
+    try {
+      accountId = await ensureSupplierAccount(companyId, String(data.nameAr).trim());
+    } catch (err) {
+      console.error("ensureSupplierAccount failed:", err);
+      accountId = null;
+    }
+  }
+
   const [supplier] = await db.insert(suppliersTable).values({
     companyId,
     code: data.code ?? null,
@@ -110,7 +173,7 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber ?? null,
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
-    accountId: data.accountId ? Number(data.accountId) : null,
+    accountId,
   }).returning();
   res.status(201).json(supplier);
 });
