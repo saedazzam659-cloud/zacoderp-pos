@@ -13,8 +13,9 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft, ChevronRight, Network } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AccountTreePickerDialog } from "@/components/AccountTreePickerDialog";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -70,6 +71,7 @@ export default function ChartOfAccounts() {
   const [form, setForm]             = useState<any>(EMPTY);
   const [editId, setEditId]         = useState<number | null>(null);
   const [showForm, setShowForm]     = useState(false);
+  const [treeOpen, setTreeOpen]     = useState(false);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -244,6 +246,18 @@ export default function ChartOfAccounts() {
           saveDisabled={!form.code || !form.nameAr || !form.accountType}
           saveLabel={editId ? t("chartOfAccounts.saveEdit") : t("chartOfAccounts.addAccountAction")}
         >
+          <AccountTreePickerDialog
+            open={treeOpen}
+            onOpenChange={setTreeOpen}
+            title="اختر الحساب الأب من شجرة الحسابات"
+            description="تصفّح وابحث في شجرة الحسابات. يمكن اختيار أي حساب رئيسي أو فرعي ليكون الأب."
+            currentAccountId={form.parentId ? Number(form.parentId) : null}
+            onlyPosting={false}
+            onSelect={(acc) => {
+              setForm((p: any) => ({ ...p, parentId: String(acc.id) }));
+              setTreeOpen(false);
+            }}
+          />
           <FormGrid>
             <Field label={t("chartOfAccounts.accountCode")} required>
               <Input placeholder={t("chartOfAccounts.placeholderCode")} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
@@ -263,13 +277,26 @@ export default function ChartOfAccounts() {
               <Input placeholder={t("chartOfAccounts.placeholderNameEn")} dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
             </Field>
             <Field label={t("chartOfAccounts.parentAccount")}>
-              <SearchCombobox
-                items={parentItems}
-                value={form.parentId}
-                onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
-                placeholder={t("chartOfAccounts.noParent")}
-                searchPlaceholder={t("chartOfAccounts.searchParent")}
-              />
+              <div className="flex gap-1.5">
+                <div className="flex-1 min-w-0">
+                  <SearchCombobox
+                    items={parentItems}
+                    value={form.parentId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
+                    placeholder={t("chartOfAccounts.noParent")}
+                    searchPlaceholder={t("chartOfAccounts.searchParent")}
+                  />
+                </div>
+                <Button
+                  type="button" variant="outline" size="icon"
+                  className="h-9 w-9 shrink-0"
+                  title="اختر من شجرة الحسابات"
+                  onClick={() => setTreeOpen(true)}
+                  data-testid="btn-tree-parent-account"
+                >
+                  <Network className="h-4 w-4" />
+                </Button>
+              </div>
             </Field>
             <Field label={t("chartOfAccounts.level")}>
               <Input type="number" min="1" max="10" value={form.level} onChange={e => setForm((p: any) => ({ ...p, level: Number(e.target.value) }))} />
