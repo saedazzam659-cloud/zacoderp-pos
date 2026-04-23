@@ -111,15 +111,15 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between min-h-[1.25rem]">
+      <div className="flex items-center justify-between gap-2 leading-none">
         <Label className="text-xs font-medium text-foreground/80">الرقم الضريبي للعميل</Label>
-        <Button
-          type="button" variant="ghost" size="sm"
-          className="h-6 px-2 text-xs gap-1 text-primary hover:text-primary hover:bg-primary/10"
+        <button
+          type="button"
+          className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5"
           onClick={() => { setNewName(""); setNewVat(""); setOpen(true); }}
         >
-          <Plus className="h-3 w-3" />عميل جديد
-        </Button>
+          <Plus className="h-2.5 w-2.5" />عميل جديد
+        </button>
       </div>
       <Input
         className="h-9 text-sm font-mono text-left"
