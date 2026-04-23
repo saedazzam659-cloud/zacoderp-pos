@@ -304,7 +304,7 @@ export default function PurchaseInvoiceForm() {
       weight:      String(l.weight ?? "0"),
       unitPrice:   String(l.unitPrice),
       discount:    String(l.discount ?? "0"),
-      vatRate:     String(l.vatRate ?? "15"),
+      vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       expenseShare:String(l.expenseShare ?? "0"),
       finalCost:   String(l.finalCost ?? "0"),
@@ -357,7 +357,7 @@ export default function PurchaseInvoiceForm() {
           weight:      String(l.weight ?? "0"),
           unitPrice:   String(l.unitPrice),
           discount:    String(l.discount ?? "0"),
-          vatRate:     String(l.vatRate ?? "15"),
+          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           expenseShare:String(l.expenseShare ?? "0"),
           finalCost:   String(l.finalCost ?? "0"),
@@ -417,7 +417,7 @@ export default function PurchaseInvoiceForm() {
         unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: trimTrailingZeros(base?.costPrice ?? item.costPrice ?? "0"),
-        vatRate:   String(item.vatRate ?? "15"),
+        vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };

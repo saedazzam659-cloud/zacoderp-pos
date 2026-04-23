@@ -287,7 +287,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       qty:         String(l.qty),
       unitPrice:   String(l.unitPrice),
       discount:    String(l.discount ?? "0"),
-      vatRate:     String(l.vatRate ?? "15"),
+      vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
     })) : [newLine()]);
@@ -339,7 +339,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           qty:         String(l.qty),
           unitPrice:   String(l.unitPrice),
           discount:    String(l.discount ?? "0"),
-          vatRate:     String(l.vatRate ?? "15"),
+          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
         })) : [newLine()]);
@@ -403,7 +403,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),
         unitPrice: trimTrailingZeros(chosenPrice),
-        vatRate:   String(item.vatRate ?? "15"),
+        vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
