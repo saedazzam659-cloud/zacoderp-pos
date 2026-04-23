@@ -609,6 +609,17 @@ export default function PurchaseInvoiceForm() {
         </div>
       </div>
 
+      <AccountTreePickerDialog
+        open={treePickerOpen}
+        onOpenChange={setTreePickerOpen}
+        title={treeContext.title}
+        accountTypes={treeContext.types}
+        currentAccountId={treeContext.currentAccountId}
+        linkedAccountIds={treeContext.linkedIds}
+        description="تصفّح وابحث في شجرة الحسابات. الحسابات المرتبطة بكيان موجود تحمل شارة (مرتبط) خضراء."
+        onSelect={treeContext.onPick}
+      />
+
       <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
         <Card className="border-2">
           <CardHeader className="p-0">
@@ -1110,16 +1121,6 @@ export default function PurchaseInvoiceForm() {
         </Button>
       </div>
 
-      <AccountTreePickerDialog
-        open={treePickerOpen}
-        onOpenChange={setTreePickerOpen}
-        title={treeContext.title}
-        accountTypes={treeContext.types}
-        currentAccountId={treeContext.currentAccountId}
-        linkedAccountIds={treeContext.linkedIds}
-        description="تصفّح وابحث في شجرة الحسابات. الحسابات المرتبطة بكيان موجود تحمل شارة (مرتبط) خضراء."
-        onSelect={treeContext.onPick}
-      />
     </div>
   );
 }

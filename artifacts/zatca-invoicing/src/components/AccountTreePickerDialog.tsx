@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChevronLeft, ChevronDown, Search, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronDown, Search, Loader2, Network, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -23,7 +23,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentAccountId?: number | null;
-  /** Account IDs that are linked to a real entity (cash box / bank / supplier). Shown with a green dot. Not a hard filter. */
+  /** Account IDs that are linked to a real entity. Shown with a green dot. Not a hard filter. */
   linkedAccountIds?: Set<number> | null;
   /** Filter accounts by type (e.g. ["asset"], ["liability"]). When omitted, all types shown. */
   accountTypes?: string[];
@@ -48,6 +48,7 @@ export function AccountTreePickerDialog({
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selectedId, setSelectedId] = useState<number | null>(currentAccountId ?? null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const { data: accounts = [], isLoading } = useQuery<any[]>({
     queryKey: ["accounts", cid],
@@ -59,9 +60,16 @@ export function AccountTreePickerDialog({
     enabled: open && !!user,
   });
 
-  // Reset selection when dialog (re)opens with new currentAccountId
+  // Reset selection + scroll into view when (re)opened
   useEffect(() => {
-    if (open) setSelectedId(currentAccountId ?? null);
+    if (open) {
+      setSelectedId(currentAccountId ?? null);
+      setSearch("");
+      // Scroll the inline panel into view shortly after it mounts
+      requestAnimationFrame(() => {
+        containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }, [open, currentAccountId]);
 
   // Filter by type
@@ -208,13 +216,29 @@ export function AccountTreePickerDialog({
     onOpenChange(false);
   };
 
+  if (!open) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl" dir="rtl">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          {description && <p className="text-xs text-muted-foreground">{description}</p>}
-        </DialogHeader>
+    <Card ref={containerRef as any} className="border-primary/40 shadow-sm" dir="rtl" data-testid="account-tree-panel">
+      <CardContent className="p-4 md:p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3 border-b pb-3">
+          <div className="flex items-center gap-2">
+            <Network className="h-5 w-5 text-primary" />
+            <div>
+              <h3 className="text-base font-bold">{title}</h3>
+              {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+            </div>
+          </div>
+          <Button
+            type="button" variant="ghost" size="sm"
+            onClick={() => onOpenChange(false)}
+            className="text-muted-foreground"
+            data-testid="account-tree-close"
+          >
+            <X className="h-4 w-4" />
+            إغلاق
+          </Button>
+        </div>
 
         <div className="relative">
           <Search className="absolute top-1/2 -translate-y-1/2 right-3 h-4 w-4 text-muted-foreground" />
@@ -224,10 +248,11 @@ export function AccountTreePickerDialog({
             onChange={(e) => setSearch(e.target.value)}
             className="pe-9"
             data-testid="account-tree-search"
+            autoFocus
           />
         </div>
 
-        <ScrollArea className="h-[420px] border rounded-lg p-2 bg-muted/20">
+        <ScrollArea className="h-[360px] border rounded-lg p-2 bg-muted/20">
           {isLoading ? (
             <div className="grid place-items-center h-full">
               <Loader2 className="w-5 h-5 animate-spin text-primary" />
@@ -239,19 +264,20 @@ export function AccountTreePickerDialog({
           )}
         </ScrollArea>
 
-        <div className="text-xs text-muted-foreground -mt-1">
-          {selected ? (
-            <>المختار: <span className="font-mono">{selected.code}</span> — <strong>{selected.nameAr}</strong></>
-          ) : (
-            <>اضغط مرتين على الحساب لاختياره مباشرة، أو اختره ثم اضغط "تأكيد"</>
-          )}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-xs text-muted-foreground">
+            {selected ? (
+              <>المختار: <span className="font-mono">{selected.code}</span> — <strong>{selected.nameAr}</strong></>
+            ) : (
+              <>اضغط مرتين على الحساب لاختياره مباشرة، أو اختره ثم اضغط "تأكيد"</>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>إلغاء</Button>
+            <Button size="sm" onClick={handleConfirm} disabled={!selected || !isSelectable(selected)} data-testid="account-tree-confirm">تأكيد</Button>
+          </div>
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>إلغاء</Button>
-          <Button onClick={handleConfirm} disabled={!selected || !isSelectable(selected)} data-testid="account-tree-confirm">تأكيد</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </CardContent>
+    </Card>
   );
 }
