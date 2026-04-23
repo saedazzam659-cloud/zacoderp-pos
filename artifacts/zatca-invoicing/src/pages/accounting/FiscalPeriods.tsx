@@ -68,7 +68,7 @@ export default function FiscalPeriods() {
   const { data: years = [], isLoading: yearsLoading } = useQuery<FiscalYear[]>({
     queryKey: ["fiscal-years", cid],
     queryFn: async () => {
-      const url = cid ? `${API}/api/fiscal-years?companyId=${cid}` : `${API}/api/fiscal-years`;
+      const url = cid ? `${API}/api/fiscal/years?companyId=${cid}` : `${API}/api/fiscal/years`;
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       return r.ok ? r.json() : [];
     },
@@ -78,8 +78,10 @@ export default function FiscalPeriods() {
     queryKey: ["fiscal-periods", selectedYearId],
     enabled: !!selectedYearId,
     queryFn: async () => {
-      const r = await fetch(`${API}/api/fiscal-periods?fiscalYearId=${selectedYearId}`, { headers: { Authorization: `Bearer ${token}` } });
-      return r.ok ? r.json() : [];
+      const r = await fetch(`${API}/api/fiscal/years/${selectedYearId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return d?.periods ?? [];
     },
   });
 
@@ -132,7 +134,7 @@ export default function FiscalPeriods() {
 
   const updateYearStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const r = await fetch(`${API}/api/fiscal-years/${id}/status`, {
+      const r = await fetch(`${API}/api/fiscal/years/${id}/status`, {
         method: "PATCH", headers, body: JSON.stringify({ status }),
       });
       const d = await r.json();
