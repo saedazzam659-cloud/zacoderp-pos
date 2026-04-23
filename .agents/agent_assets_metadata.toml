@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "ZijkzvPyt1HNWuXO3Wk_d"
+uri = "file://exports/zacoderp-source.tar.gz"
+type = "unspecified"
+title = "كود المشروع الكامل (Frontend + Backend + Schema)"
+
+[[outputs]]
+id = "3Bb-YqznDWBrBZS8mXFoe"
+uri = "file://exports/README.md"
+type = "text"
+title = "دليل تشغيل المشروع (README)"
+
+[[outputs]]
+id = "9h-pg5LlnemsY3P9TELTR"
+uri = "file://exports/ERD.md"
+type = "text"
+title = "مخطط العلاقات بين الجداول (ERD)"
