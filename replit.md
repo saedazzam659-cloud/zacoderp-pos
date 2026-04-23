@@ -50,6 +50,13 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**Default to Main Branch (April 2026)**
+- Forms that have a branch dropdown now auto-pick the branch flagged `isMain` (fallback: first branch in the list) when creating a new record. Editing keeps whatever was saved. Pattern (matching what Sales/Purchase forms already did) added to:
+  - `accounting/JournalEntryForm.tsx` (only when `isNew`).
+  - `cash/BankAccounts.tsx` (when the side panel opens for a new bank account).
+  - `cash/CashBoxes.tsx` (when the side panel opens for a new cash box).
+- Detection: `branches.find(b => b.isMain) ?? branches[0]`. Only assigns when `branchId` is empty so it never clobbers a user's selection.
+
 **Journal Entry Form — Enter-Key Navigation & Description Mirroring (April 2026)**
 - Typing in **البيان العام** (general description) now auto-fills each line's **بيان السطر** (line description). Lines that the user has manually customised (description differs from the previous general value and is not empty) are preserved.
 - Enter key now advances focus through **every** field on `/accounting/journals/new` (and edit) in DOM order: text inputs → date input → dropdowns → exchange rate → textarea → for each line: account combobox → debit → credit → line description → cost-center combobox → next line. Reaching the last field triggers `handleSave()` (guarded by `saveMutation.isPending`).

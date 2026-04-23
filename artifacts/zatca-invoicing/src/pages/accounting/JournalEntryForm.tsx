@@ -83,6 +83,17 @@ export default function JournalEntryForm() {
     enabled: !!user,
   });
 
+  // Auto-pick the main branch ONCE when creating a new entry. After that we
+  // never touch branchId again, so picking "— بدون فرع —" (which sets it to
+  // "") is preserved instead of being re-defaulted on the next render.
+  const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
+  const branchDefaultedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew || branchDefaultedRef.current || !defaultBranch || branchId) return;
+    setBranchId(String(defaultBranch.id));
+    branchDefaultedRef.current = true;
+  }, [isNew, defaultBranch?.id, branchId]);
+
   const { data: dbCurrencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
     queryFn: async () => {

@@ -58,14 +58,18 @@ export default function CashBoxes() {
     enabled: !!cid,
   });
   const defaultCurrencyId = (currencies as any[]).find((c: any) => c.isDefault)?.id ?? (currencies as any[])[0]?.id ?? null;
+  const defaultBranchId   = (branches   as any[]).find((b: any) => b.isMain)?.id   ?? (branches   as any[])[0]?.id ?? null;
 
-  // Auto-pick the default currency when the form opens for a new row
+  // Auto-pick the default currency / main branch when the form opens for a new row
   useEffect(() => {
     if (panel && !editing && !form.currencyId && defaultCurrencyId) {
       setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
     }
+    if (panel && !editing && !form.branchId && defaultBranchId) {
+      setForm(p => ({ ...p, branchId: String(defaultBranchId) }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel, editing, defaultCurrencyId]);
+  }, [panel, editing, defaultCurrencyId, defaultBranchId]);
 
   const balMap: Record<number, number> = Object.fromEntries((balances as any[]).map((b: any) => [b.cashBoxId, b.balance]));
   const filtered = (boxes as any[]).filter((b: any) => b.nameAr?.includes(search) || b.nameEn?.toLowerCase().includes(search.toLowerCase()) || b.code?.includes(search));
