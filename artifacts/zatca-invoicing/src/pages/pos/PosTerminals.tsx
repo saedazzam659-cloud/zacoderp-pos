@@ -311,18 +311,6 @@ export default function PosTerminals() {
         </div>
       )}
 
-      {/* Editor */}
-      <TerminalEditor
-        open={!!editing}
-        draft={editing}
-        branches={branchesQ.data ?? []}
-        cashBoxes={cashBoxesQ.data ?? []}
-        onClose={() => setEditing(null)}
-        onChange={setEditing}
-        onSave={() => editing && saveMut.mutate(editing)}
-        saving={saveMut.isPending}
-      />
-
       {/* Delete confirm */}
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
