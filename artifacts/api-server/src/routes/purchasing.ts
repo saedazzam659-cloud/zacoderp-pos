@@ -13,6 +13,7 @@ import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
+import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -526,14 +527,19 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     const totalAmount    = Number(inv.totalAmount    || 0);
     const inventoryDebit = totalAmount - vatAmount + discountAmount;
 
+    // Fallback to accounting mappings when per-invoice accounts are not set
+    const mapPi = await loadMappings(cid, "purchase_invoice");
+    const taxAccId      = pickAccount(inv.taxAccountId,      mapPi("purchase_invoice", "vat_input"));
+    const discountAccId = pickAccount(inv.discountAccountId, mapPi("purchase_invoice", "discount"));
+
     const counterpartyAccountId =
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getSupplierAccountId(cid, inv.supplierId);
 
     const missing: string[] = [];
-    if (vatAmount > 0 && !inv.taxAccountId) missing.push("حساب الضرائب");
-    if (discountAmount > 0 && !inv.discountAccountId) missing.push("حساب الخصم المكتسب");
+    if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
+    if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : inv.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
@@ -586,9 +592,9 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
               description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
             };
           }),
-        { accountId: inv.taxAccountId,       debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
+        { accountId: taxAccId,               debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
         { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
-        { accountId: inv.discountAccountId,  credit: discountAmount, description: "خصم مكتسب" },
+        { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
       ],
     });
 
@@ -905,14 +911,18 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
     const discountAmount = Number((ret as any).discountAmount || 0);
     const subtotal       = totalAmount - vatAmount + discountAmount;
 
+    const mapPr = await loadMappings(cid, "purchase_return");
+    const taxAccId      = pickAccount((ret as any).taxAccountId,      mapPr("purchase_return", "vat_input"));
+    const discountAccId = pickAccount((ret as any).discountAccountId, mapPr("purchase_return", "discount"));
+
     const counterpartyAccountId =
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
       : ret.paymentType === "bank" ? await getBankAccountAccountId(cid, (ret as any).bankAccountId)
       : await getSupplierAccountId(cid, ret.supplierId);
 
     const missing: string[] = [];
-    if (vatAmount > 0 && !(ret as any).taxAccountId) missing.push("حساب الضرائب");
-    if (discountAmount > 0 && !(ret as any).discountAccountId) missing.push("حساب الخصم المكتسب");
+    if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
+    if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(ret.paymentType === "cash" ? "حساب الخزنة" : ret.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
@@ -953,7 +963,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
       exchangeRate: ret.exchangeRate,
       lines: [
         { accountId: counterpartyAccountId,           debit:  totalAmount,    description: ret.paymentType === "cash" ? "استرداد نقدي" : ret.paymentType === "bank" ? "استرداد بنكي" : "تخفيض رصيد المورد" },
-        { accountId: (ret as any).discountAccountId,  debit:  discountAmount, description: "إلغاء خصم مكتسب" },
+        { accountId: discountAccId,                   debit:  discountAmount, description: "إلغاء خصم مكتسب" },
         // Inventory: one credit line per warehouse using its own GL account
         ...Object.entries(inventoryCreditByWh)
           .filter(([, amt]) => amt > 0)

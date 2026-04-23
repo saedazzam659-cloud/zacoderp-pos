@@ -626,9 +626,6 @@ export default function PurchaseReturns() {
         >
           <Tabs defaultValue="header" dir="rtl" className="space-y-4">
             <TabsList className="h-9 bg-muted/40 border gap-1">
-              <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <Calculator className="h-3.5 w-3.5" />حسابات القيد
-              </TabsTrigger>
               <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />البيانات الرأسية
               </TabsTrigger>
@@ -864,32 +861,6 @@ export default function PurchaseReturns() {
               })()
             )}
 
-            </TabsContent>
-
-            <TabsContent value="accounts" className="mt-0">
-            <div className="rounded-lg border bg-blue-50/40 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-blue-900">
-                <Calculator className="h-4 w-4" />
-                <span className="text-xs font-semibold">حسابات القيد المحاسبي (ترحيل المرتجع)</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
-                  <AccountCombobox value={form.taxAccountId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
-                    placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">حساب الخصم المكتسب</Label>
-                  <AccountCombobox value={form.discountAccountId}
-                    onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
-                    placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
-                </div>
-              </div>
-              <p className="text-[11px] text-blue-900/70">
-                مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة. عند اختيار الفاتورة المصدر يتم تعبئة الحسابات تلقائياً.
-              </p>
-            </div>
             </TabsContent>
 
             <TabsContent value="header" className="mt-0 space-y-5">

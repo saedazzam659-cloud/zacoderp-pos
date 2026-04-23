@@ -864,26 +864,6 @@ export default function PurchaseInvoiceForm() {
                 )}
               </div>
 
-              {/* ── Accounting / حسابات الترحيل ──────────────────────── */}
-              <div className="rounded-lg border bg-blue-50/40 p-3 space-y-2">
-                <div className="text-xs font-semibold text-blue-900">حسابات القيد المحاسبي (ترحيل)</div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">حساب الضرائب (مدخلات)</Label>
-                    <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
-                      placeholder="اختر حساب ضريبة المدخلات..." filterTypes={["asset", "liability"]} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">حساب الخصم المكتسب</Label>
-                    <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
-                      placeholder="اختر حساب الخصم المكتسب..." filterTypes={["revenue"]} />
-                  </div>
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  مطلوبة عند الترحيل لإنشاء القيد. يمكن ترك الضريبة/الخصم فارغاً إذا لم يكن هناك قيمة.
-                </div>
-              </div>
-
               <div className="space-y-1.5">
                 <Label className="text-xs">ملاحظات</Label>
                 <Textarea className="resize-none text-sm" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />

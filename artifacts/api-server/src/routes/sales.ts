@@ -13,6 +13,7 @@ import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
+import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -413,8 +414,13 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     //   Cr Sales Revenue (= subtotal, gross before discount)
     //   Cr VAT Output    (= vatAmount)
     //   Cr Inventory     (= total cost — credit reduces inventory asset)
-    if (!inv.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
-    if (!inv.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
+    const mapSi = await loadMappings(cid, "sales_invoice");
+    const salesAccId    = pickAccount(inv.salesAccountId,    mapSi("sales_invoice", "revenue"));
+    const cogsAccId     = pickAccount(inv.cogsAccountId,     mapSi("sales_invoice", "cogs"));
+    const taxAccId      = pickAccount(inv.taxAccountId,      mapSi("sales_invoice", "vat_output"));
+    const discountAccId = pickAccount(inv.discountAccountId, mapSi("sales_invoice", "discount"));
+    if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
+    if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
     // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -444,11 +450,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       return;
     }
 
-    if (discountAmt > 0 && !inv.discountAccountId) {
-      res.status(400).json({ error: "اختر حساب الخصم المسموح به (يوجد خصم على الفاتورة)" }); return;
+    if (discountAmt > 0 && !discountAccId) {
+      res.status(400).json({ error: "لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)" }); return;
     }
-    if (vatAmt > 0 && !inv.taxAccountId) {
-      res.status(400).json({ error: "اختر حساب ضريبة القيمة المضافة (مخرجات)" }); return;
+    if (vatAmt > 0 && !taxAccId) {
+      res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
 
     const journalId = await createJournalEntry({
@@ -462,11 +468,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       lines: [
         // Debits
         { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
-        { accountId: inv.discountAccountId, debit: discountAmt, description: "خصم مسموح به" },
-        { accountId: inv.cogsAccountId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
+        { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
+        { accountId: cogsAccId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
         // Credits
-        { accountId: inv.salesAccountId,     credit: subtotalAmt, description: "إيراد المبيعات" },
-        { accountId: inv.taxAccountId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
+        { accountId: salesAccId,     credit: subtotalAmt, description: "إيراد المبيعات" },
+        { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
         // Inventory: one credit line per warehouse using its own GL account
         ...Object.entries(cogsByWarehouse)
           .filter(([, amt]) => amt > 0)
@@ -841,8 +847,12 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         }
       }
     }
-    if (!ret.salesAccountId)     { res.status(400).json({ error: "اختر حساب إيراد المبيعات قبل الترحيل" }); return; }
-    if (!ret.cogsAccountId)      { res.status(400).json({ error: "اختر حساب تكلفة البضاعة المباعة قبل الترحيل" }); return; }
+    const mapSr = await loadMappings(cid, "sales_return");
+    const salesAccId    = pickAccount(ret.salesAccountId,    mapSr("sales_return", "revenue"));
+    const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs"));
+    const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output"));
+    if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
+    if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
     // Inventory account derived from warehouse — verify each used warehouse has one
     const missingWh: string[] = [];
     for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
@@ -870,8 +880,8 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         : "العميل لا يحتوي على حساب محاسبي مرتبط" });
       return;
     }
-    if (vatAmt > 0 && !ret.taxAccountId) {
-      res.status(400).json({ error: "اختر حساب ضريبة القيمة المضافة (مخرجات)" }); return;
+    if (vatAmt > 0 && !taxAccId) {
+      res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
 
     const journalId = await createJournalEntry({
@@ -884,8 +894,8 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       description: `قيد مرتجع مبيعات رقم ${ret.docNumber || ret.id}`,
       lines: [
         // Debits (reversed)
-        { accountId: ret.salesAccountId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
-        { accountId: ret.taxAccountId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
+        { accountId: salesAccId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
+        { accountId: taxAccId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
         // Inventory: one debit line per warehouse using its own GL account
         ...Object.entries(cogsByWarehouse)
           .filter(([, amt]) => amt > 0)

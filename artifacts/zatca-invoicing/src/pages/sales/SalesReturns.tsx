@@ -598,9 +598,6 @@ export default function SalesReturns() {
         >
           <Tabs defaultValue="header" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
             <TabsList className="h-9 bg-muted/40 border gap-1">
-              <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <Calculator className="h-3.5 w-3.5" />{t("salesReturns.tabAccounts")}
-              </TabsTrigger>
               <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{t("salesReturns.tabHeader")}
               </TabsTrigger>
@@ -674,40 +671,6 @@ export default function SalesReturns() {
               )}
               <Field label={t("salesReturns.notes")} className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
-            </TabsContent>
-
-            <TabsContent value="accounts" className="mt-0">
-            <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
-              <div className="flex items-center gap-2 text-blue-900">
-                <Calculator className="h-4 w-4" />
-                <span className="text-xs font-semibold">{t("salesReturns.accountsTitle")}</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-[11px]">{t("salesReturns.salesAccount")} <span className="text-destructive">*</span></Label>
-                  <AccountCombobox value={form.salesAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, salesAccountId: v }))}
-                    placeholder={t("salesReturns.salesAccountPlaceholder")} filterTypes={["revenue"]} allowEmpty={false} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px]">{t("salesReturns.cogsAccount")} <span className="text-destructive">*</span></Label>
-                  <AccountCombobox value={form.cogsAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, cogsAccountId: v }))}
-                    placeholder={t("salesReturns.cogsAccountPlaceholder")} filterTypes={["expense"]} allowEmpty={false} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px]">{t("salesReturns.vatAccount")}</Label>
-                  <AccountCombobox value={form.taxAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, taxAccountId: v }))}
-                    placeholder={t("salesReturns.vatAccountPlaceholder")} filterTypes={["liability"]} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-[11px]">{t("salesReturns.discountAccount")}</Label>
-                  <AccountCombobox value={form.discountAccountId} onValueChange={(v) => setForm((p: any) => ({ ...p, discountAccountId: v }))}
-                    placeholder={t("salesReturns.discountAccountPlaceholder")} filterTypes={["expense"]} />
-                </div>
-              </div>
-              <p className="text-[11px] text-blue-900/70">
-                {t("salesReturns.accountsHelp")}
-              </p>
-            </div>
             </TabsContent>
 
             <TabsContent value="header" className="mt-0 space-y-5">

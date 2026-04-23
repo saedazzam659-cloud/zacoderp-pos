@@ -698,11 +698,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
                 </TabsTrigger>
-                {isInvoice && (
-                  <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <Calculator className="h-3.5 w-3.5" />{t("salesDocForm.tabAccounts")}
-                  </TabsTrigger>
-                )}
               </TabsList>
             </div>
           </CardHeader>
@@ -815,44 +810,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               {linesSection}
             </CardContent>
           </TabsContent>
-
-          {isInvoice && (
-            <TabsContent value="accounts" className="mt-0">
-              <CardContent className="pt-5 pb-5">
-                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
-                  <div className="flex items-center gap-2 text-blue-900">
-                    <Calculator className="h-4 w-4" />
-                    <span className="text-sm font-semibold">{t("salesDocForm.accountsCardTitle")}</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.salesAccount")} <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
-                        placeholder={t("salesDocForm.salesAccountPlaceholder")} filterTypes={["revenue"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.cogsAccount")} <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
-                        placeholder={t("salesDocForm.cogsAccountPlaceholder")} filterTypes={["expense"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.vatAccount")}</Label>
-                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
-                        placeholder={t("salesDocForm.vatAccountPlaceholder")} filterTypes={["liability"]} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.discountAccount")}</Label>
-                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
-                        placeholder={t("salesDocForm.discountAccountPlaceholder")} filterTypes={["expense"]} />
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-blue-900/70">
-                    {t("salesDocForm.accountsHelp")}
-                  </p>
-                </div>
-              </CardContent>
-            </TabsContent>
-          )}
 
         </Card>
       </Tabs>
