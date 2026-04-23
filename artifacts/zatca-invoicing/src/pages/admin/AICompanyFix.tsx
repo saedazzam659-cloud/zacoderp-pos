@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2 } from "lucide-react";
+import { Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,6 +52,23 @@ export default function AICompanyFix() {
     queryFn: async () => (await fetch(`${API}/api/admin/ai-fix/diagnose?companyId=${companyId}`, { headers })).json(),
     enabled: false,
   });
+
+  const notifyMut = useMutation({
+    mutationFn: async (checkKey: string) => {
+      const r = await fetch(`${API}/api/admin/ai-fix/notify`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: Number(companyId), checkKey }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || "فشل إرسال التنبيه");
+      return r.json() as Promise<{ ok: boolean; recipients: number }>;
+    },
+    onSuccess: (data) => toast({
+      title: "تم إرسال التنبيه",
+      description: `سيظهر التنبيه لعدد ${data.recipients} مستخدم(ين) في هذه الشركة.`,
+    }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+  const [notifyingKey, setNotifyingKey] = useState<string | null>(null);
 
   const summarizeMut = useMutation({
     mutationFn: async () => {
@@ -153,6 +170,7 @@ export default function AICompanyFix() {
                     const sev = SEV_STYLE[c.severity];
                     const Icon = sev.icon;
                     const isOk = c.count === 0;
+                    const isThisNotifying = notifyMut.isPending && notifyingKey === c.key;
                     return (
                       <div
                         key={c.key}
@@ -160,7 +178,7 @@ export default function AICompanyFix() {
                           isOk ? "bg-green-50 border-green-200" : `${sev.bg} ${sev.border}`
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           {isOk
                             ? <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                             : <Icon className={`h-4 w-4 shrink-0 ${sev.text}`} />
@@ -170,11 +188,26 @@ export default function AICompanyFix() {
                             {!isOk && <p className="text-xs text-muted-foreground mt-0.5">{sev.label}</p>}
                           </div>
                         </div>
-                        <span className={`text-sm font-bold tabular-nums shrink-0 ${
-                          isOk ? "text-green-700" : sev.text
-                        }`}>
-                          {c.count}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-sm font-bold tabular-nums ${
+                            isOk ? "text-green-700" : sev.text
+                          }`}>
+                            {c.count}
+                          </span>
+                          {!isOk && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1 bg-white"
+                              disabled={notifyMut.isPending}
+                              onClick={() => { setNotifyingKey(c.key); notifyMut.mutate(c.key); }}
+                              title="إرسال تنبيه لمدير الشركة بشرح المشكلة وحلها"
+                            >
+                              {isThisNotifying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                              إبلاغ المدير
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}

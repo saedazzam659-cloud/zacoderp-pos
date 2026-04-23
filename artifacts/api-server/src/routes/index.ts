@@ -34,6 +34,7 @@ import employeesRouter from "./employees";
 import hrSettingsRouter from "./hr-settings";
 import storageRouter from "./storage";
 import posSessionsRouter from "./pos-sessions";
+import notificationsRouter from "./notifications";
 
 const router: IRouter = Router();
 
@@ -70,6 +71,7 @@ router.use("/employees",          employeesRouter);
 router.use("/hr/settings",        hrSettingsRouter);
 router.use(storageRouter);
 router.use("/pos-sessions", posSessionsRouter);
+router.use("/notifications", notificationsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

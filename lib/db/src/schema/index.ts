@@ -16,3 +16,4 @@ export * from "./fiscalPeriods";
 export * from "./costCenters";
 export * from "./hr";
 export * from "./pos";
+export * from "./notifications";

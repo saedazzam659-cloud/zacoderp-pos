@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable } from "@workspace/db";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -724,6 +724,194 @@ ${JSON.stringify(compact, null, 2)}
     res.json({ summary });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل التلخيص" });
+  }
+});
+
+// POST /api/admin/ai-fix/notify
+//   Body: { companyId, checkKey }
+//   Asks AI to write an Arabic Markdown explanation + step-by-step fix for one
+//   specific issue, then inserts a broadcast notification (userId=NULL) for that
+//   company so all its admins/managers see it in the bell + /notifications page.
+// Allow-list of check keys → ensures arbitrary strings can't trigger work,
+// and used to dispatch to single-check runners.
+const SINGLE_CHECK_RUNNERS: Record<string, (companyId: number) => Promise<CheckResult>> = {
+  unbalanced_journals:          (id) => runOneCheck(id, "unbalanced_journals"),
+  negative_stock:               (id) => runOneCheck(id, "negative_stock"),
+  sales_invoices_without_je:    (id) => runOneCheck(id, "sales_invoices_without_je"),
+  purchase_invoices_without_je: (id) => runOneCheck(id, "purchase_invoices_without_je"),
+  orphan_stock:                 (id) => runOneCheck(id, "orphan_stock"),
+  items_without_price:          (id) => runOneCheck(id, "items_without_price"),
+  items_without_cost:           (id) => runOneCheck(id, "items_without_cost"),
+  stock_balance_drift:          (id) => runOneCheck(id, "stock_balance_drift"),
+};
+async function runOneCheck(companyId: number, key: string): Promise<CheckResult> {
+  // Cheap re-implementation that runs only the queries needed for one key.
+  // Mirrors logic in diagnoseCompany() — keep them in sync.
+  if (key === "unbalanced_journals") {
+    const r = await db.execute(sql`
+      SELECT je.id, je.doc_number, je.entry_date,
+             COALESCE(SUM(jel.debit),0)::text AS total_debit,
+             COALESCE(SUM(jel.credit),0)::text AS total_credit
+      FROM journal_entries je
+      LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
+      WHERE je.company_id = ${companyId}
+      GROUP BY je.id, je.doc_number, je.entry_date
+      HAVING ROUND(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0), 2) <> 0
+      ORDER BY je.id DESC LIMIT 50`);
+    const rows = (r as any).rows ?? [];
+    return { key, label: "قيود يومية غير متوازنة (مدين ≠ دائن)", severity: "high", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "negative_stock") {
+    const rows = await db.select({ id: stockBalanceTable.id, itemId: stockBalanceTable.itemId, warehouseId: stockBalanceTable.warehouseId, qty: stockBalanceTable.qty })
+      .from(stockBalanceTable).where(and(eq(stockBalanceTable.companyId, companyId), sql`${stockBalanceTable.qty} < 0`)).limit(50);
+    return { key, label: "أرصدة مخزون سالبة", severity: "high", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "sales_invoices_without_je") {
+    const r = await db.execute(sql`
+      SELECT si.id, si.doc_number, si.invoice_date, si.total_amount FROM sales_invoices si
+      WHERE si.company_id = ${companyId} AND si.status = 'posted'
+        AND (si.journal_entry_id IS NULL OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = si.journal_entry_id))
+      ORDER BY si.id DESC LIMIT 50`);
+    const rows = (r as any).rows ?? [];
+    return { key, label: "فواتير مبيعات مرحّلة بدون قيد محاسبي", severity: "high", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "purchase_invoices_without_je") {
+    const r = await db.execute(sql`
+      SELECT pi.id, pi.doc_number, pi.invoice_date, pi.total_amount FROM purchase_invoices pi
+      WHERE pi.company_id = ${companyId} AND pi.status = 'posted'
+        AND (pi.journal_entry_id IS NULL OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = pi.journal_entry_id))
+      ORDER BY pi.id DESC LIMIT 50`);
+    const rows = (r as any).rows ?? [];
+    return { key, label: "فواتير مشتريات مرحّلة بدون قيد محاسبي", severity: "high", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "orphan_stock") {
+    const orphans = await getOrphanLedgerRows(companyId);
+    return {
+      key, label: "حركات مخزون يتيمة (مستندها محذوف)", severity: "medium", count: orphans.length,
+      samples: orphans.slice(0, 10).map(o => ({ id: o.id, itemId: o.itemId, warehouseId: o.warehouseId, refType: o.refType, refId: o.refId, qty: o.qty, txDate: o.txDate })),
+    };
+  }
+  if (key === "items_without_price") {
+    const rows = await db.select({ id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, salePrice: itemsTable.salePrice })
+      .from(itemsTable).where(and(eq(itemsTable.companyId, companyId), eq(itemsTable.itemType, "stock" as any), eq(itemsTable.status, "active" as any), sql`${itemsTable.salePrice}::numeric = 0`)).limit(50);
+    return { key, label: "أصناف مخزنية فعّالة بدون سعر بيع", severity: "medium", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "items_without_cost") {
+    const rows = await db.select({ id: itemsTable.id, code: itemsTable.code, nameAr: itemsTable.nameAr, costPrice: itemsTable.costPrice })
+      .from(itemsTable).where(and(eq(itemsTable.companyId, companyId), eq(itemsTable.itemType, "stock" as any), eq(itemsTable.status, "active" as any), sql`${itemsTable.costPrice}::numeric = 0`)).limit(50);
+    return { key, label: "أصناف مخزنية فعّالة بدون سعر تكلفة", severity: "low", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  if (key === "stock_balance_drift") {
+    const r = await db.execute(sql`
+      SELECT sb.item_id, sb.warehouse_id, sb.qty::text AS balance_qty, COALESCE(SUM(sl.qty),0)::text AS ledger_sum
+      FROM stock_balance sb
+      LEFT JOIN stock_ledger sl ON sl.company_id = sb.company_id AND sl.item_id = sb.item_id AND sl.warehouse_id = sb.warehouse_id
+      WHERE sb.company_id = ${companyId}
+      GROUP BY sb.item_id, sb.warehouse_id, sb.qty
+      HAVING ROUND(sb.qty::numeric - COALESCE(SUM(sl.qty),0), 4) <> 0 LIMIT 50`);
+    const rows = (r as any).rows ?? [];
+    return { key, label: "اختلاف بين رصيد المخزون ومجموع الحركات", severity: "medium", count: rows.length, samples: rows.slice(0, 10) };
+  }
+  throw new Error(`نوع فحص غير معروف: ${key}`);
+}
+
+router.post("/ai-fix/notify", requireSuperAdmin, async (req, res) => {
+  const { companyId: rawCid, checkKey } = (req.body ?? {}) as { companyId: any; checkKey: any };
+  const companyId = Number(rawCid);
+  if (!Number.isInteger(companyId) || companyId <= 0) { res.status(400).json({ error: "companyId غير صالح" }); return; }
+  if (typeof checkKey !== "string" || !SINGLE_CHECK_RUNNERS[checkKey]) {
+    res.status(400).json({ error: "checkKey غير صالح" }); return;
+  }
+  if (!OPENAI_BASE || !OPENAI_KEY) { res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
+
+  try {
+    const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    // Run only the requested single check (cheaper + faster than diagnoseCompany).
+    const check = await SINGLE_CHECK_RUNNERS[checkKey](companyId);
+    if (check.count === 0) { res.status(400).json({ error: "لا توجد مشاكل في هذا الفحص لإرسال تنبيه عنها" }); return; }
+
+    // Idempotency guard: don't insert another notification for the same
+    // (company, sourceKey) within the last 5 minutes — protects against
+    // accidental double-clicks / retries.
+    const recent = await db.execute(sql`
+      SELECT id FROM notifications
+      WHERE company_id = ${companyId}
+        AND source_key = ${checkKey}
+        AND created_at > NOW() - INTERVAL '5 minutes'
+      LIMIT 1
+    `);
+    const recentRows = (recent as any).rows ?? [];
+    if (recentRows.length > 0) {
+      res.status(409).json({ error: "تم إرسال تنبيه مماثل خلال آخر ٥ دقائق. يرجى الانتظار قليلاً." });
+      return;
+    }
+
+    const screenHints: Record<string, string> = {
+      unbalanced_journals:           "دفتر الأستاذ / القيود اليومية",
+      negative_stock:                "تقارير المخزون / حركة الأصناف",
+      sales_invoices_without_je:     "فواتير المبيعات",
+      purchase_invoices_without_je:  "فواتير المشتريات",
+      orphan_stock:                  "(يحتاج تدخّل مدير النظام لتنظيفها)",
+      items_without_price:           "إدارة الأصناف",
+      items_without_cost:            "إدارة الأصناف",
+      stock_balance_drift:           "تقارير المخزون / إعادة حساب الأرصدة",
+    };
+
+    const userPrompt = `مشكلة تم اكتشافها في بيانات الشركة "${company.nameAr ?? "—"}":
+- نوع المشكلة: ${check.label} (${check.key})
+- درجة الخطورة: ${check.severity}
+- عدد السجلات المتأثرة: ${check.count}
+- عينة من السجلات: ${JSON.stringify(check.samples.slice(0, 5))}
+- الشاشة المقترحة في النظام: ${screenHints[check.key] ?? "—"}
+
+اكتب تنبيهاً موجهاً لمدير الشركة بالعربية الفصحى وبصيغة Markdown يحتوي على:
+1. **سبب المشكلة** في فقرة قصيرة (سطرين كحد أقصى).
+2. **الأثر** المتوقع على القوائم المالية أو المخزون.
+3. **خطوات الحل** كقائمة مرقمة عملية ومحددة، مع ذكر اسم الشاشة في النظام.
+لا تذكر أرقاماً غير موجودة في المدخلات. لا تخترع بيانات. اجعل النص قابلاً للقراءة بسرعة.`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 1024,
+        messages: [
+          { role: "system", content: "أنت مدقق محاسبي ومخزني خبير. ترد بالعربية الفصحى وبصيغة Markdown منظمة وموجزة." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const body: string = data?.choices?.[0]?.message?.content ?? "";
+    if (!body.trim()) { res.status(502).json({ error: "تعذّر توليد محتوى التنبيه" }); return; }
+
+    const title = `[${check.count}] ${check.label}`;
+    // Broadcast: userId NULL so every user of the company sees it. Recipient
+    // count is computed for the response from the active users in the company.
+    const [inserted] = await db.insert(notificationsTable).values({
+      companyId, userId: null, title, body,
+      severity: check.severity, category: "ai_diagnostic",
+      sourceKey: check.key, createdByUserId: req.adminUser!.id,
+    }).returning();
+
+    const [{ recipients }] = await db.select({
+      recipients: sql<number>`COUNT(*)::int`,
+    }).from(usersTable).where(and(
+      eq(usersTable.companyId, companyId),
+      eq(usersTable.isActive, true),
+    ));
+
+    res.json({ ok: true, notificationId: inserted.id, recipients });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل إرسال التنبيه" });
   }
 });
 

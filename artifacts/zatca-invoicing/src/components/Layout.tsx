@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { NotificationBell } from "@/components/NotificationBell";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
@@ -1165,10 +1166,7 @@ function TopBar({
           <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground relative" title={t("topbar.notifications")}>
-            <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute top-1.5 end-2 h-1.5 w-1.5 rounded-full bg-primary" />
-          </Button>
+          <NotificationBell />
           <div className="h-5 w-px bg-border mx-1" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
