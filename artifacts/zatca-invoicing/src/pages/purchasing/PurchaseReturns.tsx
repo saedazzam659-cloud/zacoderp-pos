@@ -698,7 +698,7 @@ export default function PurchaseReturns() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="ملاحظات" className="col-span-2 lg:col-span-4"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              <Field label="ملاحظات"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 
             {/* Payment link panel: credit (supplier), cash (cash box), or bank (bank account) */}
