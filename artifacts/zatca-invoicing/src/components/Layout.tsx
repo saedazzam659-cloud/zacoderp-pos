@@ -66,6 +66,7 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders    },
   { nameKey: "nav.users",           href: "/users",               icon: Users      },
   { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign },
+  { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked },
   { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText   },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3  },
 ];

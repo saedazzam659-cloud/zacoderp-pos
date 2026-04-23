@@ -1,0 +1,129 @@
+export type RoleDef = {
+  key: string;
+  label: string;
+  description: string;
+  defaultHintCode?: string;
+  accountType?: "asset" | "liability" | "equity" | "revenue" | "expense";
+};
+
+export type DocumentTypeDef = {
+  key: string;
+  label: string;
+  icon?: string;
+  description: string;
+  roles: RoleDef[];
+};
+
+export const DOCUMENT_TYPES: DocumentTypeDef[] = [
+  {
+    key: "purchase_invoice",
+    label: "فواتير المشتريات",
+    description: "قيد شراء بضاعة من المورد: مدين المخزون/المصروف ومدين ضريبة المدخلات، دائن المورد (الذمم الدائنة).",
+    roles: [
+      { key: "inventory",   label: "المخزون / المشتريات", description: "الحساب المدين للبضاعة المستلمة (أصل).", defaultHintCode: "1220", accountType: "asset" },
+      { key: "vat_input",   label: "ضريبة القيمة المضافة (مدخلات)", description: "الحساب المدين لضريبة الشراء القابلة للاسترداد.", defaultHintCode: "1240", accountType: "asset" },
+      { key: "payable",     label: "حساب الموردين (دائن)", description: "الحساب الدائن مقابل الفاتورة الآجلة.", defaultHintCode: "2110", accountType: "liability" },
+      { key: "discount",    label: "خصم مكتسب", description: "الحساب الدائن لخصومات الشراء المكتسبة (اختياري).", accountType: "revenue" },
+    ],
+  },
+  {
+    key: "purchase_return",
+    label: "مرتجع المشتريات",
+    description: "قيد مرتجع إلى المورد: مدين المورد، دائن المخزون وضريبة المدخلات.",
+    roles: [
+      { key: "payable",   label: "حساب الموردين (مدين)", description: "الحساب المدين - تخفيض رصيد المورد.", defaultHintCode: "2110", accountType: "liability" },
+      { key: "inventory", label: "المخزون (دائن)", description: "الحساب الدائن - تخفيض المخزون.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "vat_input", label: "ضريبة المدخلات (دائن)", description: "عكس ضريبة المدخلات على المرتجع.", defaultHintCode: "1240", accountType: "asset" },
+    ],
+  },
+  {
+    key: "supplier_settlement",
+    label: "تسوية الموردين",
+    description: "سداد دفعة نقدية أو بنكية للمورد: مدين المورد، دائن الخزينة/البنك.",
+    roles: [
+      { key: "payable", label: "حساب الموردين (مدين)", description: "تخفيض التزام المورد.", defaultHintCode: "2110", accountType: "liability" },
+      { key: "cash",    label: "الخزينة (دائن)", description: "خصم نقدي من الصندوق.", defaultHintCode: "1110", accountType: "asset" },
+      { key: "bank",    label: "البنك (دائن)", description: "خصم من الحساب البنكي.", defaultHintCode: "1130", accountType: "asset" },
+    ],
+  },
+  {
+    key: "sales_invoice",
+    label: "فواتير المبيعات",
+    description: "قيد بيع بضاعة للعميل: مدين العميل/النقدية، دائن الإيراد وضريبة المخرجات، وقيد تكلفة البضاعة المباعة.",
+    roles: [
+      { key: "receivable", label: "حساب العملاء (مدين)", description: "الحساب المدين لفاتورة آجلة.", defaultHintCode: "1210", accountType: "asset" },
+      { key: "revenue",    label: "إيرادات المبيعات (دائن)", description: "الحساب الدائن لإيرادات البيع.", defaultHintCode: "4110", accountType: "revenue" },
+      { key: "vat_output", label: "ضريبة المخرجات (دائن)", description: "الحساب الدائن للضريبة المحصلة من العميل.", defaultHintCode: "2140", accountType: "liability" },
+      { key: "cogs",       label: "تكلفة البضاعة المباعة (مدين)", description: "تسجيل تكلفة المخزون المباع.", defaultHintCode: "5110", accountType: "expense" },
+      { key: "inventory",  label: "المخزون (دائن لأجل COGS)", description: "تخفيض المخزون بمقدار تكلفة المباع.", defaultHintCode: "1220", accountType: "asset" },
+    ],
+  },
+  {
+    key: "sales_return",
+    label: "مرتجع المبيعات",
+    description: "قيد استلام بضاعة مرتجعة من العميل: مدين مرتجعات المبيعات وضريبة المخرجات، دائن العميل، مع عكس قيد التكلفة.",
+    roles: [
+      { key: "revenue_return", label: "مرتجعات المبيعات (مدين)", description: "حساب مدين لإيراد المرتجع.", defaultHintCode: "4120", accountType: "revenue" },
+      { key: "vat_output",     label: "ضريبة المخرجات (مدين)", description: "عكس ضريبة المخرجات.", defaultHintCode: "2140", accountType: "liability" },
+      { key: "receivable",     label: "حساب العملاء (دائن)", description: "تخفيض رصيد العميل.", defaultHintCode: "1210", accountType: "asset" },
+      { key: "inventory",      label: "المخزون (مدين)", description: "إعادة البضاعة للمخزون بالتكلفة.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "cogs",           label: "تكلفة البضاعة المباعة (دائن)", description: "عكس التكلفة للبضاعة المرتجعة.", defaultHintCode: "5110", accountType: "expense" },
+    ],
+  },
+  {
+    key: "customer_settlement",
+    label: "تسوية العملاء",
+    description: "قبض دفعة من العميل: مدين الخزينة/البنك، دائن العميل.",
+    roles: [
+      { key: "cash",       label: "الخزينة (مدين)", description: "استلام نقدي.", defaultHintCode: "1110", accountType: "asset" },
+      { key: "bank",       label: "البنك (مدين)", description: "إيداع بنكي.", defaultHintCode: "1130", accountType: "asset" },
+      { key: "receivable", label: "حساب العملاء (دائن)", description: "خصم من رصيد العميل.", defaultHintCode: "1210", accountType: "asset" },
+    ],
+  },
+  {
+    key: "warehouse",
+    label: "المخازن (الافتتاحي)",
+    description: "أرصدة افتتاحية للمخزون: مدين المخزون، دائن رأس المال الافتتاحي / حقوق الملكية.",
+    roles: [
+      { key: "inventory",        label: "المخزون (مدين)", description: "قيمة المخزون الافتتاحي.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "opening_balance",  label: "رصيد افتتاحي (دائن)", description: "حساب مقابل الأرصدة الافتتاحية.", defaultHintCode: "3900", accountType: "equity" },
+    ],
+  },
+  {
+    key: "warehouse_adjustment",
+    label: "تسوية المخازن",
+    description: "جرد وتسويات المخزون: ربح أو خسارة جرد مقابل حساب المخزون.",
+    roles: [
+      { key: "inventory",        label: "المخزون", description: "حساب المخزون المتأثر بالتسوية.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "adjustment_gain",  label: "زيادة جرد / ربح تسوية", description: "دائن عند زيادة المخزون.", defaultHintCode: "4900", accountType: "revenue" },
+      { key: "adjustment_loss",  label: "عجز جرد / خسارة تسوية", description: "مدين عند نقص المخزون.", defaultHintCode: "5900", accountType: "expense" },
+    ],
+  },
+  {
+    key: "warehouse_transfer",
+    label: "تحويلات المخازن",
+    description: "تحويل بضاعة بين مخزنين: مدين مخزن الوصول، دائن مخزن الإرسال (يمكن أن يكون نفس الحساب مع فرع مختلف).",
+    roles: [
+      { key: "inventory_source",      label: "مخزون المُصدر (دائن)", description: "تخفيض رصيد المخزن المُرسل.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "inventory_destination", label: "مخزون المُستقبل (مدين)", description: "زيادة رصيد المخزن المستلم.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "transfer_cost",         label: "مصاريف نقل (اختياري)", description: "حساب مدين إذا كان التحويل يحمل تكاليف.", accountType: "expense" },
+    ],
+  },
+  {
+    key: "cashbox",
+    label: "الخزن (الصناديق النقدية)",
+    description: "الحساب الرئيسي المرتبط بالصناديق النقدية للشركة.",
+    roles: [
+      { key: "cash_on_hand", label: "النقدية في الخزينة", description: "الحساب الأساسي للنقدية المتوفرة.", defaultHintCode: "1110", accountType: "asset" },
+    ],
+  },
+  {
+    key: "bank",
+    label: "البنوك",
+    description: "الحساب الرئيسي المرتبط بحسابات البنوك.",
+    roles: [
+      { key: "bank_main", label: "الحساب البنكي الرئيسي", description: "الحساب الافتراضي للحركات البنكية.", defaultHintCode: "1130", accountType: "asset" },
+      { key: "bank_fees", label: "مصاريف بنكية", description: "حساب مدين للعمولات والرسوم البنكية.", defaultHintCode: "5800", accountType: "expense" },
+    ],
+  },
+];

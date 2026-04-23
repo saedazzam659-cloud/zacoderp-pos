@@ -337,6 +337,7 @@
     "generalSettings": "الإعدادات العامة",
     "users": "المستخدمون",
     "currencies": "العملات والتحويل",
+    "accountingMappings": "ربط القيود المحاسبية",
     "invoices": "الفواتير",
     "vatDeclaration": "الإقرار الضريبي",
     "posMonitoring": "مراقبة نقاط البيع",
