@@ -38,6 +38,7 @@ import posTerminalsRouter from "./pos-terminals";
 import notificationsRouter from "./notifications";
 import supportMessagesRouter from "./support-messages";
 import accountingMappingsRouter from "./accounting-mappings";
+import backupRouter from "./backup";
 
 const router: IRouter = Router();
 
@@ -78,6 +79,7 @@ router.use("/pos-terminals", posTerminalsRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/support-messages", supportMessagesRouter);
 router.use("/accounting-mappings", accountingMappingsRouter);
+router.use("/backup", backupRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

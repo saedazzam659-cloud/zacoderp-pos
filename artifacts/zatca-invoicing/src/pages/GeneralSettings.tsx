@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
-  Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet
+  Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
+  DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
@@ -188,6 +189,84 @@ export default function GeneralSettings() {
     }
   }
 
+  // ─── Backup Export / Import (with AI analysis) ───────────────────────────
+  const backupFileRef = useRef<HTMLInputElement>(null);
+  const [exporting, setExporting] = useState(false);
+  const [uploadedBackup, setUploadedBackup] = useState<any | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiSummary, setAiSummary] = useState<{ summary: string; warnings: string[]; counts: Record<string, number> } | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreReport, setRestoreReport] = useState<any | null>(null);
+
+  async function handleBackupExport() {
+    setExporting(true);
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      const res = await fetch(`${API}/api/backup/export?companyId=${cid}`, { headers });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.exportFailed"));
+      const blob = new Blob([JSON.stringify(j, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.href = url;
+      a.download = `backup-${user?.company?.nameAr?.replace(/\s+/g, "_") || "company"}-${ts}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      const total = Object.values(j.counts || {}).reduce((a: number, b: any) => a + Number(b), 0);
+      toast({ title: t("pages.generalSettings.exportSuccess", { count: total }) });
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.exportFailed"), variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleBackupFilePicked(file: File) {
+    setUploadedBackup(null); setAiSummary(null); setRestoreReport(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed?.data || typeof parsed.data !== "object") {
+        throw new Error(t("pages.generalSettings.invalidBackupFile"));
+      }
+      setUploadedBackup(parsed);
+      setAnalyzing(true);
+      try {
+        const res = await fetch(`${API}/api/backup/ai-analyze`, {
+          method: "POST", headers, body: JSON.stringify({ backup: parsed }),
+        });
+        const j = await res.json();
+        if (res.ok) setAiSummary(j);
+      } catch {/* non-fatal */} finally { setAnalyzing(false); }
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.invalidBackupFile"), variant: "destructive" });
+    }
+  }
+
+  async function handleBackupRestore() {
+    if (!uploadedBackup) return;
+    if (!window.confirm(t("pages.generalSettings.confirmRestore"))) return;
+    setRestoring(true);
+    try {
+      const cid = user?.company?.id ?? user?.companyId;
+      const res = await fetch(`${API}/api/backup/restore`, {
+        method: "POST", headers,
+        body: JSON.stringify({ companyId: cid, backup: uploadedBackup }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || t("pages.generalSettings.restoreFailed"));
+      setRestoreReport(j.report);
+      const inserted = Object.values(j.report || {}).reduce((a: number, r: any) => a + (r?.inserted || 0), 0);
+      toast({ title: t("pages.generalSettings.restoreSuccess", { count: inserted }) });
+      qc.invalidateQueries();
+    } catch (e: any) {
+      toast({ title: e.message || t("pages.generalSettings.restoreFailed"), variant: "destructive" });
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-2xl" dir="rtl">
 
@@ -215,7 +294,7 @@ export default function GeneralSettings() {
 
       {/* ─── Tabs Header (3 tabs aligned to top-right in RTL) ───────────────── */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 h-11 bg-muted/50">
+        <TabsList className="grid w-full grid-cols-6 h-11 bg-muted/50">
           <TabsTrigger value="general" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Settings2 className="h-4 w-4" />
             {t("pages.generalSettings.general")}
@@ -231,6 +310,14 @@ export default function GeneralSettings() {
           <TabsTrigger value="decimals" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Hash className="h-4 w-4" />
             {t("pages.generalSettings.decimals")}
+          </TabsTrigger>
+          <TabsTrigger value="backupExport" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <DatabaseBackup className="h-4 w-4" />
+            {t("pages.generalSettings.backupExport")}
+          </TabsTrigger>
+          <TabsTrigger value="backupImport" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <DatabaseZap className="h-4 w-4" />
+            {t("pages.generalSettings.backupImport")}
           </TabsTrigger>
         </TabsList>
 
@@ -495,6 +582,148 @@ export default function GeneralSettings() {
                 : <><CheckCircle2 className="h-4 w-4" />{t("common.save")}</>
               }
             </Button>
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 5: Backup Export ══════════════════════════════════════════ */}
+        <TabsContent value="backupExport" className="mt-5 space-y-4">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                <DatabaseBackup className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm">{t("pages.generalSettings.backupExportTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {t("pages.generalSettings.backupExportDesc")}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {t("pages.generalSettings.backupExportIncludes")}
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              onClick={handleBackupExport}
+              disabled={exporting}
+              className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+            >
+              {exporting
+                ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
+                : <><Download className="h-4 w-4" />{t("pages.generalSettings.downloadBackup")}</>
+              }
+            </Button>
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 6: Backup Import (with AI analysis) ═══════════════════════ */}
+        <TabsContent value="backupImport" className="mt-5 space-y-4">
+          <div className="rounded-xl border bg-card p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+                <DatabaseZap className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm">{t("pages.generalSettings.backupImportTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {t("pages.generalSettings.backupImportDesc")}
+                </p>
+                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mt-2 inline-flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  {t("pages.generalSettings.backupImportWarning")}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => backupFileRef.current?.click()}
+                disabled={analyzing || restoring}
+                className="gap-1.5 bg-violet-600 hover:bg-violet-700"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                {t("pages.generalSettings.pickBackupFile")}
+              </Button>
+              <input
+                ref={backupFileRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBackupFilePicked(f); e.target.value = ""; }}
+              />
+            </div>
+
+            {/* File meta + AI summary */}
+            {uploadedBackup && (
+              <div className="rounded-lg border bg-muted/20 px-3 py-2 space-y-2 text-xs">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <FileJson className="h-3.5 w-3.5" />
+                  <span>{t("pages.generalSettings.backupFileMeta", {
+                    date: uploadedBackup.meta?.exportedAt?.slice(0, 16).replace("T", " ") ?? "?",
+                    version: uploadedBackup.meta?.schemaVersion ?? "?",
+                  })}</span>
+                </div>
+                {analyzing && (
+                  <div className="flex items-center gap-2 text-violet-700">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>{t("pages.generalSettings.aiAnalyzing")}</span>
+                  </div>
+                )}
+                {aiSummary && (
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-2">
+                      <Sparkles className="h-3.5 w-3.5 mt-0.5 text-violet-600 shrink-0" />
+                      <p className="whitespace-pre-line leading-relaxed">{aiSummary.summary}</p>
+                    </div>
+                    {aiSummary.warnings?.length > 0 && (
+                      <ul className="text-[11px] text-amber-700 space-y-0.5 pr-4">
+                        {aiSummary.warnings.map((w, i) => (
+                          <li key={i} className="list-disc list-inside">{w}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {aiSummary.counts && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {Object.entries(aiSummary.counts).filter(([, n]) => (n as number) > 0).map(([k, n]) => (
+                          <span key={k} className="inline-flex items-center gap-1 rounded-full bg-white border px-2 py-0.5 text-[10px] font-mono">
+                            {k}: <b>{n as number}</b>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {uploadedBackup && (
+              <Button
+                type="button"
+                onClick={handleBackupRestore}
+                disabled={restoring || analyzing}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              >
+                {restoring
+                  ? <><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</>
+                  : <><CheckCircle2 className="h-4 w-4" />{t("pages.generalSettings.restoreBackup")}</>
+                }
+              </Button>
+            )}
+
+            {restoreReport && (
+              <div className="rounded-md border bg-card px-3 py-2 text-xs">
+                <p className="font-medium mb-1">{t("pages.generalSettings.restoreReport")}</p>
+                <ul className="space-y-0.5 font-mono text-[11px]">
+                  {Object.entries(restoreReport).map(([k, r]: any) => (
+                    <li key={k}>
+                      {k}: <span className="text-green-600">+{r.inserted}</span> · <span className="text-muted-foreground">{r.skipped} {t("pages.generalSettings.skipped")}</span> / {r.received}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>
