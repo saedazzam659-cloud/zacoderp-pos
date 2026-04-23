@@ -611,6 +611,10 @@ export default function PurchaseInvoiceForm() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
+                  <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— بدون اعتماد —" />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -851,22 +855,18 @@ export default function PurchaseInvoiceForm() {
                 })()
               )}
 
-              {/* LC */}
-              <div className="space-y-1.5">
-                <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
-                <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— اختر اعتماد مستندي —" />
-                {selectedLc && (
-                  <div className="flex items-center gap-3 mt-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    <span>
-                      الاعتماد: <strong>{selectedLc.lcNumber}</strong> | المتبقي: <strong>{fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))}</strong> {selectedLc.currencyCode}
-                    </span>
-                    <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs border-blue-300 text-blue-700" onClick={distributeExpenses}>
-                      توزيع المصاريف
-                    </Button>
-                  </div>
-                )}
-              </div>
+              {/* LC info banner */}
+              {selectedLc && (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    الاعتماد: <strong>{selectedLc.lcNumber}</strong> | المتبقي: <strong>{fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))}</strong> {selectedLc.currencyCode}
+                  </span>
+                  <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs border-blue-300 text-blue-700" onClick={distributeExpenses}>
+                    توزيع المصاريف
+                  </Button>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <Label className="text-xs">ملاحظات</Label>
