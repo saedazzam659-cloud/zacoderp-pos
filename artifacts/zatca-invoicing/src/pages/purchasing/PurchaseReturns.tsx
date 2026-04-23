@@ -627,9 +627,6 @@ export default function PurchaseReturns() {
               <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />البيانات الرأسية
               </TabsTrigger>
-              <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemId || l.itemName).length})
-              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="header" className="mt-0 space-y-4">
@@ -882,10 +879,13 @@ export default function PurchaseReturns() {
             </div>
             </TabsContent>
 
-            <TabsContent value="lines" className="mt-0 space-y-5">
+            <TabsContent value="header" className="mt-0 space-y-5">
             {/* Lines */}
             <div data-enter-nav-container="lines" className="space-y-1.5">
-              <h3 className="text-sm font-semibold">أصناف المرتجع</h3>
+              <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                <ListOrdered className="h-4 w-4" />
+                <span>أصناف المرتجع ({lines.filter(l => l.itemId || l.itemName).length})</span>
+              </div>
               <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
                 {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "السعر", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""].map((h, i) => (
                   <p key={i} className={cn("text-[10px]", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
@@ -1137,3 +1137,4 @@ export default function PurchaseReturns() {
     </div>
   );
 }
+

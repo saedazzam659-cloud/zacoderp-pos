@@ -557,16 +557,11 @@ export default function PurchaseInvoiceForm() {
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {activeTab === "header"
-                  ? "أدخل بيانات الفاتورة الرأسية"
-                  : `${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount + totalExpLoaded)}`}
+                {`${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount + totalExpLoaded)}`}
               </p>
               <TabsList className="h-8 bg-background border gap-1">
                 <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   <FileText className="h-3.5 w-3.5" />البيانات الرأسية
-                </TabsTrigger>
-                <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <ListOrdered className="h-3.5 w-3.5" />الأصناف ({lines.filter(l => l.itemName).length})
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -880,17 +875,16 @@ export default function PurchaseInvoiceForm() {
                 <Label className="text-xs">ملاحظات</Label>
                 <Textarea className="resize-none text-sm" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
-              <div className="flex justify-start">
-                <Button type="button" variant="outline" className="gap-2 text-sm" onClick={() => setActiveTab("lines")}>
-                  <ListOrdered className="h-4 w-4" />التالي: الأصناف
-                </Button>
-              </div>
             </CardContent>
           </TabsContent>
 
-          {/* ── Lines Tab ────────────────────────────────────── */}
-          <TabsContent value="lines" className="mt-0">
-            <CardContent className="pt-4 pb-5">
+          {/* ── Lines section (rendered below header data in same tab) ─── */}
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-2 pb-5 border-t">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                <ListOrdered className="h-4 w-4" />
+                <span>الأصناف ({lines.filter(l => l.itemName).length})</span>
+              </div>
               <div data-enter-nav-container="lines" className="space-y-1.5 mb-3">
                 <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2fr 0.9fr 1.3fr 1fr 0.6fr 0.6fr 0.9fr 0.6fr 0.6fr 0.85fr 1fr 1.2fr auto" }}>
                   {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "وزن", "سعر الوحدة", "خصم%", "ضريبة%", "مصاريف", "التكلفة النهائية", "ملاحظات", ""].map((h, i) => (
@@ -1046,3 +1040,4 @@ export default function PurchaseInvoiceForm() {
     </div>
   );
 }
+

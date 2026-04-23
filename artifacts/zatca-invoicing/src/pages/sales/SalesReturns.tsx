@@ -598,9 +598,6 @@ export default function SalesReturns() {
               <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                 <FileText className="h-3.5 w-3.5" />{t("salesReturns.tabHeader")}
               </TabsTrigger>
-              <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <ListOrdered className="h-3.5 w-3.5" />{t("salesReturns.tabLines", { count: lines.filter(l => l.itemId || l.itemName).length })}
-              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="header" className="mt-0 space-y-5">
@@ -706,9 +703,12 @@ export default function SalesReturns() {
             </div>
             </TabsContent>
 
-            <TabsContent value="lines" className="mt-0 space-y-5">
+            <TabsContent value="header" className="mt-0 space-y-5">
             <div data-enter-nav-container="lines" className="space-y-1.5">
-              <h3 className="text-sm font-semibold">{t("salesReturns.linesHeading")}</h3>
+              <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                <ListOrdered className="h-4 w-4" />
+                <span>{t("salesReturns.tabLines", { count: lines.filter(l => l.itemId || l.itemName).length })}</span>
+              </div>
               <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
                 {[
                   { k: "item", l: t("salesReturns.colItem") },
@@ -935,3 +935,4 @@ export default function SalesReturns() {
     </div>
   );
 }
+
