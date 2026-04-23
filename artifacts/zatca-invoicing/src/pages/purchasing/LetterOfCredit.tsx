@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -70,6 +70,22 @@ export default function LetterOfCredit() {
     },
     enabled: !!user,
   });
+
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/currencies?companyId=${cid}` : `${API}/api/currencies`;
+      const res = await fetch(url, { headers: authH }); return res.json();
+    },
+    enabled: !!user,
+  });
+  const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
+
+  // When opening a new (non-edit) LC form, default currency to company default.
+  useEffect(() => {
+    if (editId || !defaultCurrency || !showForm) return;
+    setForm((p: any) => p.currencyCode && p.currencyCode !== "SAR" ? p : { ...p, currencyCode: defaultCurrency.code });
+  }, [defaultCurrency?.code, showForm, editId]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["lc"] });
 
@@ -150,6 +166,12 @@ export default function LetterOfCredit() {
 
   const supplierItems = [{ value: "", label: "— بدون مورد —" }, ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr }))];
   const accountItems  = [{ value: "", label: "— بدون حساب —" }, ...accounts.filter((a: any) => a.isPosting).map((a: any) => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}` }))];
+  const currencyItems = currencies.length > 0
+    ? currencies.map((c: any) => ({
+        value: c.code,
+        label: `${c.code} — ${c.nameAr ?? c.nameEn ?? c.code}${c.isDefault ? " ★" : ""}`,
+      }))
+    : [{ value: "SAR", label: "SAR — ريال سعودي" }];
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -189,7 +211,7 @@ export default function LetterOfCredit() {
                 <Field label="المورد"><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="اختر المورد..." /></Field>
                 <Field label="البنك"><Input placeholder="اسم البنك" value={form.bankName} onChange={e => setForm((p: any) => ({ ...p, bankName: e.target.value }))} /></Field>
                 <Field label="قيمة الاعتماد" required><Input type="text" inputMode="decimal" placeholder="0.00" dir="ltr" className="text-left" value={form.totalAmount} onChange={e => setForm((p: any) => ({ ...p, totalAmount: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
-                <Field label="العملة"><Input placeholder="SAR" dir="ltr" className="text-left" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} /></Field>
+                <Field label="العملة"><SearchCombobox items={currencyItems} value={form.currencyCode} onValueChange={v => setForm((p: any) => ({ ...p, currencyCode: v }))} placeholder="اختر العملة..." /></Field>
                 <Field label="ملاحظات" className="md:col-span-2">
                   <Textarea rows={2} className="resize-none text-sm" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
                 </Field>
@@ -200,7 +222,7 @@ export default function LetterOfCredit() {
                 <div key={exp._id ?? idx} className="space-y-2 p-3 rounded-lg border bg-muted/20">
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1"><Label className="text-xs">نوع المصروف</Label><Input className="h-8 text-xs" placeholder="شحن / جمارك..." value={exp.expenseType} onChange={e => updateExpense(idx, "expenseType", e.target.value)} /></div>
-                    <div className="space-y-1"><Label className="text-xs">العملة</Label><Input className="h-8 text-xs" placeholder="SAR" value={exp.currencyCode} onChange={e => updateExpense(idx, "currencyCode", e.target.value)} /></div>
+                    <div className="space-y-1"><Label className="text-xs">العملة</Label><SearchCombobox items={currencyItems} value={exp.currencyCode} onValueChange={v => updateExpense(idx, "currencyCode", v)} placeholder="اختر العملة..." /></div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 items-end">
                     <div className="space-y-1"><Label className="text-xs">الحساب</Label><SearchCombobox items={accountItems} value={String(exp.accountId ?? "")} onValueChange={v => updateExpense(idx, "accountId", v)} placeholder="الحساب..." /></div>
