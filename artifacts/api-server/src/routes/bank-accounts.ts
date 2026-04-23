@@ -53,6 +53,10 @@ router.get("/:id", async (req, res) => {
   res.json(row);
 });
 
+// helpers — turn "" / undefined into null so optional fields don't crash pg
+const toInt = (v: any) => (v === "" || v === null || v === undefined ? null : parseInt(v));
+const toStr = (v: any) => (v === "" || v === null || v === undefined ? null : String(v).trim() || null);
+
 router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
@@ -76,19 +80,19 @@ router.post("/", async (req, res) => {
 
   const [row] = await db.insert(bankAccountsTable).values({
     companyId:     cid,
-    branchId:      d.branchId      ? parseInt(d.branchId)      : null,
-    code:          d.code,
-    nameAr:        d.nameAr,
-    nameEn:        d.nameEn        ?? null,
-    bankName:      d.bankName      ?? null,
-    bankNameEn:    d.bankNameEn    ?? null,
-    accountNumber: d.accountNumber ?? null,
-    iban:          d.iban          ?? null,
-    swiftCode:     d.swiftCode     ?? null,
-    currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    isActive:      d.isActive      ?? true,
-    notes:         d.notes         ?? null,
+    branchId:      toInt(d.branchId),
+    code:          String(d.code).trim(),
+    nameAr:        String(d.nameAr).trim(),
+    nameEn:        toStr(d.nameEn),
+    bankName:      toStr(d.bankName),
+    bankNameEn:    toStr(d.bankNameEn),
+    accountNumber: toStr(d.accountNumber),
+    iban:          toStr(d.iban),
+    swiftCode:     toStr(d.swiftCode),
+    currencyId:    toInt(d.currencyId),
+    accountId:     toInt(d.accountId),
+    isActive:      d.isActive ?? true,
+    notes:         toStr(d.notes),
   }).returning();
   res.status(201).json(row);
 });
@@ -114,19 +118,19 @@ router.put("/:id", async (req, res) => {
   }
 
   const [row] = await db.update(bankAccountsTable).set({
-    branchId:      d.branchId      ? parseInt(d.branchId)      : null,
-    code:          d.code,
-    nameAr:        d.nameAr,
-    nameEn:        d.nameEn        ?? null,
-    bankName:      d.bankName      ?? null,
-    bankNameEn:    d.bankNameEn    ?? null,
-    accountNumber: d.accountNumber ?? null,
-    iban:          d.iban          ?? null,
-    swiftCode:     d.swiftCode     ?? null,
-    currencyId:    d.currencyId    ? parseInt(d.currencyId)    : null,
-    accountId:     d.accountId     ? parseInt(d.accountId)     : null,
-    isActive:      d.isActive      ?? true,
-    notes:         d.notes         ?? null,
+    branchId:      toInt(d.branchId),
+    code:          String(d.code ?? current.code).trim(),
+    nameAr:        String(d.nameAr ?? current.nameAr).trim(),
+    nameEn:        toStr(d.nameEn),
+    bankName:      toStr(d.bankName),
+    bankNameEn:    toStr(d.bankNameEn),
+    accountNumber: toStr(d.accountNumber),
+    iban:          toStr(d.iban),
+    swiftCode:     toStr(d.swiftCode),
+    currencyId:    toInt(d.currencyId),
+    accountId:     toInt(d.accountId),
+    isActive:      d.isActive ?? true,
+    notes:         toStr(d.notes),
   }).where(eq(bankAccountsTable.id, parseInt(req.params.id))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
