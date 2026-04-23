@@ -1,12 +1,88 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Banknote, CreditCard, Smartphone, Wallet, Save, Loader2, Building2, Info } from "lucide-react";
+import { Banknote, CreditCard, Smartphone, Wallet, Save, Loader2, Building2, Info, Check, ChevronsUpDown, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+
+type ComboOption = { value: string; label: string; keywords?: string };
+
+function SearchCombobox({
+  value, onChange, options, placeholder, emptyText, searchPlaceholder, allowClear = true, className, testId,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  options: ComboOption[];
+  placeholder: string;
+  emptyText: string;
+  searchPlaceholder: string;
+  allowClear?: boolean;
+  className?: string;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(o => o.value === value);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          data-testid={testId}
+          className={cn("w-full justify-between font-normal", !selected && "text-muted-foreground", className)}
+        >
+          <span className="truncate text-start">{selected?.label ?? placeholder}</span>
+          <span className="flex items-center gap-1 shrink-0 ms-2">
+            {allowClear && selected && (
+              <button
+                type="button"
+                aria-label="مسح الاختيار"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onChange(null); } }}
+                className="opacity-50 hover:opacity-100 focus:opacity-100 focus:outline-none rounded"
+              ><X className="w-3.5 h-3.5" /></button>
+            )}
+            <ChevronsUpDown className="w-4 h-4 opacity-50" />
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map(opt => (
+                <CommandItem
+                  key={opt.value}
+                  value={`${opt.label} ${opt.keywords ?? ""}`}
+                  onSelect={() => {
+                    if (opt.value === value) {
+                      if (allowClear) onChange(null);
+                    } else {
+                      onChange(opt.value);
+                    }
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("me-2 h-4 w-4", value === opt.value ? "opacity-100" : "opacity-0")} />
+                  <span className="truncate">{opt.label}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -151,22 +227,23 @@ export default function PosSettings() {
           <Label className="text-xs text-muted-foreground mb-1 block">
             {kind === "cashbox" ? "اختر صندوق نقدي" : "اختر حساب بنكي"}
           </Label>
-          <Select
-            value={value ? String(value) : "none"}
-            onValueChange={(v) => onChange(v === "none" ? null : Number(v))}
-          >
-            <SelectTrigger data-testid={`select-${title}`}>
-              <SelectValue placeholder={kind === "cashbox" ? "بدون ربط" : "بدون ربط"} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">— بدون ربط —</SelectItem>
-              {list.map((x: any) => (
-                <SelectItem key={x.id} value={String(x.id)}>
-                  {kind === "cashbox" ? cashBoxOption(x) : bankOption(x)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchCombobox
+            testId={`select-${title}`}
+            value={value ? String(value) : null}
+            onChange={(v) => onChange(v ? Number(v) : null)}
+            placeholder="— بدون ربط —"
+            searchPlaceholder={kind === "cashbox" ? "ابحث عن صندوق نقدي..." : "ابحث عن حساب بنكي..."}
+            emptyText="لا توجد نتائج"
+            options={list.map((x: any) => {
+              const label = kind === "cashbox" ? cashBoxOption(x) : bankOption(x);
+              const acc = accountById.get(x.accountId ?? -1);
+              return {
+                value: String(x.id),
+                label,
+                keywords: [x.nameAr, (x as any).bankName, (x as any).code, acc?.code, acc?.nameAr].filter(Boolean).join(" "),
+              };
+            })}
+          />
           {value && (
             <div className="mt-1.5 text-[11px] flex items-center gap-1 text-muted-foreground">
               <span>الترحيل المحاسبي إلى:</span>
@@ -193,19 +270,21 @@ export default function PosSettings() {
         {isSuperAdmin && (
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-muted-foreground" />
-            <Select
-              value={companyId ? String(companyId) : ""}
-              onValueChange={(v) => setCompanyId(v ? Number(v) : null)}
-            >
-              <SelectTrigger className="w-64" data-testid="select-company">
-                <SelectValue placeholder="اختر شركة" />
-              </SelectTrigger>
-              <SelectContent>
-                {(companiesQ.data ?? []).map(c => (
-                  <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchCombobox
+              testId="select-company"
+              className="w-64"
+              value={companyId ? String(companyId) : null}
+              onChange={(v) => setCompanyId(v ? Number(v) : null)}
+              placeholder="اختر شركة"
+              searchPlaceholder="ابحث عن شركة..."
+              emptyText="لا توجد شركات"
+              allowClear={false}
+              options={(companiesQ.data ?? []).map(c => ({
+                value: String(c.id),
+                label: c.nameAr,
+                keywords: c.nameAr,
+              }))}
+            />
           </div>
         )}
       </div>
