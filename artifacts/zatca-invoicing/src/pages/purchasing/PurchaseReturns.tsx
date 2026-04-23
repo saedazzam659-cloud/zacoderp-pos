@@ -632,7 +632,7 @@ export default function PurchaseReturns() {
             </TabsList>
 
             <TabsContent value="header" className="mt-0 space-y-4">
-            <FormGrid>
+            <FormGrid cols={4}>
               <Field label="رقم المرتجع"><Input ref={docNumberRef} placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد">
@@ -698,7 +698,7 @@ export default function PurchaseReturns() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="ملاحظات" className="md:col-span-3"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              <Field label="ملاحظات" className="col-span-2 lg:col-span-4"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 
             {/* Payment link panel: credit (supplier), cash (cash box), or bank (bank account) */}
