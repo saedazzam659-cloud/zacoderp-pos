@@ -615,6 +615,10 @@ export default function PurchaseInvoiceForm() {
                   <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
                   <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— بدون اعتماد —" />
                 </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">ملاحظات</Label>
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -868,10 +872,6 @@ export default function PurchaseInvoiceForm() {
                 </div>
               )}
 
-              <div className="space-y-1.5">
-                <Label className="text-xs">ملاحظات</Label>
-                <Textarea className="resize-none text-sm" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-              </div>
             </CardContent>
           </TabsContent>
 
