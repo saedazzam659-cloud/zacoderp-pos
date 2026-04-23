@@ -617,7 +617,7 @@ export default function SalesReturns() {
             </TabsList>
 
             <TabsContent value="header" className="mt-0 space-y-5">
-            <FormGrid>
+            <FormGrid cols={4}>
               <Field label={t("salesReturns.returnNumber")}><Input ref={docNumberRef} placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
@@ -682,7 +682,7 @@ export default function SalesReturns() {
                   </Select>
                 </Field>
               )}
-              <Field label={t("salesReturns.notes")} className="md:col-span-2"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              <Field label={t("salesReturns.notes")} className="col-span-2 lg:col-span-4"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
             </TabsContent>
 
