@@ -52,6 +52,12 @@ export function SearchCombobox({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
+  // Tracks whether the user has actively navigated the list (typed a query
+  // or used arrow keys). Without this, a stray Enter right after focusing
+  // the combobox would auto-select the first item (popover auto-opens with
+  // highlight=0) and silently overwrite the field.
+  const [hasNavigated, setHasNavigated] = React.useState(false);
+  React.useEffect(() => { if (!open) setHasNavigated(false); }, [open]);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
 
@@ -123,12 +129,18 @@ export function SearchCombobox({
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (!open) setOpen(true);
+      setHasNavigated(true);
       setHighlight(h => Math.min(h + 1, Math.max(0, flatList.length - 1)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      setHasNavigated(true);
       setHighlight(h => Math.max(0, h - 1));
     } else if (e.key === "Enter") {
-      if (open && flatList[highlight]) {
+      // Only consume Enter as a selection when the user has actually
+      // engaged with the list (typed a query or arrowed). Otherwise let
+      // the event bubble so the parent form's navigation handler can
+      // advance focus to the next field.
+      if (open && hasNavigated && flatList[highlight]) {
         e.preventDefault();
         handleSelect(flatList[highlight].value);
       }
@@ -196,6 +208,7 @@ export function SearchCombobox({
             onClick={() => setOpen(true)}
             onChange={e => {
               setSearch(e.target.value);
+              setHasNavigated(true);
               if (!open) setOpen(true);
             }}
             onKeyDown={onKeyDown}

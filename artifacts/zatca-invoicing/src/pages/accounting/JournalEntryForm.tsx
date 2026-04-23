@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -209,25 +209,80 @@ export default function JournalEntryForm() {
     setFocusLineId(l.id);
   }
 
-  // Enter-key navigation between line inputs.
-  // Pressing Enter moves focus to the next input marked with [data-enter-nav].
-  // If on the last input, a new line is appended and focus jumps to its first cell.
-  function handleEnterNav(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
-    const all = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-enter-nav="true"]'));
-    const i = all.indexOf(e.currentTarget);
-    if (i >= 0 && i + 1 < all.length) {
-      all[i + 1].focus();
-      all[i + 1].select?.();
-    } else if (i === all.length - 1) {
-      // Last input on last row → append a new line and focus its first nav input
-      addLine();
-      setTimeout(() => {
-        const after = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-enter-nav="true"]'));
-        after[i + 1]?.focus();
-      }, 30);
+  // ── Form-wide Enter-key navigation ──────────────────────────────
+  // Enter advances focus through every editable field on the form
+  // (text inputs, date inputs, dropdowns, comboboxes, textarea) in
+  // visual DOM order until reaching the end → then triggers Save.
+  //   • Shift+Enter on the description textarea inserts a newline.
+  //   • Enter on a Radix Select trigger advances (does NOT open). Use
+  //     Space / ArrowDown / click to open a Select.
+  //   • SearchCombobox handles Enter itself only when the user has typed
+  //     or arrowed; otherwise Enter falls through to advance focus.
+  const formRef = useRef<HTMLDivElement>(null);
+
+  function getNavList(): HTMLElement[] {
+    const root = formRef.current;
+    if (!root) return [];
+    const SEL = [
+      'input:not([type="hidden"]):not([disabled])',
+      'textarea:not([disabled])',
+      'button[role="combobox"]:not([disabled])',
+    ].join(", ");
+    return Array.from(root.querySelectorAll<HTMLElement>(SEL))
+      .filter(el => el.offsetParent !== null && el.tabIndex !== -1);
+  }
+
+  function advanceFromTarget(target: HTMLElement) {
+    const all = getNavList();
+    const i = all.indexOf(target);
+    if (i === -1) return false;
+    if (i + 1 < all.length) {
+      const next = all[i + 1];
+      next.focus();
+      if (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) {
+        try { next.select(); } catch { /* date inputs don't support select */ }
+      }
+    } else {
+      // Last navigable field → save the entry (guard against double-fire)
+      if (!saveMutation.isPending) handleSave();
     }
+    return true;
+  }
+
+  // Capture-phase handler: ONLY hijacks Enter on Radix Select triggers
+  // (button[role="combobox"]) so the dropdown does not open. Everything
+  // else is left to bubble up so descendant components (SearchCombobox,
+  // etc.) get a chance to handle Enter first.
+  function handleFormKeyDownCapture(e: React.KeyboardEvent) {
+    if (e.key !== "Enter") return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if ((e.nativeEvent as any).isComposing) return;
+    const target = e.target as HTMLElement;
+    if (!target || target.tagName !== "BUTTON") return;
+    if (target.getAttribute("role") !== "combobox") return;
+    e.preventDefault();
+    e.stopPropagation();
+    advanceFromTarget(target);
+  }
+
+  // Bubble-phase handler: advances focus on Enter for inputs, textareas
+  // and combobox-inputs. Skips when a descendant already handled Enter
+  // (defaultPrevented = combobox just selected an item — that selection
+  // already counts as the "advance" intent for the user).
+  function handleFormKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== "Enter") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if ((e.nativeEvent as any).isComposing) return;
+    if (e.defaultPrevented) return;
+
+    const target = e.target as HTMLElement;
+    if (!target) return;
+
+    // Shift+Enter inside a textarea → allow newline as usual
+    if (target.tagName === "TEXTAREA" && e.shiftKey) return;
+
+    e.preventDefault();
+    advanceFromTarget(target);
   }
   function removeLine(id: string) {
     if (lines.length <= 2) return;
@@ -397,7 +452,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto" dir="rtl">
+    <div
+      ref={formRef}
+      onKeyDownCapture={handleFormKeyDownCapture}
+      onKeyDown={handleFormKeyDown}
+      className="p-6 space-y-5 max-w-5xl mx-auto"
+      dir="rtl"
+    >
 
       {/* ─── Page title ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
@@ -655,13 +716,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
                     <Input
                       type="number"
-                      data-enter-nav="true"
                       value={line.debit}
                       onChange={e => {
                         updateLine(line.id, "debit", e.target.value);
                         if (e.target.value) updateLine(line.id, "credit", "");
                       }}
-                      onKeyDown={handleEnterNav}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
@@ -673,13 +732,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
                     <Input
                       type="number"
-                      data-enter-nav="true"
                       value={line.credit}
                       onChange={e => {
                         updateLine(line.id, "credit", e.target.value);
                         if (e.target.value) updateLine(line.id, "debit", "");
                       }}
-                      onKeyDown={handleEnterNav}
                       placeholder="0.00"
                       className={cn(
                         "h-8 text-sm text-left font-mono",
@@ -690,10 +747,8 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                     />
 
                     <Input
-                      data-enter-nav="true"
                       value={line.description}
                       onChange={e => updateLine(line.id, "description", e.target.value)}
-                      onKeyDown={handleEnterNav}
                       placeholder="بيان السطر..."
                       className="h-8 text-sm"
                     />

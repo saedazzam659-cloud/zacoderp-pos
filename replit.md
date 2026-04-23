@@ -50,6 +50,15 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**Journal Entry Form — Enter-Key Navigation & Description Mirroring (April 2026)**
+- Typing in **البيان العام** (general description) now auto-fills each line's **بيان السطر** (line description). Lines that the user has manually customised (description differs from the previous general value and is not empty) are preserved.
+- Enter key now advances focus through **every** field on `/accounting/journals/new` (and edit) in DOM order: text inputs → date input → dropdowns → exchange rate → textarea → for each line: account combobox → debit → credit → line description → cost-center combobox → next line. Reaching the last field triggers `handleSave()` (guarded by `saveMutation.isPending`).
+- Implementation: two handlers on the form root.
+  - `onKeyDownCapture` — only catches Enter on Radix Select trigger buttons (`button[role="combobox"]`) so the dropdown does NOT open on Enter; instead focus advances. To open a Select, user can press Space, ArrowDown, or click.
+  - `onKeyDown` (bubble) — advances focus for inputs/textareas/combobox-inputs unless `e.defaultPrevented` (so SearchCombobox can still consume Enter when the user has actively interacted with the list).
+- `SearchCombobox` (`components/ui/search-combobox.tsx`) gained a `hasNavigated` flag (set true on typing into the search input or pressing ArrowUp/Down). Enter only selects the highlighted item when `hasNavigated && open`. This prevents value corruption when the user lands on a combobox via Enter and immediately presses Enter again to skip it (without this, the auto-opened popover with `highlight=0` would silently overwrite the field with the first item).
+- Shift+Enter on the textarea still inserts a newline.
+
 **Notification Dismiss / Auto-Clear UX (April 2026)**
 - New `notification_dismissals` table (per-user soft-delete: `(notification_id, user_id, dismissed_at)`). Both list/count queries and the bell dropdown now LEFT-JOIN-and-filter dismissals so a hidden notification disappears for that user only — broadcast notifications stay visible to other recipients.
 - New endpoints: `DELETE /api/notifications/:id` (dismiss for the caller, idempotent), `POST /api/notifications/:id/restore` (undo), `DELETE /api/notifications/cleanup/read` (bulk-dismiss every notification this user has already read; returns the dismissed ids so the UI can offer a single Undo).
