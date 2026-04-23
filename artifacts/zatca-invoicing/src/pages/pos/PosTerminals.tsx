@@ -14,6 +14,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
+} from "@/components/ui/sheet";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -454,16 +457,16 @@ function TerminalEditor({
   const valid = draft.nameAr.trim().length > 0 && !!draft.branchId;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" dir="rtl">
-        <DialogHeader>
-          <DialogTitle>{isNew ? "إضافة محطة بيع" : "تعديل محطة بيع"}</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="left" className="w-full sm:max-w-lg overflow-y-auto" dir="rtl">
+        <SheetHeader className="text-right">
+          <SheetTitle>{isNew ? "إضافة محطة بيع" : "تعديل محطة بيع"}</SheetTitle>
+          <SheetDescription>
             عرّف محطة بيع وحدّد فرعها. اترك حقل المكينة فارغًا ليتم ربطها تلقائيًا بأول جهاز يسجل الدخول عليها.
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 mt-4">
           <div className="col-span-1">
             <Label className="text-xs">الكود</Label>
             <Input
@@ -551,14 +554,14 @@ function TerminalEditor({
           </div>
         </div>
 
-        <DialogFooter>
+        <SheetFooter className="mt-6 flex-row justify-end gap-2">
           <Button variant="outline" onClick={onClose}>إلغاء</Button>
           <Button onClick={onSave} disabled={!valid || saving} data-testid="btn-save-terminal">
             {saving && <Loader2 className="w-4 h-4 me-1 animate-spin" />}
             حفظ
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
