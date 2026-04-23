@@ -13,6 +13,7 @@ import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, Credit
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DiscountRow } from "@/components/DiscountRow";
+import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -633,17 +634,12 @@ export default function PurchaseReturns() {
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد">
                 <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />
-                {(() => {
-                  const sup = suppliers.find((s: any) => String(s.id) === form.supplierId);
-                  if (!sup) return null;
-                  return (
-                    <p className="text-[11px] text-muted-foreground flex items-center gap-2 pt-0.5" dir="ltr">
-                      <span>VAT: <span className="font-mono">{sup.vatNumber || "—"}</span></span>
-                      {sup.code && <span>· رقم المورد: <span className="font-mono">{sup.code}</span></span>}
-                    </p>
-                  );
-                })()}
               </Field>
+              <SupplierVatControl
+                suppliers={suppliers}
+                supplierId={form.supplierId}
+                onSupplierChange={(v) => setForm((p: any) => ({ ...p, supplierId: v }))}
+              />
               <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder="رقم الفاتورة..." /></Field>
               <Field label="رقم فاتورة المورد"><Input placeholder="رقم الفاتورة لدى المورد" value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
               <Field label="الفرع">

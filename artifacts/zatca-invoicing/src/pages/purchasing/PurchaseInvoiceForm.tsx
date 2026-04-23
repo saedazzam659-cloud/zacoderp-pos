@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { DiscountRow } from "@/components/DiscountRow";
+import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
@@ -582,20 +583,11 @@ export default function PurchaseInvoiceForm() {
                   <Label className="text-xs">التاريخ *</Label>
                   <Input type="date" className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
                 </div>
-                <div className="space-y-1.5 lg:col-span-2">
+                <div className="space-y-1.5">
                   <Label className="text-xs">المورد</Label>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
-                  {(() => {
-                    const sup = suppliers.find((s: any) => String(s.id) === supplierId);
-                    if (!sup) return null;
-                    return (
-                      <p className="text-[11px] text-muted-foreground flex items-center gap-2 pt-0.5" dir="ltr">
-                        <span>VAT: <span className="font-mono">{sup.vatNumber || "—"}</span></span>
-                        {sup.code && <span>· رقم المورد: <span className="font-mono">{sup.code}</span></span>}
-                      </p>
-                    );
-                  })()}
                 </div>
+                <SupplierVatControl suppliers={suppliers} supplierId={supplierId} onSupplierChange={setSupplierId} />
                 <div className="space-y-1.5">
                   <Label className="text-xs">رقم فاتورة المورد</Label>
                   <Input className="h-9 text-sm" placeholder="رقم الفاتورة لدى المورد" value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
