@@ -797,11 +797,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("salesDocForm.notes")}</Label>
-                <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.notes")}</Label>
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
+                </div>
               </div>
 
               <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
