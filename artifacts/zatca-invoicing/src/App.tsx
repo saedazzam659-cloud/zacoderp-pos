@@ -8,6 +8,8 @@ import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
+import SupportInbox from "@/pages/admin/SupportInbox";
+import SupportSettings from "@/pages/admin/SupportSettings";
 import Notifications from "@/pages/Notifications";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
@@ -188,6 +190,8 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
+            {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
+            {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
             <Route path="/notifications" component={Notifications} />
 
             {/* Company user routes */}

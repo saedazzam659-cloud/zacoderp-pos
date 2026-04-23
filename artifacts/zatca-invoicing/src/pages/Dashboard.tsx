@@ -18,6 +18,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import SupportMessageCard from "@/components/SupportMessageCard";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info";
@@ -338,6 +339,9 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Support message — bottom of dashboard */}
+      <SupportMessageCard />
     </div>
   );
 }

@@ -35,6 +35,7 @@ import hrSettingsRouter from "./hr-settings";
 import storageRouter from "./storage";
 import posSessionsRouter from "./pos-sessions";
 import notificationsRouter from "./notifications";
+import supportMessagesRouter from "./support-messages";
 
 const router: IRouter = Router();
 
@@ -72,6 +73,7 @@ router.use("/hr/settings",        hrSettingsRouter);
 router.use(storageRouter);
 router.use("/pos-sessions", posSessionsRouter);
 router.use("/notifications", notificationsRouter);
+router.use("/support-messages", supportMessagesRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

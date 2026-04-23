@@ -16,6 +16,17 @@ router.use((req, res, next) => {
 //   companyId matches AND (it's a broadcast OR addressed to this user).
 function recipientWhere(req: any) {
   const u = req.authUser;
+  // Superadmin can also read notifications addressed directly to their user_id
+  // even when the notification's company_id doesn't match their (often null) one.
+  if (u.role === "superadmin") {
+    return or(
+      and(
+        eq(notificationsTable.companyId, u.companyId),
+        or(isNull(notificationsTable.userId), eq(notificationsTable.userId, u.id)),
+      ),
+      eq(notificationsTable.userId, u.id),
+    );
+  }
   return and(
     eq(notificationsTable.companyId, u.companyId),
     or(isNull(notificationsTable.userId), eq(notificationsTable.userId, u.id)),
@@ -40,8 +51,11 @@ router.get("/", async (req, res) => {
       FROM notifications n
       LEFT JOIN notification_reads nr
         ON nr.notification_id = n.id AND nr.user_id = ${userId}
-      WHERE n.company_id = ${req.authUser!.companyId}
+      WHERE (
+        n.company_id = ${req.authUser!.companyId}
         AND (n.user_id IS NULL OR n.user_id = ${userId})
+      )
+      ${req.authUser!.role === "superadmin" ? sql`OR n.user_id = ${userId}` : sql``}
         ${onlyUnread ? sql`AND nr.user_id IS NULL` : sql``}
       ORDER BY n.created_at DESC
       LIMIT 100
@@ -69,8 +83,10 @@ router.get("/unread-count", async (req, res) => {
       FROM notifications n
       LEFT JOIN notification_reads nr
         ON nr.notification_id = n.id AND nr.user_id = ${userId}
-      WHERE n.company_id = ${req.authUser!.companyId}
-        AND (n.user_id IS NULL OR n.user_id = ${userId})
+      WHERE (
+        (n.company_id = ${req.authUser!.companyId} AND (n.user_id IS NULL OR n.user_id = ${userId}))
+        ${req.authUser!.role === "superadmin" ? sql`OR n.user_id = ${userId}` : sql``}
+      )
         AND nr.user_id IS NULL
     `);
     const c = ((result as any).rows ?? result ?? [])[0]?.c ?? 0;

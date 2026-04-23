@@ -50,6 +50,12 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**Support Messages System (April 2026)**
+- New `support_messages` table (id, companyId, userId, senderName, companyName, subject, body, priority, status, adminReply, adminReplyAt, resolvedAt, resolvedByUserId) and `support_settings` singleton table for delivery channels (in-app / webhook URL+secret / Telegram bot+chat).
+- New API router `/api/support-messages`: POST `/` (any user creates a ticket), GET `/mine` (own history), GET `/` & `/stats` (superadmin inbox + counts), PATCH `/:id` (superadmin updates status/reply — auto-creates a `support_reply` notification for the original sender), `_settings/get|update|test` (superadmin only; secrets are masked in responses, only updated when caller sends a non-masked value).
+- Dispatch flow on a new ticket fans out to (1) in-app notification per superadmin user, (2) JSON POST to a configured webhook (Slack/Discord/Zapier/n8n compatible, optional `X-Support-Secret` header), (3) Telegram via bot API. Each channel is independently togglable.
+- ERP UI: `SupportMessageCard` mounted at the bottom of the company dashboard (subject + body + priority selector + history). Superadmin pages `/admin/support` (inbox with status filter, expand-to-reply, status changes) and `/admin/support-settings` (channel toggles, secrets, test-send button). Sidebar entries `nav.supportInbox` / `nav.supportSettings` added under the superadmin group.
+
 **POS Monitoring (April 2026)**
 - New `pos_sessions` table tracks every cashier shift (open/closed/force_closed) with opening/closing/expected cash and difference.
 - Added `pos_session_id` and `created_by_id` columns to `sales_invoices` so each POS sale is linked to its session and operator.
