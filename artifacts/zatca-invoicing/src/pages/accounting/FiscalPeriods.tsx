@@ -96,7 +96,7 @@ export default function FiscalPeriods() {
 
   const createYearMut = useMutation({
     mutationFn: async (data: typeof EMPTY_YEAR) => {
-      const r = await fetch(`${API}/api/fiscal-years`, {
+      const r = await fetch(`${API}/api/fiscal/years`, {
         method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }),
       });
       const d = await r.json();
@@ -118,7 +118,7 @@ export default function FiscalPeriods() {
 
   const updatePeriodStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const r = await fetch(`${API}/api/fiscal-periods/${id}/status`, {
+      const r = await fetch(`${API}/api/fiscal/periods/${id}/status`, {
         method: "PATCH", headers, body: JSON.stringify({ status }),
       });
       const d = await r.json();
@@ -151,7 +151,7 @@ export default function FiscalPeriods() {
 
   const delYearMut = useMutation({
     mutationFn: async (id: number) => {
-      const r = await fetch(`${API}/api/fiscal-years/${id}`, { method: "DELETE", headers });
+      const r = await fetch(`${API}/api/fiscal/years/${id}`, { method: "DELETE", headers });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.error || t("fiscalPeriods.deleteFailed"));
       return d;
