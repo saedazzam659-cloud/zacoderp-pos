@@ -442,19 +442,44 @@ export default function PurchaseInvoiceForm() {
     }));
   }
 
-  function distributeExpenses() {
-    if (!selectedLc || !lines.length) return;
+  async function distributeExpenses() {
+    if (!selectedLc || !lines.length) {
+      toast({ title: "اختر اعتماداً مستندياً أولاً", variant: "destructive" });
+      return;
+    }
     const totalBase = distMethod === "qty"
       ? lines.reduce((s, l) => s + (Number(l.qty) || 0), 0)
       : lines.reduce((s, l) => s + (Number(l.lineTotal) || 0), 0);
-    if (!totalBase) return;
-    const totalLcExpenses = Number(selectedLc.totalExpensesLoaded ?? 0);
+    if (!totalBase) {
+      toast({ title: "أدخل كميات أو أسعار للأصناف قبل التوزيع", variant: "destructive" });
+      return;
+    }
+
+    // Fetch LC detail to get its expenses (list endpoint omits them).
+    let totalLcExpenses = 0;
+    try {
+      const url = `${API}/api/purchasing/letters-of-credit/${selectedLc.id}${cid ? `?companyId=${cid}` : ""}`;
+      const r = await fetch(url, { headers: authH });
+      if (!r.ok) throw new Error("فشل تحميل بيانات الاعتماد");
+      const detail = await r.json();
+      totalLcExpenses = (detail.expenses ?? []).reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+    } catch (err: any) {
+      toast({ title: err.message || "فشل تحميل بيانات الاعتماد", variant: "destructive" });
+      return;
+    }
+
+    if (totalLcExpenses <= 0) {
+      toast({ title: "لا توجد مصاريف على هذا الاعتماد لتوزيعها", variant: "destructive" });
+      return;
+    }
+
     setLines(prev => prev.map(l => {
       const base = distMethod === "qty" ? Number(l.qty) : Number(l.lineTotal);
       const share = (base / totalBase) * totalLcExpenses;
       const finalCost = Number(l.lineTotal) + share;
       return { ...l, expenseShare: share.toFixed(2), finalCost: finalCost.toFixed(2) };
     }));
+    toast({ title: "تم توزيع مصاريف الاعتماد", description: `الإجمالي الموزع: ${fmt(totalLcExpenses)} ${selectedLc.currencyCode ?? ""}` });
   }
 
   // ── Totals ───────────────────────────────────────────────
