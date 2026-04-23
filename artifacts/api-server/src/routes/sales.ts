@@ -591,6 +591,31 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
       return;
     }
+    // Block deletion when sales returns reference this invoice (FK has no cascade).
+    const relatedReturns = await db.select({
+      id: salesReturnsTable.id, docNumber: salesReturnsTable.docNumber,
+    }).from(salesReturnsTable).where(and(
+      eq(salesReturnsTable.companyId, cid),
+      eq(salesReturnsTable.invoiceId, id),
+    )).limit(5);
+    if (relatedReturns.length) {
+      const refs = relatedReturns.map(r => r.docNumber || `#${r.id}`).join("، ");
+      res.status(409).json({ error: `لا يمكن حذف هذه الفاتورة لأنها مرتبطة بمرتجع/مرتجعات مبيعات: ${refs}. يرجى حذف المرتجع أولاً.` });
+      return;
+    }
+    // Block deletion when a quotation was converted into this invoice
+    // (sales_quotations.converted_invoice_id has no cascade either).
+    const relatedQuotes = await db.select({
+      id: salesQuotationsTable.id, docNumber: salesQuotationsTable.docNumber,
+    }).from(salesQuotationsTable).where(and(
+      eq(salesQuotationsTable.companyId, cid),
+      eq(salesQuotationsTable.convertedInvoiceId, id),
+    )).limit(5);
+    if (relatedQuotes.length) {
+      const refs = relatedQuotes.map(r => r.docNumber || `#${r.id}`).join("، ");
+      res.status(409).json({ error: `لا يمكن حذف هذه الفاتورة لأنها ناتجة عن تحويل عرض/عروض أسعار: ${refs}. يرجى فك ربط العرض أولاً.` });
+      return;
+    }
     await cleanupDocArtifacts({ companyId: cid, refType: "sales_invoice", refId: id, journalEntryId: inv.journalEntryId });
     await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
     res.json({ ok: true });

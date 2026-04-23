@@ -674,6 +674,19 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
       res.status(400).json({ error: "لا يمكن حذف فاتورة مُرحَّلة. قم بإلغاء الترحيل أولاً ثم احذفها." });
       return;
     }
+    // Block deletion when purchase returns reference this invoice (FK has no
+    // cascade). Tell the user clearly which returns to remove first.
+    const relatedReturns = await db.select({
+      id: purchaseReturnsTable.id, docNumber: purchaseReturnsTable.docNumber,
+    }).from(purchaseReturnsTable).where(and(
+      eq(purchaseReturnsTable.companyId, cid),
+      eq(purchaseReturnsTable.invoiceId, id),
+    )).limit(5);
+    if (relatedReturns.length) {
+      const refs = relatedReturns.map(r => r.docNumber || `#${r.id}`).join("، ");
+      res.status(409).json({ error: `لا يمكن حذف هذه الفاتورة لأنها مرتبطة بمرتجع/مرتجعات مشتريات: ${refs}. يرجى حذف المرتجع أولاً.` });
+      return;
+    }
     await cleanupDocArtifacts({ companyId: cid, refType: "purchase_invoice", refId: id, journalEntryId: (inv as any).journalEntryId });
     await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     res.json({ ok: true });
