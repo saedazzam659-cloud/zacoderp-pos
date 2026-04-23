@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer } from "lucide-react";
+import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -79,6 +80,18 @@ export default function SalesReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+  const [printData, setPrintData] = useState<any>(null);
+
+  async function openPrint(r: any) {
+    try {
+      const res = await fetch(`${API}/api/sales/sales-returns/${r.id}`, { headers: authH });
+      const full = await res.json();
+      const customer = customers.find((c: any) => c.id === r.customerId) ?? null;
+      setPrintData({ type: "return", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "تعذّر تحميل المرتجع للطباعة", variant: "destructive" });
+    }
+  }
   const [focusLineId, setFocusLineId] = useState<string>(() => lines[0]?._id ?? "");
   useEffect(() => {
     if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
@@ -869,6 +882,11 @@ export default function SalesReturns() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
                         )}
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:text-primary hover:bg-muted"
+                          title="طباعة"
+                          onClick={() => openPrint(r)}>
+                          <Printer className="h-3.5 w-3.5" />
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                           title={t("salesReturns.actionDuplicate")}
                           onClick={() => duplicateReturn(r.id)}>
@@ -902,6 +920,7 @@ export default function SalesReturns() {
           </table>
         )}
       </div>
+      <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
     </div>
   );
 }

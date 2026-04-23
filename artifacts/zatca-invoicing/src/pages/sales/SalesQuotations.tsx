@@ -7,8 +7,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, FileSignature, Eye, Trash2, FileText, ArrowRightLeft, CheckCircle, XCircle, Send } from "lucide-react";
+import { Plus, Search, FileSignature, Eye, Trash2, FileText, ArrowRightLeft, CheckCircle, XCircle, Send, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import SalesPrintModal from "./SalesPrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -33,6 +34,18 @@ export default function SalesQuotations() {
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [printData, setPrintData] = useState<any>(null);
+
+  async function openPrint(q: any) {
+    try {
+      const res = await fetch(`${API}/api/sales/sales-quotations/${q.id}`, { headers: authH });
+      const full = await res.json();
+      const customer = customers.find((c: any) => c.id === q.customerId) ?? null;
+      setPrintData({ type: "quotation", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "تعذّر تحميل عرض السعر للطباعة", variant: "destructive" });
+    }
+  }
 
   const statusLabel = (s: string) =>
     s === "all" ? t("common.all") : t(`salesQuotations.status${s.charAt(0).toUpperCase()}${s.slice(1)}`);
@@ -193,6 +206,11 @@ export default function SalesQuotations() {
                             onClick={() => navigate(`/sales/quotations/${q.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:text-primary hover:bg-muted"
+                            title="طباعة"
+                            onClick={() => openPrint(q)}>
+                            <Printer className="h-3.5 w-3.5" />
+                          </Button>
                           {q.status === "draft" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600" title={t("salesQuotations.actionSend")}
                               onClick={() => statusMut.mutate({ id: q.id, status: "sent" })}>
@@ -233,6 +251,7 @@ export default function SalesQuotations() {
           </div>
         )}
       </div>
+      <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
     </div>
   );
 }

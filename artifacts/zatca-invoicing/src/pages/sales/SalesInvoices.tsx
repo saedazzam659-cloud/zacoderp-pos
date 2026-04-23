@@ -7,8 +7,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy } from "lucide-react";
+import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import SalesPrintModal from "./SalesPrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -31,6 +32,18 @@ export default function SalesInvoices() {
 
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [printData, setPrintData] = useState<any>(null);
+
+  async function openPrint(inv: any) {
+    try {
+      const res = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { headers: authH });
+      const full = await res.json();
+      const customer = customers.find((c: any) => c.id === inv.customerId) ?? null;
+      setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "تعذّر تحميل الفاتورة للطباعة", variant: "destructive" });
+    }
+  }
 
   const { data: invoices = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-invoices", cid],
@@ -197,6 +210,11 @@ export default function SalesInvoices() {
                             onClick={() => navigate(`/sales/invoices/${inv.id}`)}>
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:text-primary hover:bg-muted"
+                            title="طباعة"
+                            onClick={() => openPrint(inv)}>
+                            <Printer className="h-3.5 w-3.5" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                             title={t("common.duplicate")}
                             onClick={() => navigate(`/sales/invoices/new?from=${inv.id}`)}>
@@ -238,6 +256,7 @@ export default function SalesInvoices() {
           </div>
         )}
       </div>
+      <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
     </div>
   );
 }
