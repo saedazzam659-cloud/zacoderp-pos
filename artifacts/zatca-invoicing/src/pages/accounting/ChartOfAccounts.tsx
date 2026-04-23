@@ -72,6 +72,7 @@ export default function ChartOfAccounts() {
   const [editId, setEditId]         = useState<number | null>(null);
   const [showForm, setShowForm]     = useState(false);
   const [treeOpen, setTreeOpen]     = useState(false);
+  const [quickParentRow, setQuickParentRow] = useState<any | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -331,6 +332,33 @@ export default function ChartOfAccounts() {
         <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("chartOfAccounts.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
+      {quickParentRow && (
+        <AccountTreePickerDialog
+          open={!!quickParentRow}
+          onOpenChange={(o) => { if (!o) setQuickParentRow(null); }}
+          title={`تغيير الحساب الأب لـ: ${quickParentRow.code} — ${quickParentRow.nameAr}`}
+          description="اختر الحساب الأب الجديد. سيتم حفظ التغيير فوراً."
+          currentAccountId={quickParentRow.parentId ?? null}
+          onlyPosting={false}
+          onSelect={(acc) => {
+            if (acc.id === quickParentRow.id) {
+              toast({ title: "لا يمكن جعل الحساب أباً لنفسه", variant: "destructive" });
+              return;
+            }
+            const payload = {
+              ...quickParentRow,
+              parentId: acc.id,
+              level: Number(quickParentRow.level) || 1,
+              reportDirection: quickParentRow.reportDirection ?? "",
+            };
+            updateMut.mutate(
+              { id: quickParentRow.id, data: payload },
+              { onSuccess: () => setQuickParentRow(null) }
+            );
+          }}
+        />
+      )}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -411,6 +439,14 @@ export default function ChartOfAccounts() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
+                          <Button
+                            variant="ghost" size="icon" className="h-8 w-8"
+                            title="تغيير الحساب الأب"
+                            onClick={() => setQuickParentRow(a)}
+                            data-testid={`btn-row-tree-${a.id}`}
+                          >
+                            <Network className="h-3.5 w-3.5" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
                             onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}>
