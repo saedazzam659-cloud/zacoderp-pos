@@ -584,7 +584,21 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 <Label className="text-xs font-medium">البيان العام</Label>
                 <Textarea
                   value={description}
-                  onChange={e => setDescription(e.target.value)}
+                  onChange={e => {
+                    const next = e.target.value;
+                    const prev = description;
+                    // Mirror into each line's description IF the line is empty
+                    // or still equals the previous general description (i.e. the
+                    // user hasn't customised that line yet). Lines with their
+                    // own custom text are left alone.
+                    setLines(ls => ls.map(l => {
+                      if (!l.description || l.description === prev) {
+                        return { ...l, description: next };
+                      }
+                      return l;
+                    }));
+                    setDescription(next);
+                  }}
                   placeholder="وصف القيد..."
                   className="text-sm resize-none"
                   rows={2}
