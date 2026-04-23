@@ -125,23 +125,31 @@ router.post("/ai-suggest", async (req, res) => {
       return;
     }
 
-    const accountList = dbAccounts.slice(0, 300).map(a =>
-      `- id=${a.id} | ${a.code} | ${a.nameAr} | type=${a.accountType}${a.isPosting === false ? " | (غير ترحيلي)" : ""}`
+    const accountList = dbAccounts.slice(0, 400).map(a =>
+      `- id=${a.id} | ${a.code} | ${a.nameAr} | type=${a.accountType}${a.isPosting === false ? " | (غير ترحيلي/أب)" : ""}`
     ).join("\n");
 
-    const prompt = `أنت خبير محاسبة سعودي متخصص في نظام ZATCA.
-مطلوب ربط حساب محاسبي (من شجرة الحسابات الحالية) للدور التالي:
+    const prompt = `أنت خبير محاسبة سعودي متخصص في نظام ZATCA والدليل المحاسبي السعودي.
+مطلوب ربط حساب محاسبي للدور التالي:
 
 نوع المستند: ${documentType}
 الدور: ${roleKey} — ${roleLabel}
 الوصف: ${roleDescription}
 
-شجرة الحسابات المتاحة:
+شجرة الحسابات الحالية:
 ${accountList}
 
+القاعدة:
+1) إن وُجد حساب ترحيلي مناسب تماماً، أعد accountId برقمه.
+2) إن لم يوجد، اقترح إنشاء حساب جديد عبر الحقل create، واختر أب مناسب من القائمة (حساب غير ترحيلي من نفس النوع).
+
 أرجع JSON فقط بالشكل:
-{"accountId": <رقم id من القائمة أو null>, "reasoning": "<شرح مختصر بالعربية>"}
-اختر حساباً ترحيلياً (isPosting != غير ترحيلي) فقط. إذا لا يوجد حساب مناسب أعد accountId=null.`;
+{
+  "accountId": <رقم id موجود أو null>,
+  "create": {"code": "<كود 4-6 أرقام>", "nameAr": "<اسم عربي واضح>", "accountType": "<asset|liability|equity|revenue|expense>", "parentId": <id حساب أب موجود أو null>} أو null,
+  "reasoning": "<شرح مختصر بالعربية>"
+}
+لا تعد create إن كنت تعد accountId بقيمة صالحة.`;
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20_000);
@@ -177,12 +185,66 @@ ${accountList}
     const content = data?.choices?.[0]?.message?.content ?? "{}";
     let parsed: any = {};
     try { parsed = JSON.parse(content); } catch {}
+
     const suggestedId = parsed.accountId ? Number(parsed.accountId) : null;
-    const valid = suggestedId && dbAccounts.some(a => a.id === suggestedId);
-    res.json({
-      accountId: valid ? suggestedId : null,
-      reasoning: String(parsed.reasoning || "").slice(0, 1000),
-    });
+    const existingAcc = suggestedId ? dbAccounts.find(a => a.id === suggestedId) : null;
+    const reasoning = String(parsed.reasoning || "").slice(0, 1000);
+
+    if (existingAcc && existingAcc.isPosting !== false) {
+      res.json({ accountId: existingAcc.id, created: false, reasoning });
+      return;
+    }
+
+    const createSpec = parsed.create && typeof parsed.create === "object" ? parsed.create : null;
+    if (createSpec) {
+      const validTypes = ["asset","liability","equity","revenue","expense"] as const;
+      const accountType = validTypes.includes(createSpec.accountType) ? createSpec.accountType : null;
+      let code = String(createSpec.code || "").trim().slice(0, 32);
+      const nameAr = String(createSpec.nameAr || "").trim().slice(0, 200);
+      const parentIdRaw = createSpec.parentId ? Number(createSpec.parentId) : null;
+      const parent = parentIdRaw ? dbAccounts.find(a => a.id === parentIdRaw) : null;
+
+      if (accountType && nameAr && code) {
+        // Ensure unique code per company
+        const existingCodes = new Set(dbAccounts.map(a => a.code));
+        if (existingCodes.has(code)) {
+          let i = 1;
+          while (existingCodes.has(`${code}${i}`)) i++;
+          code = `${code}${i}`;
+        }
+        const level = parent ? (parent.level ?? 1) + 1 : 1;
+        try {
+          const [inserted] = await db.insert(accountsTable).values({
+            companyId,
+            parentId: parent?.id ?? null,
+            code,
+            nameAr,
+            accountType: accountType as any,
+            level,
+            isPosting: true,
+            isActive: true,
+          }).returning();
+          // Flip parent to non-posting (branch)
+          if (parent && parent.isPosting) {
+            await db.update(accountsTable)
+              .set({ isPosting: false, updatedAt: new Date() })
+              .where(eq(accountsTable.id, parent.id));
+          }
+          res.json({
+            accountId: inserted.id,
+            created: true,
+            createdAccount: { id: inserted.id, code: inserted.code, nameAr: inserted.nameAr, accountType: inserted.accountType },
+            reasoning,
+          });
+          return;
+        } catch (err: any) {
+          res.json({ accountId: null, created: false, reasoning: `${reasoning} (تعذّر إنشاء الحساب: ${err?.message ?? "خطأ"})` });
+          return;
+        }
+      }
+    }
+
+    res.json({ accountId: null, created: false, reasoning });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

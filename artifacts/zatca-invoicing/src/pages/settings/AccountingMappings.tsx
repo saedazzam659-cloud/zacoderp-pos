@@ -145,8 +145,14 @@ export default function AccountingMappings() {
       if (data.accountId) {
         setState(s => ({ ...s, [k]: { ...s[k]!, accountId: Number(data.accountId) } }));
       }
+      if (data.created) {
+        await qc.invalidateQueries({ queryKey: ["accounts", cid] });
+      }
       setAiReasoning(r => ({ ...r, [k]: data.reasoning || "" }));
-      toast({ title: data.accountId ? "تم اقتراح حساب" : "لم يجد الذكاء الاصطناعي حساباً مناسباً", description: data.reasoning?.slice(0, 120) });
+      const title = data.created
+        ? `تم إنشاء حساب جديد: ${data.createdAccount?.code} — ${data.createdAccount?.nameAr}`
+        : data.accountId ? "تم اقتراح حساب" : "لم يجد الذكاء الاصطناعي حساباً مناسباً";
+      toast({ title, description: data.reasoning?.slice(0, 160) });
     } catch (e: any) {
       toast({ title: "فشل اقتراح الذكاء الاصطناعي", description: e?.message, variant: "destructive" });
     } finally {
@@ -162,6 +168,8 @@ export default function AccountingMappings() {
         await aiSuggest(doc, r.key);
       }
     }
+    // Persist newly mapped accounts (including AI-created ones) to the server
+    try { await saveMut.mutateAsync(undefined); } catch {}
   }
 
   const completion = useMemo(() => {
