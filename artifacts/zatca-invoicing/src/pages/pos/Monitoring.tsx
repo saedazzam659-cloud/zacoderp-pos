@@ -62,11 +62,25 @@ function StatCard({ icon: Icon, label, value, accent, sub }: {
 }
 
 export default function PosMonitoring() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const isSuperAdmin = user?.role === "superadmin";
   const [companyId, setCompanyId] = useState<number | null>(user?.companyId ?? null);
+
+  // Companies dropdown for superadmin to filter by tenant.
+  const companiesQ = useQuery({
+    queryKey: ["companies-for-pos-monitor"],
+    enabled: isSuperAdmin,
+    queryFn: async () => {
+      const API = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${API}/api/companies`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("فشل تحميل الشركات");
+      return (await res.json()) as Array<{ id: number; nameAr: string; nameEn?: string }>;
+    },
+  });
   const [status, setStatus] = useState<"" | "open" | "closed" | "force_closed">("");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -222,13 +236,20 @@ export default function PosMonitoring() {
             </SelectContent>
           </Select>
           {isSuperAdmin && (
-            <Input
-              type="number"
-              value={companyId ?? ""}
-              onChange={e => setCompanyId(e.target.value ? Number(e.target.value) : null)}
-              placeholder="رقم الشركة"
-              className="w-32"
-            />
+            <Select
+              value={companyId ? String(companyId) : "all"}
+              onValueChange={(v) => setCompanyId(v === "all" ? null : Number(v))}
+            >
+              <SelectTrigger className="w-56" data-testid="select-company">
+                <SelectValue placeholder="كل الشركات" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">كل الشركات</SelectItem>
+                {(companiesQ.data ?? []).map(c => (
+                  <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </CardContent>
       </Card>

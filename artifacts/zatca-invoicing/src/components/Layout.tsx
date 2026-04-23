@@ -36,6 +36,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
+  { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];
 const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity },

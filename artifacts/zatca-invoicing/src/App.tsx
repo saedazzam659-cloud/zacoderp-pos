@@ -201,7 +201,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
 
             {/* HR routes */}
-            {!isSuperAdmin && <Route path="/pos-monitoring" component={PosMonitoring} />}
+            <Route path="/pos-monitoring" component={PosMonitoring} />
             {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
             {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
             {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}
