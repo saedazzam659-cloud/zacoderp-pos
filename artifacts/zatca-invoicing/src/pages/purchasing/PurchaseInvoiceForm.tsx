@@ -882,17 +882,33 @@ export default function PurchaseInvoiceForm() {
                 <ListOrdered className="h-4 w-4" />
                 <span>الأصناف ({lines.filter(l => l.itemName).length})</span>
               </div>
-              <div data-enter-nav-container="lines" className="space-y-1.5 mb-3">
-                <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2fr 0.9fr 1.3fr 1fr 0.6fr 0.6fr 0.9fr 0.6fr 0.6fr 0.85fr 1fr 1.2fr auto" }}>
-                  {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "وزن", "سعر الوحدة", "خصم%", "ضريبة%", "مصاريف", "التكلفة النهائية", "ملاحظات", ""].map((h, i) => (
-                    <p key={i} className={cn("text-[10px]", h === "التكلفة النهائية" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
+              {(() => {
+                const GRID_COLS = "220px 110px 160px 120px 90px 80px 110px 80px 80px 110px 130px 180px 40px";
+                const HEADERS = ["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "وزن", "سعر الوحدة", "خصم%", "ضريبة%", "مصاريف", "التكلفة النهائية", "ملاحظات", ""];
+                return (
+              <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-x-auto">
+                <div className="min-w-max">
+                <div
+                  className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0"
+                  style={{ gridTemplateColumns: GRID_COLS }}
+                >
+                  {HEADERS.map((h, i) => (
+                    <p
+                      key={i}
+                      className={cn(
+                        "text-[11px] font-medium truncate",
+                        h === "التكلفة النهائية" ? "font-semibold text-primary" : "text-muted-foreground"
+                      )}
+                      title={h}
+                    >{h}</p>
                   ))}
                 </div>
+                <div className="divide-y">
                 {lines.map(l => (
-                  <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
+                  <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
                     <div
-                      className="grid gap-1.5 items-center"
-                      style={{ gridTemplateColumns: "2fr 0.9fr 1.3fr 1fr 0.6fr 0.6fr 0.9fr 0.6fr 0.6fr 0.85fr 1fr 1.2fr auto" }}
+                      className="grid gap-2 items-center"
+                      style={{ gridTemplateColumns: GRID_COLS }}
                     >
                       {inventoryItems.length > 0 ? (
                         <SearchCombobox
@@ -962,7 +978,11 @@ export default function PurchaseInvoiceForm() {
                     </div>
                   </div>
                 ))}
+                </div>
+                </div>
               </div>
+                );
+              })()}
 
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
                 <Plus className="h-4 w-4" />إضافة صنف
