@@ -107,11 +107,14 @@ export default function ChartOfAccounts() {
     childrenIndex.set(key, arr);
   }
   const balanceCache = new Map<number, number>();
-  function computeBalance(accountId: number): number {
+  function computeBalance(accountId: number, seen: Set<number> = new Set()): number {
     if (balanceCache.has(accountId)) return balanceCache.get(accountId)!;
+    if (seen.has(accountId)) return 0; // cycle guard
+    seen.add(accountId);
     const own = leafBalanceMap.get(accountId) ?? 0;
     const kids = childrenIndex.get(accountId) || [];
-    const sum = own + kids.reduce((s, c) => s + computeBalance(c.id), 0);
+    const sum = own + kids.reduce((s, c) => s + computeBalance(c.id, seen), 0);
+    seen.delete(accountId);
     balanceCache.set(accountId, sum);
     return sum;
   }
