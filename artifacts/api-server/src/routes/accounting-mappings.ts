@@ -16,7 +16,23 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   warehouse_transfer:    ["inventory_source", "inventory_destination", "transfer_cost"],
   cashbox:               ["cash_on_hand"],
   bank:                  ["bank_main", "bank_fees"],
+  letter_of_credit:      ["lc_margin", "lc_liability", "lc_commission", "lc_expenses", "lc_fx_diff", "inventory", "bank"],
 };
+
+// Default LC chart-of-accounts seed used by /seed-lc
+const LC_SEED_ACCOUNTS: Array<{
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  accountType: "asset" | "liability" | "equity" | "revenue" | "expense";
+  roleKey: string;
+}> = [
+  { code: "1150", nameAr: "هامش الاعتماد المستندي", nameEn: "Letter of Credit Margin", accountType: "asset",     roleKey: "lc_margin" },
+  { code: "2150", nameAr: "الاعتمادات المستندية المفتوحة", nameEn: "Open Letters of Credit", accountType: "liability", roleKey: "lc_liability" },
+  { code: "5830", nameAr: "عمولة فتح الاعتماد المستندي", nameEn: "LC Opening Commission", accountType: "expense",   roleKey: "lc_commission" },
+  { code: "5835", nameAr: "مصاريف الاعتماد المستندي", nameEn: "LC Expenses (Shipping/Insurance/Customs)", accountType: "expense", roleKey: "lc_expenses" },
+  { code: "5840", nameAr: "فروق عملة الاعتماد المستندي", nameEn: "LC FX Differences", accountType: "expense", roleKey: "lc_fx_diff" },
+];
 
 const isValidRole = (dt: string, rk: string) =>
   Array.isArray(DOCUMENT_TYPE_ROLES[dt]) && DOCUMENT_TYPE_ROLES[dt]!.includes(rk);
@@ -94,6 +110,64 @@ router.put("/bulk", async (req, res) => {
     const rows = await db.select().from(accountingMappingsTable)
       .where(eq(accountingMappingsTable.companyId, companyId));
     res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Seed default LC chart-of-accounts and map them to the letter_of_credit document type.
+// Idempotent: accounts with matching code are reused; mappings are upserted.
+router.post("/seed-lc", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+    const existing = await db.select().from(accountsTable)
+      .where(eq(accountsTable.companyId, companyId));
+    const byCode = new Map(existing.map(a => [a.code, a]));
+
+    const created: Array<{ code: string; nameAr: string; id: number }> = [];
+    const reused: Array<{ code: string; nameAr: string; id: number }> = [];
+    const roleToAccountId: Record<string, number> = {};
+
+    for (const seed of LC_SEED_ACCOUNTS) {
+      const hit = byCode.get(seed.code);
+      if (hit) {
+        roleToAccountId[seed.roleKey] = hit.id;
+        reused.push({ code: hit.code, nameAr: hit.nameAr, id: hit.id });
+        continue;
+      }
+      const [inserted] = await db.insert(accountsTable).values({
+        companyId,
+        parentId: null,
+        code: seed.code,
+        nameAr: seed.nameAr,
+        nameEn: seed.nameEn,
+        accountType: seed.accountType as any,
+        level: 1,
+        isPosting: true,
+        isActive: true,
+      }).returning();
+      roleToAccountId[seed.roleKey] = inserted.id;
+      created.push({ code: inserted.code, nameAr: inserted.nameAr, id: inserted.id });
+    }
+
+    // Auto-map the seeded LC accounts; leave `inventory` and `bank` roles untouched so the user picks them.
+    await db.transaction(async (tx) => {
+      for (const [roleKey, accountId] of Object.entries(roleToAccountId)) {
+        await tx.insert(accountingMappingsTable).values({
+          companyId, documentType: "letter_of_credit", roleKey, accountId, isLocked: false,
+        }).onConflictDoUpdate({
+          target: [
+            accountingMappingsTable.companyId,
+            accountingMappingsTable.documentType,
+            accountingMappingsTable.roleKey,
+          ],
+          // Preserve any existing mapping the user already set.
+          set: { updatedAt: new Date() },
+        });
+      }
+    });
+
+    res.json({ created, reused, mapped: Object.keys(roleToAccountId).length });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

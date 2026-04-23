@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AccountCombobox } from "@/components/AccountCombobox";
-import { Lock, Unlock, Sparkles, Save, Info, Loader2, BookMarked, Wand2 } from "lucide-react";
+import { Lock, Unlock, Sparkles, Save, Info, Loader2, BookMarked, Wand2, FileStack } from "lucide-react";
 import { DOCUMENT_TYPES, type DocumentTypeDef } from "@/config/accountingMappings";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -168,6 +168,33 @@ export default function AccountingMappings() {
     }
   }
 
+  const seedLcMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/accounting-mappings/seed-lc`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: cid }),
+      });
+      if (!res.ok) {
+        const t = await res.text(); let m = t;
+        try { m = JSON.parse(t).error ?? t; } catch {}
+        throw new Error(m || "فشل إنشاء حسابات الاعتماد المستندي");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["accounts", cid] });
+      qc.invalidateQueries({ queryKey: ["accounting-mappings", cid] });
+      const created = data?.created?.length ?? 0;
+      const reused = data?.reused?.length ?? 0;
+      toast({
+        title: "تم إعداد حسابات الاعتماد المستندي",
+        description: `تم إنشاء ${created} حساب جديد وإعادة استخدام ${reused}. افتح بطاقة «الاعتمادات المستندية» بالأسفل.`,
+      });
+    },
+    onError: (e: any) => toast({ title: "تعذّر الإنشاء", description: e?.message, variant: "destructive" }),
+  });
+
   async function aiSuggestAll() {
     for (const doc of DOCUMENT_TYPES) {
       for (const r of doc.roles) {
@@ -202,6 +229,11 @@ export default function AccountingMappings() {
           <div className="text-xs text-muted-foreground px-3 py-1.5 rounded-full bg-muted">
             اكتمال: <span className="font-semibold text-foreground">{completion.done}/{completion.total}</span> ({completion.pct}%)
           </div>
+          <Button variant="outline" size="sm" className="gap-1 border-blue-300 text-blue-700 hover:bg-blue-50"
+            onClick={() => seedLcMut.mutate()} disabled={seedLcMut.isPending || !cid}>
+            {seedLcMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileStack className="h-4 w-4" />}
+            إنشاء حسابات الاعتماد المستندي
+          </Button>
           <Button variant="outline" size="sm" className="gap-1" onClick={aiSuggestAll}>
             <Wand2 className="h-4 w-4" />اقتراح الكل بالذكاء الاصطناعي
           </Button>

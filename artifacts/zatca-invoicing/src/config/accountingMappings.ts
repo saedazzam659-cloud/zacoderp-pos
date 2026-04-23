@@ -126,4 +126,18 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "bank_fees", label: "مصاريف بنكية", description: "حساب مدين للعمولات والرسوم البنكية.", defaultHintCode: "5800", accountType: "expense" },
     ],
   },
+  {
+    key: "letter_of_credit",
+    label: "الاعتمادات المستندية",
+    description: "القيود الخاصة بفتح الاعتماد وسداد الهامش وتحميل المصاريف والعمولات البنكية وفروق العملة، قبل ترحيل التكلفة النهائية على المخزون.",
+    roles: [
+      { key: "lc_margin",      label: "هامش الاعتماد (مدين)", description: "الحساب المدين بنسبة الهامش المُجمّد لدى البنك عند فتح الاعتماد.", defaultHintCode: "1150", accountType: "asset" },
+      { key: "lc_liability",   label: "الاعتمادات المستندية المفتوحة (دائن)", description: "التزام الشركة للبنك بقيمة الاعتماد بعد خصم الهامش.", defaultHintCode: "2150", accountType: "liability" },
+      { key: "lc_commission",  label: "عمولة فتح الاعتماد", description: "عمولة البنك عند فتح الاعتماد (مصروف).", defaultHintCode: "5830", accountType: "expense" },
+      { key: "lc_expenses",    label: "مصاريف الاعتماد المستندي (شحن/تأمين/جمارك)", description: "حساب تجميع مصاريف الاعتماد قبل توزيعها على تكلفة المخزون.", defaultHintCode: "5835", accountType: "expense" },
+      { key: "lc_fx_diff",     label: "فروق عملة الاعتماد", description: "فرق سعر الصرف بين فتح الاعتماد وسداده.", defaultHintCode: "5840", accountType: "expense" },
+      { key: "inventory",      label: "المخزون (تحميل التكلفة)", description: "الحساب الذي تُحمّل عليه التكلفة النهائية (قيمة البضاعة + المصاريف).", defaultHintCode: "1220", accountType: "asset" },
+      { key: "bank",           label: "البنك (دفع الهامش/المصاريف)", description: "الحساب البنكي الذي يُخصم منه الهامش والعمولات.", defaultHintCode: "1130", accountType: "asset" },
+    ],
+  },
 ];
