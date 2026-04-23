@@ -169,7 +169,7 @@ export default function PurchaseInvoices() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/50 border-b">
-                  {["رقم الفاتورة","التاريخ","المورد","نوع الدفع","العملة","المجموع","الضريبة","الإجمالي","الحالة","رقم القيد","إجراءات"].map(h => (
+                  {["رقم الفاتورة","التاريخ","المورد","نوع الدفع","العملة","المجموع","الضريبة","الإجمالي","القيد","الحالة","إجراءات"].map(h => (
                     <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>
                   ))}
                 </tr>
@@ -193,9 +193,6 @@ export default function PurchaseInvoices() {
                       <td className="px-3 py-2.5 font-mono">{fmt(inv.subtotal)}</td>
                       <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(inv.vatAmount)}</td>
                       <td className="px-3 py-2.5 font-mono font-semibold">{fmt(inv.totalAmount)}</td>
-                      <td className="px-3 py-2.5">
-                        <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
-                      </td>
                       <td className="px-3 py-2.5 font-mono text-xs">
                         {inv.journalEntryId ? (
                           <button
@@ -208,6 +205,9 @@ export default function PurchaseInvoices() {
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", st.cls)}>{st.label}</span>
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex gap-1">

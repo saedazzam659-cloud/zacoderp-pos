@@ -1023,7 +1023,7 @@ export default function PurchaseReturns() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 border-b">
-                {["رقم المرتجع","التاريخ","المورد","العملة","الضريبة","الإجمالي","الحالة","رقم القيد","إجراءات"].map(h => (
+                {["رقم المرتجع","التاريخ","المورد","العملة","المجموع","الضريبة","الإجمالي","القيد","الحالة","إجراءات"].map(h => (
                   <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>
                 ))}
               </tr>
@@ -1037,17 +1037,9 @@ export default function PurchaseReturns() {
                   <td className="px-3 py-2.5">{r.returnDate}</td>
                   <td className="px-3 py-2.5">{supMap[r.supplierId] ?? "—"}</td>
                   <td className="px-3 py-2.5">{r.currencyCode}</td>
+                  <td className="px-3 py-2.5 font-mono">{fmt(Number(r.totalAmount) - Number(r.vatAmount))}</td>
                   <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
                   <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
-                  <td className="px-3 py-2.5">
-                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
-                      r.status === "posted"
-                        ? "bg-green-50 text-green-700 border-green-200"
-                        : "bg-amber-50 text-amber-700 border-amber-200"
-                    )}>
-                      {r.status === "posted" ? "مرحّل" : "مسودة"}
-                    </span>
-                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs">
                     {r.journalEntryId ? (
                       <button
@@ -1060,6 +1052,15 @@ export default function PurchaseReturns() {
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
+                      r.status === "posted"
+                        ? "bg-green-50 text-green-700 border-green-200"
+                        : "bg-amber-50 text-amber-700 border-amber-200"
+                    )}>
+                      {r.status === "posted" ? "مرحّل" : "مسودة"}
+                    </span>
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">

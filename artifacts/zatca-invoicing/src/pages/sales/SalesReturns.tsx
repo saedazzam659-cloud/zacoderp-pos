@@ -840,9 +840,10 @@ export default function SalesReturns() {
                 t("salesReturns.date"),
                 t("salesReturns.customer"),
                 t("salesReturns.colInvoice"),
-                t("salesReturns.totalLabel"),
-                t("salesReturns.vatLabel"),
                 t("salesReturns.currency"),
+                "المجموع",
+                t("salesReturns.vatLabel"),
+                t("salesReturns.totalLabel"),
                 t("salesReturns.colJournal"),
                 t("salesReturns.colStatus"),
                 t("salesReturns.colActions"),
@@ -861,9 +862,10 @@ export default function SalesReturns() {
                     <td className="px-3 py-2.5">{r.returnDate}</td>
                     <td className="px-3 py-2.5">{cusMap[r.customerId] ?? t("common.none")}</td>
                     <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv?.docNumber ?? (r.invoiceId ? `SI-${r.invoiceId}` : t("common.none"))}</td>
-                    <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
-                    <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
                     <td className="px-3 py-2.5">{r.currencyCode}</td>
+                    <td className="px-3 py-2.5 font-mono">{fmt(Number(r.totalAmount) - Number(r.vatAmount))}</td>
+                    <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
+                    <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
                     <td className="px-3 py-2.5">
                       {r.journalEntryId ? (
                         <button onClick={() => navigate(`/accounting/journals/${r.journalEntryId}?tab=lines`)}
