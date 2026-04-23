@@ -1119,4 +1119,94 @@ router.delete("/supplier-settlements/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ── AI explanation for Letters of Credit ───────────────────────────────
+router.post("/letters-of-credit/ai-explain", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const lc = req.body?.lc ?? {};
+    const expenses: any[] = Array.isArray(req.body?.expenses) ? req.body.expenses : [];
+    const supplierName = String(req.body?.supplierName ?? "—");
+
+    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
+      return;
+    }
+
+    const totalAmt = Number(lc.totalAmount || 0);
+    const totalExp = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const remaining = totalAmt - totalExp;
+    const expList = expenses.length
+      ? expenses.map((e, i) => `  ${i + 1}) ${e.expenseType || "—"} — ${Number(e.amount || 0)} ${e.currencyCode || "SAR"}`).join("\n")
+      : "  (لا توجد مصاريف مسجلة)";
+
+    const prompt = `أنت خبير في التمويل التجاري والاعتمادات المستندية (Letter of Credit) في المملكة العربية السعودية.
+اشرح للمستخدم هذا الاعتماد المستندي بلغة عربية واضحة وبسيطة، ثم قدّم توصيات عملية.
+
+بيانات الاعتماد:
+- رقم الاعتماد: ${lc.lcNumber || "—"}
+- التاريخ: ${lc.lcDate || "—"}
+- المورد: ${supplierName}
+- البنك: ${lc.bankName || "—"}
+- العملة: ${lc.currencyCode || "SAR"}
+- قيمة الاعتماد: ${totalAmt}
+- إجمالي المصاريف المسجلة: ${totalExp}
+- المتبقي: ${remaining}
+- ملاحظات: ${lc.notes || "—"}
+
+مصاريف الاستيراد المرتبطة:
+${expList}
+
+أرجع JSON فقط بالشكل:
+{
+  "summary": "<فقرة قصيرة 2-3 أسطر تشرح ما هو الاعتماد المستندي بشكل عام>",
+  "currentState": "<تحليل مختصر للحالة الحالية لهذا الاعتماد — مفتوح/مستخدم جزئياً/مغلق وما الذي يعنيه ذلك>",
+  "expensesInsight": "<ملاحظات على توزيع المصاريف وما قد يكون ناقصاً (شحن/جمارك/تأمين/رسوم بنكية)>",
+  "recommendations": ["<توصية عملية 1>", "<توصية عملية 2>", "<توصية عملية 3>"]
+}`;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
+    let aiRes: Response;
+    try {
+      aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "أنت مستشار تمويل تجاري. أعد JSON صالحاً فقط بالعربية." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+          response_format: { type: "json_object" },
+        }),
+        signal: ctrl.signal,
+      });
+    } catch (e: any) {
+      clearTimeout(timer);
+      const msg = e?.name === "AbortError" ? "انتهت مهلة الذكاء الاصطناعي" : "تعذّر الاتصال بالذكاء الاصطناعي";
+      res.status(502).json({ error: msg });
+      return;
+    }
+    clearTimeout(timer);
+    if (!aiRes.ok) { res.status(502).json({ error: "فشل الاتصال بالذكاء الاصطناعي" }); return; }
+
+    const data = await aiRes.json() as any;
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any = {};
+    try { parsed = JSON.parse(content); } catch {}
+
+    res.json({
+      summary: String(parsed.summary || "").slice(0, 2000),
+      currentState: String(parsed.currentState || "").slice(0, 2000),
+      expensesInsight: String(parsed.expensesInsight || "").slice(0, 2000),
+      recommendations: Array.isArray(parsed.recommendations)
+        ? parsed.recommendations.slice(0, 8).map((r: any) => String(r).slice(0, 500))
+        : [],
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;
