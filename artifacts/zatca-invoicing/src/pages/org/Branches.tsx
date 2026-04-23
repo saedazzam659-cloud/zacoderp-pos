@@ -133,7 +133,7 @@ export default function Branches() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={!form.nameAr}
           saveLabel={editId ? t("branches.saveEdit") : t("branches.save")}
         >
           <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>

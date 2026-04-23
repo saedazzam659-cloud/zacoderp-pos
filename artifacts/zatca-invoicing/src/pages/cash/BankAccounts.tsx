@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +13,7 @@ import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", notes: "", isActive: true };
+const EMPTY = { code: "", nameAr: "", nameEn: "", bankName: "", bankNameEn: "", accountNumber: "", iban: "", swiftCode: "", currencyId: "", branchId: "", notes: "", isActive: true };
 
 export default function BankAccounts() {
   const { user, token } = useAuth();
@@ -42,10 +42,23 @@ export default function BankAccounts() {
     enabled: !!cid,
   });
   const { data: currencies = [] } = useQuery({
-    queryKey: ["currencies"],
-    queryFn: () => fetch(`${API}/api/currencies`, { headers: h }).then(r => r.json()),
-    enabled: !!user,
+    queryKey: ["currencies", cid],
+    queryFn: () => fetch(`${API}/api/currencies?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
   });
+  const { data: branches = [] } = useQuery({
+    queryKey: ["branches", cid],
+    queryFn: () => fetch(`${API}/api/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+  const defaultCurrencyId = (currencies as any[]).find((c: any) => c.isDefault)?.id ?? (currencies as any[])[0]?.id ?? null;
+
+  useEffect(() => {
+    if (panel && !editing && !form.currencyId && defaultCurrencyId) {
+      setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel, editing, defaultCurrencyId]);
 
   const balMap: Record<number, number> = Object.fromEntries((balances as any[]).map((b: any) => [b.bankAccountId, b.balance]));
   const filtered = (banks as any[]).filter((b: any) => {
@@ -53,17 +66,27 @@ export default function BankAccounts() {
     return b.nameAr?.includes(search) || b.nameEn?.toLowerCase().includes(s) || b.code?.toLowerCase().includes(s) || b.bankName?.includes(search) || b.bankNameEn?.toLowerCase().includes(s) || b.iban?.toLowerCase().includes(s);
   });
 
-  function openAdd()  { setEditing(null); setForm(EMPTY); setAcctId(""); setPanel(true); }
+  function openAdd()  {
+    setEditing(null);
+    setForm({ ...EMPTY, currencyId: defaultCurrencyId ? String(defaultCurrencyId) : "" });
+    setAcctId(""); setPanel(true);
+  }
   function openEdit(r: any) {
     setEditing(r);
-    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", bankName: r.bankName ?? "", bankNameEn: r.bankNameEn ?? "", accountNumber: r.accountNumber ?? "", iban: r.iban ?? "", swiftCode: r.swiftCode ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", notes: r.notes ?? "", isActive: r.isActive ?? true });
+    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", bankName: r.bankName ?? "", bankNameEn: r.bankNameEn ?? "", accountNumber: r.accountNumber ?? "", iban: r.iban ?? "", swiftCode: r.swiftCode ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", notes: r.notes ?? "", isActive: r.isActive ?? true });
     setAcctId(r.accountId ? String(r.accountId) : "");
     setPanel(true);
   }
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };
+      const body = {
+        ...form,
+        companyId: cid,
+        accountId: acctId ? parseInt(acctId) : null,
+        currencyId: form.currencyId ? parseInt(form.currencyId) : null,
+        branchId:   form.branchId   ? parseInt(form.branchId)   : null,
+      };
       const url  = editing ? `${API}/api/bank-accounts/${editing.id}` : `${API}/api/bank-accounts`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
@@ -91,9 +114,17 @@ export default function BankAccounts() {
     b.accountId === parseInt(acctId) && b.id !== editing?.id);
 
   const delMut = useMutation({
-    mutationFn: async (id: number) => fetch(`${API}/api/bank-accounts/${id}`, { method: "DELETE", headers: h }),
-    onSuccess: () => { toast({ title: t("bankAccounts.deleted_toast") }); qc.invalidateQueries({ queryKey: ["bank-accounts"] }); setDelRow(null); },
-    onError: () => toast({ title: t("bankAccounts.err_delete"), variant: "destructive" }),
+    mutationFn: async (id: number) => {
+      const res = await fetch(`${API}/api/bank-accounts/${id}`, { method: "DELETE", headers: h });
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || t("bankAccounts.err_delete"));
+      }
+    },
+    onSuccess: () => { toast({ title: t("bankAccounts.deleted_toast") }); qc.invalidateQueries({ queryKey: ["bank-accounts"] }); qc.invalidateQueries({ queryKey: ["bank-accounts-bal"] }); setDelRow(null); },
+    onError: (e: any) => toast({ title: t("bankAccounts.err_delete"), description: e?.message, variant: "destructive" }),
   });
 
   function f(name: keyof typeof EMPTY) {
@@ -133,7 +164,7 @@ export default function BankAccounts() {
           onClose={() => setPanel(false)}
           onSave={() => saveMut.mutate()}
           saving={saveMut.isPending}
-          saveDisabled={!form.nameAr || !form.code}
+          saveDisabled={!form.nameAr}
         >
           {(dupCode || dupIban || dupAccount) && (
             <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
@@ -146,7 +177,7 @@ export default function BankAccounts() {
             </div>
           )}
           <FormGrid>
-            <Field label={t("bankAccounts.code")} required><Input placeholder="B001" {...f("code")} /></Field>
+            <Field label={t("bankAccounts.code")} hint={<span className="text-muted-foreground text-xs">يُولَّد تلقائياً عند الترك فارغاً</span>}><Input placeholder="BA-0001" {...f("code")} /></Field>
             <Field label={t("bankAccounts.nameAr")} required><Input {...f("nameAr")} /></Field>
             <Field label={t("bankAccounts.nameEn")} className="md:col-span-2">
               <Input placeholder="Riyadh Bank" dir="ltr" className="text-left" {...f("nameEn")} />
@@ -164,7 +195,19 @@ export default function BankAccounts() {
                 {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
               </select>
             </Field>
-            <Field label={t("cashCommon.account")}>
+            <Field label="الفرع">
+              <select
+                className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                value={form.branchId}
+                onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+              >
+                <option value="">— بدون فرع محدد —</option>
+                {(branches as any[]).map((b: any) => (
+                  <option key={b.id} value={b.id}>{b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t("cashCommon.account")} className="md:col-span-2">
               <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder={t("cashCommon.selectAccount")} filterTypes={["asset"]} grouped={false} />
             </Field>
             <Field label={t("cashCommon.notes")} className="md:col-span-2"><Input placeholder={t("cashCommon.notesPlaceholder")} {...f("notes")} /></Field>

@@ -57,16 +57,27 @@ router.get("/:id", async (req, res) => {
 const toInt = (v: any) => (v === "" || v === null || v === undefined ? null : parseInt(v));
 const toStr = (v: any) => (v === "" || v === null || v === undefined ? null : String(v).trim() || null);
 
+async function nextBankAccountCode(cid: number): Promise<string> {
+  const rows = await db.select({ code: bankAccountsTable.code })
+    .from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
+  let max = 0;
+  for (const r of rows) {
+    const m = /^BA-(\d+)$/i.exec(r.code ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `BA-${String(max + 1).padStart(4, "0")}`;
+}
+
 router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid)   { res.status(400).json({ error: "companyId مطلوب" }); return; }
   if (!d.nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
-  if (!d.code)   { res.status(400).json({ error: "الكود مطلوب" }); return; }
 
   const existing = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
-  if (existing.some(b => b.code?.trim().toLowerCase() === String(d.code).trim().toLowerCase())) {
-    res.status(409).json({ error: `الكود "${d.code}" مستخدم بالفعل لحساب بنكي آخر` });
+  const code = (d.code && String(d.code).trim()) ? String(d.code).trim() : await nextBankAccountCode(cid);
+  if (existing.some(b => b.code?.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لحساب بنكي آخر` });
     return;
   }
   if (d.iban && existing.some(b => b.iban?.trim() === String(d.iban).trim())) {
@@ -81,7 +92,7 @@ router.post("/", async (req, res) => {
   const [row] = await db.insert(bankAccountsTable).values({
     companyId:     cid,
     branchId:      toInt(d.branchId),
-    code:          String(d.code).trim(),
+    code,
     nameAr:        String(d.nameAr).trim(),
     nameEn:        toStr(d.nameEn),
     bankName:      toStr(d.bankName),
@@ -119,7 +130,7 @@ router.put("/:id", async (req, res) => {
 
   const [row] = await db.update(bankAccountsTable).set({
     branchId:      toInt(d.branchId),
-    code:          String(d.code ?? current.code).trim(),
+    code:          (d.code && String(d.code).trim()) ? String(d.code).trim() : current.code,
     nameAr:        String(d.nameAr ?? current.nameAr).trim(),
     nameEn:        toStr(d.nameEn),
     bankName:      toStr(d.bankName),
@@ -137,8 +148,26 @@ router.put("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
-  await db.delete(bankAccountsTable).where(eq(bankAccountsTable.id, parseInt(req.params.id)));
-  res.status(204).send();
+  const id = parseInt(req.params.id);
+  const [{ recv }] = await db.select({
+    recv: sql<number>`count(*)::int`,
+  }).from(receiptVouchersTable).where(eq(receiptVouchersTable.bankAccountId, id));
+  const [{ paid }] = await db.select({
+    paid: sql<number>`count(*)::int`,
+  }).from(paymentVouchersTable).where(eq(paymentVouchersTable.bankAccountId, id));
+  if ((recv ?? 0) + (paid ?? 0) > 0) {
+    res.status(409).json({
+      error: `لا يمكن حذف الحساب البنكي لوجود ${recv} سند قبض و ${paid} سند صرف مرتبطة به — احذف السندات أو انقلها إلى حساب آخر أولاً.`,
+    });
+    return;
+  }
+  try {
+    const result = await db.delete(bankAccountsTable).where(eq(bankAccountsTable.id, id)).returning({ id: bankAccountsTable.id });
+    if (result.length === 0) { res.status(404).json({ error: "الحساب البنكي غير موجود" }); return; }
+    res.status(204).send();
+  } catch (e: any) {
+    res.status(409).json({ error: "لا يمكن حذف الحساب البنكي لارتباطه بسجلات أخرى في النظام" });
+  }
 });
 
 export default router;

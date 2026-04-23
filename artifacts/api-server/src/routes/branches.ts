@@ -16,6 +16,19 @@ function getCompanyId(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+// Auto-generate next available code (e.g. R-0001 / BR-0001) scoped to company.
+async function nextCode(prefix: string, table: any, cid: number): Promise<string> {
+  const re = new RegExp(`^${prefix}-(\\d+)$`, "i");
+  const rows = await db.select({ code: table.code })
+    .from(table).where(eq(table.companyId, cid));
+  let max = 0;
+  for (const r of rows) {
+    const m = re.exec(r.code ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}-${String(max + 1).padStart(4, "0")}`;
+}
+
 // ═══════════════════════════════════════════════════
 //  REGIONS
 // ═══════════════════════════════════════════════════
@@ -47,10 +60,11 @@ router.get("/regions", async (req, res) => {
 router.post("/regions", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { code, nameAr, nameEn, notes } = req.body;
-    if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const { nameAr, nameEn, notes } = req.body;
+    if (!nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
     const existing = await db.select().from(regionsTable).where(eq(regionsTable.companyId, cid));
-    if (existing.some(r => r.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    const code = (req.body.code && String(req.body.code).trim()) ? String(req.body.code).trim() : await nextCode("R", regionsTable, cid);
+    if (existing.some(r => r.code?.trim().toLowerCase() === code.toLowerCase())) {
       res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمنطقة أخرى` }); return;
     }
     if (existing.some(r => r.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
@@ -138,10 +152,11 @@ router.get("/branches", async (req, res) => {
 router.post("/branches", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
-    const { code, nameAr, nameEn, regionId, city, address, phone, email, isMain, status, notes } = req.body;
-    if (!code || !nameAr) { res.status(400).json({ error: "الكود والاسم مطلوبان" }); return; }
+    const { nameAr, nameEn, regionId, city, address, phone, email, isMain, status, notes } = req.body;
+    if (!nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
     const existing = await db.select().from(branchesTable).where(eq(branchesTable.companyId, cid));
-    if (existing.some(b => b.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    const code = (req.body.code && String(req.body.code).trim()) ? String(req.body.code).trim() : await nextCode("BR", branchesTable, cid);
+    if (existing.some(b => b.code?.trim().toLowerCase() === code.toLowerCase())) {
       res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لفرع آخر` }); return;
     }
     if (existing.some(b => b.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {

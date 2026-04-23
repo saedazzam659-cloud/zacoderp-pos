@@ -60,17 +60,29 @@ const toStr = (v: any) => (v === "" || v === null || v === undefined ? null : St
 const toDec = (v: any, def: string | null = null) =>
   v === "" || v === null || v === undefined || isNaN(Number(v)) ? def : String(v);
 
+// Auto-generate next available code like CB-0001 (scoped to company).
+async function nextCashBoxCode(cid: number): Promise<string> {
+  const rows = await db.select({ code: cashBoxesTable.code })
+    .from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
+  let max = 0;
+  for (const r of rows) {
+    const m = /^CB-(\d+)$/i.exec(r.code ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `CB-${String(max + 1).padStart(4, "0")}`;
+}
+
 router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
   if (!d.nameAr) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
-  if (!d.code)   { res.status(400).json({ error: "الكود مطلوب" }); return; }
 
   // Uniqueness checks scoped to the company
   const existing = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
-  if (existing.some(b => b.code?.trim().toLowerCase() === String(d.code).trim().toLowerCase())) {
-    res.status(409).json({ error: `الكود "${d.code}" مستخدم بالفعل لخزنة أخرى` });
+  const code = (d.code && String(d.code).trim()) ? String(d.code).trim() : await nextCashBoxCode(cid);
+  if (existing.some(b => b.code?.trim().toLowerCase() === code.toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لخزنة أخرى` });
     return;
   }
   if (d.accountId && existing.some(b => b.accountId === parseInt(d.accountId))) {
@@ -81,7 +93,7 @@ router.post("/", async (req, res) => {
   const [row] = await db.insert(cashBoxesTable).values({
     companyId:  cid,
     branchId:   toInt(d.branchId),
-    code:       String(d.code).trim(),
+    code,
     nameAr:     String(d.nameAr).trim(),
     nameEn:     toStr(d.nameEn),
     currencyId: toInt(d.currencyId),
@@ -112,7 +124,7 @@ router.put("/:id", async (req, res) => {
 
   const [row] = await db.update(cashBoxesTable).set({
     branchId:   toInt(d.branchId),
-    code:       String(d.code ?? current.code).trim(),
+    code:       (d.code && String(d.code).trim()) ? String(d.code).trim() : current.code,
     nameAr:     String(d.nameAr ?? current.nameAr).trim(),
     nameEn:     toStr(d.nameEn),
     currencyId: toInt(d.currencyId),
@@ -127,8 +139,27 @@ router.put("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
-  await db.delete(cashBoxesTable).where(eq(cashBoxesTable.id, parseInt(req.params.id)));
-  res.status(204).send();
+  const id = parseInt(req.params.id);
+  // Block delete when the cashbox is referenced by vouchers
+  const [{ recv }] = await db.select({
+    recv: sql<number>`count(*)::int`,
+  }).from(receiptVouchersTable).where(eq(receiptVouchersTable.cashBoxId, id));
+  const [{ paid }] = await db.select({
+    paid: sql<number>`count(*)::int`,
+  }).from(paymentVouchersTable).where(eq(paymentVouchersTable.cashBoxId, id));
+  if ((recv ?? 0) + (paid ?? 0) > 0) {
+    res.status(409).json({
+      error: `لا يمكن حذف الخزنة لوجود ${recv} سند قبض و ${paid} سند صرف مرتبطة بها — احذف السندات أو انقلها إلى خزنة أخرى أولاً.`,
+    });
+    return;
+  }
+  try {
+    const result = await db.delete(cashBoxesTable).where(eq(cashBoxesTable.id, id)).returning({ id: cashBoxesTable.id });
+    if (result.length === 0) { res.status(404).json({ error: "الخزنة غير موجودة" }); return; }
+    res.status(204).send();
+  } catch (e: any) {
+    res.status(409).json({ error: "لا يمكن حذف الخزنة لارتباطها بسجلات أخرى في النظام" });
+  }
 });
 
 export default router;

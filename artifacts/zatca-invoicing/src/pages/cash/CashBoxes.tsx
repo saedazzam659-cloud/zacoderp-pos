@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const EMPTY = { code: "", nameAr: "", nameEn: "", currencyId: "", accountId: "", minBalance: "", maxBalance: "", notes: "", isActive: true };
+const EMPTY = { code: "", nameAr: "", nameEn: "", currencyId: "", branchId: "", accountId: "", minBalance: "", maxBalance: "", notes: "", isActive: true };
 
 export default function CashBoxes() {
   const { user, token } = useAuth();
@@ -48,18 +48,36 @@ export default function CashBoxes() {
     enabled: !!cid,
   });
   const { data: currencies = [] } = useQuery({
-    queryKey: ["currencies"],
-    queryFn: () => fetch(`${API}/api/currencies`, { headers: h }).then(r => r.json()),
-    enabled: !!user,
+    queryKey: ["currencies", cid],
+    queryFn: () => fetch(`${API}/api/currencies?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
   });
+  const { data: branches = [] } = useQuery({
+    queryKey: ["branches", cid],
+    queryFn: () => fetch(`${API}/api/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+  });
+  const defaultCurrencyId = (currencies as any[]).find((c: any) => c.isDefault)?.id ?? (currencies as any[])[0]?.id ?? null;
+
+  // Auto-pick the default currency when the form opens for a new row
+  useEffect(() => {
+    if (panel && !editing && !form.currencyId && defaultCurrencyId) {
+      setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel, editing, defaultCurrencyId]);
 
   const balMap: Record<number, number> = Object.fromEntries((balances as any[]).map((b: any) => [b.cashBoxId, b.balance]));
   const filtered = (boxes as any[]).filter((b: any) => b.nameAr?.includes(search) || b.nameEn?.toLowerCase().includes(search.toLowerCase()) || b.code?.includes(search));
 
-  function openAdd()  { setEditing(null); setForm(EMPTY); setAcctId(""); setErrors({}); setTab("basic"); setPanel(true); }
+  function openAdd()  {
+    setEditing(null);
+    setForm({ ...EMPTY, currencyId: defaultCurrencyId ? String(defaultCurrencyId) : "" });
+    setAcctId(""); setErrors({}); setTab("basic"); setPanel(true);
+  }
   function openEdit(r: any) {
     setEditing(r);
-    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", accountId: "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
+    setForm({ code: r.code ?? "", nameAr: r.nameAr ?? "", nameEn: r.nameEn ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", branchId: r.branchId ? String(r.branchId) : "", accountId: "", minBalance: r.minBalance ?? "", maxBalance: r.maxBalance ?? "", notes: r.notes ?? "", isActive: r.isActive ?? true });
     setAcctId(r.accountId ? String(r.accountId) : "");
     setErrors({});
     setTab("basic");
@@ -68,8 +86,7 @@ export default function CashBoxes() {
 
   function validate(): boolean {
     const e: Record<string, string> = {};
-    if (!form.code.trim())   e.code   = t("cashBoxes.codeRequired");
-    else if (form.code.trim().length > 20) e.code = t("cashBoxes.codeTooLong");
+    if (form.code.trim().length > 20) e.code = t("cashBoxes.codeTooLong");
     if (!form.nameAr.trim()) e.nameAr = t("cashBoxes.nameArRequired");
     else if (form.nameAr.trim().length < 2) e.nameAr = t("cashBoxes.nameArShort");
     if (form.minBalance && isNaN(Number(form.minBalance))) e.minBalance = t("cashBoxes.invalidValue");
@@ -87,7 +104,13 @@ export default function CashBoxes() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      const body = { ...form, companyId: cid, accountId: acctId ? parseInt(acctId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };
+      const body = {
+        ...form,
+        companyId: cid,
+        accountId: acctId ? parseInt(acctId) : null,
+        currencyId: form.currencyId ? parseInt(form.currencyId) : null,
+        branchId:   form.branchId   ? parseInt(form.branchId)   : null,
+      };
       const url  = editing ? `${API}/api/cash-boxes/${editing.id}` : `${API}/api/cash-boxes`;
       const res  = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
@@ -114,10 +137,16 @@ export default function CashBoxes() {
 
   const delMut = useMutation({
     mutationFn: async (id: number) => {
-      await fetch(`${API}/api/cash-boxes/${id}`, { method: "DELETE", headers: h });
+      const res = await fetch(`${API}/api/cash-boxes/${id}`, { method: "DELETE", headers: h });
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || t("cashBoxes.err_delete"));
+      }
     },
-    onSuccess: () => { toast({ title: t("cashBoxes.deleted_toast") }); qc.invalidateQueries({ queryKey: ["cash-boxes"] }); setDelRow(null); },
-    onError: () => toast({ title: t("cashBoxes.err_delete"), variant: "destructive" }),
+    onSuccess: () => { toast({ title: t("cashBoxes.deleted_toast") }); qc.invalidateQueries({ queryKey: ["cash-boxes"] }); qc.invalidateQueries({ queryKey: ["cash-boxes-bal"] }); setDelRow(null); },
+    onError: (e: any) => toast({ title: t("cashBoxes.err_delete"), description: e?.message, variant: "destructive" }),
   });
 
   function f(name: keyof typeof EMPTY) {
@@ -193,8 +222,8 @@ export default function CashBoxes() {
 
             <TabsContent value="basic" className="mt-0">
               <FormGrid>
-                <Field label={t("cashBoxes.code")} required hint={errors.code && <span className="text-destructive">{errors.code}</span>}>
-                  <Input placeholder="C001" className={errors.code ? errCls : ""} {...f("code")} />
+                <Field label={t("cashBoxes.code")} hint={errors.code ? <span className="text-destructive">{errors.code}</span> : <span className="text-muted-foreground">يُولَّد تلقائياً عند الترك فارغاً</span>}>
+                  <Input placeholder="CB-0001" className={errors.code ? errCls : ""} {...f("code")} />
                 </Field>
                 <Field label={t("cashBoxes.nameAr")} required hint={errors.nameAr && <span className="text-destructive">{errors.nameAr}</span>}>
                   <Input className={errors.nameAr ? errCls : ""} {...f("nameAr")} />
@@ -212,7 +241,19 @@ export default function CashBoxes() {
                     {(currencies as any[]).map((c: any) => <option key={c.id} value={c.id}>{c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
                   </select>
                 </Field>
-                <Field label={t("cashCommon.account")}>
+                <Field label="الفرع">
+                  <select
+                    className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    value={form.branchId}
+                    onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                  >
+                    <option value="">— بدون فرع محدد —</option>
+                    {(branches as any[]).map((b: any) => (
+                      <option key={b.id} value={b.id}>{b.code} — {isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("cashCommon.account")} className="md:col-span-2">
                   <AccountCombobox value={acctId} onValueChange={setAcctId} placeholder={t("cashCommon.selectAccount")} filterTypes={["asset"]} grouped={false} />
                 </Field>
               </FormGrid>

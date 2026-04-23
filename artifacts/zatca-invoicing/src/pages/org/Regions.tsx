@@ -124,7 +124,7 @@ export default function Regions() {
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={createMut.isPending || updateMut.isPending}
-          saveDisabled={!form.code || !form.nameAr}
+          saveDisabled={!form.nameAr}
           saveLabel={editId ? t("regions.saveEdit") : t("regions.save")}
         >
           <FormGrid>
