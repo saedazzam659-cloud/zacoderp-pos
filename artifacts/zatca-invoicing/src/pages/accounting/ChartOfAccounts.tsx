@@ -13,9 +13,8 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft, ChevronRight, Network } from "lucide-react";
+import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AccountTreePickerDialog } from "@/components/AccountTreePickerDialog";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -71,8 +70,6 @@ export default function ChartOfAccounts() {
   const [form, setForm]             = useState<any>(EMPTY);
   const [editId, setEditId]         = useState<number | null>(null);
   const [showForm, setShowForm]     = useState(false);
-  const [treeOpen, setTreeOpen]     = useState(false);
-  const [quickParentRow, setQuickParentRow] = useState<any | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -247,18 +244,6 @@ export default function ChartOfAccounts() {
           saveDisabled={!form.code || !form.nameAr || !form.accountType}
           saveLabel={editId ? t("chartOfAccounts.saveEdit") : t("chartOfAccounts.addAccountAction")}
         >
-          <AccountTreePickerDialog
-            open={treeOpen}
-            onOpenChange={setTreeOpen}
-            title="اختر الحساب الأب من شجرة الحسابات"
-            description="تصفّح وابحث في شجرة الحسابات. يمكن اختيار أي حساب رئيسي أو فرعي ليكون الأب."
-            currentAccountId={form.parentId ? Number(form.parentId) : null}
-            onlyPosting={false}
-            onSelect={(acc) => {
-              setForm((p: any) => ({ ...p, parentId: String(acc.id) }));
-              setTreeOpen(false);
-            }}
-          />
           <FormGrid>
             <Field label={t("chartOfAccounts.accountCode")} required>
               <Input placeholder={t("chartOfAccounts.placeholderCode")} value={form.code} onChange={e => setForm((p: any) => ({ ...p, code: e.target.value }))} />
@@ -278,26 +263,13 @@ export default function ChartOfAccounts() {
               <Input placeholder={t("chartOfAccounts.placeholderNameEn")} dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
             </Field>
             <Field label={t("chartOfAccounts.parentAccount")}>
-              <div className="flex gap-1.5">
-                <div className="flex-1 min-w-0">
-                  <SearchCombobox
-                    items={parentItems}
-                    value={form.parentId}
-                    onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
-                    placeholder={t("chartOfAccounts.noParent")}
-                    searchPlaceholder={t("chartOfAccounts.searchParent")}
-                  />
-                </div>
-                <Button
-                  type="button" variant="outline" size="icon"
-                  className="h-9 w-9 shrink-0"
-                  title="اختر من شجرة الحسابات"
-                  onClick={() => setTreeOpen(true)}
-                  data-testid="btn-tree-parent-account"
-                >
-                  <Network className="h-4 w-4" />
-                </Button>
-              </div>
+              <SearchCombobox
+                items={parentItems}
+                value={form.parentId}
+                onValueChange={v => setForm((p: any) => ({ ...p, parentId: v }))}
+                placeholder={t("chartOfAccounts.noParent")}
+                searchPlaceholder={t("chartOfAccounts.searchParent")}
+              />
             </Field>
             <Field label={t("chartOfAccounts.level")}>
               <Input type="number" min="1" max="10" value={form.level} onChange={e => setForm((p: any) => ({ ...p, level: Number(e.target.value) }))} />
@@ -331,33 +303,6 @@ export default function ChartOfAccounts() {
         <Search className={cn("absolute top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground", isRtl ? "right-3" : "left-3")} />
         <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("chartOfAccounts.searchPlaceholder")} value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-
-      {quickParentRow && (
-        <AccountTreePickerDialog
-          open={!!quickParentRow}
-          onOpenChange={(o) => { if (!o) setQuickParentRow(null); }}
-          title={`تغيير الحساب الأب لـ: ${quickParentRow.code} — ${quickParentRow.nameAr}`}
-          description="اختر الحساب الأب الجديد. سيتم حفظ التغيير فوراً."
-          currentAccountId={quickParentRow.parentId ?? null}
-          onlyPosting={false}
-          onSelect={(acc) => {
-            if (acc.id === quickParentRow.id) {
-              toast({ title: "لا يمكن جعل الحساب أباً لنفسه", variant: "destructive" });
-              return;
-            }
-            const payload = {
-              ...quickParentRow,
-              parentId: acc.id,
-              level: Number(quickParentRow.level) || 1,
-              reportDirection: quickParentRow.reportDirection ?? "",
-            };
-            updateMut.mutate(
-              { id: quickParentRow.id, data: payload },
-              { onSuccess: () => setQuickParentRow(null) }
-            );
-          }}
-        />
-      )}
 
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
@@ -439,14 +384,6 @@ export default function ChartOfAccounts() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
-                          <Button
-                            variant="ghost" size="icon" className="h-8 w-8"
-                            title="تغيير الحساب الأب"
-                            onClick={() => setQuickParentRow(a)}
-                            data-testid={`btn-row-tree-${a.id}`}
-                          >
-                            <Network className="h-3.5 w-3.5" />
-                          </Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
                             onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}>
