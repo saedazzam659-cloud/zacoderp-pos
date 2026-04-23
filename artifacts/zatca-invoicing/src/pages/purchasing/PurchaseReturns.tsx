@@ -395,7 +395,52 @@ export default function PurchaseReturns() {
     setPrintData({ type: "return", doc: full, lines: full.lines ?? [], supplier, company: user?.company ?? null });
   }
 
-  // ── Pre-fill form from purchase invoice (fromInvoice param) ─
+  // Load a purchase invoice and populate the return form with its data
+  async function loadInvoiceIntoForm(invId: string | number, opts: { openForm?: boolean } = {}) {
+    if (!invId) return;
+    try {
+      const res = await fetch(`${API}/api/purchasing/purchase-invoices/${invId}`, { headers: authH });
+      if (!res.ok) return;
+      const inv = await res.json();
+      setForm((prev: any) => ({
+        ...prev,
+        supplierId: inv.supplierId ? String(inv.supplierId) : "",
+        branchId:   inv.branchId   ? String(inv.branchId)   : "",
+        invoiceId:  String(inv.id),
+        paymentType: inv.paymentType ?? prev.paymentType ?? "credit",
+        cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
+        bankAccountId: inv.bankAccountId ? String(inv.bankAccountId) : "",
+        currencyCode:  inv.currencyCode  ?? prev.currencyCode ?? defaultCurrency?.code ?? "",
+        exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
+        notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
+        priceIncludesVat: !!inv.priceIncludesVat,
+        inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : prev.inventoryAccountId,
+        taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : prev.taxAccountId,
+        discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : prev.discountAccountId,
+      }));
+      if (inv.lines?.length) {
+        setLines(inv.lines.map((l: any) => ({
+          _id:         crypto.randomUUID(),
+          itemId:      l.itemId      ? String(l.itemId)      : "",
+          itemName:    l.itemName    ?? "",
+          itemCode:    l.itemCode    ?? "",
+          unitId:      l.unitId      ? String(l.unitId)      : "",
+          unit:        l.unit        ?? "",
+          conversionFactor: String(l.conversionFactor ?? "1"),
+          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+          qty:         String(Math.round(Number(l.qty ?? 1))),
+          unitPrice:   String(l.unitPrice ?? 0),
+          discount:    String(l.discount  ?? "0"),
+          vatRate:     String(l.vatRate   ?? 15),
+          lineTotal:   String(l.lineTotal ?? 0),
+          notes:       l.notes ?? "",
+        })));
+      }
+      if (opts.openForm) setShowForm(true);
+    } catch (_) { /* silent */ }
+  }
+
+  // ── Pre-fill form from purchase invoice via ?fromInvoice URL param ─
   const prefilledRef = useRef(false);
   useEffect(() => {
     if (prefilledRef.current) return;
@@ -403,56 +448,7 @@ export default function PurchaseReturns() {
     const invId = params.get("fromInvoice");
     if (!invId || !user || !currencies.length) return;
     prefilledRef.current = true;
-
-    (async () => {
-      try {
-        const res = await fetch(`${API}/api/purchasing/purchase-invoices/${invId}`, { headers: authH });
-        if (!res.ok) return;
-        const inv = await res.json();
-
-        // set header
-        setForm({
-          docNumber: "",
-          returnDate: today(),
-          supplierId: inv.supplierId ? String(inv.supplierId) : "",
-          branchId:   inv.branchId   ? String(inv.branchId)   : "",
-          invoiceId:  String(inv.id),
-          paymentType: inv.paymentType ?? "credit",
-          cashBoxId:   inv.cashBoxId ? String(inv.cashBoxId) : "",
-          bankAccountId: inv.bankAccountId ? String(inv.bankAccountId) : "",
-          currencyCode:  inv.currencyCode  ?? defaultCurrency?.code ?? "",
-          exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
-          notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
-          discountAmount: "0",
-          priceIncludesVat: !!inv.priceIncludesVat,
-          inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
-          taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : "",
-          discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : "",
-        });
-
-        // map invoice lines → return lines
-        if (inv.lines?.length) {
-          setLines(inv.lines.map((l: any) => ({
-            _id:         crypto.randomUUID(),
-            itemId:      l.itemId      ? String(l.itemId)      : "",
-            itemName:    l.itemName    ?? "",
-            itemCode:    l.itemCode    ?? "",
-            unitId:      l.unitId      ? String(l.unitId)      : "",
-            unit:        l.unit        ?? "",
-            conversionFactor: String(l.conversionFactor ?? "1"),
-            warehouseId: l.warehouseId ? String(l.warehouseId) : "",
-            qty:         String(Math.round(Number(l.qty ?? 1))),
-            unitPrice:   String(l.unitPrice ?? 0),
-            discount:    String(l.discount  ?? "0"),
-            vatRate:     String(l.vatRate   ?? 15),
-            lineTotal:   String(l.lineTotal ?? 0),
-            notes:       l.notes ?? "",
-          })));
-        }
-
-        setShowForm(true);
-      } catch (_) { /* silent */ }
-    })();
+    loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
   // ── Line helpers ─────────────────────────────────────────
@@ -634,7 +630,7 @@ export default function PurchaseReturns() {
               <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد"><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." /></Field>
-              <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder="رقم الفاتورة..." /></Field>
+              <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder="رقم الفاتورة..." /></Field>
               <Field label="الفرع">
                 <Select value={form.branchId || undefined} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
