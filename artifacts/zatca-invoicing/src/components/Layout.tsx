@@ -39,7 +39,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];
 const companyBusinessNav: NavDef[] = [
-  { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity },
+  { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity, permKey: "pos" },
   { nameKey: "nav.hrEmployees",   href: "/hr/employees",       icon: UserCog },
   { nameKey: "nav.hrContracts",   href: "/hr/contracts",       icon: FileSignature },
   { nameKey: "nav.hrAttendance",  href: "/hr/attendance",      icon: CalendarRange },

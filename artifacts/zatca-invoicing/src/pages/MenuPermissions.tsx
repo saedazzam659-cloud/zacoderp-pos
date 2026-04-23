@@ -37,6 +37,8 @@ const MENU_ITEMS: MenuItem[] = [
   { key: "purchases_module",   label: "الموردون والمشتريات",        icon: ShoppingBag,     section: "المشتريات" },
   { key: "purchases_reports",  label: "تقارير الموردين والمشتريات", icon: PieChart,        section: "المشتريات" },
 
+  { key: "pos",                label: "نقاط البيع",                  icon: ShoppingCart,    section: "نقاط البيع" },
+
   { key: "cash_module",        label: "النقد والبنوك",              icon: Wallet,          section: "المحاسبة" },
   { key: "cash_reports",       label: "تقارير النقد والبنوك",       icon: PieChart,        section: "المحاسبة" },
   { key: "accounts",           label: "الحسابات العامة",            icon: BookOpen,        section: "المحاسبة" },
@@ -53,6 +55,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "المخازن":    { bg: "bg-amber-50",   text: "text-amber-700",   border: "border-amber-200",   ring: "from-amber-500/10" },
   "المبيعات":   { bg: "bg-cyan-50",    text: "text-cyan-700",    border: "border-cyan-200",    ring: "from-cyan-500/10" },
   "المشتريات":  { bg: "bg-orange-50",  text: "text-orange-700",  border: "border-orange-200",  ring: "from-orange-500/10" },
+  "نقاط البيع": { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200",    ring: "from-teal-500/10" },
   "المحاسبة":   { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200",  ring: "from-indigo-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
 };
