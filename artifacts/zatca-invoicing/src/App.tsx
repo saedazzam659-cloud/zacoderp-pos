@@ -253,6 +253,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/inventory/reports/slow-moving"      component={SlowMovingItems} />}
 
             {/* Accounting routes */}
+            {!isSuperAdmin && <Route path="/accounting"><Redirect to="/accounting/accounts" /></Route>}
             {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
             {!isSuperAdmin && <Route path="/accounting/cost-centers" component={CostCenters} />}
             {!isSuperAdmin && <Route path="/accounting/fiscal-periods" component={FiscalPeriods} />}
@@ -260,16 +261,19 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/accounting/journals/new" component={JournalEntryForm} />}
             {!isSuperAdmin && <Route path="/accounting/journals/:id" component={JournalEntryForm} />}
             {/* Accounting Reports */}
+            {!isSuperAdmin && <Route path="/accounting/reports"><Redirect to="/accounting/reports/trial-balance" /></Route>}
             {!isSuperAdmin && <Route path="/accounting/reports/account-statement" component={AccountStatement} />}
             {!isSuperAdmin && <Route path="/accounting/reports/trial-balance"     component={TrialBalance} />}
             {!isSuperAdmin && <Route path="/accounting/reports/balance-sheet"     component={BalanceSheet} />}
             {!isSuperAdmin && <Route path="/accounting/reports/income-statement"  component={IncomeStatement} />}
 
             {/* Org routes */}
+            {!isSuperAdmin && <Route path="/org"><Redirect to="/org/branches" /></Route>}
             {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}
             {!isSuperAdmin && <Route path="/org/branches" component={Branches} />}
 
             {/* Purchasing routes */}
+            {!isSuperAdmin && <Route path="/purchasing"><Redirect to="/purchasing/invoices" /></Route>}
             {!isSuperAdmin && <Route path="/purchasing/supplier-groups" component={SupplierGroups} />}
             {!isSuperAdmin && <Route path="/purchasing/lc"              component={LetterOfCredit} />}
             {!isSuperAdmin && <Route path="/purchasing/invoices/new"    component={PurchaseInvoiceForm} />}
@@ -279,6 +283,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/purchasing/settlements"     component={SupplierSettlement} />}
 
             {/* Sales routes */}
+            {!isSuperAdmin && <Route path="/sales"><Redirect to="/sales/invoices" /></Route>}
             {!isSuperAdmin && <Route path="/sales/invoices/new"      component={SalesInvoiceForm} />}
             {!isSuperAdmin && <Route path="/sales/invoices/:id"      component={SalesInvoiceForm} />}
             {!isSuperAdmin && <Route path="/sales/invoices"          component={SalesInvoices} />}
