@@ -11,7 +11,7 @@ import {
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
-  Activity, MonitorSmartphone,
+  Activity, MonitorSmartphone, AlertTriangle, Sparkles,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,8 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.subscriptions",        href: "/admin/subscriptions",      icon: Package },
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },
+  { nameKey: "nav.orphanStock",          href: "/admin/orphan-stock",       icon: AlertTriangle },
+  { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];

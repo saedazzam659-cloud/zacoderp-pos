@@ -326,6 +326,8 @@
     "subscriptions": "Subscriptions",
     "plans": "Plans Settings",
     "menuPermissions": "Menu Permissions",
+    "orphanStock": "Orphan Stock Cleanup",
+    "aiCompanyFix": "AI Company Issue Fixer",
     "companies": "Companies",
     "regions": "Regions",
     "branches": "Branches",
