@@ -882,144 +882,86 @@ export default function PurchaseInvoiceForm() {
                 <ListOrdered className="h-4 w-4" />
                 <span>الأصناف ({lines.filter(l => l.itemName).length})</span>
               </div>
-              <div data-enter-nav-container="lines" className="space-y-3 mb-3">
-                {lines.map((l, idx) => {
-                  const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
-                  const unitOpts = itemUnits.length > 0
-                    ? itemUnits.map((iu: any) => ({
-                        value: String(iu.unitId),
-                        label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
-                      }))
-                    : unitItems;
-                  const fieldLabel = "text-[10px] font-medium text-muted-foreground mb-1 block";
-                  return (
-                    <div key={l._id}
-                      className="group rounded-xl border bg-card shadow-sm hover:shadow-md hover:border-primary/30 transition-all p-4 relative">
-                      {/* Line number badge + delete */}
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="inline-flex items-center justify-center h-6 min-w-6 px-2 rounded-full bg-primary/10 text-primary text-[11px] font-bold">
-                          #{idx + 1}
-                        </span>
-                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:bg-destructive/10 gap-1"
-                          onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
-                          <Trash2 className="h-3.5 w-3.5" /><span className="text-[11px]">حذف</span>
-                        </Button>
-                      </div>
-
-                      {/* Identity: item + code */}
-                      <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-3 mb-3">
-                        <div>
-                          <label className={fieldLabel}>الصنف</label>
-                          {inventoryItems.length > 0 ? (
-                            <SearchCombobox
-                              items={itemComboItems}
-                              value={l.itemId}
-                              onValueChange={v => selectItem(l._id, v)}
-                              placeholder="اختر أو ابحث عن صنف..."
-                            />
-                          ) : (
-                            <Input className="h-9 text-sm" placeholder="اسم الصنف" value={l.itemName}
-                              onChange={e => updateLine(l._id, "itemName", e.target.value)} />
-                          )}
-                        </div>
-                        <div>
-                          <label className={fieldLabel}>كود الصنف</label>
-                          <Input className="h-9 text-sm bg-muted/40 font-mono" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
-                            onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
-                        </div>
-                      </div>
-
-                      {/* Logistics section: warehouse + unit + qty + weight */}
-                      <div className="rounded-lg bg-muted/30 border border-border/50 p-3 mb-3">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">المخزون والكمية</p>
-                        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
-                          <div>
-                            <label className={fieldLabel}>المستودع</label>
-                            {warehouses.length > 0 ? (
-                              <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
-                                <SelectTrigger className={cn("h-9 text-sm", l.itemId && !l.warehouseId && "border-amber-400 ring-1 ring-amber-300/40")}>
-                                  <SelectValue placeholder="اختر..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {warehouses.map((w: any) => (
-                                    <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (<Input className="h-9 text-sm" placeholder="—" readOnly />)}
-                          </div>
-                          <div>
-                            <label className={fieldLabel}>الوحدة</label>
-                            {units.length > 0 ? (
-                              <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="الوحدة" /></SelectTrigger>
-                                <SelectContent>
-                                  {unitOpts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Input className="h-9 text-sm" placeholder="وحدة" value={l.unit}
-                                onChange={e => updateLine(l._id, "unit", e.target.value)} />
-                            )}
-                          </div>
-                          <div>
-                            <label className={fieldLabel}>الكمية</label>
-                            <Input className="h-9 text-sm font-mono text-center" type="text" inputMode="numeric" value={l.qty}
-                              onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                          </div>
-                          <div>
-                            <label className={fieldLabel}>الوزن</label>
-                            <Input className="h-9 text-sm font-mono text-center" type="text" inputMode="decimal" value={l.weight}
-                              onChange={e => updateLine(l._id, "weight", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Pricing section */}
-                      <div className="rounded-lg bg-muted/30 border border-border/50 p-3 mb-3">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">التسعير</p>
-                        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
-                          <div>
-                            <label className={fieldLabel}>سعر الوحدة</label>
-                            <Input className="h-9 text-sm font-mono text-center" type="text" inputMode="decimal" value={l.unitPrice}
-                              onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          </div>
-                          <div>
-                            <label className={fieldLabel}>خصم %</label>
-                            <Input className="h-9 text-sm font-mono text-center" type="text" inputMode="decimal" value={l.discount}
-                              onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          </div>
-                          <div>
-                            <label className={fieldLabel}>ضريبة %</label>
-                            <Input className="h-9 text-sm font-mono text-center" type="text" inputMode="decimal" value={l.vatRate}
-                              onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Costs summary: expense share + final cost */}
-                      <div className="rounded-lg bg-gradient-to-l from-primary/5 via-primary/10 to-primary/5 border border-primary/20 p-3 mb-3">
-                        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
-                          <div>
-                            <label className="text-[10px] font-medium text-blue-700 mb-1 block">نصيب من المصاريف</label>
-                            <Input className="h-9 text-sm bg-blue-50/70 text-blue-700 font-mono text-center" dir="ltr" readOnly value={fmt(l.expenseShare)} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-primary mb-1 block">التكلفة النهائية</label>
-                            <Input className="h-9 text-base bg-primary/10 font-bold text-primary font-mono text-center" dir="ltr" readOnly value={fmt(l.finalCost)} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Notes full-width */}
-                      <div>
-                        <label className={fieldLabel}>ملاحظات</label>
-                        <Input className="h-9 text-sm" placeholder="ملاحظة اختيارية على هذا السطر..."
-                          value={l.notes} onChange={e => updateLine(l._id, "notes", e.target.value)} />
-                      </div>
+              <div data-enter-nav-container="lines" className="space-y-1.5 mb-3">
+                <div className="grid gap-1.5 px-2 pb-1" style={{ gridTemplateColumns: "2fr 0.9fr 1.3fr 1fr 0.6fr 0.6fr 0.9fr 0.6fr 0.6fr 0.85fr 1fr 1.2fr auto" }}>
+                  {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "وزن", "سعر الوحدة", "خصم%", "ضريبة%", "مصاريف", "التكلفة النهائية", "ملاحظات", ""].map((h, i) => (
+                    <p key={i} className={cn("text-[10px]", h === "التكلفة النهائية" ? "font-semibold text-primary" : "text-muted-foreground")}>{h}</p>
+                  ))}
+                </div>
+                {lines.map(l => (
+                  <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
+                    <div
+                      className="grid gap-1.5 items-center"
+                      style={{ gridTemplateColumns: "2fr 0.9fr 1.3fr 1fr 0.6fr 0.6fr 0.9fr 0.6fr 0.6fr 0.85fr 1fr 1.2fr auto" }}
+                    >
+                      {inventoryItems.length > 0 ? (
+                        <SearchCombobox
+                          items={itemComboItems}
+                          value={l.itemId}
+                          onValueChange={v => selectItem(l._id, v)}
+                          placeholder="اختر أو ابحث عن صنف..."
+                        />
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                          onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                      )}
+                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      {warehouses.length > 0 ? (
+                        <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                          <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                            <SelectValue placeholder="اختر مستودع..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {warehouses.map((w: any) => (
+                              <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="—" readOnly />
+                      )}
+                      {(() => {
+                        const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
+                        const opts = itemUnits.length > 0
+                          ? itemUnits.map((iu: any) => ({
+                              value: String(iu.unitId),
+                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                            }))
+                          : unitItems;
+                        return units.length > 0 ? (
+                          <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectContent>
+                              {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                        );
+                      })()}
+                      <Input className="h-8 text-xs" type="text" inputMode="numeric" value={l.qty}
+                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.weight}
+                        onChange={e => updateLine(l._id, "weight", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                        onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs bg-blue-50 text-blue-700" readOnly value={fmt(l.expenseShare)} />
+                      <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.finalCost)} />
+                      <Input className="h-8 text-xs" value={l.notes}
+                        onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
 
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
