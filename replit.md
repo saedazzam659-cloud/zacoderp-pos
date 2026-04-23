@@ -50,6 +50,12 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**AI-Powered Journal Entry Validation (April 2026)**
+- Save button on the Journal Entry form is now disabled while debits ≠ credits, with an inline red message showing the imbalance amount and a tooltip explaining why save is blocked. The existing `handleSave` toast guard remains as a second-line check.
+- New "فحص بالذكاء الاصطناعي" button next to Save runs an AI review and pops a dialog showing: a one-line summary, totals + diff cards, a list of issues (unbalanced, account on wrong side, missing leg, amount-without-account, account-without-amount, debit & credit on same line, etc.) and a concrete fix suggestion (e.g. "أضف 250.00 SAR إلى الجانب الدائن").
+- Backend: new endpoint `POST /api/ai/validate-journal-entry` (in `artifacts/api-server/src/routes/ai.ts`). Uses the OpenAI integration via `AI_INTEGRATIONS_OPENAI_*` env vars when configured (model `gpt-5.4`, JSON mode), and falls back to a deterministic rule-based check when AI isn't configured or the call fails — so the feature always works. Response shape: `{ isBalanced, totalDebit, totalCredit, diff, suggestion, issues[], summary, source }`.
+- Frontend: `journalEntriesApi.aiValidate(...)` posts the entry header + lines (with account code/name/type, debit, credit, description) to the new route. Dialog component is `Dialog` from `@/components/ui/dialog`.
+
 **Combobox Selection Now Also Advances Focus (April 2026)**
 - In the Journal Entry form, when you type an account code/name (or arrow-navigate) inside an account / cost-center combobox and press Enter, the combobox both **selects** the highlighted item AND focus moves to the next field — instead of stopping after selection.
 - Implementation: `JournalEntryForm.handleFormKeyDown` no longer bails on `e.defaultPrevented`. SearchCombobox still calls `preventDefault()` to stop default browser behaviour after a selection, but the form-level Enter handler now runs unconditionally and calls `advanceFromTarget(target)` to focus the next nav element. (Capture-phase combobox-trigger handling, IME guard, Shift+Enter-in-textarea behaviour, and last-field-saves-form behaviour are unchanged.)

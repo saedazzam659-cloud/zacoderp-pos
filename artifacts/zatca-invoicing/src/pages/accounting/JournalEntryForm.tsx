@@ -13,7 +13,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { Sparkles, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
@@ -298,6 +300,30 @@ export default function JournalEntryForm() {
   function removeLine(id: string) {
     if (lines.length <= 2) return;
     setLines(prev => prev.filter(l => l.id !== id));
+  }
+
+  // ── AI validation ───────────────────────────────────────────────
+  const [aiValidationOpen, setAiValidationOpen] = useState(false);
+  const validateMutation = useMutation({
+    mutationFn: () => journalEntriesApi.aiValidate({
+      entry: { entryDate, description, entryType, currency },
+      lines: lines.map(l => {
+        const a = acctMap.get(Number(l.accountId));
+        return {
+          accountCode: a?.code ?? "",
+          accountName: a?.nameAr || a?.nameEn || "",
+          accountType: a?.accountType ?? a?.type ?? "",
+          debit:  Number(l.debit  || 0),
+          credit: Number(l.credit || 0),
+          description: l.description || "",
+        };
+      }),
+    }),
+    onError: (e: any) => toast({ title: "تعذّر تشغيل الفحص", description: e?.message ?? "خطأ غير معروف", variant: "destructive" }),
+  });
+  function runAiValidation() {
+    setAiValidationOpen(true);
+    validateMutation.mutate();
   }
 
   const saveMutation = useMutation({
@@ -817,18 +843,111 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
       </Tabs>
 
       {/* ─── Action buttons ─────────────────────────────────────── */}
-      <div className="flex gap-3 justify-start pb-4">
+      <div className="flex flex-wrap gap-3 justify-start items-center pb-4">
         <Button
           onClick={handleSave}
-          disabled={saveMutation.isPending}
+          disabled={saveMutation.isPending || !isBalanced}
           className="min-w-[120px]"
+          title={!isBalanced ? `لا يمكن الحفظ — القيد غير متوازن (الفرق ${diff.toFixed(2)} ${currency})` : undefined}
         >
           {saveMutation.isPending ? "جارٍ الحفظ..." : "حفظ"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={runAiValidation}
+          disabled={validateMutation.isPending}
+          className="gap-2"
+        >
+          <Sparkles className="h-4 w-4" />
+          {validateMutation.isPending ? "جارٍ الفحص..." : "فحص بالذكاء الاصطناعي"}
         </Button>
         <Button variant="outline" onClick={() => navigate("/accounting/journals")}>
           إلغاء
         </Button>
+        {!isBalanced && (
+          <span className="text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3.5 w-3.5" />
+            القيد غير متوازن — الفرق {diff.toFixed(2)} {currency}
+          </span>
+        )}
       </div>
+
+      {/* ─── AI validation dialog ───────────────────────────────── */}
+      <Dialog open={aiValidationOpen} onOpenChange={setAiValidationOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              فحص القيد بالذكاء الاصطناعي
+            </DialogTitle>
+            <DialogDescription>
+              مراجعة آلية للتوازن وللحسابات والمبالغ قبل الحفظ.
+            </DialogDescription>
+          </DialogHeader>
+
+          {validateMutation.isPending ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              جارٍ تحليل القيد…
+            </div>
+          ) : validateMutation.data ? (
+            <div className="space-y-4">
+              <div className={cn(
+                "flex items-start gap-2 p-3 rounded-md border text-sm",
+                validateMutation.data.isBalanced && validateMutation.data.issues.length === 0
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-amber-50 border-amber-200 text-amber-900"
+              )}>
+                {validateMutation.data.isBalanced && validateMutation.data.issues.length === 0
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                  : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />}
+                <span className="font-medium">{validateMutation.data.summary}</span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 rounded border bg-muted/40">
+                  <div className="text-muted-foreground">إجمالي مدين</div>
+                  <div className="font-semibold mt-1">{validateMutation.data.totalDebit.toFixed(2)}</div>
+                </div>
+                <div className="p-2 rounded border bg-muted/40">
+                  <div className="text-muted-foreground">إجمالي دائن</div>
+                  <div className="font-semibold mt-1">{validateMutation.data.totalCredit.toFixed(2)}</div>
+                </div>
+                <div className={cn("p-2 rounded border",
+                  validateMutation.data.isBalanced ? "bg-emerald-50 border-emerald-200" : "bg-destructive/10 border-destructive/30"
+                )}>
+                  <div className="text-muted-foreground">الفرق</div>
+                  <div className="font-semibold mt-1">{Math.abs(validateMutation.data.diff).toFixed(2)}</div>
+                </div>
+              </div>
+
+              {validateMutation.data.issues.length > 0 && (
+                <div>
+                  <div className="text-sm font-semibold mb-1.5">الملاحظات:</div>
+                  <ul className="space-y-1 text-sm list-disc pe-5">
+                    {validateMutation.data.issues.map((it, i) => (
+                      <li key={i}>{it}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="p-3 rounded-md border bg-primary/5 border-primary/20 text-sm">
+                <div className="font-semibold mb-1">الاقتراح:</div>
+                <div>{validateMutation.data.suggestion}</div>
+              </div>
+
+              <div className="text-[10px] text-muted-foreground text-end">
+                المصدر: {validateMutation.data.source === "ai" ? "ذكاء اصطناعي" : "قواعد محلية"}
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAiValidationOpen(false)}>إغلاق</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

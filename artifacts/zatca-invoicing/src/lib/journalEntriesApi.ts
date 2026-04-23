@@ -27,10 +27,23 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw new Error(await r.text());
 }
 
+export interface JournalValidationResult {
+  isBalanced: boolean;
+  totalDebit: number;
+  totalCredit: number;
+  diff: number;
+  suggestion: string;
+  issues: string[];
+  summary: string;
+  source: "ai" | "fallback";
+}
+
 export const journalEntriesApi = {
   list:   (cid?: number) => get<any[]>(`/journal-entries${cid ? `?companyId=${cid}` : ""}`),
   get:    (id: number, cid?: number) => get<any>(`/journal-entries/${id}${cid ? `?companyId=${cid}` : ""}`),
   create: (data: any) => post<any>("/journal-entries", data),
   update: (id: number, data: any) => put<any>(`/journal-entries/${id}`, data),
   remove: (id: number) => del(`/journal-entries/${id}`),
+  aiValidate: (data: { entry: any; lines: any[] }) =>
+    post<JournalValidationResult>("/ai/validate-journal-entry", data),
 };

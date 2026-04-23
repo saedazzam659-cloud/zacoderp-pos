@@ -1532,4 +1532,151 @@ ${JSON.stringify(context || {}, null, 2)}
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// Validate a journal entry. Confirms it is balanced (debits == credits)
+// AND uses AI to spot common mistakes (account on wrong side, suspicious
+// amounts, missing leg, etc.). Falls back to a deterministic rule-based
+// check when AI is not configured.
+//
+// Body: { entry: {entryDate, description, entryType, currency},
+//         lines: [{accountCode, accountName, accountType, debit, credit, description}] }
+// Returns: {
+//   isBalanced: boolean,
+//   totalDebit: number,
+//   totalCredit: number,
+//   diff: number,
+//   suggestion: string,        // which side and how much to add
+//   issues: string[],          // human-readable list of problems
+//   summary: string,           // one-line headline (Arabic)
+//   source: "ai" | "fallback"
+// }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/validate-journal-entry", async (req, res) => {
+  try {
+    const { entry, lines } = req.body as {
+      entry: { entryDate?: string; description?: string; entryType?: string; currency?: string };
+      lines: Array<{
+        accountCode?: string;
+        accountName?: string;
+        accountType?: string;
+        debit?: number | string;
+        credit?: number | string;
+        description?: string;
+      }>;
+    };
+    if (!entry || !Array.isArray(lines)) {
+      res.status(400).json({ error: "بيانات القيد مطلوبة" });
+      return;
+    }
+
+    const num = (v: any) => Number(v || 0) || 0;
+    const totalDebit  = lines.reduce((s, l) => s + num(l.debit),  0);
+    const totalCredit = lines.reduce((s, l) => s + num(l.credit), 0);
+    const diff = Math.round((totalDebit - totalCredit) * 100) / 100;
+    const isBalanced = Math.abs(diff) < 0.01;
+    const cur = entry.currency || "ر.س";
+
+    const suggestion = isBalanced
+      ? "القيد متوازن — يمكنك الحفظ."
+      : diff > 0
+        ? `أضف ${diff.toFixed(2)} ${cur} إلى الجانب الدائن (أو خفّض المدين بنفس المبلغ).`
+        : `أضف ${Math.abs(diff).toFixed(2)} ${cur} إلى الجانب المدين (أو خفّض الدائن بنفس المبلغ).`;
+
+    function deterministicIssues(): string[] {
+      const issues: string[] = [];
+      if (!isBalanced) {
+        issues.push(`القيد غير متوازن: مدين ${totalDebit.toFixed(2)} ≠ دائن ${totalCredit.toFixed(2)} (الفرق ${Math.abs(diff).toFixed(2)} ${cur}).`);
+      }
+      const usable = lines.filter(l => (l.accountCode || l.accountName) && (num(l.debit) > 0 || num(l.credit) > 0));
+      if (usable.length < 2) issues.push("يجب أن يحتوي القيد على سطرين على الأقل بحساب وقيمة.");
+      for (const [i, l] of lines.entries()) {
+        const d = num(l.debit), c = num(l.credit);
+        if (d > 0 && c > 0) {
+          issues.push(`السطر ${i + 1} (${l.accountName || l.accountCode || "—"}): لا يمكن إدخال مدين ودائن في نفس السطر.`);
+        }
+        if ((l.accountCode || l.accountName) && d === 0 && c === 0) {
+          issues.push(`السطر ${i + 1} (${l.accountName || l.accountCode}): الحساب محدد لكن المبلغ صفر.`);
+        }
+        if (!l.accountCode && !l.accountName && (d > 0 || c > 0)) {
+          issues.push(`السطر ${i + 1}: يوجد مبلغ بدون حساب.`);
+        }
+      }
+      return issues;
+    }
+
+    function fallback() {
+      const issues = deterministicIssues();
+      const summary = isBalanced && issues.length === 0
+        ? "القيد سليم ومتوازن."
+        : !isBalanced
+          ? `القيد غير متوازن — الفرق ${Math.abs(diff).toFixed(2)} ${cur}.`
+          : "هناك ملاحظات على القيد، راجعها قبل الحفظ.";
+      return {
+        isBalanced, totalDebit, totalCredit, diff,
+        suggestion, issues, summary,
+        source: "fallback" as const,
+      };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+
+    try {
+      const userPrompt = `راجع القيد المحاسبي التالي وفق المبادئ المحاسبية المتعارف عليها في السعودية (IFRS-SME).
+
+رأس القيد:
+${JSON.stringify({ entryDate: entry.entryDate, description: entry.description, entryType: entry.entryType, currency: cur }, null, 2)}
+
+السطور (الترقيم يبدأ من 1):
+${JSON.stringify(lines.map((l, i) => ({ row: i + 1, ...l })), null, 2)}
+
+الإجماليات المحسوبة:
+- إجمالي المدين: ${totalDebit.toFixed(2)} ${cur}
+- إجمالي الدائن: ${totalCredit.toFixed(2)} ${cur}
+- الفرق (مدين - دائن): ${diff.toFixed(2)} ${cur}
+- متوازن؟ ${isBalanced ? "نعم" : "لا"}
+
+اكتشف المشاكل (أمثلة): قيد غير متوازن، حساب على الجانب الخطأ بحسب طبيعته (أصول/مصروفات عادة مدينة، خصوم/إيرادات/حقوق ملكية عادة دائنة)، مبلغ بدون حساب، حساب محدد بدون مبلغ، مدين ودائن في نفس السطر، مبالغ تبدو خاطئة منطقياً.
+
+أعد JSON فقط بالشكل:
+{
+  "summary": "جملة عربية واحدة قصيرة",
+  "issues": ["مشكلة 1", "مشكلة 2"],
+  "suggestion": "اقتراح عملي للإصلاح بالعربية"
+}
+
+إذا كان القيد سليماً تماماً، أعد issues فارغة وsummary مثل "القيد سليم ومتوازن".`;
+
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 600,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي خبير. تفحص القيود المحاسبية بدقة وتشير للمشاكل بإيجاز ووضوح. ترد بـ JSON فقط بدون أي شرح إضافي." },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const aiIssues = Array.isArray(parsed.issues) ? parsed.issues.map(String).filter(Boolean) : [];
+      const aiSuggestion = String(parsed.suggestion || "").trim() || suggestion;
+      const aiSummary = String(parsed.summary || "").trim() ||
+        (isBalanced ? "القيد سليم ومتوازن." : `القيد غير متوازن — الفرق ${Math.abs(diff).toFixed(2)} ${cur}.`);
+      res.json({
+        isBalanced, totalDebit, totalCredit, diff,
+        suggestion: aiSuggestion,
+        issues: aiIssues.length ? aiIssues : deterministicIssues(),
+        summary: aiSummary,
+        source: "ai" as const,
+      });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 export default router;
