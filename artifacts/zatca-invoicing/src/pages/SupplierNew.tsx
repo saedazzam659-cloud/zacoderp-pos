@@ -15,6 +15,7 @@ import { Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 const supplierSchema = z.object({
+  code: z.string().optional(),
   nameAr: z.string().min(2, "اسم المورد مطلوب"),
   nameEn: z.string().optional(),
   vatNumber: z.string().optional(),
@@ -102,8 +103,15 @@ export default function SupplierNew() {
             </CardHeader>
             <CardContent className="pt-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <FormField control={form.control} name="code" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>رقم المورد</FormLabel>
+                    <FormControl><Input placeholder="SUP-001" dir="ltr" className="text-left font-mono" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
                 <FormField control={form.control} name="nameAr" render={({ field }) => (
-                  <FormItem className="md:col-span-2">
+                  <FormItem>
                     <FormLabel>اسم المورد (عربي) <span className="text-destructive">*</span></FormLabel>
                     <FormControl><Input placeholder="شركة التوريدات الوطنية" {...field} /></FormControl>
                     <FormMessage />

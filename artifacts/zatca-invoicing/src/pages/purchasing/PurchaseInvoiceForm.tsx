@@ -81,6 +81,7 @@ export default function PurchaseInvoiceForm() {
 
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
+  const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [invoiceDate,  setInvoiceDate]  = useState(today());
   const [supplierId,   setSupplierId]   = useState("");
   const [branchId,     setBranchId]     = useState("");
@@ -268,6 +269,7 @@ export default function PurchaseInvoiceForm() {
   useEffect(() => {
     if (!existing) return;
     setDocNumber(existing.docNumber ?? "");
+    setSupplierInvoiceNumber(existing.supplierInvoiceNumber ?? "");
     setInvoiceDate(existing.invoiceDate ?? today());
     setSupplierId(existing.supplierId ? String(existing.supplierId) : "");
     setBranchId(existing.branchId ? String(existing.branchId) : "");
@@ -320,6 +322,7 @@ export default function PurchaseInvoiceForm() {
         if (!r.ok) return;
         const src = await r.json();
         setDocNumber("");
+        setSupplierInvoiceNumber("");
         setInvoiceDate(today());
         setSupplierId(src.supplierId ? String(src.supplierId) : "");
         setBranchId(src.branchId ? String(src.branchId) : "");
@@ -494,7 +497,7 @@ export default function PurchaseInvoiceForm() {
   function handleSave() {
     saveMut.mutate({
       companyId: cid, branchId: branchId || null,
-      docNumber: docNumber || null, invoiceDate,
+      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
       supplierId: supplierId || null, paymentType,
       cashBoxId: paymentType === "cash" ? (cashBoxId || null) : null,
       bankAccountId: paymentType === "bank" ? (bankAccountId || null) : null,
@@ -582,6 +585,20 @@ export default function PurchaseInvoiceForm() {
                 <div className="space-y-1.5 lg:col-span-2">
                   <Label className="text-xs">المورد</Label>
                   <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
+                  {(() => {
+                    const sup = suppliers.find((s: any) => String(s.id) === supplierId);
+                    if (!sup) return null;
+                    return (
+                      <p className="text-[11px] text-muted-foreground flex items-center gap-2 pt-0.5" dir="ltr">
+                        <span>VAT: <span className="font-mono">{sup.vatNumber || "—"}</span></span>
+                        {sup.code && <span>· رقم المورد: <span className="font-mono">{sup.code}</span></span>}
+                      </p>
+                    );
+                  })()}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">رقم فاتورة المورد</Label>
+                  <Input className="h-9 text-sm" placeholder="رقم الفاتورة لدى المورد" value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">الفرع</Label>

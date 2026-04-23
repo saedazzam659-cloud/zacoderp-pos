@@ -47,7 +47,7 @@ function newLine(): ReturnLine {
 }
 
 const EMPTY = {
-  docNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
+  docNumber: "", supplierInvoiceNumber: "", returnDate: today(), supplierId: "", branchId: "", invoiceId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
   currencyCode: "", exchangeRate: "1", notes: "",
   discountAmount: "0",
@@ -269,6 +269,7 @@ export default function PurchaseReturns() {
       setEditingId(retId);
       setForm({
         docNumber:    full.docNumber ?? "",
+        supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         returnDate:   full.returnDate ?? today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
@@ -315,6 +316,7 @@ export default function PurchaseReturns() {
       setEditingId(null);
       setForm({
         docNumber:    "",
+        supplierInvoiceNumber: full.supplierInvoiceNumber ?? "",
         returnDate:   today(),
         supplierId:   full.supplierId ? String(full.supplierId) : "",
         branchId:     full.branchId   ? String(full.branchId)   : "",
@@ -629,8 +631,21 @@ export default function PurchaseReturns() {
             <FormGrid>
               <Field label="رقم المرتجع"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
-              <Field label="المورد"><SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." /></Field>
+              <Field label="المورد">
+                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />
+                {(() => {
+                  const sup = suppliers.find((s: any) => String(s.id) === form.supplierId);
+                  if (!sup) return null;
+                  return (
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-2 pt-0.5" dir="ltr">
+                      <span>VAT: <span className="font-mono">{sup.vatNumber || "—"}</span></span>
+                      {sup.code && <span>· رقم المورد: <span className="font-mono">{sup.code}</span></span>}
+                    </p>
+                  );
+                })()}
+              </Field>
               <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder="رقم الفاتورة..." /></Field>
+              <Field label="رقم فاتورة المورد"><Input placeholder="رقم الفاتورة لدى المورد" value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
               <Field label="الفرع">
                 <Select value={form.branchId || undefined} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>

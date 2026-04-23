@@ -6,6 +6,7 @@ import { companiesTable } from "./companies";
 export const suppliersTable = pgTable("suppliers", {
   id:                  serial("id").primaryKey(),
   companyId:           integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  code:                text("code"),
   nameAr:              text("name_ar").notNull(),
   nameEn:              text("name_en"),
   vatNumber:           text("vat_number"),

@@ -97,6 +97,7 @@ router.post("/", async (req, res) => {
 
   const [supplier] = await db.insert(suppliersTable).values({
     companyId,
+    code: data.code ?? null,
     nameAr: data.nameAr,
     nameEn: data.nameEn ?? null,
     vatNumber: data.vatNumber ?? null,
@@ -150,6 +151,7 @@ router.put("/:id", async (req, res) => {
   }
 
   const [supplier] = await db.update(suppliersTable).set({
+    code: data.code ?? null,
     nameAr: data.nameAr,
     nameEn: data.nameEn ?? null,
     vatNumber: data.vatNumber ?? null,

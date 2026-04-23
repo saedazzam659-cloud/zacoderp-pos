@@ -40,6 +40,7 @@ const buildTypeTabs = (t: (k: string) => string) => [
 ];
 
 const EMPTY_FORM = {
+  code: "",
   nameAr: "", nameEn: "", vatNumber: "", crNumber: "",
   email: "", phone: "", city: "", district: "",
   street: "", buildingNumber: "", postalCode: "", country: "SA",
@@ -109,6 +110,7 @@ export default function Suppliers() {
   function openEdit(sup: any) {
     setEditSup(sup);
     setEditForm({
+      code:           sup.code           ?? "",
       nameAr:         sup.nameAr         ?? "",
       nameEn:         sup.nameEn         ?? "",
       vatNumber:      sup.vatNumber      ?? "",
@@ -249,7 +251,8 @@ export default function Suppliers() {
             <div className="space-y-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5 border-b pb-2"><Truck className="h-3.5 w-3.5" />{t("pages.suppliers.commercialIdentity")}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                <div className="md:col-span-2"><Field label={`${t("pages.suppliers.supplierNameAr")} *`} name="nameAr" placeholder={t("pages.suppliers.supplierNameArPlaceholder")} /></div>
+                <Field label="رقم المورد" name="code" placeholder="SUP-001" dir="ltr" />
+                <Field label={`${t("pages.suppliers.supplierNameAr")} *`} name="nameAr" placeholder={t("pages.suppliers.supplierNameArPlaceholder")} />
                 <div className="md:col-span-2"><Field label={t("pages.suppliers.nameEnLabel")} name="nameEn" placeholder={t("pages.suppliers.nameEnPlaceholder")} dir="ltr" /></div>
                 <Field label={t("pages.suppliers.vatNumberLabel")} name="vatNumber" placeholder="310000000000003" dir="ltr" />
                 <Field label={t("pages.suppliers.crNumberLabel")} name="crNumber" placeholder="1010000001" dir="ltr" />
