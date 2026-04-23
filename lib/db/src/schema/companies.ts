@@ -36,6 +36,8 @@ export const companiesTable = pgTable("companies", {
   decimalPlaces: integer("decimal_places").notNull().default(2),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
+  // System-wide posting mode: true = auto-post after save, false = manual posting only
+  autoPostingEnabled: boolean("auto_posting_enabled").notNull().default(true),
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),

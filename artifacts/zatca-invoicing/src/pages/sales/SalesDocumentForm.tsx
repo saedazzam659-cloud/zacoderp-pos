@@ -440,14 +440,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const discountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
   const totalAmount = grossTotal - discountAmt;
 
+  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/sales/${apiPath}/${editId}` : `${API}/api/sales/${apiPath}`;
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
 
-      // Auto-post immediately after save for invoices only (not quotations)
-      if (isInvoice && j?.id && (j.status ?? "draft") === "draft") {
+      // Auto-post immediately after save for invoices only (not quotations) — only when enabled system-wide
+      if (autoPostingEnabled && isInvoice && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/sales/${apiPath}/${j.id}/post`, {
           method: "PATCH", headers,
         });

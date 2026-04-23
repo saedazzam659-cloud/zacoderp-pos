@@ -73,10 +73,12 @@ router.put("/:id", async (req, res) => {
   res.json(company);
 });
 
-// PATCH /:id/general-settings — update logo + decimal places (company users update own company)
+// PATCH /:id/general-settings — update logo + decimal places + auto-posting toggle
 router.patch("/:id/general-settings", async (req, res) => {
   const id = parseInt(req.params.id);
-  const { logo, decimalPlaces } = req.body as { logo?: string; decimalPlaces?: number };
+  const { logo, decimalPlaces, autoPostingEnabled } = req.body as {
+    logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
+  };
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (logo !== undefined) updates.logo = logo;
   if (decimalPlaces !== undefined) {
@@ -85,6 +87,9 @@ router.patch("/:id/general-settings", async (req, res) => {
       res.status(400).json({ error: "عدد الأرقام العشرية يجب أن يكون بين 0 و 4" }); return;
     }
     updates.decimalPlaces = dp;
+  }
+  if (autoPostingEnabled !== undefined) {
+    updates.autoPostingEnabled = !!autoPostingEnabled;
   }
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();

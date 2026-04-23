@@ -472,14 +472,15 @@ export default function PurchaseInvoiceForm() {
   const selectedLc     = lcs.find((lc: any) => String(lc.id) === lcId);
 
   // ── Save ─────────────────────────────────────────────────
+  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
 
-      // Auto-post (ترحيل) immediately after save, only if still draft
-      if (j?.id && (j.status ?? "draft") === "draft") {
+      // Auto-post (ترحيل) after save only when enabled system-wide and still draft
+      if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
           method: "PATCH", headers,
         });
@@ -493,7 +494,10 @@ export default function PurchaseInvoiceForm() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
-      toast({ title: isNew ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم الحفظ والترحيل" });
+      toast({ title: autoPostingEnabled
+        ? (isNew ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم الحفظ والترحيل")
+        : (isNew ? "✓ تم إنشاء الفاتورة (مسودة — بحاجة إلى ترحيل يدوي)" : "✓ تم الحفظ (مسودة — بحاجة إلى ترحيل يدوي)")
+      });
       navigate("/purchasing/invoices");
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
