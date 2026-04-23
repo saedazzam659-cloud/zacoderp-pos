@@ -512,190 +512,8 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     ? t("salesDocForm.subtitleInvoice")
     : t("salesDocForm.subtitleQuotation");
 
-  return (
-    <div className="space-y-5 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
-          <BackIcon className="h-4 w-4" />
-        </Button>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-            <Icon className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold">{title}</h1>
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          </div>
-        </div>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
-        <Card className="border-2">
-          <CardHeader className="p-0">
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
-              <p className="text-[11px] text-muted-foreground">
-                {activeTab === "header"
-                  ? t("salesDocForm.headerHint")
-                  : t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
-              </p>
-              <TabsList className="h-8 bg-background border gap-1">
-                {isInvoice && (
-                  <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                    <Calculator className="h-3.5 w-3.5" />{t("salesDocForm.tabAccounts")}
-                  </TabsTrigger>
-                )}
-                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
-                </TabsTrigger>
-                <TabsTrigger value="lines" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <ListOrdered className="h-3.5 w-3.5" />{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}
-                </TabsTrigger>
-              </TabsList>
-            </div>
-          </CardHeader>
-
-          <TabsContent value="header" className="mt-0">
-            <CardContent className="pt-5 pb-5 space-y-4">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
-                  <Input className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.date")}</Label>
-                  <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
-                </div>
-                {!isInvoice && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.validUntil")}</Label>
-                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.customer")}</Label>
-                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
-                </div>
-                {isInvoice && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.branch")}</Label>
-                    <Select value={branchId || undefined} onValueChange={setBranchId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
-                      <SelectContent>
-                        {(branches as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? ` (${t("common.main")})` : ""}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {isInvoice && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
-                    <Select value={paymentType} onValueChange={setPaymentType}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="credit">{t("salesDocForm.paymentCredit")}</SelectItem>
-                        <SelectItem value="cash">{t("salesDocForm.paymentCash")}</SelectItem>
-                        <SelectItem value="bank">{t("salesDocForm.paymentBank")}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {isInvoice && paymentType === "cash" && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.cashBox")}</Label>
-                    <Select value={cashBoxId || undefined} onValueChange={setCashBoxId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.cashBoxPlaceholder")} /></SelectTrigger>
-                      <SelectContent>
-                        {(cashBoxes as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {isInvoice && paymentType === "bank" && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.bankAccount")}</Label>
-                    <Select value={bankAccountId || undefined} onValueChange={setBankAccountId}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.bankAccountPlaceholder")} /></SelectTrigger>
-                      <SelectContent>
-                        {(bankAccounts as any[]).map((b: any) => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.currency")}</Label>
-                  {currencies.length > 0 ? (
-                    <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
-                      <SelectContent>
-                        {currencies.map((c: any) => (
-                          <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input className="h-9 text-sm" dir="ltr" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.exchangeRate")}</Label>
-                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
-                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("salesDocForm.notes")}</Label>
-                <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
-              </div>
-            </CardContent>
-          </TabsContent>
-
-          {isInvoice && (
-            <TabsContent value="accounts" className="mt-0">
-              <CardContent className="pt-5 pb-5">
-                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
-                  <div className="flex items-center gap-2 text-blue-900">
-                    <Calculator className="h-4 w-4" />
-                    <span className="text-sm font-semibold">{t("salesDocForm.accountsCardTitle")}</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.salesAccount")} <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
-                        placeholder={t("salesDocForm.salesAccountPlaceholder")} filterTypes={["revenue"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.cogsAccount")} <span className="text-destructive">*</span></Label>
-                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
-                        placeholder={t("salesDocForm.cogsAccountPlaceholder")} filterTypes={["expense"]} allowEmpty={false} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.vatAccount")}</Label>
-                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
-                        placeholder={t("salesDocForm.vatAccountPlaceholder")} filterTypes={["liability"]} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">{t("salesDocForm.discountAccount")}</Label>
-                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
-                        placeholder={t("salesDocForm.discountAccountPlaceholder")} filterTypes={["expense"]} />
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-blue-900/70">
-                    {t("salesDocForm.accountsHelp")}
-                  </p>
-                </div>
-              </CardContent>
-            </TabsContent>
-          )}
-
-          <TabsContent value="lines" className="mt-0">
-            <CardContent className="pt-5 pb-5 space-y-3">
+  const linesSection = (
+    <div className="pt-2 space-y-3">
               <div data-enter-nav-container="lines" className="space-y-1.5">
                 {(() => {
                   const gridCols = isInvoice
@@ -842,8 +660,194 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   )}
                 </div>
               </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 max-w-6xl mx-auto">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(basePath)}>
+          <BackIcon className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{title}</h1>
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {activeTab === "header"
+                  ? t("salesDocForm.headerHint")
+                  : t("salesDocForm.summaryHint", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
+              </p>
+              <TabsList className="h-8 bg-background border gap-1">
+                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <FileText className="h-3.5 w-3.5" />{t("salesDocForm.tabHeader")}
+                </TabsTrigger>
+                {isInvoice && (
+                  <TabsTrigger value="accounts" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                    <Calculator className="h-3.5 w-3.5" />{t("salesDocForm.tabAccounts")}
+                  </TabsTrigger>
+                )}
+              </TabsList>
+            </div>
+          </CardHeader>
+
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
+                  <Input className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.date")}</Label>
+                  <Input type="date" className="h-9 text-sm" value={docDate} onChange={e => setDocDate(e.target.value)} required />
+                </div>
+                {!isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.validUntil")}</Label>
+                    <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.customer")}</Label>
+                  <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
+                </div>
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.branch")}</Label>
+                    <Select value={branchId || undefined} onValueChange={setBranchId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.branchPlaceholder")} /></SelectTrigger>
+                      <SelectContent>
+                        {(branches as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? ` (${t("common.main")})` : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
+                    <Select value={paymentType} onValueChange={setPaymentType}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="credit">{t("salesDocForm.paymentCredit")}</SelectItem>
+                        <SelectItem value="cash">{t("salesDocForm.paymentCash")}</SelectItem>
+                        <SelectItem value="bank">{t("salesDocForm.paymentBank")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {isInvoice && paymentType === "cash" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.cashBox")}</Label>
+                    <Select value={cashBoxId || undefined} onValueChange={setCashBoxId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.cashBoxPlaceholder")} /></SelectTrigger>
+                      <SelectContent>
+                        {(cashBoxes as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {isInvoice && paymentType === "bank" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.bankAccount")}</Label>
+                    <Select value={bankAccountId || undefined} onValueChange={setBankAccountId}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesDocForm.bankAccountPlaceholder")} /></SelectTrigger>
+                      <SelectContent>
+                        {(bankAccounts as any[]).map((b: any) => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.currency")}</Label>
+                  {currencies.length > 0 ? (
+                    <Select value={currencyCode || undefined} onValueChange={handleCurrencyChange}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent>
+                        {currencies.map((c: any) => (
+                          <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input className="h-9 text-sm" dir="ltr" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("salesDocForm.exchangeRate")}</Label>
+                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("salesDocForm.notes")}</Label>
+                <Textarea className="text-sm min-h-[60px] resize-none" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+
+              <div className="border-t pt-4 mt-2 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                <ListOrdered className="h-4 w-4" />
+                <span>{t("salesDocForm.tabLines", { count: lines.filter(l => l.itemName).length })}</span>
+              </div>
+              {linesSection}
             </CardContent>
           </TabsContent>
+
+          {isInvoice && (
+            <TabsContent value="accounts" className="mt-0">
+              <CardContent className="pt-5 pb-5">
+                <div className="rounded-lg border-2 border-blue-200 bg-blue-50/40 p-4 space-y-4">
+                  <div className="flex items-center gap-2 text-blue-900">
+                    <Calculator className="h-4 w-4" />
+                    <span className="text-sm font-semibold">{t("salesDocForm.accountsCardTitle")}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs">{t("salesDocForm.salesAccount")} <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={salesAccountId} onValueChange={setSalesAccountId}
+                        placeholder={t("salesDocForm.salesAccountPlaceholder")} filterTypes={["revenue"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">{t("salesDocForm.cogsAccount")} <span className="text-destructive">*</span></Label>
+                      <AccountCombobox value={cogsAccountId} onValueChange={setCogsAccountId}
+                        placeholder={t("salesDocForm.cogsAccountPlaceholder")} filterTypes={["expense"]} allowEmpty={false} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">{t("salesDocForm.vatAccount")}</Label>
+                      <AccountCombobox value={taxAccountId} onValueChange={setTaxAccountId}
+                        placeholder={t("salesDocForm.vatAccountPlaceholder")} filterTypes={["liability"]} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">{t("salesDocForm.discountAccount")}</Label>
+                      <AccountCombobox value={discountAccountId} onValueChange={setDiscountAccountId}
+                        placeholder={t("salesDocForm.discountAccountPlaceholder")} filterTypes={["expense"]} />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-blue-900/70">
+                    {t("salesDocForm.accountsHelp")}
+                  </p>
+                </div>
+              </CardContent>
+            </TabsContent>
+          )}
+
         </Card>
       </Tabs>
 
