@@ -158,7 +158,6 @@ export default function SalesReturns() {
     enabled: !!user,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
-  useAutoFocusOnMount(docNumberRef, showForm);
   useEffect(() => {
     if (!showForm || !defaultBranch || form.branchId) return;
     setForm((p: any) => ({ ...p, branchId: String(defaultBranch.id) }));

@@ -124,7 +124,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   useEnterNavContainer({ onAppend: () => addLine() });
   const { containerRef: enterNavRef, onKeyDown: enterNavKey } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
-  useAutoFocusOnMount(docNumberRef);
 
   // Accounts used to build journal entry on posting (invoices only)
   const [cogsAccountId,      setCogsAccountId]      = useState("");

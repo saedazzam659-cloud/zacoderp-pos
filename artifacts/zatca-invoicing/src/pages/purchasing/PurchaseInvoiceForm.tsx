@@ -113,7 +113,6 @@ export default function PurchaseInvoiceForm() {
   useEnterNavContainer({ onAppend: () => addLine() });
   const { containerRef, onKeyDown } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
-  useAutoFocusOnMount(docNumberRef);
 
   // Accounting accounts (used to build the journal entry on post)
   const [inventoryAccountId, setInventoryAccountId] = useState("");
