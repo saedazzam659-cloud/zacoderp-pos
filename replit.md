@@ -50,6 +50,12 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 # Recent Changes
 
+**Notification Dismiss / Auto-Clear UX (April 2026)**
+- New `notification_dismissals` table (per-user soft-delete: `(notification_id, user_id, dismissed_at)`). Both list/count queries and the bell dropdown now LEFT-JOIN-and-filter dismissals so a hidden notification disappears for that user only — broadcast notifications stay visible to other recipients.
+- New endpoints: `DELETE /api/notifications/:id` (dismiss for the caller, idempotent), `POST /api/notifications/:id/restore` (undo), `DELETE /api/notifications/cleanup/read` (bulk-dismiss every notification this user has already read; returns the dismissed ids so the UI can offer a single Undo).
+- Page `/notifications`: each card has an X (dismiss) button on the right. Cards can also be **drag-to-dismiss** (mouse + touch — beyond ~35% of the card width snaps out). After a user clicks "تعليم كمقروء" a small purple banner appears at the bottom of the card with a 5-second countdown ring around the X plus an "إيقاف" button — if not stopped, the card auto-clears with a Toast undo. Header gets a "تنظيف المقروء (N)" button that bulk-dismisses every read item with a single Undo toast that restores all of them.
+- Bell dropdown also gets a small X-on-hover for inline dismissal with the same Undo Toast.
+
 **Support Messages System (April 2026)**
 - New `support_messages` table (id, companyId, userId, senderName, companyName, subject, body, priority, status, adminReply, adminReplyAt, resolvedAt, resolvedByUserId) and `support_settings` singleton table for delivery channels (in-app / webhook URL+secret / Telegram bot+chat).
 - New API router `/api/support-messages`: POST `/` (any user creates a ticket), GET `/mine` (own history), GET `/` & `/stats` (superadmin inbox + counts), PATCH `/:id` (superadmin updates status/reply — auto-creates a `support_reply` notification for the original sender), `_settings/get|update|test` (superadmin only; secrets are masked in responses, only updated when caller sends a non-masked value).

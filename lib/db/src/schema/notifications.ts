@@ -32,3 +32,14 @@ export const notificationReadsTable = pgTable("notification_reads", {
 }, (t) => ({
   pk: primaryKey({ columns: [t.notificationId, t.userId] }),
 }));
+
+// Per-user dismissals (soft-delete). When a row exists for (notification, user)
+// the notification is hidden from that user's lists. Broadcast notifications
+// (userId NULL) stay visible to other users; this is per-recipient only.
+export const notificationDismissalsTable = pgTable("notification_dismissals", {
+  notificationId: integer("notification_id").notNull().references(() => notificationsTable.id, { onDelete: "cascade" }),
+  userId:         integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  dismissedAt:    timestamp("dismissed_at").defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.notificationId, t.userId] }),
+}));

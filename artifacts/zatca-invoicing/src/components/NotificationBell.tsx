@@ -1,6 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { Bell, Sparkles } from "lucide-react";
+import { Bell, Sparkles, X } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +28,46 @@ const SEV_DOT: Record<string, string> = {
 export function NotificationBell() {
   const { token } = useAuth();
   const [, navigate] = useLocation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const headers = { Authorization: `Bearer ${token}` };
+
+  const dismiss = async (id: number, title: string) => {
+    // optimistic remove from both cached lists + counter
+    qc.setQueryData<{ notifications: Notification[] }>(["notif-list-recent"], (old) => {
+      if (!old?.notifications) return old;
+      return { ...old, notifications: old.notifications.filter(n => n.id !== id) };
+    });
+    qc.setQueryData<{ notifications: Notification[] }>(["notif-list-full"], (old) => {
+      if (!old?.notifications) return old;
+      return { ...old, notifications: old.notifications.filter(n => n.id !== id) };
+    });
+    try {
+      await fetch(`${API}/api/notifications/${id}`, { method: "DELETE", headers });
+    } catch {}
+    qc.invalidateQueries({ queryKey: ["notif-unread"] });
+    toast({
+      title: "تم حذف التنبيه",
+      description: title,
+      action: (
+        <ToastAction
+          altText="تراجع"
+          onClick={async () => {
+            try {
+              await fetch(`${API}/api/notifications/${id}/restore`, {
+                method: "POST", headers,
+              });
+            } catch {}
+            qc.invalidateQueries({ queryKey: ["notif-list-recent"] });
+            qc.invalidateQueries({ queryKey: ["notif-list-full"] });
+            qc.invalidateQueries({ queryKey: ["notif-unread"] });
+          }}
+        >
+          تراجع
+        </ToastAction>
+      ),
+    });
+  };
 
   // Poll every 30s for new notifications. Cheap COUNT query.
   const { data: countData } = useQuery({
@@ -70,22 +111,33 @@ export function NotificationBell() {
           {items.length === 0 ? (
             <div className="text-center text-sm text-muted-foreground py-8">لا توجد تنبيهات</div>
           ) : items.map(n => (
-            <button
+            <div
               key={n.id}
-              onClick={() => navigate("/notifications")}
-              className={`w-full text-start px-3 py-2.5 border-b last:border-b-0 hover:bg-accent transition-colors flex items-start gap-2 ${
+              className={`group relative w-full border-b last:border-b-0 hover:bg-accent transition-colors flex items-start gap-2 ${
                 !n.isRead ? "bg-violet-50/40" : ""
               }`}
             >
-              <span className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${SEV_DOT[n.severity] || "bg-slate-400"}`} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
-                  {n.category === "ai_diagnostic" && <Sparkles className="h-3 w-3 text-violet-500" />}
-                  <span>{new Date(n.createdAt).toLocaleString("ar-SA")}</span>
+              <button
+                onClick={() => navigate("/notifications")}
+                className="flex-1 text-start px-3 py-2.5 flex items-start gap-2 min-w-0"
+              >
+                <span className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${SEV_DOT[n.severity] || "bg-slate-400"}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground mb-0.5">
+                    {n.category === "ai_diagnostic" && <Sparkles className="h-3 w-3 text-violet-500" />}
+                    <span>{new Date(n.createdAt).toLocaleString("ar-SA")}</span>
+                  </div>
+                  <p className={`text-sm leading-snug truncate ${!n.isRead ? "font-semibold" : ""}`}>{n.title}</p>
                 </div>
-                <p className={`text-sm leading-snug truncate ${!n.isRead ? "font-semibold" : ""}`}>{n.title}</p>
-              </div>
-            </button>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); dismiss(n.id, n.title); }}
+                title="حذف"
+                className="opacity-0 group-hover:opacity-100 transition-opacity me-2 mt-2 h-6 w-6 inline-flex items-center justify-center rounded-full hover:bg-red-100 hover:text-red-600 text-muted-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           ))}
         </div>
         <Link href="/notifications" className="block px-3 py-2 text-center text-xs font-medium text-violet-700 hover:bg-violet-50 border-t">
