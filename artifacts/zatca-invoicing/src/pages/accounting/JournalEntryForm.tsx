@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
-  FileText, ListOrdered, Printer, FileSpreadsheet, FileDown,
+  FileText, Printer, FileSpreadsheet, FileDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -58,13 +58,7 @@ export default function JournalEntryForm() {
   const qc       = useQueryClient();
   const { toast } = useToast();
 
-  const [activeTab,    setActiveTab]    = useState(() => {
-    if (typeof window !== "undefined") {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get("tab") === "lines") return "lines";
-    }
-    return "header";
-  });
+  const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
   const [entryDate,    setEntryDate]    = useState(today());
   const [currency,     setCurrency]     = useState("SAR");
@@ -198,8 +192,7 @@ export default function JournalEntryForm() {
           }))
         : [newLine(), newLine()]
     );
-    const tabParam = new URLSearchParams(window.location.search).get("tab");
-    setActiveTab(tabParam === "lines" ? "lines" : "header");
+    setActiveTab("header");
   }, [existing]);
 
   const totalDebit  = lines.reduce((s, l) => s + (parseFloat(l.debit)  || 0), 0);
@@ -442,17 +435,15 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
         </div>
 
         {/* Balance indicator in header */}
-        {activeTab === "lines" && (
-          <div className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border",
-            isBalanced
-              ? "bg-green-50 text-green-700 border-green-200"
-              : "bg-red-50 text-red-700 border-red-200"
-          )}>
-            {!isBalanced && <AlertCircle className="h-3.5 w-3.5" />}
-            {isBalanced ? "القيد متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
-          </div>
-        )}
+        <div className={cn(
+          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border",
+          isBalanced
+            ? "bg-green-50 text-green-700 border-green-200"
+            : "bg-red-50 text-red-700 border-red-200"
+        )}>
+          {!isBalanced && <AlertCircle className="h-3.5 w-3.5" />}
+          {isBalanced ? "القيد متوازن ✓" : `فرق: ${diff.toFixed(2)}`}
+        </div>
       </div>
 
       {/* ─── Tabs ───────────────────────────────────────────────── */}
@@ -477,18 +468,6 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 >
                   <FileText className="h-3.5 w-3.5" />
                   البيانات الرأسية
-                </TabsTrigger>
-                <TabsTrigger
-                  value="lines"
-                  className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-                >
-                  <ListOrdered className="h-3.5 w-3.5" />
-                  سطور القيد
-                  {lines.filter(l => l.accountId).length > 0 && (
-                    <span className="mr-1 bg-primary-foreground/20 text-current rounded-full px-1.5 py-0 text-[10px] font-bold">
-                      {lines.filter(l => l.accountId).length}
-                    </span>
-                  )}
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -612,23 +591,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                 />
               </div>
 
-              {/* Next button */}
-              <div className="mt-5 flex justify-start">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setActiveTab("lines")}
-                  className="gap-2 text-sm"
-                >
-                  <ListOrdered className="h-4 w-4" />
-                  التالي: سطور القيد
-                </Button>
-              </div>
             </CardContent>
           </TabsContent>
 
-          {/* ── Tab 2: Lines ──────────────────────────────── */}
-          <TabsContent value="lines" className="mt-0">
+          {/* ── Lines (rendered under same header tab) ─── */}
+          <TabsContent value="header" className="mt-0">
             <CardContent className="p-0">
               {/* Toolbar */}
               <div className="flex items-center justify-end px-4 py-2 border-b bg-muted/10">
