@@ -101,4 +101,7 @@ app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   seedSuperAdmin();
   seedPlanConfigs();
+  // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
+  // company on its configured frequency).
+  import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});
 });

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { useState, useRef, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
-  DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle
+  DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
+  Clock, Repeat, Trash, History, Play
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";

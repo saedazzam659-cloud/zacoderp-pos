@@ -1,4 +1,4 @@
-import { pgTable, serial, text, boolean, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, boolean, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -55,6 +55,11 @@ export const companiesTable = pgTable("companies", {
   posCardBankAccountId:      integer("pos_card_bank_account_id"),
   posAppleBankAccountId:     integer("pos_apple_bank_account_id"),
   posWalletBankAccountId:    integer("pos_wallet_bank_account_id"),
+  // ─── Automatic backup settings ────────────────────────────────────────
+  autoBackupEnabled:        boolean("auto_backup_enabled").notNull().default(true),
+  autoBackupFrequencyHours: integer("auto_backup_frequency_hours").notNull().default(24),
+  autoBackupRetention:      integer("auto_backup_retention").notNull().default(7),
+  lastAutoBackupAt:         timestamp("last_auto_backup_at"),
   // Registration workflow
   status: text("status").notNull().default("active"), // pending | active | rejected
   rejectionReason: text("rejection_reason"),

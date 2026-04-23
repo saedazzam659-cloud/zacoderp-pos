@@ -7,8 +7,9 @@ import {
   customersTable, suppliersTable, supplierGroupsTable,
   accountsTable,
   cashBoxesTable, bankAccountsTable,
+  companiesTable, autoBackupsTable,
 } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
@@ -296,6 +297,202 @@ router.post("/restore", async (req, res) => {
     res.json({ ok: true, companyId, report });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * Automatic backups
+ * Scheduler builds a snapshot per company every N hours and keeps the last K.
+ * Users can list / download / restore / delete snapshots and tweak the
+ * schedule per company.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/** Reusable: build a full snapshot payload for one company (same shape as /export). */
+export async function buildSnapshot(companyId: number): Promise<{ payload: any; counts: Record<string, number> }> {
+  const data: Record<string, any[]> = {};
+  for (const t of TABLES) {
+    const rows = t.hasCompanyId
+      ? await db.select().from(t.table).where(eq(t.table.companyId, companyId))
+      : await db.select().from(t.table);
+    data[t.key] = rows;
+  }
+  const counts = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v.length]));
+  const payload = {
+    meta: { schemaVersion: 1, companyId, exportedAt: new Date().toISOString(), exportedBy: "scheduler", appName: "ZATCA Invoicing" },
+    counts, data,
+  };
+  return { payload, counts };
+}
+
+/** Write a snapshot row and enforce per-company retention. */
+async function persistSnapshot(companyId: number, reason: "scheduled" | "manual"): Promise<number> {
+  const { payload, counts } = await buildSnapshot(companyId);
+  const sizeBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+  const [row] = await db.insert(autoBackupsTable).values({
+    companyId, reason, sizeBytes, counts, data: payload,
+  }).returning({ id: autoBackupsTable.id });
+
+  // Rotate: keep only the most recent `autoBackupRetention` per company.
+  const [company] = await db.select({ retention: companiesTable.autoBackupRetention })
+    .from(companiesTable).where(eq(companiesTable.id, companyId));
+  const retention = Math.max(1, Math.min(30, company?.retention ?? 7));
+  const old = await db.select({ id: autoBackupsTable.id })
+    .from(autoBackupsTable)
+    .where(eq(autoBackupsTable.companyId, companyId))
+    .orderBy(desc(autoBackupsTable.createdAt))
+    .offset(retention);
+  if (old.length) {
+    for (const o of old) {
+      await db.delete(autoBackupsTable).where(eq(autoBackupsTable.id, o.id));
+    }
+  }
+
+  await db.update(companiesTable)
+    .set({ lastAutoBackupAt: new Date() })
+    .where(eq(companiesTable.id, companyId));
+
+  return row.id;
+}
+
+/* ─── GET /auto/list?companyId=X ─── list snapshot metadata (no data blob) ── */
+router.get("/auto/list", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const rows = await db.select({
+      id: autoBackupsTable.id,
+      createdAt: autoBackupsTable.createdAt,
+      reason: autoBackupsTable.reason,
+      sizeBytes: autoBackupsTable.sizeBytes,
+      counts: autoBackupsTable.counts,
+    }).from(autoBackupsTable)
+      .where(eq(autoBackupsTable.companyId, companyId))
+      .orderBy(desc(autoBackupsTable.createdAt));
+
+    const [company] = await db.select({
+      enabled: companiesTable.autoBackupEnabled,
+      frequencyHours: companiesTable.autoBackupFrequencyHours,
+      retention: companiesTable.autoBackupRetention,
+      lastAt: companiesTable.lastAutoBackupAt,
+    }).from(companiesTable).where(eq(companiesTable.id, companyId));
+
+    res.json({ settings: company ?? null, snapshots: rows });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── GET /auto/:id/download ─── download one snapshot as JSON file ────────── */
+router.get("/auto/:id/download", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req);
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+    if (companyId && row.companyId !== companyId) { res.status(403).json({ error: "ممنوع" }); return; }
+    res.json(row.data);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /auto/:id/restore ─── restore one stored snapshot ───────────────── */
+router.post("/auto/:id/restore", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+    if (row.companyId !== companyId) { res.status(403).json({ error: "ممنوع" }); return; }
+
+    // Forward to the existing /restore logic by calling it internally.
+    req.body = { companyId, backup: row.data };
+    // @ts-ignore - reuse handler
+    (router as any).handle({ ...req, url: "/restore", method: "POST" }, res, () => {});
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── DELETE /auto/:id ─── remove a snapshot ───────────────────────────────── */
+router.delete("/auto/:id", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req);
+    const id = Number(req.params.id);
+    const [row] = await db.select({ companyId: autoBackupsTable.companyId }).from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+    if (companyId && row.companyId !== companyId) { res.status(403).json({ error: "ممنوع" }); return; }
+    await db.delete(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /auto/settings ─── update per-company auto-backup settings ──────── */
+router.post("/auto/settings", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+    const patch: any = {};
+    if (typeof req.body.enabled === "boolean")   patch.autoBackupEnabled = req.body.enabled;
+    if (Number.isFinite(Number(req.body.frequencyHours))) {
+      const h = Math.max(1, Math.min(168, Number(req.body.frequencyHours)));
+      patch.autoBackupFrequencyHours = h;
+    }
+    if (Number.isFinite(Number(req.body.retention))) {
+      const r = Math.max(1, Math.min(30, Number(req.body.retention)));
+      patch.autoBackupRetention = r;
+    }
+    if (!Object.keys(patch).length) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
+
+    await db.update(companiesTable).set(patch).where(eq(companiesTable.id, companyId));
+    res.json({ ok: true, settings: patch });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── POST /auto/run-now ─── manual snapshot on demand ─────────────────────── */
+router.post("/auto/run-now", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const id = await persistSnapshot(companyId, "manual");
+    res.json({ ok: true, id });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/* ─── Scheduler ───────────────────────────────────────────────────────────────
+ * Runs every 15 minutes. For each company with autoBackupEnabled=true,
+ * if (now - lastAutoBackupAt) >= frequencyHours, a new scheduled snapshot is
+ * created. Runs guard-railed so one company's failure doesn't abort others.
+ * ─────────────────────────────────────────────────────────────────────────── */
+let schedulerStarted = false;
+export function startBackupScheduler(intervalMs = 15 * 60_000) {
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+
+  async function tick() {
+    try {
+      const companies = await db.select({
+        id: companiesTable.id,
+        enabled: companiesTable.autoBackupEnabled,
+        frequencyHours: companiesTable.autoBackupFrequencyHours,
+        lastAt: companiesTable.lastAutoBackupAt,
+      }).from(companiesTable);
+
+      for (const c of companies) {
+        if (!c.enabled) continue;
+        const dueMs = (c.frequencyHours ?? 24) * 60 * 60_000;
+        const lastMs = c.lastAt ? new Date(c.lastAt).getTime() : 0;
+        if (Date.now() - lastMs < dueMs) continue;
+        try {
+          await persistSnapshot(c.id, "scheduled");
+          console.log(`[auto-backup] snapshot saved for company ${c.id}`);
+        } catch (e: any) {
+          console.error(`[auto-backup] failed for company ${c.id}:`, e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error("[auto-backup] scheduler tick error:", e.message);
+    }
+  }
+
+  // Run soon after startup (5 s), then every `intervalMs`.
+  setTimeout(tick, 5_000);
+  setInterval(tick, intervalMs);
+}
 
 /** Topological-ish sort for a self-referencing table (roots first). */
 function sortByParentDepth(rows: any[], idKey: string, parentKey: string): any[] {

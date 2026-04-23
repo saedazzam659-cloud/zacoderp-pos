@@ -19,3 +19,4 @@ export * from "./pos";
 export * from "./notifications";
 export * from "./supportMessages";
 export * from "./accountingMappings";
+export * from "./autoBackups";
