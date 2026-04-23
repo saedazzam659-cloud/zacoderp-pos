@@ -114,7 +114,8 @@ export function SearchCombobox({
     onValueChange(val);
     setOpen(false);
     setSearch("");
-    inputRef.current?.blur();
+    // Keep focus on the combobox input so the next Enter press bubbles to
+    // the parent form navigator and advances to the following field.
   };
 
   const handleClear = (e: React.MouseEvent) => {
