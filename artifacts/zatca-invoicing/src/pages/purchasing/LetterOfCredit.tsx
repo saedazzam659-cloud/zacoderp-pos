@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered } from "lucide-react";
+import { Plus, Pencil, Trash2, CreditCard, FileText, ListOrdered, Sparkles, Loader2 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -38,6 +39,10 @@ export default function LetterOfCredit() {
   const [form,      setForm]      = useState<any>(EMPTY_LC);
   const [expenses,  setExpenses]  = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState("info");
+  const [aiLc,      setAiLc]      = useState<any | null>(null);
+  const [aiPreview, setAiPreview] = useState<any | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSaving,  setAiSaving]  = useState(false);
 
   const { data: lcs = [], isLoading } = useQuery<any[]>({
     queryKey: ["lc", cid],
@@ -106,6 +111,37 @@ export default function LetterOfCredit() {
 
   const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remaining     = Number(form.totalAmount || 0) - totalExpenses;
+
+  async function runAiJournal(lc: any) {
+    setAiLc(lc); setAiPreview(null); setAiLoading(true);
+    try {
+      const res = await fetch(`${API}/api/purchasing/letters-of-credit/${lc.id}/ai-journal`, {
+        method: "POST", headers, body: JSON.stringify({ save: false }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "فشل الذكاء الاصطناعي");
+      setAiPreview(j);
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+      setAiLc(null);
+    } finally { setAiLoading(false); }
+  }
+
+  async function confirmAiJournal() {
+    if (!aiLc) return;
+    setAiSaving(true);
+    try {
+      const res = await fetch(`${API}/api/purchasing/letters-of-credit/${aiLc.id}/ai-journal`, {
+        method: "POST", headers, body: JSON.stringify({ save: true }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || "فشل حفظ القيد");
+      toast({ title: "تم إنشاء القيد المحاسبي", description: `رقم القيد: ${j.entryId}` });
+      setAiLc(null); setAiPreview(null);
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    } finally { setAiSaving(false); }
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -224,6 +260,10 @@ export default function LetterOfCredit() {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="إنشاء قيد بالذكاء الاصطناعي"
+                          onClick={() => runAiJournal(lc)} disabled={aiLoading && aiLc?.id === lc.id}>
+                          {aiLoading && aiLc?.id === lc.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(lc)}><Pencil className="h-3.5 w-3.5" /></Button>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
                           onClick={() => { if (confirm("حذف الاعتماد؟")) deleteMut.mutate(lc.id); }}>
@@ -238,6 +278,76 @@ export default function LetterOfCredit() {
           </table>
         )}
       </div>
+
+      <Dialog open={!!aiLc} onOpenChange={(o) => { if (!o) { setAiLc(null); setAiPreview(null); } }}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              قيد محاسبي مقترح للاعتماد {aiLc?.lcNumber}
+            </DialogTitle>
+          </DialogHeader>
+
+          {aiLoading || !aiPreview ? (
+            <div className="py-10 text-center text-sm text-muted-foreground flex flex-col items-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              جارٍ توليد القيد المحاسبي بالذكاء الاصطناعي...
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-sm">
+                <div className="text-muted-foreground text-xs mb-1">الوصف</div>
+                <div className="font-medium">{aiPreview.description}</div>
+              </div>
+
+              <div className="rounded-lg border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="text-right px-3 py-2 font-semibold">الحساب</th>
+                      <th className="text-right px-3 py-2 font-semibold">البيان</th>
+                      <th className="text-left px-3 py-2 font-semibold">مدين</th>
+                      <th className="text-left px-3 py-2 font-semibold">دائن</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aiPreview.lines.map((l: any, i: number) => (
+                      <tr key={i} className="border-t">
+                        <td className="px-3 py-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> — {l.accountNameAr}</td>
+                        <td className="px-3 py-2 text-muted-foreground text-xs">{l.description}</td>
+                        <td className="px-3 py-2 font-mono text-left">{l.debit > 0 ? fmt(l.debit) : "—"}</td>
+                        <td className="px-3 py-2 font-mono text-left">{l.credit > 0 ? fmt(l.credit) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/40 border-t font-semibold">
+                      <td colSpan={2} className="px-3 py-2 text-xs text-muted-foreground">الإجمالي</td>
+                      <td className="px-3 py-2 font-mono text-left">{fmt(aiPreview.totalDebit)}</td>
+                      <td className="px-3 py-2 font-mono text-left">{fmt(aiPreview.totalCredit)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {aiPreview.reasoning && (
+                <div className="rounded-lg border bg-primary/5 p-3 text-xs leading-relaxed">
+                  <div className="font-semibold text-primary mb-1 flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5" />تفسير الذكاء الاصطناعي</div>
+                  <div className="text-muted-foreground">{aiPreview.reasoning}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setAiLc(null); setAiPreview(null); }} disabled={aiSaving}>إلغاء</Button>
+            <Button size="sm" className="gap-2" onClick={confirmAiJournal} disabled={!aiPreview || aiSaving}>
+              {aiSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {aiSaving ? "جارٍ الحفظ..." : "اعتماد وحفظ القيد"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );

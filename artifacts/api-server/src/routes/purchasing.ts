@@ -1119,6 +1119,157 @@ router.delete("/supplier-settlements/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ── AI-generated journal entry for a Letter of Credit ───────────────────
+router.post("/letters-of-credit/:id/ai-journal", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const save = !!req.body?.save;
+
+    const [lc] = await db.select().from(lettersOfCreditTable)
+      .where(and(eq(lettersOfCreditTable.id, id), eq(lettersOfCreditTable.companyId, cid)));
+    if (!lc) { res.status(404).json({ error: "الاعتماد غير موجود" }); return; }
+    const expenses = await db.select().from(lcExpensesTable).where(eq(lcExpensesTable.lcId, id));
+
+    let supplierName = "—", supplierAccountId: number | null = null;
+    if (lc.supplierId) {
+      const [s] = await db.select().from(suppliersTable)
+        .where(and(eq(suppliersTable.id, lc.supplierId), eq(suppliersTable.companyId, cid)));
+      supplierName = s?.nameAr ?? "—";
+      supplierAccountId = s?.accountId ?? null;
+    }
+
+    const { accountsTable } = await import("@workspace/db");
+    const dbAccounts = await db.select().from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+    const postable = dbAccounts.filter(a => a.isPosting !== false);
+    if (postable.length < 2) { res.status(400).json({ error: "شجرة الحسابات غير مهيأة" }); return; }
+
+    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return; }
+
+    const accountList = postable.slice(0, 400).map(a =>
+      `- id=${a.id} | ${a.code} | ${a.nameAr} | ${a.accountType}`
+    ).join("\n");
+    const expList = expenses.length
+      ? expenses.map((e, i) => `  ${i + 1}) ${e.expenseType || "—"} — ${Number(e.amount || 0)} ${e.currencyCode || "SAR"}${e.accountId ? ` (حساب مقترح id=${e.accountId})` : ""}`).join("\n")
+      : "  (لا توجد مصاريف مسجلة)";
+
+    const prompt = `أنت محاسب سعودي خبير. مطلوب إنشاء قيد محاسبي متوازن (debit = credit) يعكس فتح اعتماد مستندي وتسجيل مصاريف الاستيراد المرتبطة به.
+
+بيانات الاعتماد:
+- رقم الاعتماد: ${lc.lcNumber}
+- التاريخ: ${lc.lcDate}
+- المورد: ${supplierName}${supplierAccountId ? ` (حساب مورد id=${supplierAccountId})` : ""}
+- البنك: ${lc.bankName || "—"}
+- العملة: ${lc.currencyCode}
+- قيمة الاعتماد: ${Number(lc.totalAmount)}
+
+مصاريف الاستيراد:
+${expList}
+
+شجرة الحسابات المتاحة (استخدم id الرقمي فقط):
+${accountList}
+
+المبادئ المحاسبية لفتح الاعتماد المستندي:
+1) عند فتح الاعتماد: مدين "اعتمادات مستندية" أو "بضاعة بالطريق" بقيمة الاعتماد، دائن "البنك" أو "هامش اعتماد" بنفس القيمة.
+2) كل مصروف استيراد: مدين الحساب المحدد له (أو حساب "مصاريف استيراد") بقيمة المصروف، دائن "البنك" أو "الموردون" بنفس القيمة.
+3) اختر أنسب حساب موجود فعلياً في القائمة؛ لا تخترع أرقاماً.
+4) يجب أن يكون مجموع المدين = مجموع الدائن بالضبط.
+
+أرجع JSON فقط بالشكل التالي (بدون أي نص قبله أو بعده):
+{
+  "description": "<وصف عربي مختصر للقيد>",
+  "lines": [
+    {"accountId": <id>, "debit": <رقم>, "credit": 0, "description": "<وصف مختصر>"},
+    {"accountId": <id>, "debit": 0, "credit": <رقم>, "description": "<وصف مختصر>"}
+  ],
+  "reasoning": "<شرح موجز بالعربية لاختيار الحسابات>"
+}`;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25_000);
+    let aiRes: Response;
+    try {
+      aiRes = await fetch(`${OPENAI_BASE.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي. أعد JSON صالحاً فقط بدون أي نص إضافي." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.1,
+          response_format: { type: "json_object" },
+        }),
+        signal: ctrl.signal,
+      });
+    } catch (e: any) {
+      clearTimeout(timer);
+      const msg = e?.name === "AbortError" ? "انتهت مهلة الذكاء الاصطناعي" : "تعذّر الاتصال بالذكاء الاصطناعي";
+      res.status(502).json({ error: msg }); return;
+    }
+    clearTimeout(timer);
+    if (!aiRes.ok) { res.status(502).json({ error: "فشل الاتصال بالذكاء الاصطناعي" }); return; }
+
+    const data = await aiRes.json() as any;
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any = {};
+    try { parsed = JSON.parse(content); } catch {}
+
+    const rawLines: any[] = Array.isArray(parsed.lines) ? parsed.lines : [];
+    const accMap = new Map(postable.map(a => [a.id, a]));
+    const linesValidated = rawLines
+      .map(l => ({
+        accountId: Number(l.accountId) || null,
+        debit:  Math.max(0, Number(l.debit  || 0)),
+        credit: Math.max(0, Number(l.credit || 0)),
+        description: String(l.description || "").slice(0, 200),
+      }))
+      .filter(l => l.accountId && accMap.has(l.accountId) && (l.debit > 0 || l.credit > 0));
+
+    if (linesValidated.length < 2) {
+      res.status(422).json({ error: "الذكاء الاصطناعي لم يُنتج قيداً صالحاً", raw: parsed }); return;
+    }
+    const totalDebit  = linesValidated.reduce((s, l) => s + l.debit,  0);
+    const totalCredit = linesValidated.reduce((s, l) => s + l.credit, 0);
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      res.status(422).json({ error: `القيد غير متوازن: ${totalDebit.toFixed(2)} ≠ ${totalCredit.toFixed(2)}`, preview: { lines: linesValidated } });
+      return;
+    }
+
+    const linesOut = linesValidated.map(l => {
+      const a = accMap.get(l.accountId!)!;
+      return { ...l, accountCode: a.code, accountNameAr: a.nameAr };
+    });
+    const description = String(parsed.description || `قيد اعتماد مستندي ${lc.lcNumber}`).slice(0, 300);
+    const reasoning = String(parsed.reasoning || "").slice(0, 1000);
+
+    if (!save) {
+      res.json({ preview: true, description, reasoning, lines: linesOut, totalDebit, totalCredit });
+      return;
+    }
+
+    const entryId = await createJournalEntry({
+      companyId: cid,
+      date: lc.lcDate,
+      description,
+      docNumber: `LC-${lc.lcNumber}`,
+      entryType: "general",
+      exchangeRate: "1",
+      lines: linesValidated.map(l => ({
+        accountId: l.accountId,
+        debit:  l.debit,
+        credit: l.credit,
+        description: l.description,
+      })),
+    });
+    res.json({ saved: true, entryId, description, reasoning, lines: linesOut, totalDebit, totalCredit });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AI explanation for Letters of Credit ───────────────────────────────
 router.post("/letters-of-credit/ai-explain", async (req, res) => {
   try {
