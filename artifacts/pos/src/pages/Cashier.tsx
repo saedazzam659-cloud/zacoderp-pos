@@ -554,17 +554,34 @@ export default function CashierPage() {
                 </div>
               </div>
             ) : loadError ? (
-              <div className="h-full grid place-items-center text-center text-destructive py-20">
-                <div>
+              <div className="h-full grid place-items-center text-center py-20">
+                <div className="max-w-md">
                   <div className="text-5xl mb-3">⚠️</div>
-                  <p className="font-bold">{loadError}</p>
-                  <Button
-                    onClick={() => window.location.reload()}
-                    className="mt-4"
-                    variant="outline"
-                  >
-                    إعادة المحاولة
-                  </Button>
+                  <p className="font-bold text-destructive">{loadError}</p>
+                  {(user?.role === "superadmin" || !user?.companyId) && (
+                    <p className="text-sm text-muted-foreground mt-3">
+                      الحساب الحالي <strong>({user?.username || "—"})</strong> للإدارة العامة وليس مرتبطاً بشركة.
+                      نقطة البيع متاحة لحسابات الكاشير فقط.
+                      <br />
+                      سجّل خروج ثم ادخل بحساب كاشير مرتبط بشركة.
+                    </p>
+                  )}
+                  <div className="flex items-center justify-center gap-2 mt-4">
+                    <Button
+                      onClick={() => window.location.reload()}
+                      variant="outline"
+                    >
+                      إعادة المحاولة
+                    </Button>
+                    <Button
+                      onClick={handleLogout}
+                      variant="default"
+                      className="gap-1"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      تسجيل الخروج
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : filtered.length === 0 ? (

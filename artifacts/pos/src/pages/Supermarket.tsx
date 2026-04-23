@@ -353,11 +353,27 @@ export default function SupermarketPage() {
     return <div dir={dir} className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="h-10 w-10 animate-spin text-emerald-600" /></div>;
   }
   if (loadError) {
+    const noCompany = user?.role === "superadmin" || !user?.companyId;
     return (
       <div dir={dir} className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
         <div className="bg-white rounded-xl p-6 max-w-md shadow border text-center space-y-3">
-          <p className="text-red-600 font-medium">{loadError}</p>
-          <Button onClick={() => navigate("/login")}>{tr("العودة لتسجيل الدخول", "Back to login")}</Button>
+          <div className="text-5xl">⚠️</div>
+          <p className="text-red-600 font-semibold">{loadError}</p>
+          {noCompany && (
+            <p className="text-sm text-slate-600">
+              {tr(
+                `الحساب الحالي (${user?.username || "—"}) للإدارة العامة وليس مرتبطاً بشركة. نقطة البيع متاحة لحسابات الكاشير فقط.`,
+                `The current account (${user?.username || "—"}) is an administrator account not linked to any company. POS is only available for cashier accounts.`,
+              )}
+            </p>
+          )}
+          <div className="flex items-center justify-center gap-2 pt-2">
+            <Button variant="outline" onClick={() => window.location.reload()}>{tr("إعادة المحاولة", "Retry")}</Button>
+            <Button onClick={handleLogout} className="gap-1">
+              <LogOut className="h-4 w-4" />
+              {tr("تسجيل الخروج", "Logout")}
+            </Button>
+          </div>
         </div>
       </div>
     );
