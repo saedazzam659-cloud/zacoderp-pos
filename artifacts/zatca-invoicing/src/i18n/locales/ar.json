@@ -735,7 +735,19 @@
       "sar": "ر.س",
       "belowReorderLevel": "دون حد الطلب",
       "negativeBalance": "رصيد سالب",
-      "itemsCount": "{{filtered}} صنف من {{total}} — انقر على السهم لإدارة وحدات التسعير وأرصدة المخازن"
+      "itemsCount": "{{filtered}} صنف من {{total}} — انقر على السهم لإدارة وحدات التسعير وأرصدة المخازن",
+      "newItem": "صنف جديد",
+      "editItem": "تعديل الصنف",
+      "addItem": "إضافة صنف",
+      "saveEdit": "حفظ التعديلات",
+      "itemFormSubtitle": "أدخل بيانات الصنف الأساسية والتسعير والربط المحاسبي",
+      "basicData": "البيانات الأساسية",
+      "pricingAndControl": "التسعير والتحكم",
+      "accountingLink": "الربط المحاسبي",
+      "defaultPricing": "التسعير الافتراضي",
+      "chooseGroup": "— اختر المجموعة —",
+      "noGroup": "بدون مجموعة",
+      "baseUnitHint": "الوحدة المرجعية لحساب الأرصدة"
     },
     "suppliers": {
       "nameArHeader": "الاسم (عربي)",

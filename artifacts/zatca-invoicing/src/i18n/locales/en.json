@@ -713,7 +713,19 @@
       "sar": "SAR",
       "belowReorderLevel": "Below Reorder Level",
       "negativeBalance": "Negative Balance",
-      "itemsCount": "{{filtered}} items out of {{total}} — click arrow to manage units and balances"
+      "itemsCount": "{{filtered}} items out of {{total}} — click arrow to manage units and balances",
+      "newItem": "New Item",
+      "editItem": "Edit Item",
+      "addItem": "Add Item",
+      "saveEdit": "Save Changes",
+      "itemFormSubtitle": "Enter the item's basic, pricing, and accounting information",
+      "basicData": "Basic Data",
+      "pricingAndControl": "Pricing & Control",
+      "accountingLink": "Accounting Link",
+      "defaultPricing": "Default Pricing",
+      "chooseGroup": "— Choose group —",
+      "noGroup": "No group",
+      "baseUnitHint": "Reference unit used for stock balances"
     },
     "suppliers": {
       "nameArHeader": "Name (Arabic)",
