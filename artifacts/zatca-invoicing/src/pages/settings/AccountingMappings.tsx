@@ -68,7 +68,7 @@ export default function AccountingMappings() {
       }
     }
     setState(next);
-  }, [serverMappings.length]);
+  }, [serverMappings]);
 
   // Group-level isLocked
   const groupLocked = (docType: string) =>

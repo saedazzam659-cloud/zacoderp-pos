@@ -1262,7 +1262,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen]           = useState(false);
   const [dashboardOpen, setDashboardOpen]     = useState(() =>
     location === "/" ||
-    ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
+    ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
   );
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/reports"));
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));

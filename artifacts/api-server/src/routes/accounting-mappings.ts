@@ -9,13 +9,13 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_return:       ["inventory", "vat_input", "payable", "discount"],
   supplier_settlement:   ["payable", "cash", "bank", "discount"],
   sales_invoice:         ["receivable", "revenue", "vat_output", "cogs", "inventory"],
-  sales_return:          ["receivable", "revenue", "vat_output", "cogs", "inventory"],
+  sales_return:          ["receivable", "revenue_return", "vat_output", "cogs", "inventory"],
   customer_settlement:   ["receivable", "cash", "bank", "discount"],
-  warehouse:             ["inventory", "cogs"],
-  warehouse_adjustment:  ["inventory", "gain", "loss"],
-  warehouse_transfer:    ["inventory_out", "inventory_in", "transit"],
-  cashbox:               ["cash", "over_short"],
-  bank:                  ["bank", "fees", "interest"],
+  warehouse:             ["inventory", "opening_balance"],
+  warehouse_adjustment:  ["inventory", "adjustment_gain", "adjustment_loss"],
+  warehouse_transfer:    ["inventory_source", "inventory_destination", "transfer_cost"],
+  cashbox:               ["cash_on_hand"],
+  bank:                  ["bank_main", "bank_fees"],
 };
 
 const isValidRole = (dt: string, rk: string) =>
