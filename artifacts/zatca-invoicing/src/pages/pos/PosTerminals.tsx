@@ -11,9 +11,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
-import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -274,6 +271,19 @@ export default function PosTerminals() {
         </CardContent>
       </Card>
 
+      {/* Inline editor — appears between the filter row and the grid */}
+      {editing && (
+        <TerminalEditor
+          draft={editing}
+          branches={branchesQ.data ?? []}
+          cashBoxes={cashBoxesQ.data ?? []}
+          onClose={() => setEditing(null)}
+          onChange={setEditing}
+          onSave={() => editing && saveMut.mutate(editing)}
+          saving={saveMut.isPending}
+        />
+      )}
+
       {/* Cards grid */}
       {!companyId ? (
         <Card><CardContent className="p-10 text-center text-muted-foreground">اختر شركة للمتابعة</CardContent></Card>
@@ -438,10 +448,9 @@ function TerminalCard({
 }
 
 function TerminalEditor({
-  open, draft, branches, cashBoxes, onClose, onChange, onSave, saving,
+  draft, branches, cashBoxes, onClose, onChange, onSave, saving,
 }: {
-  open: boolean;
-  draft: Draft | null;
+  draft: Draft;
   branches: Branch[];
   cashBoxes: CashBox[];
   onClose: () => void;
@@ -449,21 +458,28 @@ function TerminalEditor({
   onSave: () => void;
   saving: boolean;
 }) {
-  if (!draft) return null;
   const isNew = !draft.id;
   const valid = draft.nameAr.trim().length > 0 && !!draft.branchId;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" dir="rtl">
-        <DialogHeader>
-          <DialogTitle>{isNew ? "إضافة محطة بيع" : "تعديل محطة بيع"}</DialogTitle>
-          <DialogDescription>
-            عرّف محطة بيع وحدّد فرعها. اترك حقل المكينة فارغًا ليتم ربطها تلقائيًا بأول جهاز يسجل الدخول عليها.
-          </DialogDescription>
-        </DialogHeader>
+    <Card className="border-primary/40 shadow-sm" dir="rtl">
+      <CardContent className="p-4 md:p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3 border-b pb-3">
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2">
+              <MonitorSmartphone className="w-5 h-5 text-primary" />
+              {isNew ? "إضافة محطة بيع" : "تعديل محطة بيع"}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              عرّف محطة بيع وحدّد فرعها. اترك حقل المكينة فارغًا ليتم ربطها تلقائيًا بأول جهاز يسجل الدخول عليها.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground">
+            إغلاق
+          </Button>
+        </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="col-span-1">
             <Label className="text-xs">الكود</Label>
             <Input
@@ -551,14 +567,14 @@ function TerminalEditor({
           </div>
         </div>
 
-        <DialogFooter>
+        <div className="flex items-center justify-end gap-2 pt-2 border-t">
           <Button variant="outline" onClick={onClose}>إلغاء</Button>
           <Button onClick={onSave} disabled={!valid || saving} data-testid="btn-save-terminal">
             {saving && <Loader2 className="w-4 h-4 me-1 animate-spin" />}
             حفظ
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
