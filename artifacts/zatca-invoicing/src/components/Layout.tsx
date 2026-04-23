@@ -45,6 +45,7 @@ const superAdminNav: NavDef[] = [
 ];
 const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity, permKey: "pos" },
+  { nameKey: "nav.posTerminals",  href: "/pos-terminals",      icon: MonitorSmartphone, permKey: "pos" },
   { nameKey: "nav.posSettings",   href: "/pos-settings",       icon: Settings, permKey: "pos" },
 ];
 // HR submenu — sits under the "شؤون الموظفين" (HR) collapsible group.

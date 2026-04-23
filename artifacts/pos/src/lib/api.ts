@@ -182,12 +182,28 @@ export type CreateInvoiceBody = {
   posSessionId?: number | null;
 };
 
+export type PosTerminal = {
+  id:          number;
+  code:        string;
+  nameAr:      string;
+  nameEn:      string | null;
+  branchId:    number;
+  branchName:  string | null;
+  machineCode: string | null;
+  cashBoxId:   number | null;
+  cashBoxName: string | null;
+  isActive:    boolean;
+  notes:       string | null;
+  busyUserId:  number | null;
+};
+
 export type PosSession = {
   id: number;
   companyId: number;
   userId: number;
   branchId: number | null;
   cashBoxId: number | null;
+  posTerminalId?: number | null;
   openingCash: string;
   closingCash: string | null;
   openedAt: string;
@@ -245,10 +261,26 @@ export const api = {
   postSalesInvoice: (id: number) =>
     req<SalesInvoice>("PATCH", `/api/sales/sales-invoices/${id}/post`),
 
+  // POS Terminals (طرق البيع) — for the login picker.
+  getPosTerminals: (opts?: { branchId?: number; activeOnly?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (opts?.branchId)   qs.set("branchId", String(opts.branchId));
+    if (opts?.activeOnly) qs.set("activeOnly", "1");
+    const s = qs.toString();
+    return req<PosTerminal[]>("GET", `/api/pos-terminals${s ? `?${s}` : ""}`);
+  },
+
   // POS Sessions
   getCurrentPosSession: () =>
     req<PosSession | null>("GET", "/api/pos-sessions/current"),
-  openPosSession: (body: { branchId?: number | null; cashBoxId?: number | null; openingCash?: number; device?: string }) =>
+  openPosSession: (body: {
+    branchId?: number | null;
+    cashBoxId?: number | null;
+    openingCash?: number;
+    device?: string;
+    posTerminalId?: number | null;
+    machineCode?: string | null;
+  }) =>
     req<PosSession>("POST", "/api/pos-sessions/open", body),
   closePosSession: (id: number, body: { closingCash?: number; notes?: string }) =>
     req<PosSession>("POST", `/api/pos-sessions/${id}/close`, body),

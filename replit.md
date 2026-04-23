@@ -1,8 +1,6 @@
 # Overview
 
-This project is a pnpm workspace monorepo using TypeScript, focused on developing a comprehensive Saudi ZATCA e-invoicing system. It supports multi-company operations, features a bilingual (Arabic/English) RTL UI, and aims to provide a robust solution for various business functions including invoicing, inventory management, accounting, purchasing, and sales, all while ensuring compliance with ZATCA regulations.
-
-The system is designed to streamline financial operations, enhance reporting capabilities, and automate complex accounting processes, offering significant market potential for businesses operating in Saudi Arabia. Key capabilities include ZATCA integration for CSR generation, invoice submission (clearance and reporting), QR code generation, and detailed accounting reports.
+This project is a pnpm workspace monorepo using TypeScript, focused on developing a comprehensive Saudi ZATCA e-invoicing system. It supports multi-company operations, features a bilingual (Arabic/English) RTL UI, and aims to provide a robust solution for various business functions including invoicing, inventory management, accounting, purchasing, and sales, all while ensuring compliance with ZATCA regulations. The system is designed to streamline financial operations, enhance reporting capabilities, and automate complex accounting processes, offering significant market potential for businesses operating in Saudi Arabia. Key capabilities include ZATCA integration for CSR generation, invoice submission (clearance and reporting), QR code generation, and detailed accounting reports.
 
 # User Preferences
 
@@ -10,108 +8,53 @@ I prefer detailed explanations and a clear, concise communication style. I value
 
 # System Architecture
 
-The system is built as a pnpm workspace monorepo, leveraging Node.js 24 and TypeScript 5.9.
+The system is built as a pnpm workspace monorepo, leveraging Node.js and TypeScript.
 
 **UI/UX Decisions:**
-The frontend uses React with Vite and TailwindCSS, supporting a multi-company, Arabic/English RTL interface. Design templates for invoices (Classic, Modern, Professional, Colored, Compact) are provided, ensuring a consistent and professional appearance. Logo uploads and decimal place settings are customizable per company.
+The frontend uses React with Vite and TailwindCSS, supporting a multi-company, Arabic/English RTL interface. Design templates for invoices (Classic, Modern, Professional, Colored, Compact) are provided. Logo uploads and decimal place settings are customizable per company.
 
 **Technical Implementations:**
-- **Monorepo Tool:** pnpm workspaces for efficient dependency management.
-- **API Framework:** Express 5 handles API routing and logic.
-- **Database:** PostgreSQL with Drizzle ORM for data persistence.
-- **Validation:** Zod (`zod/v4`) and `drizzle-zod` for robust data validation.
+- **Monorepo Tool:** pnpm workspaces.
+- **API Framework:** Express.
+- **Database:** PostgreSQL with Drizzle ORM.
+- **Validation:** Zod and `drizzle-zod`.
 - **API Codegen:** Orval generates API hooks and Zod schemas from an OpenAPI specification.
 - **Build System:** esbuild for CJS bundle generation.
-- **Authentication:** JWT-style Bearer tokens stored in localStorage, with single-session enforcement and real-time session validation. Password hashing is done using bcryptjs (12 rounds).
-- **ZATCA Integration:**
-    - CSR generation uses ECDSA secp256k1 with ZATCA-specific OIDs.
-    - APIs for compliance, production CSID onboarding, and invoice submission (clearance/reporting).
-    - QR code generation uses TLV binary encoding (Tags 1-5) rendered via `qrcode.react`.
-    - XML generation adheres to UBL 2.1 full ZATCA namespace, including invoice hash chaining and counter tracking.
+- **Authentication:** JWT-style Bearer tokens, single-session enforcement, real-time session validation, and bcryptjs for password hashing.
+- **ZATCA Integration:** CSR generation (ECDSA secp256k1 with ZATCA-specific OIDs), APIs for compliance, production CSID onboarding, and invoice submission. QR code generation uses TLV binary encoding rendered via `qrcode.react`. XML generation adheres to UBL 2.1 full ZATCA namespace.
 - **Subscription Plans:** Differentiated plans (Starter, Professional, Enterprise) based on users and invoice limits.
-- **Menu Permissions:** A flexible system allowing superadmins to toggle menu visibility per company, stored as JSON in the `companies.menuPermissions` column.
-- **Inventory Management Module:**
-    - Comprehensive inventory tracking including warehouses, item groups, units, items, stock balance, ledger, transfers, adjustments, and counts.
-    - Costing method: Weighted Average.
-    - Multi-unit per item support with conversion factors and pricing.
-    - Stock Transfer and Adjustment modules include auto Journal Entry generation and AI-powered account suggestions.
-- **Fiscal Periods Module:** Manages fiscal years and periods with status tracking (open, closed, permanently_closed), including auto-splitting of years into monthly periods and overlap detection.
-- **Sales Document Enhancements:**
-    - **Tax-Inclusive Pricing:** `priceIncludesVat` flag on sales documents to handle VAT calculation dynamically, recomputing line totals instantly.
-    - **Document-Level Discount:** Implemented across sales invoices, quotations, and purchase invoices/returns, with percentage and amount inputs and server-side clamping.
-- **Voucher AI Suggestions:** AI-powered suggestions for counterparty accounts in Receipt and Payment Vouchers, leveraging entity type, linked accounts, keywords, and amount to select appropriate accounts (assets, liabilities, revenue, expenses).
+- **Menu Permissions:** Flexible system for superadmins to toggle menu visibility per company, stored as JSON.
+- **Inventory Management Module:** Comprehensive tracking including warehouses, items, stock balance, ledger, transfers, adjustments, and counts. Costing method: Weighted Average. Multi-unit per item support. Stock Transfer and Adjustment modules include auto Journal Entry generation and AI-powered account suggestions.
+- **Fiscal Periods Module:** Manages fiscal years and periods with status tracking, auto-splitting into monthly periods, and overlap detection.
+- **Sales Document Enhancements:** `priceIncludesVat` flag for dynamic VAT calculation and document-level discount implementation.
+- **Voucher AI Suggestions:** AI-powered suggestions for counterparty accounts in Receipt and Payment Vouchers.
+- **Support Messages System:** In-app support ticket system with admin replies, configurable delivery channels (in-app notifications, webhooks, Telegram), and superadmin inbox.
+- **POS Monitoring:** Tracks cashier shifts (open/closed), links sales invoices to sessions, and provides live KPIs, active session monitoring, and cashier ranking.
+- **POS Terminals (طرق البيع / المحطات):** Admin-managed POS stations that link a branch to a specific physical machine (auto-paired by `localStorage.pos_device_id` on first cashier login) and optionally a cash box. Cashier login is a 2-stage wizard: credentials → branch+terminal picker. Session opening is wrapped in a DB transaction with `SELECT … FOR UPDATE` on the terminal row, preventing two cashiers from grabbing the same station and two devices from racing to claim an unpaired terminal. All mutating endpoints (`POST/PATCH/DELETE/unpair`) require `admin` or `superadmin` role; cross-tenant `branchId`/`cashBoxId` linkage is rejected.
 
 **System Design Choices:**
 - **Modular Monorepo:** Promotes code reusability and separation of concerns.
-- **Database Schema:** Designed to support multi-tenancy and the complex relationships between companies, users, invoices, inventory, and accounting entities. Key tables include `companies`, `customers`, `invoices`, `users`, `subscriptions`, `suppliers`, `accounts`, `inventory_items`, `warehouses`, `fiscal_years`, `fiscal_periods`, `sales_invoices`, `sales_quotations`, `stock_transfers`, `stock_adjustments`.
-- **API Design:** RESTful API with distinct routes for various modules like `/auth`, `/companies`, `/customers`, `/invoices`, `/dashboard`, `/inventory`, `/accounts`, and `/fiscal`.
-- **Security:** JWTs for authentication, bcryptjs for password hashing, and multi-tenant guards (`assertCompanyOwned()`) to ensure data isolation.
-- **AI Integration:** AI endpoints for suggesting accounts in inventory transfers, adjustments, receipt vouchers, and payment vouchers, with robust rule-based fallbacks.
-
-# Recent Changes
-
-**AI-Powered Journal Entry Validation (April 2026)**
-- Save button on the Journal Entry form is now disabled while debits ≠ credits, with an inline red message showing the imbalance amount and a tooltip explaining why save is blocked. The existing `handleSave` toast guard remains as a second-line check.
-- New "فحص بالذكاء الاصطناعي" button next to Save runs an AI review and pops a dialog showing: a one-line summary, totals + diff cards, a list of issues (unbalanced, account on wrong side, missing leg, amount-without-account, account-without-amount, debit & credit on same line, etc.) and a concrete fix suggestion (e.g. "أضف 250.00 SAR إلى الجانب الدائن").
-- Backend: new endpoint `POST /api/ai/validate-journal-entry` (in `artifacts/api-server/src/routes/ai.ts`). Uses the OpenAI integration via `AI_INTEGRATIONS_OPENAI_*` env vars when configured (model `gpt-5.4`, JSON mode), and falls back to a deterministic rule-based check when AI isn't configured or the call fails — so the feature always works. Response shape: `{ isBalanced, totalDebit, totalCredit, diff, suggestion, issues[], summary, source }`.
-- Frontend: `journalEntriesApi.aiValidate(...)` posts the entry header + lines (with account code/name/type, debit, credit, description) to the new route. Dialog component is `Dialog` from `@/components/ui/dialog`.
-
-**Combobox Selection Now Also Advances Focus (April 2026)**
-- In the Journal Entry form, when you type an account code/name (or arrow-navigate) inside an account / cost-center combobox and press Enter, the combobox both **selects** the highlighted item AND focus moves to the next field — instead of stopping after selection.
-- Implementation: `JournalEntryForm.handleFormKeyDown` no longer bails on `e.defaultPrevented`. SearchCombobox still calls `preventDefault()` to stop default browser behaviour after a selection, but the form-level Enter handler now runs unconditionally and calls `advanceFromTarget(target)` to focus the next nav element. (Capture-phase combobox-trigger handling, IME guard, Shift+Enter-in-textarea behaviour, and last-field-saves-form behaviour are unchanged.)
-
-**Default to Main Branch (April 2026)**
-- Forms that have a branch dropdown now auto-pick the branch flagged `isMain` (fallback: first branch in the list) when creating a new record. Editing keeps whatever was saved. Pattern (matching what Sales/Purchase forms already did) added to:
-  - `accounting/JournalEntryForm.tsx` (only when `isNew`).
-  - `cash/BankAccounts.tsx` (when the side panel opens for a new bank account).
-  - `cash/CashBoxes.tsx` (when the side panel opens for a new cash box).
-- Detection: `branches.find(b => b.isMain) ?? branches[0]`. Only assigns when `branchId` is empty so it never clobbers a user's selection.
-
-**Journal Entry Form — Enter-Key Navigation & Description Mirroring (April 2026)**
-- Typing in **البيان العام** (general description) now auto-fills each line's **بيان السطر** (line description). Lines that the user has manually customised (description differs from the previous general value and is not empty) are preserved.
-- Enter key now advances focus through **every** field on `/accounting/journals/new` (and edit) in DOM order: text inputs → date input → dropdowns → exchange rate → textarea → for each line: account combobox → debit → credit → line description → cost-center combobox → next line. Reaching the last field triggers `handleSave()` (guarded by `saveMutation.isPending`).
-- Implementation: two handlers on the form root.
-  - `onKeyDownCapture` — only catches Enter on Radix Select trigger buttons (`button[role="combobox"]`) so the dropdown does NOT open on Enter; instead focus advances. To open a Select, user can press Space, ArrowDown, or click.
-  - `onKeyDown` (bubble) — advances focus for inputs/textareas/combobox-inputs unless `e.defaultPrevented` (so SearchCombobox can still consume Enter when the user has actively interacted with the list).
-- `SearchCombobox` (`components/ui/search-combobox.tsx`) gained a `hasNavigated` flag (set true on typing into the search input or pressing ArrowUp/Down). Enter only selects the highlighted item when `hasNavigated && open`. This prevents value corruption when the user lands on a combobox via Enter and immediately presses Enter again to skip it (without this, the auto-opened popover with `highlight=0` would silently overwrite the field with the first item).
-- Shift+Enter on the textarea still inserts a newline.
-
-**Notification Dismiss / Auto-Clear UX (April 2026)**
-- New `notification_dismissals` table (per-user soft-delete: `(notification_id, user_id, dismissed_at)`). Both list/count queries and the bell dropdown now LEFT-JOIN-and-filter dismissals so a hidden notification disappears for that user only — broadcast notifications stay visible to other recipients.
-- New endpoints: `DELETE /api/notifications/:id` (dismiss for the caller, idempotent), `POST /api/notifications/:id/restore` (undo), `DELETE /api/notifications/cleanup/read` (bulk-dismiss every notification this user has already read; returns the dismissed ids so the UI can offer a single Undo).
-- Page `/notifications`: each card has an X (dismiss) button on the right. Cards can also be **drag-to-dismiss** (mouse + touch — beyond ~35% of the card width snaps out). After a user clicks "تعليم كمقروء" a small purple banner appears at the bottom of the card with a 5-second countdown ring around the X plus an "إيقاف" button — if not stopped, the card auto-clears with a Toast undo. Header gets a "تنظيف المقروء (N)" button that bulk-dismisses every read item with a single Undo toast that restores all of them.
-- Bell dropdown also gets a small X-on-hover for inline dismissal with the same Undo Toast.
-
-**Support Messages System (April 2026)**
-- New `support_messages` table (id, companyId, userId, senderName, companyName, subject, body, priority, status, adminReply, adminReplyAt, resolvedAt, resolvedByUserId) and `support_settings` singleton table for delivery channels (in-app / webhook URL+secret / Telegram bot+chat).
-- New API router `/api/support-messages`: POST `/` (any user creates a ticket), GET `/mine` (own history), GET `/` & `/stats` (superadmin inbox + counts), PATCH `/:id` (superadmin updates status/reply — auto-creates a `support_reply` notification for the original sender), `_settings/get|update|test` (superadmin only; secrets are masked in responses, only updated when caller sends a non-masked value).
-- Dispatch flow on a new ticket fans out to (1) in-app notification per superadmin user, (2) JSON POST to a configured webhook (Slack/Discord/Zapier/n8n compatible, optional `X-Support-Secret` header), (3) Telegram via bot API. Each channel is independently togglable.
-- ERP UI: `SupportMessageCard` mounted at the bottom of the company dashboard (subject + body + priority selector + history). Superadmin pages `/admin/support` (inbox with status filter, expand-to-reply, status changes) and `/admin/support-settings` (channel toggles, secrets, test-send button). Sidebar entries `nav.supportInbox` / `nav.supportSettings` added under the superadmin group.
-
-**POS Monitoring (April 2026)**
-- New `pos_sessions` table tracks every cashier shift (open/closed/force_closed) with opening/closing/expected cash and difference.
-- Added `pos_session_id` and `created_by_id` columns to `sales_invoices` so each POS sale is linked to its session and operator.
-- New API router `/api/pos-sessions` (open / close / current / list / detail / summary). Hard-gated to authenticated users; tenant-isolated by `companyId`. Force-close requires same-company match for non-superadmin admins; sales POST validates that any provided `posSessionId` belongs to the caller's company and is open before linking.
-- POS app: opens a session on login (or reuses the user's existing open one), passes `posSessionId` on each invoice create, and closes the session on logout.
-- ERP page `/pos-monitoring` (Arabic, RTL) shows live KPIs (open sessions, today's POS sales, invoice count, sessions closed today), an active-sessions strip with auto-refresh every 10 s, top-cashier ranking, a filterable sessions table, and a per-session detail dialog with all linked invoices and a force-close action. Menu entry `nav.posMonitoring` added in the Company Business group.
-- Note: route is `/pos-monitoring` (not `/pos/monitoring`) because `/pos/*` is reserved for the POS artifact preview path in the proxy.
+- **Database Schema:** Designed for multi-tenancy and complex relationships.
+- **API Design:** RESTful API with distinct routes for various modules.
+- **Security:** JWTs, bcryptjs, and multi-tenant guards for data isolation.
+- **AI Integration:** AI endpoints for suggesting accounts in various modules, with robust rule-based fallbacks.
 
 # External Dependencies
 
 - **pnpm:** Monorepo package manager.
 - **Node.js:** Runtime environment.
 - **TypeScript:** Programming language.
-- **Express:** Web application framework for the API server.
+- **Express:** Web application framework.
 - **PostgreSQL:** Relational database.
-- **Drizzle ORM:** Object-Relational Mapper for database interaction.
+- **Drizzle ORM:** Object-Relational Mapper.
 - **Zod:** Schema declaration and validation library.
-- **drizzle-zod:** Integration between Drizzle ORM and Zod.
+- **drizzle-zod:** Drizzle ORM and Zod integration.
 - **Orval:** OpenAPI client code generator.
-- **esbuild:** Bundler for JavaScript and TypeScript.
-- **React:** JavaScript library for building user interfaces.
-- **Vite:** Next-generation frontend tooling.
-- **TailwindCSS:** Utility-first CSS framework.
-- **React Query:** Data-fetching library for React.
-- **bcryptjs:** Library for hashing passwords.
+- **esbuild:** Bundler.
+- **React:** JavaScript library for UIs.
+- **Vite:** Frontend tooling.
+- **TailwindCSS:** CSS framework.
+- **bcryptjs:** Password hashing library.
 - **qrcode.react:** React component for QR code generation.
-- **openssl:** Used for CSR generation for ZATCA integration.
+- **openssl:** Used for CSR generation for ZATCA.
+- **OpenAI:** For AI-powered suggestions and validations (e.g., Journal Entry Validation).

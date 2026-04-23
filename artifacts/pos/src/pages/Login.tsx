@@ -28,7 +28,25 @@ import {
   setPosSessionId,
   getToken,
   type Branch,
+  type PosTerminal,
 } from "@/lib/api";
+import { Cpu, MonitorSmartphone, Loader2 } from "lucide-react";
+
+// Stable per-browser device fingerprint used to pair this device with a POS
+// terminal (machineCode). Stored once in localStorage; never changes unless
+// localStorage is cleared.
+const POS_DEVICE_KEY = "pos_device_id";
+function getDeviceId(): string {
+  try {
+    let v = localStorage.getItem(POS_DEVICE_KEY);
+    if (!v) {
+      v = "DEV-" + Math.random().toString(36).slice(2, 10).toUpperCase()
+            + "-" + Date.now().toString(36).toUpperCase();
+      localStorage.setItem(POS_DEVICE_KEY, v);
+    }
+    return v;
+  } catch { return "DEV-UNKNOWN"; }
+}
 
 const features = [
   {
@@ -60,6 +78,11 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(true);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState<number | null>(null);
+  const [terminals, setTerminals] = useState<PosTerminal[]>([]);
+  const [terminalId, setTerminalId] = useState<number | null>(null);
+  const [terminalsLoading, setTerminalsLoading] = useState(false);
+  // Stage of the wizard: "auth" = enter credentials, "select" = pick branch + terminal.
+  const [stage, setStage] = useState<"auth" | "select">("auth");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [online, setOnline] = useState(
@@ -92,18 +115,88 @@ export default function LoginPage() {
     try {
       const list = await api.getBranches(companyId);
       setBranches(list);
-      if (list.length && branchId == null) setBranchId(list[0].id);
-      if (list.length) {
-        localStorage.setItem("pos_branch_id", String(list[0].id));
+      // Auto-select main branch if available, else the first one. Don't
+      // overwrite an explicit user pick.
+      if (list.length && branchId == null) {
+        const main = list.find((b: any) => (b as any).isMain) ?? list[0];
+        setBranchId(main.id);
+        localStorage.setItem("pos_branch_id", String(main.id));
       }
     } catch {
       // Branches are optional; silently ignore.
     }
   }
 
+  // Reload terminals whenever the user switches branch (only in the select
+  // stage — i.e. after authentication so the API call is authorized).
+  useEffect(() => {
+    if (stage !== "select" || !branchId) {
+      setTerminals([]);
+      setTerminalId(null);
+      return;
+    }
+    let cancelled = false;
+    setTerminalsLoading(true);
+    api.getPosTerminals({ branchId, activeOnly: true })
+      .then((list) => {
+        if (cancelled) return;
+        setTerminals(list);
+        // Auto-select rules: prefer a terminal already paired to this device,
+        // else the first non-busy one.
+        const myDevice = getDeviceId();
+        const mine = list.find(t => t.machineCode === myDevice && !t.busyUserId);
+        const free = list.find(t => !t.busyUserId);
+        const pick = mine ?? free ?? null;
+        setTerminalId(pick ? pick.id : null);
+      })
+      .catch(() => { if (!cancelled) setTerminals([]); })
+      .finally(() => { if (!cancelled) setTerminalsLoading(false); });
+    return () => { cancelled = true; };
+  }, [branchId, stage]);
+
+  async function startSessionAndGo() {
+    if (!branchId) { setError("اختر فرعًا أولاً"); return; }
+    if (terminals.length > 0 && !terminalId) { setError("اختر محطة بيع"); return; }
+    setLoading(true); setError(null);
+    try {
+      const existing = await api.getCurrentPosSession();
+      if (existing) {
+        setPosSessionId(existing.id);
+        navigate("/pos");
+        return;
+      }
+      const cashBoxId = (() => {
+        const v = localStorage.getItem("pos_cash_box_id");
+        return v ? Number(v) : null;
+      })();
+      const session = await api.openPosSession({
+        branchId,
+        cashBoxId,
+        openingCash: 0,
+        device: navigator.userAgent.slice(0, 120),
+        posTerminalId: terminalId ?? null,
+        machineCode: terminalId ? getDeviceId() : null,
+      });
+      setPosSessionId(session.id);
+      localStorage.setItem("pos_branch_id", String(branchId));
+      if (terminalId) localStorage.setItem("pos_terminal_id", String(terminalId));
+      navigate("/pos");
+    } catch (err: any) {
+      setError(err?.message || "تعذّر فتح الجلسة");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    // In the select stage, Enter inside the form (e.g. on a focused button)
+    // should kick off the session, not re-submit the credentials form.
+    if (stage === "select") {
+      void startSessionAndGo();
+      return;
+    }
     if (pinMode) {
       setError("الدخول برمز PIN غير مفعّل بعد، فضلًا استخدم اسم المستخدم.");
       return;
@@ -121,30 +214,18 @@ export default function LoginPage() {
         localStorage.setItem("pos_company_id", String(res.user.companyId));
         await loadBranchesFor(res.user.companyId);
       }
-      if (branchId) {
-        localStorage.setItem("pos_branch_id", String(branchId));
-      }
+      // If the cashier already has an open session (e.g. they refreshed the
+      // tab) jump straight into POS — don't make them re-pick.
       try {
         const existing = await api.getCurrentPosSession();
         if (existing) {
           setPosSessionId(existing.id);
-        } else {
-          const cashBoxId = (() => {
-            const v = localStorage.getItem("pos_cash_box_id");
-            return v ? Number(v) : null;
-          })();
-          const session = await api.openPosSession({
-            branchId: branchId ?? null,
-            cashBoxId,
-            openingCash: 0,
-            device: navigator.userAgent.slice(0, 120),
-          });
-          setPosSessionId(session.id);
+          navigate("/pos");
+          return;
         }
-      } catch {
-        // Don't block login if session opening fails; cashier will retry on first sale.
-      }
-      navigate("/pos");
+      } catch {/* ignore */}
+      // Otherwise advance to the branch + terminal selection step.
+      setStage("select");
     } catch (err: any) {
       setError(err?.message || "فشل تسجيل الدخول");
     } finally {
@@ -352,42 +433,22 @@ export default function LoginPage() {
                 </p>
 
                 <form onSubmit={handleLogin} className="space-y-4">
-                  {/* Branch selector — shows after first successful login when branches exist */}
-                  {branches.length > 0 && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-muted-foreground">
-                        الفرع
-                      </Label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {branches.slice(0, 6).map((b) => (
-                          <button
-                            key={b.id}
-                            type="button"
-                            onClick={() => {
-                              setBranchId(b.id);
-                              localStorage.setItem(
-                                "pos_branch_id",
-                                String(b.id),
-                              );
-                            }}
-                            className={`text-right rounded-xl border p-2.5 transition-all hover-elevate active-elevate-2 ${
-                              branchId === b.id
-                                ? "border-primary bg-primary/5 ring-2 ring-primary/30"
-                                : "border-border bg-card"
-                            }`}
-                          >
-                            <p className="text-[11px] text-muted-foreground leading-none">
-                              {b.city || b.code}
-                            </p>
-                            <p className="text-xs font-bold mt-1 leading-tight">
-                              {b.nameAr}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
+                  {stage === "select" ? (
+                    <SelectStage
+                      branches={branches}
+                      branchId={branchId}
+                      setBranchId={setBranchId}
+                      terminals={terminals}
+                      terminalId={terminalId}
+                      setTerminalId={setTerminalId}
+                      terminalsLoading={terminalsLoading}
+                      deviceId={getDeviceId()}
+                      onBack={() => { setStage("auth"); setError(null); }}
+                      onContinue={startSessionAndGo}
+                      loading={loading}
+                      error={error}
+                    />
+                  ) : (
                   <AnimatePresence mode="wait">
                     {!pinMode ? (
                       <motion.div
@@ -518,7 +579,9 @@ export default function LoginPage() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  )}
 
+                  {stage === "auth" && (<>
                   {/* Remember + Biometric */}
                   <div className="flex items-center justify-between pt-1">
                     <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -571,6 +634,7 @@ export default function LoginPage() {
                       </span>
                     )}
                   </Button>
+                  </>)}
                 </form>
 
                 <div className="mt-6 pt-5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
@@ -596,5 +660,157 @@ export default function LoginPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+// ─── Branch + Terminal selection stage ────────────────────────────────────
+function SelectStage({
+  branches, branchId, setBranchId,
+  terminals, terminalId, setTerminalId,
+  terminalsLoading, deviceId,
+  onBack, onContinue, loading, error,
+}: {
+  branches: Branch[];
+  branchId: number | null;
+  setBranchId: (id: number) => void;
+  terminals: PosTerminal[];
+  terminalId: number | null;
+  setTerminalId: (id: number) => void;
+  terminalsLoading: boolean;
+  deviceId: string;
+  onBack: () => void;
+  onContinue: () => void;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className="space-y-4"
+    >
+      {/* Branch */}
+      <div className="space-y-1.5">
+        <Label className="text-xs font-semibold text-muted-foreground">الفرع</Label>
+        {branches.length === 0 ? (
+          <div className="text-xs text-muted-foreground rounded-xl border border-dashed p-3">
+            لا توجد فروع لهذا الحساب. اطلب من المسؤول إضافة فرع.
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {branches.slice(0, 6).map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => setBranchId(b.id)}
+                data-testid={`btn-branch-${b.id}`}
+                className={`text-right rounded-xl border p-2.5 transition-all hover-elevate active-elevate-2 ${
+                  branchId === b.id
+                    ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                    : "border-border bg-card"
+                }`}
+              >
+                <p className="text-[11px] text-muted-foreground leading-none">
+                  {(b as any).city || b.code}
+                </p>
+                <p className="text-xs font-bold mt-1 leading-tight">{b.nameAr}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Terminals */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-semibold text-muted-foreground inline-flex items-center gap-1.5">
+            <MonitorSmartphone className="w-3.5 h-3.5" /> محطة البيع (المكينة)
+          </Label>
+          <span className="text-[10px] font-mono text-muted-foreground" title="معرّف هذا الجهاز">
+            <Cpu className="w-3 h-3 inline -mt-0.5 me-0.5" />
+            {deviceId.length > 18 ? deviceId.slice(0, 8) + "…" + deviceId.slice(-6) : deviceId}
+          </span>
+        </div>
+        {terminalsLoading ? (
+          <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground inline-flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> جاري تحميل المحطات...
+          </div>
+        ) : terminals.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">
+            لا توجد محطات بيع لهذا الفرع. سيتم فتح الجلسة بدون محطة. يمكن للمسؤول إضافة محطات من إعدادات نقاط البيع.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 max-h-[220px] overflow-y-auto">
+            {terminals.map((t) => {
+              const isMine    = !!t.machineCode && t.machineCode === deviceId;
+              const isOther   = !!t.machineCode && t.machineCode !== deviceId;
+              const isBusy    = !!t.busyUserId;
+              const selected  = terminalId === t.id;
+              const disabled  = isBusy || isOther;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setTerminalId(t.id)}
+                  data-testid={`btn-terminal-${t.id}`}
+                  className={`text-right rounded-xl border p-2.5 transition-all ${
+                    selected
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                      : disabled
+                        ? "border-border bg-muted/40 opacity-60 cursor-not-allowed"
+                        : "border-border bg-card hover-elevate active-elevate-2"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-mono text-muted-foreground">{t.code}</p>
+                    {isMine && <span className="text-[9px] font-bold text-emerald-600">جهازك</span>}
+                    {isBusy && <span className="text-[9px] font-bold text-amber-600">قيد الاستخدام</span>}
+                    {isOther && !isBusy && <span className="text-[9px] font-bold text-destructive">جهاز آخر</span>}
+                    {!t.machineCode && <span className="text-[9px] font-bold text-blue-600">جديدة</span>}
+                  </div>
+                  <p className="text-xs font-bold mt-1 leading-tight truncate">{t.nameAr}</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -6, height: 0 }}
+            className="text-sm font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2"
+          >
+            {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" className="h-12" onClick={onBack} disabled={loading}>
+          رجوع
+        </Button>
+        <Button
+          type="button"
+          onClick={onContinue}
+          disabled={loading || !branchId || (terminals.length > 0 && !terminalId)}
+          data-testid="btn-start-session"
+          className="flex-1 h-12 text-base font-extrabold rounded-xl bg-gradient-to-l from-primary via-primary to-chart-2 hover:opacity-95 text-primary-foreground"
+        >
+          {loading ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> جاري الفتح...
+            </span>
+          ) : (
+            "بدء وردية البيع"
+          )}
+        </Button>
+      </div>
+    </motion.div>
   );
 }

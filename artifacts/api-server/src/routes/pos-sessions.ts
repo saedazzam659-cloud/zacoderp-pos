@@ -6,6 +6,7 @@ import {
   cashBoxesTable,
   branchesTable,
   usersTable,
+  posTerminalsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, isNull, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -39,7 +40,7 @@ router.get("/current", async (req, res) => {
 router.post("/open", async (req, res) => {
   const u = req.authUser;
   if (!u || !u.companyId) { res.status(401).json({ error: "غير مصرّح" }); return; }
-  const { branchId, cashBoxId, openingCash, device } = req.body ?? {};
+  const { branchId, cashBoxId, openingCash, device, posTerminalId, machineCode } = req.body ?? {};
 
   // If user already has an open session, return it instead of creating a duplicate.
   const [existing] = await db.select().from(posSessionsTable)
@@ -52,15 +53,97 @@ router.post("/open", async (req, res) => {
     .limit(1);
   if (existing) { res.json(existing); return; }
 
-  const [row] = await db.insert(posSessionsTable).values({
-    companyId:   u.companyId,
-    userId:      u.id,
-    branchId:    branchId ?? null,
-    cashBoxId:   cashBoxId ?? null,
-    openingCash: String(openingCash ?? "0"),
-    device:      device ?? null,
-  }).returning();
-  res.status(201).json(row);
+  // ─── Terminal validation + auto-pairing ──────────────────────────────────
+  // Wrapped in a transaction with SELECT … FOR UPDATE so two cashiers cannot
+  // grab the same terminal concurrently and two devices cannot race to claim
+  // the same unpaired terminal.
+  // Tenant guard for the manual (no-terminal) path: branchId / cashBoxId, if
+  // supplied, must belong to the caller's company. Without this check a user
+  // in company A could open a session referencing branch/cashbox IDs from
+  // company B, causing cross-tenant linkage corruption and metadata leakage
+  // through later joins on session listing endpoints.
+  if (!posTerminalId) {
+    if (branchId) {
+      const [b] = await db.select({ id: branchesTable.id })
+        .from(branchesTable)
+        .where(and(eq(branchesTable.id, Number(branchId)), eq(branchesTable.companyId, u.companyId)))
+        .limit(1);
+      if (!b) { res.status(400).json({ error: "الفرع غير موجود في هذه الشركة" }); return; }
+    }
+    if (cashBoxId) {
+      const [c] = await db.select({ id: cashBoxesTable.id })
+        .from(cashBoxesTable)
+        .where(and(eq(cashBoxesTable.id, Number(cashBoxId)), eq(cashBoxesTable.companyId, u.companyId)))
+        .limit(1);
+      if (!c) { res.status(400).json({ error: "الصندوق النقدي غير موجود في هذه الشركة" }); return; }
+    }
+  }
+
+  try {
+    const row = await db.transaction(async (tx) => {
+      let resolvedBranchId  = branchId  ?? null;
+      let resolvedCashBoxId = cashBoxId ?? null;
+
+      if (posTerminalId) {
+        // Lock the terminal row.
+        const lockRes = await tx.execute(sql`
+          SELECT id, branch_id, cash_box_id, machine_code, is_active
+          FROM pos_terminals
+          WHERE id = ${Number(posTerminalId)} AND company_id = ${u.companyId}
+          FOR UPDATE
+        `);
+        const t = (lockRes as any).rows?.[0];
+        if (!t)            throw Object.assign(new Error("محطة البيع غير موجودة"), { status: 404 });
+        if (!t.is_active)  throw Object.assign(new Error("محطة البيع غير مفعّلة"), { status: 400 });
+
+        // Reject if another open session already holds this terminal (also
+        // re-reads under the same transaction, after the lock is held).
+        const [busy] = await tx.select({ id: posSessionsTable.id, userId: posSessionsTable.userId })
+          .from(posSessionsTable)
+          .where(and(
+            eq(posSessionsTable.companyId, u.companyId),
+            eq(posSessionsTable.posTerminalId, Number(posTerminalId)),
+            eq(posSessionsTable.status, "open"),
+          )).limit(1);
+        if (busy) {
+          throw Object.assign(new Error("محطة البيع قيد الاستخدام بواسطة مستخدم آخر"),
+            { status: 409, busyUserId: busy.userId });
+        }
+
+        // Pair / verify device under lock — first writer wins.
+        const incoming = machineCode ? String(machineCode).trim() : null;
+        if (t.machine_code && incoming && t.machine_code !== incoming) {
+          throw Object.assign(new Error("هذه المحطة مرتبطة بجهاز آخر. اطلب من المسؤول إلغاء الربط أولاً."),
+            { status: 409 });
+        }
+        if (!t.machine_code && incoming) {
+          await tx.update(posTerminalsTable)
+            .set({ machineCode: incoming, updatedAt: new Date() })
+            .where(eq(posTerminalsTable.id, Number(posTerminalId)));
+        }
+
+        // Terminal drives the branch and (if set) the cash box.
+        resolvedBranchId  = t.branch_id;
+        if (t.cash_box_id) resolvedCashBoxId = t.cash_box_id;
+      }
+
+      const [inserted] = await tx.insert(posSessionsTable).values({
+        companyId:     u.companyId,
+        userId:        u.id,
+        branchId:      resolvedBranchId,
+        cashBoxId:     resolvedCashBoxId,
+        posTerminalId: posTerminalId ? Number(posTerminalId) : null,
+        openingCash:   String(openingCash ?? "0"),
+        device:        device ?? null,
+      }).returning();
+      return inserted;
+    });
+
+    res.status(201).json(row);
+  } catch (e: any) {
+    const status = e?.status ?? 500;
+    res.status(status).json({ error: e?.message ?? "تعذّر فتح الجلسة", busyUserId: e?.busyUserId });
+  }
 });
 
 // ─── POST /pos-sessions/:id/close ─────────────────────────────────────────────
