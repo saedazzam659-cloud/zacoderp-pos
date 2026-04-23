@@ -13,10 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { AccountTreePickerDialog, type PickedAccount } from "@/components/AccountTreePickerDialog";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown, Network } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -87,6 +88,7 @@ export default function PurchaseInvoiceForm() {
   const [paymentType,  setPaymentType]  = useState("credit");
   const [cashBoxId,    setCashBoxId]    = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
+  const [treePickerOpen, setTreePickerOpen] = useState(false);
   const [currencyCode, setCurrencyCode] = useState("");
   const [exchangeRate, setExchangeRate] = useState("1");
   const [lcId,         setLcId]         = useState("");
@@ -515,6 +517,61 @@ export default function PurchaseInvoiceForm() {
   if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
 
   // ── Combobox data ────────────────────────────────────────
+  // ── Tree picker handler: maps a chart-of-accounts pick → corresponding entity ──
+  const treeContext = paymentType === "credit"
+    ? {
+        title: "اختر حساب المورد من شجرة الحسابات",
+        types: ["liability", "asset"],
+        currentAccountId: (suppliers as any[]).find((s: any) => String(s.id) === supplierId)?.accountId ?? null,
+        linkedIds: new Set<number>(
+          (suppliers as any[]).map((s: any) => Number(s.accountId)).filter((n: any) => Number.isFinite(n)),
+        ),
+        onPick: (a: PickedAccount) => {
+          const sup = (suppliers as any[]).find((s: any) => Number(s.accountId) === a.id);
+          if (!sup) {
+            toast({ title: "لا يوجد مورد مرتبط بهذا الحساب", variant: "destructive" });
+            return;
+          }
+          setSupplierId(String(sup.id));
+          toast({ title: `✓ تم اختيار المورد: ${sup.nameAr ?? sup.nameEn ?? `#${sup.id}`}` });
+        },
+      }
+    : paymentType === "cash"
+    ? {
+        title: "اختر الخزنة من شجرة الحسابات",
+        types: ["asset"],
+        currentAccountId: (cashBoxes as any[]).find((b: any) => String(b.id) === cashBoxId)?.accountId ?? null,
+        linkedIds: new Set<number>(
+          (cashBoxes as any[]).map((b: any) => Number(b.accountId)).filter((n: any) => Number.isFinite(n)),
+        ),
+        onPick: (a: PickedAccount) => {
+          const box = (cashBoxes as any[]).find((b: any) => Number(b.accountId) === a.id);
+          if (!box) {
+            toast({ title: "لا توجد خزنة مرتبطة بهذا الحساب", variant: "destructive" });
+            return;
+          }
+          setCashBoxId(String(box.id));
+          toast({ title: `✓ تم اختيار الخزنة: ${box.nameAr}` });
+        },
+      }
+    : {
+        title: "اختر الحساب البنكي من شجرة الحسابات",
+        types: ["asset"],
+        currentAccountId: (bankAccounts as any[]).find((b: any) => String(b.id) === bankAccountId)?.accountId ?? null,
+        linkedIds: new Set<number>(
+          (bankAccounts as any[]).map((b: any) => Number(b.accountId)).filter((n: any) => Number.isFinite(n)),
+        ),
+        onPick: (a: PickedAccount) => {
+          const bank = (bankAccounts as any[]).find((b: any) => Number(b.accountId) === a.id);
+          if (!bank) {
+            toast({ title: "لا يوجد حساب بنكي مرتبط بهذا الحساب", variant: "destructive" });
+            return;
+          }
+          setBankAccountId(String(bank.id));
+          toast({ title: `✓ تم اختيار الحساب البنكي: ${bank.nameAr ?? bank.nameEn}` });
+        },
+      };
+
   const supplierItems = [
     { value: "", label: "— بدون مورد —" },
     ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr })),
@@ -581,7 +638,12 @@ export default function PurchaseInvoiceForm() {
                 </div>
                 <div className="space-y-1.5 lg:col-span-2">
                   <Label className="text-xs">المورد</Label>
-                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1"><SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." /></div>
+                    <Button type="button" variant="outline" size="sm" className="h-9 px-2 shrink-0" title="اختر من شجرة الحسابات" onClick={() => setTreePickerOpen(true)} data-testid="btn-tree-supplier">
+                      <Network className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">الفرع</Label>
@@ -686,7 +748,12 @@ export default function PurchaseInvoiceForm() {
                     <div className="space-y-2">
                       <div className="space-y-1.5">
                         <Label className="text-xs">الحساب البنكي *</Label>
-                        <SearchCombobox items={items} value={bankAccountId} onValueChange={setBankAccountId} placeholder="اختر الحساب البنكي..." />
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex-1"><SearchCombobox items={items} value={bankAccountId} onValueChange={setBankAccountId} placeholder="اختر الحساب البنكي..." /></div>
+                          <Button type="button" variant="outline" size="sm" className="h-9 px-2 shrink-0" title="اختر من شجرة الحسابات" onClick={() => setTreePickerOpen(true)} data-testid="btn-tree-bank">
+                            <Network className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                       <div className={cn(
                         "rounded-lg border p-3 flex items-start gap-3",
@@ -786,7 +853,12 @@ export default function PurchaseInvoiceForm() {
                     <div className="space-y-2">
                       <div className="space-y-1.5">
                         <Label className="text-xs">الخزنة *</Label>
-                        <SearchCombobox items={cashBoxItems} value={cashBoxId} onValueChange={setCashBoxId} placeholder="اختر الخزنة..." />
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex-1"><SearchCombobox items={cashBoxItems} value={cashBoxId} onValueChange={setCashBoxId} placeholder="اختر الخزنة..." /></div>
+                          <Button type="button" variant="outline" size="sm" className="h-9 px-2 shrink-0" title="اختر من شجرة الحسابات" onClick={() => setTreePickerOpen(true)} data-testid="btn-tree-cashbox">
+                            <Network className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                       <div className={cn(
                         "rounded-lg border p-3 flex items-start gap-3",
@@ -1037,6 +1109,17 @@ export default function PurchaseInvoiceForm() {
           {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
         </Button>
       </div>
+
+      <AccountTreePickerDialog
+        open={treePickerOpen}
+        onOpenChange={setTreePickerOpen}
+        title={treeContext.title}
+        accountTypes={treeContext.types}
+        currentAccountId={treeContext.currentAccountId}
+        linkedAccountIds={treeContext.linkedIds}
+        description="تصفّح وابحث في شجرة الحسابات. الحسابات المرتبطة بكيان موجود تحمل شارة (مرتبط) خضراء."
+        onSelect={treeContext.onPick}
+      />
     </div>
   );
 }
