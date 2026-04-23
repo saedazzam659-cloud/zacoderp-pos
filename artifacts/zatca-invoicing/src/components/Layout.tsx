@@ -41,14 +41,17 @@ const superAdminNav: NavDef[] = [
 const companyBusinessNav: NavDef[] = [
   { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity, permKey: "pos" },
   { nameKey: "nav.posSettings",   href: "/pos-settings",       icon: Settings, permKey: "pos" },
-  { nameKey: "nav.hrEmployees",   href: "/hr/employees",       icon: UserCog },
-  { nameKey: "nav.hrContracts",   href: "/hr/contracts",       icon: FileSignature },
-  { nameKey: "nav.hrAttendance",  href: "/hr/attendance",      icon: CalendarRange },
-  { nameKey: "nav.hrLoans",       href: "/hr/loans",           icon: Wallet },
-  { nameKey: "nav.hrPayroll",     href: "/hr/payroll",         icon: Banknote },
-  { nameKey: "nav.hrEos",         href: "/hr/end-of-service",  icon: Scale },
-  { nameKey: "nav.hrCalculators", href: "/hr/calculators",     icon: Calculator },
-  { nameKey: "nav.hrSettings",    href: "/hr/settings",        icon: Settings },
+];
+// HR submenu — sits under the "شؤون الموظفين" (HR) collapsible group.
+const hrSubNav: NavDef[] = [
+  { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog },
+  { nameKey: "nav.hrContracts",     href: "/hr/contracts",       icon: FileSignature },
+  { nameKey: "nav.hrAttendance",    href: "/hr/attendance",      icon: CalendarRange },
+  { nameKey: "nav.hrLoans",         href: "/hr/loans",           icon: Wallet },
+  { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote },
+  { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale },
+  { nameKey: "nav.hrCalculators",   href: "/hr/calculators",     icon: Calculator },
+  { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings },
 ];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },
@@ -654,6 +657,38 @@ function AccountingNavGroup({
   );
 }
 
+// ─── HrNavGroup ───────────────────────────────────────────────────────────────
+function HrNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const isOnSub = hrSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <button onClick={onToggle} className={cn(
+        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        isOnSub && !open
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}>
+        <UserCog className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-start">{t("nav.hrEmployees")}</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {hrSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -683,6 +718,8 @@ function SidebarInner({
   onCashReportsToggle,
   accountingOpen,
   onAccountingToggle,
+  hrOpen,
+  onHrToggle,
   onNavigate,
   onLogout,
 }: {
@@ -712,6 +749,8 @@ function SidebarInner({
   onCashReportsToggle: () => void;
   accountingOpen: boolean;
   onAccountingToggle: () => void;
+  hrOpen: boolean;
+  onHrToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -874,6 +913,15 @@ function SidebarInner({
             </div>
 
             <div className="space-y-0.5">
+              <HrNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={hrOpen}
+                onToggle={onHrToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
               <ReportsNavGroup
                 location={location}
                 onNavigate={onNavigate}
@@ -1004,6 +1052,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     inventoryReportsHeader,
     ...inventoryReportsSubNav.map(i => ({ ...i, parent: "/inventory/reports" })),
     ...companyBusinessNav,
+    ...hrSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -1221,6 +1270,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash") && !location.startsWith("/cash/reports"));
   const [cashReportsOpen, setCashReportsOpen] = useState(() => location.startsWith("/cash/reports"));
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
+  const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -1236,6 +1286,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleCashToggle       = () => setCashOpen(v => !v);
   const handleCashReportsToggle = () => setCashReportsOpen(v => !v);
   const handleAccountingToggle = () => setAccountingOpen(v => !v);
+  const handleHrToggle         = () => setHrOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -1265,6 +1316,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onCashReportsToggle: handleCashReportsToggle,
     accountingOpen,
     onAccountingToggle: handleAccountingToggle,
+    hrOpen,
+    onHrToggle: handleHrToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };
