@@ -490,6 +490,13 @@ export default function CashierPage() {
             <UserIcon className="w-4 h-4" />
           </button>
           <button
+            onClick={() => navigate("/super")}
+            title="نمط سوبر ماركت"
+            className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
+          >
+            🛒 سوبر ماركت
+          </button>
+          <button
             onClick={handleLogout}
             title="تسجيل الخروج"
             className="w-10 h-10 rounded-xl border border-border bg-card grid place-items-center hover-elevate active-elevate-2"

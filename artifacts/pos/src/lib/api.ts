@@ -217,6 +217,62 @@ export type SalesInvoice = {
   invoiceDate: string;
   totalAmount: string;
   status: string;
+  customerName?: string | null;
+  customerId?: number | null;
+  branchId?: number | null;
+  subtotal?: string;
+  vatAmount?: string;
+  discountAmount?: string;
+  priceIncludesVat?: boolean;
+  paymentType?: string;
+  currencyCode?: string;
+  lines?: SalesInvoiceLine[];
+};
+
+export type SalesInvoiceLine = {
+  id: number;
+  itemId: number | null;
+  itemName: string;
+  itemCode?: string | null;
+  unit?: string | null;
+  unitId?: number | null;
+  warehouseId?: number | null;
+  qty: string;
+  unitPrice: string;
+  discount?: string;
+  vatRate: string;
+  lineTotal: string;
+};
+
+export type CreateReturnLine = {
+  itemId: number | null;
+  itemName: string;
+  itemCode?: string | null;
+  unit?: string | null;
+  unitId?: number | null;
+  warehouseId?: number | null;
+  qty: number;
+  unitPrice: number;
+  discount?: number;
+  vatRate: number;
+  lineTotal: number;
+};
+
+export type CreateReturnBody = {
+  returnDate: string;
+  customerId?: number | null;
+  branchId?: number | null;
+  invoiceId?: number | null;
+  paymentType: "cash" | "bank" | "credit";
+  cashBoxId?: number | null;
+  bankAccountId?: number | null;
+  currencyCode?: string;
+  totalAmount: number;
+  vatAmount: number;
+  discountAmount: number;
+  priceIncludesVat?: boolean;
+  notes?: string | null;
+  lines: CreateReturnLine[];
 };
 
 // ─── Endpoints ────────────────────────────────────────────────────────────
@@ -260,6 +316,16 @@ export const api = {
     req<SalesInvoice>("POST", "/api/sales/sales-invoices", body),
   postSalesInvoice: (id: number) =>
     req<SalesInvoice>("PATCH", `/api/sales/sales-invoices/${id}/post`),
+  listSalesInvoices: (companyId: number, q?: string) =>
+    req<SalesInvoice[]>("GET", `/api/sales/sales-invoices?companyId=${companyId}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+  getSalesInvoice: (id: number) =>
+    req<SalesInvoice>("GET", `/api/sales/sales-invoices/${id}`),
+  listSalesReturns: (companyId: number) =>
+    req<SalesInvoice[]>("GET", `/api/sales/sales-returns?companyId=${companyId}`),
+  createSalesReturn: (body: CreateReturnBody) =>
+    req<{ id: number; docNumber: string | null }>("POST", "/api/sales/sales-returns", body),
+  postSalesReturn: (id: number) =>
+    req<{ id: number }>("PATCH", `/api/sales/sales-returns/${id}/post`),
 
   // POS Terminals (طرق البيع) — for the login picker.
   getPosTerminals: (opts?: { branchId?: number; activeOnly?: boolean }) => {
