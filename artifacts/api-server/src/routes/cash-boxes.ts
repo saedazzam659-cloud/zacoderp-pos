@@ -54,6 +54,12 @@ router.get("/:id", async (req, res) => {
   res.json(row);
 });
 
+// helpers — turn "" / undefined into null, "" decimals into safe defaults
+const toInt = (v: any) => (v === "" || v === null || v === undefined ? null : parseInt(v));
+const toStr = (v: any) => (v === "" || v === null || v === undefined ? null : String(v));
+const toDec = (v: any, def: string | null = null) =>
+  v === "" || v === null || v === undefined || isNaN(Number(v)) ? def : String(v);
+
 router.post("/", async (req, res) => {
   const d = req.body;
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
@@ -74,16 +80,16 @@ router.post("/", async (req, res) => {
 
   const [row] = await db.insert(cashBoxesTable).values({
     companyId:  cid,
-    branchId:   d.branchId   ? parseInt(d.branchId)   : null,
-    code:       d.code,
-    nameAr:     d.nameAr,
-    nameEn:     d.nameEn     ?? null,
-    currencyId: d.currencyId ? parseInt(d.currencyId) : null,
-    accountId:  d.accountId  ? parseInt(d.accountId)  : null,
-    minBalance: d.minBalance ?? "0",
-    maxBalance: d.maxBalance ?? null,
-    isActive:   d.isActive   ?? true,
-    notes:      d.notes      ?? null,
+    branchId:   toInt(d.branchId),
+    code:       String(d.code).trim(),
+    nameAr:     String(d.nameAr).trim(),
+    nameEn:     toStr(d.nameEn),
+    currencyId: toInt(d.currencyId),
+    accountId:  toInt(d.accountId),
+    minBalance: toDec(d.minBalance, "0")!,
+    maxBalance: toDec(d.maxBalance, null),
+    isActive:   d.isActive ?? true,
+    notes:      toStr(d.notes),
   }).returning();
   res.status(201).json(row);
 });
@@ -105,16 +111,16 @@ router.put("/:id", async (req, res) => {
   }
 
   const [row] = await db.update(cashBoxesTable).set({
-    branchId:   d.branchId   ? parseInt(d.branchId)   : null,
-    code:       d.code,
-    nameAr:     d.nameAr,
-    nameEn:     d.nameEn     ?? null,
-    currencyId: d.currencyId ? parseInt(d.currencyId) : null,
-    accountId:  d.accountId  ? parseInt(d.accountId)  : null,
-    minBalance: d.minBalance ?? "0",
-    maxBalance: d.maxBalance ?? null,
-    isActive:   d.isActive   ?? true,
-    notes:      d.notes      ?? null,
+    branchId:   toInt(d.branchId),
+    code:       String(d.code ?? current.code).trim(),
+    nameAr:     String(d.nameAr ?? current.nameAr).trim(),
+    nameEn:     toStr(d.nameEn),
+    currencyId: toInt(d.currencyId),
+    accountId:  toInt(d.accountId),
+    minBalance: toDec(d.minBalance, "0")!,
+    maxBalance: toDec(d.maxBalance, null),
+    isActive:   d.isActive ?? true,
+    notes:      toStr(d.notes),
   }).where(eq(cashBoxesTable.id, parseInt(req.params.id))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);

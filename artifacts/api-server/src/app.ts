@@ -41,4 +41,14 @@ app.use((_req, res, next) => {
 
 app.use("/api", router);
 
+// JSON error handler — must be the LAST middleware so async errors return JSON
+// (not Express's default HTML "Internal Server Error" page).
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ err, url: req.url, method: req.method }, "unhandled API error");
+  if (res.headersSent) return;
+  const status = typeof err?.status === "number" ? err.status : 500;
+  const message = err?.message || "حدث خطأ غير متوقع في الخادم";
+  res.status(status).json({ error: message });
+});
+
 export default app;
