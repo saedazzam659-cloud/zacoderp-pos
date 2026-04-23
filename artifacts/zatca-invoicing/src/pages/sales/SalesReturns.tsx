@@ -384,7 +384,51 @@ export default function SalesReturns() {
     }
   }
 
-  // Pre-fill from sales invoice
+  // Load a sales invoice and populate the return form with its data
+  async function loadInvoiceIntoForm(invId: string | number, opts: { openForm?: boolean } = {}) {
+    if (!invId) return;
+    try {
+      const res = await fetch(`${API}/api/sales/sales-invoices/${invId}?companyId=${cid}`, { headers: authH });
+      if (!res.ok) return;
+      const inv = await res.json();
+      setForm((prev: any) => ({
+        ...prev,
+        customerId: inv.customerId ? String(inv.customerId) : "",
+        branchId:   inv.branchId   ? String(inv.branchId)   : "",
+        invoiceId:  String(inv.id),
+        currencyCode: inv.currencyCode ?? prev.currencyCode ?? defaultCurrency?.code ?? "",
+        exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
+        notes: t("salesReturns.fromInvoiceNote", { number: inv.docNumber ?? `SI-${inv.id}` }),
+        priceIncludesVat: !!inv.priceIncludesVat,
+        cogsAccountId:      inv.cogsAccountId      ? String(inv.cogsAccountId)      : prev.cogsAccountId,
+        inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : prev.inventoryAccountId,
+        salesAccountId:     inv.salesAccountId     ? String(inv.salesAccountId)     : prev.salesAccountId,
+        taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : prev.taxAccountId,
+        discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : prev.discountAccountId,
+      }));
+      if (inv.lines?.length) {
+        setLines(inv.lines.map((l: any) => ({
+          _id: crypto.randomUUID(),
+          itemId:      l.itemId      ? String(l.itemId)      : "",
+          itemName:    l.itemName    ?? "",
+          itemCode:    l.itemCode    ?? "",
+          unitId:      l.unitId      ? String(l.unitId)      : "",
+          unit:        l.unit        ?? "",
+          conversionFactor: String(l.conversionFactor ?? "1"),
+          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+          qty:         String(Math.round(Number(l.qty ?? 1))),
+          unitPrice:   String(l.unitPrice ?? 0),
+          discount:    String(l.discount  ?? "0"),
+          vatRate:     String(l.vatRate   ?? 15),
+          lineTotal:   String(l.lineTotal ?? 0),
+          notes:       l.notes ?? "",
+        })));
+      }
+      if (opts.openForm) setShowForm(true);
+    } catch (_) { /* silent */ }
+  }
+
+  // Pre-fill from sales invoice via ?fromInvoice URL param
   const prefilledRef = useRef(false);
   useEffect(() => {
     if (prefilledRef.current) return;
@@ -392,52 +436,7 @@ export default function SalesReturns() {
     const invId = params.get("fromInvoice");
     if (!invId || !user || !currencies.length) return;
     prefilledRef.current = true;
-
-    (async () => {
-      try {
-        const res = await fetch(`${API}/api/sales/sales-invoices/${invId}?companyId=${cid}`, { headers: authH });
-        if (!res.ok) return;
-        const inv = await res.json();
-        setForm({
-          docNumber: "",
-          returnDate: today(),
-          customerId: inv.customerId ? String(inv.customerId) : "",
-          branchId:   inv.branchId   ? String(inv.branchId)   : "",
-          invoiceId:  String(inv.id),
-          currencyCode: inv.currencyCode ?? defaultCurrency?.code ?? "",
-          exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
-          notes: t("salesReturns.fromInvoiceNote", { number: inv.docNumber ?? `SI-${inv.id}` }),
-          paymentType: "credit",
-          cashBoxId: "",
-          bankAccountId: "",
-          priceIncludesVat: !!inv.priceIncludesVat,
-          cogsAccountId:      inv.cogsAccountId      ? String(inv.cogsAccountId)      : "",
-          inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : "",
-          salesAccountId:     inv.salesAccountId     ? String(inv.salesAccountId)     : "",
-          taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : "",
-          discountAccountId:  inv.discountAccountId  ? String(inv.discountAccountId)  : "",
-        });
-        if (inv.lines?.length) {
-          setLines(inv.lines.map((l: any) => ({
-            _id: crypto.randomUUID(),
-            itemId:      l.itemId      ? String(l.itemId)      : "",
-            itemName:    l.itemName    ?? "",
-            itemCode:    l.itemCode    ?? "",
-            unitId:      l.unitId      ? String(l.unitId)      : "",
-            unit:        l.unit        ?? "",
-            conversionFactor: String(l.conversionFactor ?? "1"),
-            warehouseId: l.warehouseId ? String(l.warehouseId) : "",
-            qty:         String(Math.round(Number(l.qty ?? 1))),
-            unitPrice:   String(l.unitPrice ?? 0),
-            discount:    String(l.discount  ?? "0"),
-            vatRate:     String(l.vatRate   ?? 15),
-            lineTotal:   String(l.lineTotal ?? 0),
-            notes:       l.notes ?? "",
-          })));
-        }
-        setShowForm(true);
-      } catch (_) { /* silent */ }
-    })();
+    loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
   function calcLineTotal(l: ReturnLine, priceIncludesVat = false) {
@@ -605,7 +604,7 @@ export default function SalesReturns() {
               <Field label={t("salesReturns.returnNumber")}><Input placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
-              <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => setForm((p: any) => ({ ...p, invoiceId: v }))} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
+              <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
               <Field label={t("salesReturns.branch")}>
                 <Select value={form.branchId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("salesReturns.branchPlaceholder")} /></SelectTrigger>
