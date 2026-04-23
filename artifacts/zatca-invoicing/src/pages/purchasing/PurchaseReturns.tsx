@@ -913,7 +913,6 @@ export default function PurchaseReturns() {
                         value={l.itemId}
                         onValueChange={v => selectItem(l._id, v)}
                         placeholder="اختر صنف..."
-                        autoFocus={l._id === focusLineId}
                       />
                     ) : (
                       <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}

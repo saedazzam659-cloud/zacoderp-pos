@@ -735,7 +735,7 @@ export default function SalesReturns() {
                 <div key={l._id} className="rounded-lg border bg-muted/20 p-2">
                   <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: "2.2fr 1fr 1.4fr 1.1fr 0.7fr 1fr 0.7fr 0.7fr 1fr 1.4fr auto" }}>
                     {inventoryItems.length > 0 ? (
-                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesReturns.itemPlaceholder")} autoFocus={l._id === focusLineId} />
+                      <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesReturns.itemPlaceholder")} />
                     ) : (
                       <Input className="h-8 text-xs" placeholder={t("salesReturns.itemNamePlaceholder")} value={l.itemName}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />

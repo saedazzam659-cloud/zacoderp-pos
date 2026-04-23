@@ -916,7 +916,6 @@ export default function PurchaseInvoiceForm() {
                           value={l.itemId}
                           onValueChange={v => selectItem(l._id, v)}
                           placeholder="اختر أو ابحث عن صنف..."
-                          autoFocus={l._id === focusLineId}
                         />
                       ) : (
                         <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}

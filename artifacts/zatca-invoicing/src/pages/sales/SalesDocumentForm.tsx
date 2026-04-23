@@ -546,7 +546,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       }}
                     >
                       {inventoryItems.length > 0 ? (
-                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} autoFocus={l._id === focusLineId} />
+                        <SearchCombobox items={itemComboItems} value={l.itemId} onValueChange={v => selectItem(l._id, v)} placeholder={t("salesDocForm.itemPlaceholder")} />
                       ) : (
                         <Input className="h-8 text-xs" placeholder={t("salesDocForm.itemNamePlaceholder")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
