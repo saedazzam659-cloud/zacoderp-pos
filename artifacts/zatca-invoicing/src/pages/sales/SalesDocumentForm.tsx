@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -727,6 +728,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Label className="text-xs">{t("salesDocForm.customer")}</Label>
                   <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
                 </div>
+                <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} />
                 {isInvoice && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.branch")}</Label>

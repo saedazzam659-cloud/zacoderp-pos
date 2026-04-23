@@ -1,9 +1,58 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable } from "@workspace/db";
-import { and, eq, sql } from "drizzle-orm";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, accountsTable } from "@workspace/db";
+import { and, eq, sql, like, or } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+// Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
+// Returns the new account id, or null if no suitable parent exists.
+async function ensureCustomerAccount(companyId: number, customerName: string): Promise<number | null> {
+  const candidates = await db.select().from(accountsTable)
+    .where(and(
+      eq(accountsTable.companyId, companyId),
+      eq(accountsTable.accountType, "asset"),
+      or(
+        like(accountsTable.code, "1130%"),
+        like(accountsTable.nameAr, "%عملاء%"),
+        like(accountsTable.nameAr, "%مدين%"),
+      ),
+    ));
+  const parent =
+    candidates.find(a => a.code.startsWith("1130")) ??
+    candidates.find(a => (a.nameAr || "").includes("عملاء")) ??
+    candidates[0];
+  if (!parent) return null;
+
+  const siblings = await db.select({ code: accountsTable.code }).from(accountsTable)
+    .where(and(eq(accountsTable.companyId, companyId), eq(accountsTable.parentId, parent.id)));
+  const prefix = `${parent.code}-`;
+  let maxSeq = 0;
+  for (const s of siblings) {
+    if (s.code.startsWith(prefix)) {
+      const n = parseInt(s.code.slice(prefix.length), 10);
+      if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+  const newCode = `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
+
+  const [created] = await db.insert(accountsTable).values({
+    companyId,
+    parentId: parent.id,
+    code: newCode,
+    nameAr: customerName,
+    accountType: "asset",
+    reportDirection: parent.reportDirection ?? null,
+    level: (parent.level ?? 1) + 1,
+    isPosting: true,
+    isActive: true,
+  }).returning();
+
+  if (parent.isPosting) {
+    await db.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
+  }
+  return created?.id ?? null;
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -98,6 +147,16 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  let accountId: number | null = (data as any).accountId ? Number((data as any).accountId) : null;
+  if (!accountId) {
+    try {
+      accountId = await ensureCustomerAccount(effectiveCompanyId, String(data.nameAr).trim());
+    } catch (err) {
+      console.error("ensureCustomerAccount failed:", err);
+      accountId = null;
+    }
+  }
+
   const [customer] = await db.insert(customersTable).values({
     companyId: effectiveCompanyId,
     nameAr: data.nameAr,
@@ -112,6 +171,7 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber,
     postalCode: data.postalCode,
     country: data.country ?? "SA",
+    accountId,
   }).returning();
   res.status(201).json(customer);
 });

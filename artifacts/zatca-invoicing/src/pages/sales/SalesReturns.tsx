@@ -16,6 +16,7 @@ import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, Lis
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
+import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -610,6 +611,7 @@ export default function SalesReturns() {
               <Field label={t("salesReturns.returnNumber")}><Input ref={docNumberRef} placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
+              <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v }))} />
               <Field label={t("salesReturns.salesInvoice")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={t("salesReturns.invoicePlaceholder")} /></Field>
               <Field label={t("salesReturns.branch")}>
                 <Select value={form.branchId || undefined} onValueChange={(v) => setForm((p: any) => ({ ...p, branchId: v }))}>
