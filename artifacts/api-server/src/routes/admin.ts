@@ -294,10 +294,23 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
   const end   = addMonthsISO(start, cycle === "yearly" ? 12 : 1);
   const price = cycle === "yearly" ? planConfig.annualPrice : planConfig.monthlyPrice;
 
+  // Plan template defines limits & price. Copy ALL caps so over-limit
+  // accounting stays accurate after a plan switch. planConfigs only
+  // stores users/invoices, so branches/warehouses come from the
+  // hard-coded plan defaults below (kept in lockstep with the plan
+  // catalogue used in the registration flow).
+  const planDefaults: Record<string, { maxBranches: number; maxWarehouses: number }> = {
+    starter:      { maxBranches: 1, maxWarehouses: 1 },
+    professional: { maxBranches: 3, maxWarehouses: 5 },
+    enterprise:   { maxBranches: 999, maxWarehouses: 999 },
+  };
+  const caps = planDefaults[planKey] ?? planDefaults.starter;
   const [updated] = await db.update(subscriptionsTable).set({
     plan: planKey,
     billingCycle: cycle,
     maxUsers: planConfig.maxUsers,
+    maxBranches: caps.maxBranches,
+    maxWarehouses: caps.maxWarehouses,
     maxInvoices: planConfig.maxInvoices,
     price: String(price),
     startDate: start,
@@ -412,7 +425,11 @@ router.post("/subscriptions/bulk-freeze", requireSuperAdmin, async (req, res) =>
 // GET /api/admin/subscriptions/usage — actual vs allowed per company
 // Picks the LATEST subscription per company (in case multiple historical rows
 // exist) so usage isn't multi-counted across superseded subscriptions.
-router.get("/subscriptions/usage", requireSuperAdmin, async (_req, res) => {
+// Default scope is active subscriptions belonging to non-suspended companies
+// (the actionable set for over-limit alerts). Pass ?scope=all to include every
+// company.
+router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
+  const scope = String(req.query?.scope ?? "active");
   const userCounts     = await db.select({ companyId: usersTable.companyId, n: count() })
     .from(usersTable).groupBy(usersTable.companyId);
   const branchCounts   = await db.select({ companyId: branchesTable.companyId, n: count() })
@@ -455,7 +472,14 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (_req, res) => {
   const warehouseMap = new Map(warehouseCounts.map(r => [r.companyId, Number(r.n)]));
   const invoiceMap  = new Map(invoiceRows.map(r => [r.companyId, Number(r.n)]));
 
-  const out = latestSubsRows.map((sub: any) => {
+  const filteredSubs = scope === "all"
+    ? latestSubsRows
+    : latestSubsRows.filter((sub: any) => {
+        const c = companyMap.get(Number(sub.company_id));
+        return !!sub.is_active && c?.status !== "suspended";
+      });
+
+  const out = filteredSubs.map((sub: any) => {
     const cid = Number(sub.company_id);
     const company = companyMap.get(cid);
     const allowed = {

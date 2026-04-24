@@ -126,6 +126,8 @@ export default function SubscriptionManagement() {
   const [editForm, setEditForm]         = useState<any>({});
   const [extendForms, setExtendForms]   = useState<Record<number, number>>({});
   const [planForms, setPlanForms]       = useState<Record<number, { plan: string; cycle: "monthly" | "yearly" }>>({});
+  const [overLimitOpen, setOverLimitOpen] = useState(false);
+  const [upgradeForId, setUpgradeForId] = useState<number | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -355,27 +357,59 @@ export default function SubscriptionManagement() {
         <StatCard label="منتهية"             value={expired}       icon={XCircle}        iconBg="bg-red-100"     iconColor="text-red-600" />
       </div>
 
-      {/* Over-limit panel */}
+      {/* Over-limit collapsible panel */}
       {overLimitCount > 0 && (
-        <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 space-y-2">
-          <div className="flex items-center gap-2 font-semibold text-amber-900">
-            <Zap className="h-4 w-4" />
-            <span>{overLimitCount} شركة تجاوزت حدود باقتها</span>
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            {overLimitRows.slice(0, 6).map(u => (
-              <div key={u.subscriptionId} className="rounded-lg bg-white border border-amber-200 px-3 py-2 text-xs">
-                <div className="font-semibold text-foreground mb-1">{u.companyName ?? `شركة #${u.companyId}`}</div>
-                <div className="flex flex-wrap gap-2 text-amber-800">
-                  {u.overFields.map((f: string) => (
-                    <span key={f} className="bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-mono">
-                      {f}: {u.actual[f]} / {u.allowed[f]}
+        <div className="rounded-xl border-2 border-amber-300 bg-amber-50">
+          <button
+            type="button"
+            onClick={() => setOverLimitOpen(o => !o)}
+            className="w-full flex items-center justify-between gap-2 px-4 py-3 font-semibold text-amber-900 hover:bg-amber-100/60 transition-colors rounded-xl"
+            aria-expanded={overLimitOpen}
+          >
+            <span className="flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              <span>{overLimitCount} شركة تجاوزت حدود باقتها</span>
+            </span>
+            <span className="text-xs font-normal text-amber-700">
+              {overLimitOpen ? "إخفاء" : "عرض التفاصيل"}
+            </span>
+          </button>
+          {overLimitOpen && (
+            <div className="grid gap-2 md:grid-cols-2 px-4 pb-4">
+              {overLimitRows.map(u => (
+                <div key={u.subscriptionId} className="rounded-lg bg-white border border-amber-200 px-3 py-2 text-xs space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold text-foreground">{u.companyName ?? `شركة #${u.companyId}`}</div>
+                    <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5">
+                      {u.plan}
                     </span>
-                  ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-amber-800">
+                    {u.overFields.map((f: string) => (
+                      <span key={f} className="bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 font-mono">
+                        {f}: {u.actual[f]} / {u.allowed[f]}
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpandedRow(u.subscriptionId);
+                      setUpgradeForId(u.subscriptionId);
+                      setOverLimitOpen(false);
+                      setTimeout(() => {
+                        const el = document.getElementById(`sub-row-${u.subscriptionId}`);
+                        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }, 50);
+                    }}
+                    className="w-full mt-1 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded px-2 py-1.5 transition-colors"
+                  >
+                    ترقية الباقة الآن ←
+                  </button>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -490,12 +524,22 @@ export default function SubscriptionManagement() {
             const extM    = extendForms[sub?.id] ?? 1;
             const planForm = planForms[sub?.id] ?? { plan: sub?.plan, cycle: (sub?.billingCycle === "annual" ? "yearly" : sub?.billingCycle) ?? "monthly" };
 
+            const isUpgradeTarget = upgradeForId === sub?.id;
             return (
-              <div key={sub?.id} className={cn("transition-colors", !sub?.isActive && "bg-muted/20", isSelected && "bg-primary/5")}>
+              <div
+                key={sub?.id}
+                id={`sub-row-${sub?.id}`}
+                className={cn(
+                  "transition-colors",
+                  !sub?.isActive && "bg-muted/20",
+                  isSelected && "bg-primary/5",
+                  isUpgradeTarget && "ring-2 ring-amber-400 ring-inset bg-amber-50/40",
+                )}
+              >
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer hover:bg-muted/20 transition-colors"
                   style={{ gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1.4fr auto" }}
-                  onClick={() => setExpandedRow(isExp ? null : sub?.id)}
+                  onClick={() => { setExpandedRow(isExp ? null : sub?.id); if (isUpgradeTarget) setUpgradeForId(null); }}
                 >
                   <div onClick={e => e.stopPropagation()}>
                     <Checkbox checked={isSelected} onCheckedChange={() => toggleOne(sub?.id)} aria-label="تحديد" />
