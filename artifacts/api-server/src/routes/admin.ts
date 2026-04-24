@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable } from "@workspace/db";
-import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte } from "drizzle-orm";
+import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
@@ -2220,7 +2220,7 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     // rows for RBAC failures across every module, so without the auth
     // scope this list would conflate "wrong password" with "no permission
     // to view sales invoices" — a misleading security signal.
-    const conds: any[] = [
+    const conds: SQL[] = [
       eq(auditLogTable.module, "auth"),
       inArray(auditLogTable.action, ["login", "logout", "denied"]),
     ];
@@ -2242,7 +2242,7 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     const where = and(...conds);
     const [{ count: total }] = await db
       .select({ count: sql<number>`count(*)::int` })
-      .from(auditLogTable).where(where as any);
+      .from(auditLogTable).where(where);
     const rows = await db
       .select({
         id: auditLogTable.id, userId: auditLogTable.userId, username: auditLogTable.username,
@@ -2251,7 +2251,7 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
         ip: auditLogTable.ip, userAgent: auditLogTable.userAgent, metadata: auditLogTable.metadata,
         createdAt: auditLogTable.createdAt,
       })
-      .from(auditLogTable).where(where as any)
+      .from(auditLogTable).where(where)
       .orderBy(desc(auditLogTable.createdAt))
       .limit(limit).offset(offset);
 
@@ -2334,6 +2334,53 @@ router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
     // Superadmin-only subset (more sensitive — even one new-IP login matters).
     const superadminNewIps = newIps.filter(r => r.role === "superadmin");
 
+    // 7-day baseline aggregation (per spec):
+    //  - Per user, count distinct IPs used today vs the daily average over the
+    //    prior 7 days. A user whose distinct-IP count today is ≥3 AND at least
+    //    2× their 7-day daily average gets flagged as a "wide-spread login".
+    //  - Per user, today's denied count vs the prior-7-day daily average; flag
+    //    when today is ≥5 AND ≥3× the baseline.
+    interface BaselineRow {
+      user_id: number; username: string; role: string;
+      today_ips: number; baseline_ips: number;
+      today_denied: number; baseline_denied: number;
+    }
+    const baselineResult = await db.execute<BaselineRow>(sql`
+      WITH today AS (
+        SELECT user_id, username, role,
+               COUNT(DISTINCT ip) FILTER (WHERE action = 'login' AND ip IS NOT NULL) AS ips,
+               COUNT(*)            FILTER (WHERE action = 'denied')                  AS denied
+          FROM audit_log
+         WHERE module = 'auth'
+           AND user_id IS NOT NULL
+           AND created_at >= date_trunc('day', NOW())
+         GROUP BY user_id, username, role
+      ), baseline AS (
+        SELECT user_id,
+               (COUNT(DISTINCT (date_trunc('day', created_at), ip))
+                  FILTER (WHERE action = 'login' AND ip IS NOT NULL))::numeric / 7.0 AS avg_ips,
+               (COUNT(*) FILTER (WHERE action = 'denied'))::numeric / 7.0            AS avg_denied
+          FROM audit_log
+         WHERE module = 'auth'
+           AND user_id IS NOT NULL
+           AND created_at >= date_trunc('day', NOW()) - INTERVAL '7 days'
+           AND created_at <  date_trunc('day', NOW())
+         GROUP BY user_id
+      )
+      SELECT t.user_id, t.username, t.role,
+             COALESCE(t.ips,    0)::int AS today_ips,
+             COALESCE(b.avg_ips,    0)::float AS baseline_ips,
+             COALESCE(t.denied, 0)::int AS today_denied,
+             COALESCE(b.avg_denied, 0)::float AS baseline_denied
+        FROM today t
+        LEFT JOIN baseline b ON b.user_id = t.user_id
+       WHERE (t.ips    >= 3 AND COALESCE(t.ips,    0) >= 2 * GREATEST(COALESCE(b.avg_ips,    0), 1))
+          OR (t.denied >= 5 AND COALESCE(t.denied, 0) >= 3 * GREATEST(COALESCE(b.avg_denied, 0), 1))
+       ORDER BY t.denied DESC, t.ips DESC
+       LIMIT 50
+    `);
+    const baselines = sqlRows<BaselineRow>(baselineResult as SqlExecuteResult<BaselineRow>);
+
     res.json({
       deniedSpikes:  deniedSpikes.map(r => ({ userId: r.user_id, username: r.username, count: r.n })),
       newIps:        newIps.map(r => ({
@@ -2342,6 +2389,11 @@ router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
       superadminNewIps: superadminNewIps.map(r => ({
         userId: r.user_id, username: r.username, ip: r.ip, createdAt: r.created_at,
       })),
+      baselineDeviations: baselines.map(r => ({
+        userId: r.user_id, username: r.username, role: r.role,
+        todayIps: r.today_ips, baselineIps: Number(r.baseline_ips.toFixed(2)),
+        todayDenied: r.today_denied, baselineDenied: Number(r.baseline_denied.toFixed(2)),
+      })),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر حساب التنبيهات الأمنية";
@@ -2349,11 +2401,24 @@ router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
   }
 });
 
-// GET /api/admin/security/permissions-matrix — every admin/superadmin/owner
-// user with their company, role, and granted permission groups. Read-only.
+// GET /api/admin/security/permissions-matrix — true matrix (users × permission
+// groups) for admin/owner/superadmin users. Each cell is one of:
+//   "inherited" — role bypasses RBAC (superadmin/admin), full access by role.
+//   "granted"   — explicit user permission map has at least one true action.
+//   "denied"    — explicit map exists for the group but every action is false.
+//   "none"      — no entry, no inheritance — group is effectively unused.
 // Also returns per-role headcount per company for the role-distribution panel.
 router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) => {
   try {
+    // Top permission groups exposed in the matrix. Keep the column count small
+    // so the table stays readable; deeper editing happens in the user editor.
+    const PERMISSION_GROUPS = [
+      "sales_invoices", "purchase_invoices", "items", "customers",
+      "suppliers", "journal_entries", "reports", "users",
+    ] as const;
+    type PermissionGroup = typeof PERMISSION_GROUPS[number];
+    type CellState = "inherited" | "granted" | "denied" | "none";
+
     const adminUsers = await db.select({
       id: usersTable.id, username: usersTable.username, email: usersTable.email,
       role: usersTable.role, companyId: usersTable.companyId,
@@ -2381,20 +2446,36 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
     `);
     const roleDist = sqlRows<RoleCountRow>(roleResult as SqlExecuteResult<RoleCountRow>);
 
+    function cellFor(role: string, perms: unknown, group: PermissionGroup): CellState {
+      // ONLY superadmin/admin actually bypass RBAC in requirePermission middleware
+      // (see middleware/permissions.ts). owner has no bypass — it falls through
+      // to the explicit per-user permissions map like any other role. So it must
+      // NOT be marked "inherited"; otherwise the matrix would lie about effective
+      // access for owner users.
+      if (role === "superadmin" || role === "admin") return "inherited";
+      if (!perms || typeof perms !== "object") return "none";
+      const entry = (perms as Record<string, Record<string, boolean>>)[group];
+      if (!entry || typeof entry !== "object") return "none";
+      const vals = Object.values(entry);
+      if (vals.length === 0) return "none";
+      return vals.some(v => v === true) ? "granted" : "denied";
+    }
+
     res.json({
-      users: adminUsers.map(u => ({
-        id: u.id, username: u.username, email: u.email, role: u.role,
-        companyId: u.companyId,
-        companyName: u.companyId != null ? companyMap.get(u.companyId)?.nameAr ?? null : null,
-        // Surface ONLY the permission group keys (e.g. ["sales_invoices","items"]),
-        // never the underlying granular flags — keeps response slim and avoids
-        // accidental leakage of internal action names.
-        permissionGroups: u.permissions && typeof u.permissions === "object"
-          ? Object.keys(u.permissions as Record<string, unknown>)
-          : [],
-        isActive: u.isActive,
-        lastLoginAt: u.lastLoginAt,
-      })),
+      // Column definitions for the matrix UI.
+      columns: PERMISSION_GROUPS.map(g => ({ key: g })),
+      users: adminUsers.map(u => {
+        const cells: Record<string, CellState> = {};
+        for (const g of PERMISSION_GROUPS) cells[g] = cellFor(u.role, u.permissions, g);
+        return {
+          id: u.id, username: u.username, email: u.email, role: u.role,
+          companyId: u.companyId,
+          companyName: u.companyId != null ? companyMap.get(u.companyId)?.nameAr ?? null : null,
+          cells,
+          isActive: u.isActive,
+          lastLoginAt: u.lastLoginAt,
+        };
+      }),
       roleDistribution: roleDist.map(r => ({
         companyId: r.company_id, role: r.role, count: r.n,
       })),

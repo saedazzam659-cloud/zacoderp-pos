@@ -221,6 +221,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/zatca-report"  module="zatca_report"  component={ZatcaReport} />}
             {!isSuperAdmin && <PermRoute path="/general-settings" module="general_settings" component={GeneralSettings} />}
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/users" module="users" component={Users} />}
+            {isSuperAdmin && <Route path="/users" component={Users} />}
             {!isSuperAdmin && <PermRoute path="/vat-declaration" module="vat_declaration" component={VATDeclaration} />}
 
             {/* POS routes (gated behind the "pos" module — same as the sidebar permKey) */}

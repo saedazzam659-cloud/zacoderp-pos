@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -38,14 +39,30 @@ interface AnomalyResp {
   newIps:       { userId: number; username: string; role: string; ip: string; createdAt: string }[];
   superadminNewIps: { userId: number; username: string; ip: string; createdAt: string }[];
 }
+type PermCellState = "inherited" | "granted" | "denied" | "none";
 interface PermsMatrixResp {
+  columns: { key: string }[];
   users: {
     id: number; username: string; email: string | null; role: string;
     companyId: number | null; companyName: string | null;
-    permissionGroups: string[]; isActive: boolean; lastLoginAt: string | null;
+    cells: Record<string, PermCellState>;
+    isActive: boolean; lastLoginAt: string | null;
   }[];
   roleDistribution: { companyId: number | null; role: string; count: number }[];
 }
+
+// Arabic labels for permission group columns. Keep in sync with PERMISSION_GROUPS
+// in the backend `/security/permissions-matrix` endpoint.
+const PERM_GROUP_LABEL: Record<string, string> = {
+  sales_invoices: "المبيعات",
+  purchase_invoices: "المشتريات",
+  items: "الأصناف",
+  customers: "العملاء",
+  suppliers: "الموردون",
+  journal_entries: "القيود",
+  reports: "التقارير",
+  users: "المستخدمون",
+};
 
 // ─── Small helpers ──────────────────────────────────────────────────────
 function fmtDateTime(s: string | null): string {
@@ -260,19 +277,32 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
 function LoginAttemptsTab({ token }: { token: string | null }) {
   const headers = { Authorization: `Bearer ${token}` };
   const [username, setUsername] = useState("");
+  const [companyId, setCompanyId] = useState<string>("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [success, setSuccess] = useState<"all" | "true" | "false">("all");
 
+  // Companies dropdown for the filter — minimal payload from existing endpoint.
+  const { data: companies } = useQuery<{ id: number; nameAr: string }[]>({
+    queryKey: ["security-history-companies"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/companies`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (username.trim())   p.set("username", username.trim());
+    if (companyId !== "all") p.set("companyId", companyId);
     if (from)              p.set("from", new Date(from).toISOString());
     if (to)                p.set("to",   new Date(to + "T23:59:59").toISOString());
     if (success !== "all") p.set("success", success);
     p.set("limit", "100");
     return p.toString();
-  }, [username, from, to, success]);
+  }, [username, companyId, from, to, success]);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<{
     rows: LoginHistoryRow[]; total: number; deniedSeries30d: { day: string; n: number }[];
@@ -320,10 +350,22 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
 
       <Card>
         <CardContent className="p-3 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground mb-1 block">اسم المستخدم</label>
-              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="بحث جزئي…" />
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="بحث جزئي…" data-testid="filter-username" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">الشركة</label>
+              <Select value={companyId} onValueChange={setCompanyId}>
+                <SelectTrigger data-testid="filter-company"><SelectValue placeholder="الكل" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">جميع الشركات</SelectItem>
+                  {(companies ?? []).map(c => (
+                    <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">من تاريخ</label>
@@ -338,7 +380,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
               <div className="flex items-center gap-1">
                 <Button variant={success === "all"   ? "default" : "outline"} size="sm" onClick={() => setSuccess("all")}>الكل</Button>
                 <Button variant={success === "true"  ? "default" : "outline"} size="sm" onClick={() => setSuccess("true")}>ناجح</Button>
-                <Button variant={success === "false" ? "default" : "outline"} size="sm" onClick={() => setSuccess("false")}>مرفوض</Button>
+                <Button variant={success === "false" ? "default" : "outline"} size="sm" onClick={() => setSuccess("false")} data-testid="filter-success-false">مرفوض</Button>
               </div>
             </div>
           </div>
@@ -461,15 +503,18 @@ function PermissionsTab({ token }: { token: string | null }) {
             <div className="p-8 text-center text-muted-foreground">لا يوجد مستخدمون مطابقون.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" data-testid="perms-matrix-table">
                 <thead className="bg-muted/40 border-b">
                   <tr className="text-right text-xs text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">المستخدم</th>
-                    <th className="px-3 py-2 font-medium">الدور</th>
-                    <th className="px-3 py-2 font-medium">الشركة</th>
-                    <th className="px-3 py-2 font-medium">مجموعات الصلاحيات</th>
-                    <th className="px-3 py-2 font-medium">آخر دخول</th>
-                    <th className="px-3 py-2 font-medium">الحالة</th>
+                    <th className="px-3 py-2 font-medium sticky right-0 bg-muted/40">المستخدم</th>
+                    <th className="px-2 py-2 font-medium">الدور</th>
+                    <th className="px-2 py-2 font-medium">الشركة</th>
+                    {(data?.columns ?? []).map(col => (
+                      <th key={col.key} className="px-2 py-2 font-medium text-center min-w-[90px]" title={col.key}>
+                        {PERM_GROUP_LABEL[col.key] ?? col.key}
+                      </th>
+                    ))}
+                    <th className="px-2 py-2 font-medium">الحالة</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -477,39 +522,48 @@ function PermissionsTab({ token }: { token: string | null }) {
                     <tr
                       key={u.id}
                       className="border-b last:border-0 hover:bg-muted/20 cursor-pointer"
-                      onClick={() => setLocation(`/users/${u.id}/edit`)}
+                      onClick={() => setLocation(`/users?selected=${u.id}`)}
                       data-testid={`perms-user-row-${u.id}`}
+                      title="فتح صفحة المستخدمين"
                     >
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 sticky right-0 bg-background">
                         <div className="font-medium">{u.username}</div>
                         {u.email && <div className="text-[11px] text-muted-foreground">{u.email}</div>}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <Badge variant="outline" className={
                           u.role === "superadmin" ? "bg-purple-50 text-purple-700 border-purple-200" :
                           u.role === "owner"      ? "bg-amber-50 text-amber-700 border-amber-200" :
                                                     "bg-blue-50 text-blue-700 border-blue-200"
                         }>{u.role}</Badge>
                       </td>
-                      <td className="px-3 py-2 text-xs">{u.companyName ?? (u.companyId == null ? "—" : `#${u.companyId}`)}</td>
-                      <td className="px-3 py-2">
-                        {u.role === "superadmin" || u.role === "admin" ? (
-                          <span className="text-xs text-emerald-600 font-medium">جميع الصلاحيات</span>
-                        ) : u.permissionGroups.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">— بدون —</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1 max-w-md">
-                            {u.permissionGroups.slice(0, 8).map(g => (
-                              <Badge key={g} variant="outline" className="text-[10px] font-mono">{g}</Badge>
-                            ))}
-                            {u.permissionGroups.length > 8 && (
-                              <span className="text-[10px] text-muted-foreground">+{u.permissionGroups.length - 8}</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-xs font-mono">{fmtDateTime(u.lastLoginAt)}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2 text-xs">{u.companyName ?? (u.companyId == null ? "—" : `#${u.companyId}`)}</td>
+                      {(data?.columns ?? []).map(col => {
+                        const state = u.cells[col.key] ?? "none";
+                        // Each cell shows one of four explicit states with colour cues:
+                        //   inherited (الدور كامل) — green outline, role bypass
+                        //   granted   (مُمنوح)      — green filled, explicit allow
+                        //   denied    (ممنوع)       — red,           explicit block
+                        //   none      (—)           — neutral muted
+                        const cls =
+                          state === "inherited" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                          state === "granted"   ? "bg-emerald-100 text-emerald-800 border-emerald-300 font-semibold" :
+                          state === "denied"    ? "bg-rose-100 text-rose-800 border-rose-300 font-semibold" :
+                                                  "bg-slate-50 text-slate-400 border-slate-200";
+                        const label =
+                          state === "inherited" ? "كامل" :
+                          state === "granted"   ? "مُمنوح" :
+                          state === "denied"    ? "ممنوع" :
+                                                  "—";
+                        return (
+                          <td key={col.key} className="px-2 py-2 text-center" data-testid={`perms-cell-${u.id}-${col.key}`} data-state={state}>
+                            <Badge variant="outline" className={`${cls} text-[10px] w-full justify-center`}>
+                              {label}
+                            </Badge>
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-2">
                         <Badge variant="outline" className={u.isActive
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                           : "bg-rose-50 text-rose-700 border-rose-200"
