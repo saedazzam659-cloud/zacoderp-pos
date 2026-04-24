@@ -8,6 +8,7 @@ import {
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert,
   HardDrive, ScrollText, Activity, LineChart as LineChartIcon, PieChart as PieChartIcon,
   KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles,
+  type LucideIcon,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -15,6 +16,23 @@ import {
 } from "recharts";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// ─── Local view-model types ──────────────────────────────────────────────
+type QuickLink = {
+  title: string;
+  desc: string;
+  href: string;
+  icon: LucideIcon;
+  bg: string;
+  color: string;
+  /** When true, render as a disabled placeholder with a "قريباً" badge. */
+  soon?: boolean;
+};
+
+// Recharts tooltip "payload" carries the original datum; we destructure
+// only the known fields below (name + revenue for plan slice tooltips).
+type PlanDatum = { name: string; plan: string; value: number; revenue: number };
+type SignupDatum = { day: string; count: number };
 
 // ─── Types matching the /api/admin/dashboard payload ─────────────────────
 interface DashboardData {
@@ -71,7 +89,7 @@ function KpiTile({
 }: {
   label: string;
   value: string | number;
-  icon: any;
+  icon: LucideIcon;
   color?: string;
   bg?: string;
   delta?: number;
@@ -105,7 +123,7 @@ function KpiTile({
 }
 
 // Reusable category section header
-function CategoryHeader({ icon: Icon, label, color }: { icon: any; label: string; color: string }) {
+function CategoryHeader({ icon: Icon, label, color }: { icon: LucideIcon; label: string; color: string }) {
   return (
     <div className="flex items-center gap-2 mb-2">
       <Icon className={`h-4 w-4 ${color}`} />
@@ -312,8 +330,8 @@ export default function SuperAdminDashboard() {
                   <XAxis dataKey="day" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={28} />
                   <Tooltip
-                    formatter={(v: any) => [`${v} شركة`, "الجديد"]}
-                    labelFormatter={(l) => `يوم ${l}`}
+                    formatter={(value: number | string) => [`${value} شركة`, "الجديد"]}
+                    labelFormatter={(label) => `يوم ${label}`}
                     contentStyle={{ fontSize: 12 }}
                   />
                   <Bar dataKey="count" fill="#3b82f6" radius={[3, 3, 0, 0]} />
@@ -352,10 +370,13 @@ export default function SuperAdminDashboard() {
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(v: any, _n: any, p: any) => [
-                      `${v} شركة • ${formatSAR(p.payload.revenue ?? 0)}`,
-                      p.payload.name,
-                    ]}
+                    formatter={(value: number | string, _name: string, item: { payload?: PlanDatum }) => {
+                      const p = item.payload;
+                      return [
+                        `${value} شركة • ${formatSAR(p?.revenue ?? 0)}`,
+                        p?.name ?? "",
+                      ];
+                    }}
                     contentStyle={{ fontSize: 12 }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -401,7 +422,7 @@ export default function SuperAdminDashboard() {
               href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "صلاحيات القوائم", desc: "إظهار وإخفاء أقسام لكل شركة",
               href: "/admin/menu-permissions", icon: BarChart3, bg: "bg-slate-100", color: "text-slate-700" },
-          ].map((qa: any, i) => {
+          ].map((qa: QuickLink, i) => {
             const inner = (
               <Card className={`border-dashed border-2 transition-colors h-full ${
                 qa.soon ? "opacity-90 hover:border-amber-300" : "hover:border-primary/50 cursor-pointer"
@@ -465,54 +486,6 @@ export default function SuperAdminDashboard() {
               <p className="text-xs text-muted-foreground mt-3 text-center">
                 و {b.missingCount - b.missing.length} شركة أخرى…
               </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── Recent pending requests (kept from previous version) ─────── */}
-      {recentRequests.length > 0 && (
-        <Card>
-          <CardHeader className="border-b bg-amber-50/50 pb-3">
-            <CardTitle className="text-base flex items-center gap-2 text-amber-800">
-              <Clock className="h-4 w-4" />
-              آخر الطلبات المعلقة
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="space-y-3">
-              {recentRequests.slice(0, 5).map((r: any) => (
-                <div key={r.company.id} className="flex items-center justify-between gap-4 py-2 border-b last:border-0">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0">
-                      {r.company.nameAr?.[0]}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm text-foreground truncate">{r.company.nameAr}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{r.company.vatNumber}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-muted-foreground hidden sm:block">
-                      {r.subscription?.plan && (
-                        <span className="bg-muted px-2 py-0.5 rounded-full">
-                          {PLAN_LABEL_AR[r.subscription.plan] ?? r.subscription.plan}
-                        </span>
-                      )}
-                    </span>
-                    <Button size="sm" className="h-7 px-2.5 text-xs bg-green-600 hover:bg-green-700 gap-1" asChild>
-                      <Link href="/admin/requests">مراجعة</Link>
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {recentRequests.length > 5 && (
-              <div className="pt-3 text-center">
-                <Button asChild variant="ghost" size="sm">
-                  <Link href="/admin/requests">عرض جميع الطلبات ({recentRequests.length})</Link>
-                </Button>
-              </div>
             )}
           </CardContent>
         </Card>
