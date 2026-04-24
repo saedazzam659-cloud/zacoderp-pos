@@ -31,10 +31,18 @@ export default function PlanUsageReport() {
   const [search, setSearch] = useState("");
   const [onlyOver, setOnlyOver] = useState(false);
 
+  // Backend filters by name when ?search is set so CSV export matches the
+  // visible table. The "over limit" toggle is a UI-only refinement.
+  const queryString = useMemo(() => {
+    const qs = new URLSearchParams(periodToQuery(period));
+    if (search.trim()) qs.set("search", search.trim());
+    return qs.toString();
+  }, [period.preset, period.from, period.to, search]);
+
   const { data, isLoading, error } = useQuery<UsageResp>({
-    queryKey: ["report-plan-usage", period.preset, period.from, period.to],
+    queryKey: ["report-plan-usage", queryString],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/reports/plan-usage?${periodToQuery(period)}`, {
+      const r = await fetch(`/api/admin/reports/plan-usage?${queryString}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "تعذر التحميل");
@@ -42,11 +50,10 @@ export default function PlanUsageReport() {
     },
   });
 
-  const filtered = useMemo(() => (data?.rows ?? []).filter(r => {
-    if (onlyOver && !r.overLimit) return false;
-    if (search && !r.companyName.toLowerCase().includes(search.trim().toLowerCase())) return false;
-    return true;
-  }), [data, search, onlyOver]);
+  const filtered = useMemo(
+    () => (data?.rows ?? []).filter(r => !onlyOver || r.overLimit),
+    [data, onlyOver],
+  );
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -64,7 +71,7 @@ export default function PlanUsageReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/plan-usage?${periodToQuery(period)}&format=csv`, `plan-usage-${period.from}_${period.to}.csv`)}
+          onClick={() => downloadCsv(token, `/api/admin/reports/plan-usage?${queryString}&format=csv`, `plan-usage-${period.from}_${period.to}.csv`)}
           disabled={!data || filtered.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV

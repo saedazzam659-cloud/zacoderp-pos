@@ -31,10 +31,20 @@ export default function CompanyPerformanceReport() {
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
+  // Backend filters by name when ?search is set so CSV export matches the
+  // visible table. Sorting stays client-side so the CSV is sorted by the
+  // backend's deterministic order (revenue desc) — that's intentional, the
+  // CSV is canonical and not affected by transient UI sort.
+  const queryString = useMemo(() => {
+    const qs = new URLSearchParams(periodToQuery(period));
+    if (search.trim()) qs.set("search", search.trim());
+    return qs.toString();
+  }, [period.preset, period.from, period.to, search]);
+
   const { data, isLoading, error } = useQuery<PerfResp>({
-    queryKey: ["report-company-performance", period.preset, period.from, period.to],
+    queryKey: ["report-company-performance", queryString],
     queryFn: async () => {
-      const r = await fetch(`/api/admin/reports/company-performance?${periodToQuery(period)}`, {
+      const r = await fetch(`/api/admin/reports/company-performance?${queryString}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "تعذر التحميل");
@@ -43,16 +53,14 @@ export default function CompanyPerformanceReport() {
   });
 
   const filtered = useMemo(() => {
-    const rows = (data?.rows ?? []).filter(r =>
-      !search || r.companyName.toLowerCase().includes(search.trim().toLowerCase()),
-    );
+    const rows = data?.rows ?? [];
     const dir = sortDir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
       const av = a[sortKey] ?? -Infinity;
       const bv = b[sortKey] ?? -Infinity;
       return (Number(av) - Number(bv)) * dir;
     });
-  }, [data, search, sortKey, sortDir]);
+  }, [data, sortKey, sortDir]);
 
   const totals = useMemo(() => ({
     revenue: filtered.reduce((s, r) => s + r.revenue, 0),
@@ -80,7 +88,7 @@ export default function CompanyPerformanceReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/company-performance?${periodToQuery(period)}&format=csv`, `company-performance-${period.from}_${period.to}.csv`)}
+          onClick={() => downloadCsv(token, `/api/admin/reports/company-performance?${queryString}&format=csv`, `company-performance-${period.from}_${period.to}.csv`)}
           disabled={!data || filtered.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV
