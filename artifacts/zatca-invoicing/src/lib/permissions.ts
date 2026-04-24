@@ -23,6 +23,8 @@ const G = {
   inventory:  "perms.groups.inventory",
   accounting: "perms.groups.accounting",
   tax:        "perms.groups.tax",
+  pos:        "perms.groups.pos",
+  hr:         "perms.groups.hr",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -63,6 +65,18 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "accounting_reports",   label: "perms.modules.accounting_reports",   group: G.accounting, actions: ["view", "export"] },
 
   { key: "vat_declaration",      label: "perms.modules.vat_declaration",      group: G.tax,        actions: ["view", "export"] },
+
+  // POS group — covers /pos-monitoring, /pos-settings and /pos-terminals.
+  { key: "pos",                  label: "perms.modules.pos",                  group: G.pos,        actions: VC },
+
+  // HR group — one module per logical screen.
+  { key: "hr_employees",         label: "perms.modules.hr_employees",         group: G.hr,         actions: ALL },
+  { key: "hr_attendance",        label: "perms.modules.hr_attendance",        group: G.hr,         actions: ALL },
+  { key: "hr_loans",             label: "perms.modules.hr_loans",             group: G.hr,         actions: ALL },
+  { key: "hr_payroll",           label: "perms.modules.hr_payroll",           group: G.hr,         actions: ALL },
+  { key: "hr_eos",               label: "perms.modules.hr_eos",               group: G.hr,         actions: VC },
+  { key: "hr_calculators",       label: "perms.modules.hr_calculators",       group: G.hr,         actions: VO },
+  { key: "hr_settings",          label: "perms.modules.hr_settings",          group: G.hr,         actions: ["view", "edit"] },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

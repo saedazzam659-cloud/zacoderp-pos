@@ -223,16 +223,16 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
             {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
 
-            {/* HR routes */}
-            {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
-            {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
-            {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}
-            {!isSuperAdmin && <Route path="/hr/loans" component={EmployeeLoans} />}
-            {!isSuperAdmin && <Route path="/hr/payroll" component={Payroll} />}
-            {!isSuperAdmin && <Route path="/hr/contracts" component={AllContracts} />}
-            {!isSuperAdmin && <Route path="/hr/end-of-service" component={EndOfService} />}
-            {!isSuperAdmin && <Route path="/hr/calculators" component={HRCalculators} />}
-            {!isSuperAdmin && <Route path="/hr/settings" component={HRSettings} />}
+            {/* HR routes — gated per logical screen against the matching hr_* module */}
+            {!isSuperAdmin && <PermRoute path="/hr/employees"               module="hr_employees"   component={Employees} />}
+            {!isSuperAdmin && <PermRoute path="/hr/employees/:id/contracts" module="hr_employees"   component={EmployeeContracts} />}
+            {!isSuperAdmin && <PermRoute path="/hr/contracts"               module="hr_employees"   component={AllContracts} />}
+            {!isSuperAdmin && <PermRoute path="/hr/attendance"              module="hr_attendance"  component={Attendance} />}
+            {!isSuperAdmin && <PermRoute path="/hr/loans"                   module="hr_loans"       component={EmployeeLoans} />}
+            {!isSuperAdmin && <PermRoute path="/hr/payroll"                 module="hr_payroll"     component={Payroll} />}
+            {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
+            {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}
+            {!isSuperAdmin && <PermRoute path="/hr/settings"                module="hr_settings"    component={HRSettings} />}
 
             {/* Inventory routes */}
             {!isSuperAdmin && <PermRoute path="/inventory" module="items" component={InventoryDashboard} />}

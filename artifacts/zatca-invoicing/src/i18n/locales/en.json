@@ -1116,7 +1116,15 @@
       "receipt_vouchers": "Receipt Vouchers",
       "payment_vouchers": "Payment Vouchers",
       "accounting_reports": "Accounting Reports",
-      "vat_declaration": "VAT Declaration"
+      "vat_declaration": "VAT Declaration",
+      "pos": "POS (Monitoring, Settings, Terminals)",
+      "hr_employees": "Employees & Contracts",
+      "hr_attendance": "Attendance",
+      "hr_loans": "Loans & Advances",
+      "hr_payroll": "Payroll",
+      "hr_eos": "End of Service",
+      "hr_calculators": "HR Calculators",
+      "hr_settings": "HR Settings"
     }
   },
   "cashCommon": {

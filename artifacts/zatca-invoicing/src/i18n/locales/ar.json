@@ -1104,7 +1104,9 @@
       "purchasing": "المشتريات",
       "inventory": "المخزون",
       "accounting": "المحاسبة",
-      "tax": "الضرائب"
+      "tax": "الضرائب",
+      "pos": "نقاط البيع",
+      "hr": "شؤون الموظفين"
     },
     "actions": {
       "view": "عرض",
@@ -1146,7 +1148,15 @@
       "receipt_vouchers": "سندات القبض",
       "payment_vouchers": "سندات الصرف",
       "accounting_reports": "التقارير المحاسبية",
-      "vat_declaration": "الإقرار الضريبي"
+      "vat_declaration": "الإقرار الضريبي",
+      "pos": "نقاط البيع (مراقبة، إعدادات، محطات)",
+      "hr_employees": "الموظفون والعقود",
+      "hr_attendance": "الحضور والانصراف",
+      "hr_loans": "السلف والعُهد",
+      "hr_payroll": "مسيرات الرواتب",
+      "hr_eos": "مكافأة نهاية الخدمة",
+      "hr_calculators": "حاسبات الموارد البشرية",
+      "hr_settings": "إعدادات الموارد البشرية"
     }
   },
   "cashCommon": {

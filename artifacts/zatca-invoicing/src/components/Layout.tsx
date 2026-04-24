@@ -95,14 +95,18 @@ const companyBusinessNav: NavDef[] = [
 ];
 // HR submenu — sits under the "شؤون الموظفين" (HR) collapsible group.
 const hrSubNav: NavDef[] = [
-  { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog },
-  { nameKey: "nav.hrContracts",     href: "/hr/contracts",       icon: FileSignature },
-  { nameKey: "nav.hrAttendance",    href: "/hr/attendance",      icon: CalendarRange },
-  { nameKey: "nav.hrLoans",         href: "/hr/loans",           icon: Wallet },
-  { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote },
-  { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale },
-  { nameKey: "nav.hrCalculators",   href: "/hr/calculators",     icon: Calculator },
-  { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings },
+  { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog,         permKey: "hr_employees" },
+  { nameKey: "nav.hrContracts",     href: "/hr/contracts",       icon: FileSignature,   permKey: "hr_employees" },
+  { nameKey: "nav.hrAttendance",    href: "/hr/attendance",      icon: CalendarRange,   permKey: "hr_attendance" },
+  { nameKey: "nav.hrLoans",         href: "/hr/loans",           icon: Wallet,          permKey: "hr_loans" },
+  { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote,        permKey: "hr_payroll" },
+  { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale,           permKey: "hr_eos" },
+  { nameKey: "nav.hrCalculators",   href: "/hr/calculators",     icon: Calculator,      permKey: "hr_calculators" },
+  { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings,        permKey: "hr_settings" },
+];
+const HR_GROUP_PERMS = [
+  "hr_employees", "hr_attendance", "hr_loans", "hr_payroll",
+  "hr_eos", "hr_calculators", "hr_settings",
 ];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
@@ -792,6 +796,8 @@ function HrNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, HR_GROUP_PERMS)) return null;
   const isOnSub = hrSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
