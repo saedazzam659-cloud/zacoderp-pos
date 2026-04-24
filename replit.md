@@ -6,6 +6,18 @@ This project is a pnpm workspace monorepo using TypeScript, focused on developin
 
 I prefer detailed explanations and a clear, concise communication style. I value iterative development and would like to be asked before any major architectural changes or significant code refactoring are implemented. Do not make changes to the `pnpm-workspace` skill.
 
+## Permissions Policy (MANDATORY)
+
+Whenever a new screen, page, or backend module is added to the system, it MUST be wired into the permissions system in the SAME change set — never as a follow-up. Concretely, every new feature must include:
+
+1. **Register the module** in `artifacts/zatca-invoicing/src/lib/permissions.ts` (`PERMISSION_MODULES`) with: a stable `key`, an i18n `label` (`perms.modules.<key>`), the right `group` (reuse one of the existing `G.*` groups, or add a new `G.<name>` + `perms.groups.<name>` if a new domain is being introduced), and the appropriate `actions` set (`VO`, `VC`, or `ALL`; include `post` / `export` only when the screen actually has those operations).
+2. **Add Arabic + English labels** for the new module key (and group key, if new) in `artifacts/zatca-invoicing/src/i18n/locales/ar.json` and `en.json` under `perms.modules.*` and `perms.groups.*`.
+3. **Gate the route** in `artifacts/zatca-invoicing/src/App.tsx` by wrapping the new `<Route>` with `<PermRoute module="<key>" …>` (use `isSuperAdmin` split if superadmin needs raw access). Never leave a new screen behind a plain `<Route>`.
+4. **Gate the sidebar entry** in `artifacts/zatca-invoicing/src/components/Layout.tsx` by giving every new `NavDef` entry an explicit `permKey: "<key>"`. If the new screen lives in a brand-new collapsible group, also add a `*_GROUP_PERMS` constant and `if (!groupVisible(user, *_GROUP_PERMS)) return null;` at the top of the corresponding `NavGroup` component, so the whole group disappears for users with no perms in it.
+5. **Gate the backend** in `artifacts/api-server/src/routes/<route>.ts`: add `router.use(extractAuth)` + a `requireAuthed` 401 gate at minimum, then `requirePermission("<key>", "<action>")` + `audit("<key>", "<action>")` on each handler (or `requireModulePermission(<key>)` for single-purpose routers). Anonymous callers must always receive 401, not data.
+
+`admin` and `superadmin` always bypass step 5's granular checks (handled inside the middleware), so existing privileged users keep working without manual intervention. The result of these five steps is that the new screen is automatically hidden in the sidebar, blocked at the URL, blocked at the API, and immediately visible/toggleable in the Users → Permissions tab — all from the same commit.
+
 # System Architecture
 
 The system is built as a pnpm workspace monorepo, leveraging Node.js and TypeScript.
