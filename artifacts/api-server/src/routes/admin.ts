@@ -2537,29 +2537,13 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
 //    • requireSuperAdmin on every endpoint.
 //    • All aggregations live in SQL with GROUP BY (never load full transaction
 //      tables into memory) so the system stays fast as tenant count grows.
-//    • Each endpoint accepts ?format=csv → returns a UTF-8 BOM CSV with Arabic
-//      column headers (so Excel opens the file with correct encoding).
-//    • "Revenue" = SUM(total_amount) on sales_invoices where status='posted'
-//      (i.e. issued, non-draft), within the requested period. The hard rule
-//      from the task spec is intentionally a flat tenant-level aggregation;
-//      it does NOT join subscriptions, because superadmin reporting must
-//      reflect actual billed activity even for tenants with lapsed plans.
-//      salesInvoicesTable is the operational sales table users see in the
-//      dashboard; the legacy invoicesTable is reserved for ZATCA submission
-//      tracking and is intentionally excluded here.
+// Revenue = SUM(total_amount) on sales_invoices WHERE status='posted',
+// scoped to companies with a currently-active subscription.
+// CSV: ?format=csv returns UTF-8 BOM + Arabic headers.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ─── Period parsing ────────────────────────────────────────────────────────
-// Accepts either:
-//   ?period=this_month|last_month|this_quarter|last_quarter|this_year|last_year|custom
-//   ?from=YYYY-MM-DD&to=YYYY-MM-DD  (required when period=custom or omitted)
-// Defaults to `this_month`. Returns inclusive [from, to] ISO dates plus a
-// previous-period window of identical length for growth comparisons.
-//
-// Calendar boundaries (UTC):
-//   month   → 1st .. last day of the month
-//   quarter → Jan/Apr/Jul/Oct 1st .. end of Mar/Jun/Sep/Dec
-//   year    → Jan 1 .. Dec 31
+// ?period=<preset>|custom (+ ?from/&to when custom). Returns inclusive [from,to]
+// plus an equal-length previous window anchored just before `from`.
 const PERIOD_PRESETS = [
   "this_month", "last_month",
   "this_quarter", "last_quarter",
@@ -2756,12 +2740,8 @@ router.get("/reports/summary", requireSuperAdmin, async (_req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  GET /api/admin/reports/company-performance
-// ───────────────────────────────────────────────────────────────────────────
-//  Per-company revenue, invoice count, AOV, and growth % vs the previous
-//  period of equal length. Sorted by revenue desc by default.
-// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/admin/reports/company-performance — revenue/invoices/AOV/growth%
+// per company within the period, scoped to companies with an active sub.
 router.get("/reports/company-performance", requireSuperAdmin, async (req, res) => {
   try {
     const period = parsePeriod(req);
@@ -2769,26 +2749,37 @@ router.get("/reports/company-performance", requireSuperAdmin, async (req, res) =
     const search = typeof req.query?.search === "string" ? req.query.search : undefined;
     const format = req.query?.format === "csv" ? "csv" : "json";
 
+    // Companies with a currently-active subscription only (per task spec).
+    const today = todayISO();
+
     const [currResult, prevResult, companiesList] = await Promise.all([
       db.execute<RevenueRow>(sql`
-        SELECT company_id,
-               COALESCE(SUM(total_amount), 0)::text AS revenue,
-               COUNT(*)::int                        AS invoice_count
-          FROM sales_invoices
-         WHERE status = 'posted'
-           AND invoice_date >= ${period.from}
-           AND invoice_date <= ${period.to}
-         GROUP BY company_id
+        SELECT si.company_id,
+               COALESCE(SUM(si.total_amount), 0)::text AS revenue,
+               COUNT(*)::int                           AS invoice_count
+          FROM sales_invoices si
+          JOIN subscriptions sub
+            ON sub.company_id = si.company_id
+           AND sub.is_active = true
+           AND sub.end_date >= ${today}
+         WHERE si.status = 'posted'
+           AND si.invoice_date >= ${period.from}
+           AND si.invoice_date <= ${period.to}
+         GROUP BY si.company_id
       `),
       db.execute<RevenueRow>(sql`
-        SELECT company_id,
-               COALESCE(SUM(total_amount), 0)::text AS revenue,
-               COUNT(*)::int                        AS invoice_count
-          FROM sales_invoices
-         WHERE status = 'posted'
-           AND invoice_date >= ${period.prevFrom}
-           AND invoice_date <= ${period.prevTo}
-         GROUP BY company_id
+        SELECT si.company_id,
+               COALESCE(SUM(si.total_amount), 0)::text AS revenue,
+               COUNT(*)::int                           AS invoice_count
+          FROM sales_invoices si
+          JOIN subscriptions sub
+            ON sub.company_id = si.company_id
+           AND sub.is_active = true
+           AND sub.end_date >= ${today}
+         WHERE si.status = 'posted'
+           AND si.invoice_date >= ${period.prevFrom}
+           AND si.invoice_date <= ${period.prevTo}
+         GROUP BY si.company_id
       `),
       db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status })
         .from(companiesTable)
