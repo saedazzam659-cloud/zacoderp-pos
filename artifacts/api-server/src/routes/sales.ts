@@ -11,7 +11,7 @@ import {
   salesRepsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
@@ -241,7 +241,10 @@ router.get("/sales-invoices", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(salesInvoicesTable)
-      .where(eq(salesInvoicesTable.companyId, cid))
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, req.query.branchId),
+      ))
       .orderBy(desc(salesInvoicesTable.invoiceDate));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -692,7 +695,10 @@ router.get("/sales-returns", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(salesReturnsTable)
-      .where(eq(salesReturnsTable.companyId, cid))
+      .where(and(
+        eq(salesReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, req.query.branchId),
+      ))
       .orderBy(desc(salesReturnsTable.returnDate));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1474,7 +1480,7 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
       ))
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
-        ...(bid ? [eq(salesInvoicesTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
     res.json(rows);

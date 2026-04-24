@@ -41,6 +41,8 @@ const ALLOWLIST = new Set([
   // Pages that legitimately do not need a branch filter (e.g. reports that
   // operate on entities without a branchId column). Add the BASENAME only,
   // and document why next to it.
+  "VATDeclaration.tsx", // ZATCA invoicesTable has no branchId column — VAT declaration aggregates across all branches.
+  "LowStockReport.tsx", // warehousesTable has no branchId column — stock balance is per-warehouse only.
 ]);
 
 function walk(dir, out = []) {

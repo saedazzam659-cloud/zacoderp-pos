@@ -133,3 +133,80 @@ export function intersectBranchRequest(
   if (requested == null) return null; // let scope filter handle it
   return allowed.includes(Number(requested)) ? Number(requested) : "deny";
 }
+
+/**
+ * One-stop branch enforcement for any list / aggregate endpoint.
+ *
+ * Combines the explicit `?branchId=` query param chosen by the caller with
+ * the per-user `viewAllBranches` / `userBranches` scope. Returns either:
+ *
+ *   { deny: true }                 → restricted user requested a branch
+ *                                    they are not linked to. Caller should
+ *                                    short-circuit with an empty result.
+ *   { cond: <Drizzle SQL | undef>} → AND-able condition for the WHERE
+ *                                    clause. May be `undefined` (admin /
+ *                                    superadmin / viewAll user with no
+ *                                    explicit filter) — in that case the
+ *                                    caller pushes nothing.
+ *
+ * Usage:
+ *   const branch = effectiveBranchCondition(req, salesInvoicesTable.branchId, req.query.branchId);
+ *   if (branch.deny) return res.json([]);
+ *   const where = and(eq(salesInvoicesTable.companyId, cid), branch.cond);
+ */
+export function effectiveBranchCondition(
+  req: Request,
+  branchColumn: any,
+  requestedRaw: unknown,
+): { deny: true } | { deny?: false; cond: any | undefined } {
+  const reqId =
+    requestedRaw === undefined || requestedRaw === null || requestedRaw === ""
+      ? null
+      : Number(requestedRaw);
+  const intersect = intersectBranchRequest(
+    req,
+    Number.isFinite(reqId as number) ? (reqId as number) : null,
+  );
+  if (intersect === "deny") return { deny: true };
+  if (typeof intersect === "number") return { cond: eq(branchColumn, intersect) };
+  return { cond: branchScopeFilter(req, branchColumn) };
+}
+
+/**
+ * Convenience: pushes the effective branch condition into a conds[] array.
+ *
+ * Returns "deny" so callers MAY short-circuit to an empty response, but
+ * also pushes `sql\`false\`` on deny so that callers which forget to check
+ * still produce zero rows instead of leaking unfiltered data.
+ */
+export function pushBranchScope(
+  req: Request,
+  conds: any[],
+  branchColumn: any,
+  requestedRaw: unknown,
+): "ok" | "deny" {
+  const r = effectiveBranchCondition(req, branchColumn, requestedRaw);
+  if (r.deny) {
+    conds.push(sql`false`);
+    return "deny";
+  }
+  if (r.cond) conds.push(r.cond);
+  return "ok";
+}
+
+/**
+ * Convenience: returns an array of conditions to spread into an existing
+ * `and(...)` / `where(and(...))` clause. Empty array means no restriction.
+ * Important: a "deny" (restricted user requesting a forbidden branch) is
+ * encoded as `[sql\`false\`]` so the surrounding query still returns zero
+ * rows without the caller having to short-circuit.
+ */
+export function branchScopeSpread(
+  req: Request,
+  branchColumn: any,
+  requestedRaw: unknown,
+): any[] {
+  const r = effectiveBranchCondition(req, branchColumn, requestedRaw);
+  if (r.deny) return [sql`false`];
+  return r.cond ? [r.cond] : [];
+}

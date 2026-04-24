@@ -90,7 +90,8 @@ interface VATData {
 }
 
 async function fetchVAT(from: string, to: string): Promise<VATData> {
-  const res = await fetch(`${API}/api/reports/vat-declaration?from=${from}&to=${to}`, { credentials: "include" });
+  const qs = `from=${from}&to=${to}`;
+  const res = await fetch(`${API}/api/reports/vat-declaration?${qs}`, { credentials: "include" });
   if (!res.ok) throw new Error("فشل في تحميل البيانات");
   return res.json();
 }
@@ -196,7 +197,7 @@ export default function VATDeclaration() {
           <h1 className="text-xl font-bold">الإقرار الضريبي على القيمة المضافة</h1>
           <p className="text-xs text-muted-foreground mt-0.5">هيئة الزكاة والضريبة والجمارك — نموذج الإقرار الدوري</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-end gap-2">
           <Select value={selectedKey} onValueChange={v => setSelectedKey(v as PeriodKey)}>
             <SelectTrigger className="w-48 h-9 text-sm gap-2">
               <CalendarRange className="h-3.5 w-3.5 text-muted-foreground" />

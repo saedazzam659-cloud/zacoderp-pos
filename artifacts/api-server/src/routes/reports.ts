@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { invoicesTable, companiesTable } from "@workspace/db";
 import { eq, and, gte, lte } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -38,7 +38,9 @@ router.get("/vat-declaration", async (req, res) => {
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, companyId))
     : [];
 
-  // Fetch issued invoices in range
+  // NOTE: ZATCA `invoicesTable` has no branchId column, so this report
+  // intentionally aggregates across all branches. See audit-branch-filter.cjs
+  // ALLOWLIST entry for VATDeclaration.tsx for the rationale.
   const invoices = companyId
     ? await db.select().from(invoicesTable).where(
         and(

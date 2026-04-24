@@ -10,7 +10,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
@@ -332,7 +332,10 @@ router.get("/purchase-invoices", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(purchaseInvoicesTable)
-      .where(eq(purchaseInvoicesTable.companyId, cid))
+      .where(and(
+        eq(purchaseInvoicesTable.companyId, cid),
+        ...branchScopeSpread(req, purchaseInvoicesTable.branchId, req.query.branchId),
+      ))
       .orderBy(desc(purchaseInvoicesTable.invoiceDate));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -715,7 +718,10 @@ router.get("/purchase-returns", async (req, res) => {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
     const rows = await db.select().from(purchaseReturnsTable)
-      .where(eq(purchaseReturnsTable.companyId, cid))
+      .where(and(
+        eq(purchaseReturnsTable.companyId, cid),
+        ...branchScopeSpread(req, purchaseReturnsTable.branchId, req.query.branchId),
+      ))
       .orderBy(desc(purchaseReturnsTable.returnDate));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

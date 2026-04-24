@@ -4,8 +4,8 @@ import {
   cashBoxesTable, bankAccountsTable,
   receiptVouchersTable, paymentVouchersTable, cashTransfersTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { and, eq, sql, gte, lte, asc, inArray, or } from "drizzle-orm";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -24,6 +24,27 @@ function getBid(req: any): number | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Resolves the effective allowed-branch set for endpoints that filter
+ * accounts (cash boxes / bank accounts) by branch:
+ *   - deny=true                     → restricted user requested a forbidden branch
+ *   - allowedSet=null               → no restriction (admin/superadmin, no filter)
+ *   - allowedSet=[]                 → restricted user with zero branches (empty result)
+ *   - allowedSet=[N]                → restricted to a single branch (explicit or auto)
+ *   - allowedSet=[N1,N2,...]        → restricted to user's allowed list
+ */
+function resolveAllowedBranchSet(
+  req: any,
+  bid: number | undefined,
+): { deny: boolean; allowedSet: number[] | null } {
+  const allowed = getAllowedBranchIds(req);
+  if (bid !== undefined) {
+    if (allowed !== null && !allowed.includes(bid)) return { deny: true, allowedSet: [] };
+    return { deny: false, allowedSet: [bid] };
+  }
+  return { deny: false, allowedSet: allowed };
 }
 
 const TRANSFER_TYPE_LABEL: Record<string, string> = {
@@ -55,7 +76,14 @@ router.get("/cash-balances", async (req, res) => {
     const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
-    const boxes = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
+    const scope = resolveAllowedBranchSet(req, bid);
+    if (scope.deny) { res.json([]); return; }
+    const boxConds: any[] = [eq(cashBoxesTable.companyId, cid)];
+    if (scope.allowedSet) {
+      if (scope.allowedSet.length === 0) { res.json([]); return; }
+      boxConds.push(inArray(cashBoxesTable.branchId, scope.allowedSet));
+    }
+    const boxes = await db.select().from(cashBoxesTable).where(and(...boxConds));
 
     const inAgg = await db.select({
       cashBoxId: receiptVouchersTable.cashBoxId,
@@ -67,7 +95,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "cash"),
         lte(receiptVouchersTable.date, asOf),
-        ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.cashBoxId);
 
@@ -81,10 +109,13 @@ router.get("/cash-balances", async (req, res) => {
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "cash"),
         lte(paymentVouchersTable.date, asOf),
-        ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
       .groupBy(paymentVouchersTable.cashBoxId);
 
+    // NOTE: cashTransfersTable has no branchId column (transfers are
+    // inter-account movements; branch is implicit in the source/destination
+    // cash box / bank account). Skip branch filter on transfers.
     const trIn = await db.select({
       cashBoxId: cashTransfersTable.toCashBoxId,
       total:     sql<string>`coalesce(sum(${cashTransfersTable.amount}), 0)`,
@@ -94,7 +125,6 @@ router.get("/cash-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
-        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.toCashBoxId);
 
@@ -107,7 +137,6 @@ router.get("/cash-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
-        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.fromCashBoxId);
 
@@ -141,7 +170,14 @@ router.get("/bank-balances", async (req, res) => {
     const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
-    const banks = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
+    const scope = resolveAllowedBranchSet(req, bid);
+    if (scope.deny) { res.json([]); return; }
+    const bankConds: any[] = [eq(bankAccountsTable.companyId, cid)];
+    if (scope.allowedSet) {
+      if (scope.allowedSet.length === 0) { res.json([]); return; }
+      bankConds.push(inArray(bankAccountsTable.branchId, scope.allowedSet));
+    }
+    const banks = await db.select().from(bankAccountsTable).where(and(...bankConds));
 
     const inAgg = await db.select({
       bankAccountId: receiptVouchersTable.bankAccountId,
@@ -153,7 +189,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "bank"),
         lte(receiptVouchersTable.date, asOf),
-        ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.bankAccountId);
 
@@ -167,10 +203,11 @@ router.get("/bank-balances", async (req, res) => {
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "bank"),
         lte(paymentVouchersTable.date, asOf),
-        ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
       ))
       .groupBy(paymentVouchersTable.bankAccountId);
 
+    // Transfers: no branchId on cashTransfersTable (see note in /cash-balances).
     const trIn = await db.select({
       bankAccountId: cashTransfersTable.toBankId,
       total: sql<string>`coalesce(sum(${cashTransfersTable.amount}), 0)`,
@@ -180,7 +217,6 @@ router.get("/bank-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
-        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.toBankId);
 
@@ -193,7 +229,6 @@ router.get("/bank-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
-        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.fromBankId);
 
@@ -228,6 +263,7 @@ type StatementLine = {
 };
 
 async function buildAccountStatement(opts: {
+  req: any;
   cid: number;
   kind: "cash" | "bank";
   accountId: number;
@@ -235,14 +271,17 @@ async function buildAccountStatement(opts: {
   to?: string;
   bid?: number;
 }) {
-  const { cid, kind, accountId, from, to, bid } = opts;
+  const { req, cid, kind, accountId, from, to, bid } = opts;
   const idCol = kind === "cash" ? receiptVouchersTable.cashBoxId : receiptVouchersTable.bankAccountId;
   const idCol2 = kind === "cash" ? paymentVouchersTable.cashBoxId : paymentVouchersTable.bankAccountId;
   const trToCol   = kind === "cash" ? cashTransfersTable.toCashBoxId   : cashTransfersTable.toBankId;
   const trFromCol = kind === "cash" ? cashTransfersTable.fromCashBoxId : cashTransfersTable.fromBankId;
   const paymentType = kind === "cash" ? "cash" : "bank";
 
-  async function priorSum(table: any, col: any, dateCol: any, extraConds: any[] = []) {
+  // Branch filter applies only to receipts/payments (which have a branchId).
+  // Transfers are inter-account movements and cashTransfersTable has no
+  // branchId column, so transfers are included unfiltered for both branches.
+  async function priorSumVoucher(table: any, col: any, dateCol: any, extraConds: any[] = []) {
     if (!from) return 0;
     const [row] = await db.select({ s: sql<string>`coalesce(sum(${table.amount}), 0)` })
       .from(table)
@@ -251,18 +290,30 @@ async function buildAccountStatement(opts: {
         eq(table.status, "posted"),
         eq(col, accountId),
         ...extraConds,
-        ...(bid ? [eq(table.branchId, bid)] : []),
+        ...branchScopeSpread(req, table.branchId, bid),
         sql`${dateCol} < ${from}`,
+      ));
+    return Number(row.s);
+  }
+  async function priorSumTransfer(col: any) {
+    if (!from) return 0;
+    const [row] = await db.select({ s: sql<string>`coalesce(sum(${cashTransfersTable.amount}), 0)` })
+      .from(cashTransfersTable)
+      .where(and(
+        eq(cashTransfersTable.companyId, cid),
+        eq(cashTransfersTable.status, "posted"),
+        eq(col, accountId),
+        sql`${cashTransfersTable.date} < ${from}`,
       ));
     return Number(row.s);
   }
 
   // Opening balance = (receipts before from) + (transfers in before from)
   //                 - (payments before from) - (transfers out before from)
-  const openIn  = await priorSum(receiptVouchersTable, idCol,  receiptVouchersTable.date, [eq(receiptVouchersTable.paymentType, paymentType)]);
-  const openOut = await priorSum(paymentVouchersTable, idCol2, paymentVouchersTable.date, [eq(paymentVouchersTable.paymentType, paymentType)]);
-  const openTrIn  = await priorSum(cashTransfersTable, trToCol,   cashTransfersTable.date);
-  const openTrOut = await priorSum(cashTransfersTable, trFromCol, cashTransfersTable.date);
+  const openIn  = await priorSumVoucher(receiptVouchersTable, idCol,  receiptVouchersTable.date, [eq(receiptVouchersTable.paymentType, paymentType)]);
+  const openOut = await priorSumVoucher(paymentVouchersTable, idCol2, paymentVouchersTable.date, [eq(paymentVouchersTable.paymentType, paymentType)]);
+  const openTrIn  = await priorSumTransfer(trToCol);
+  const openTrOut = await priorSumTransfer(trFromCol);
   const opening = openIn + openTrIn - openOut - openTrOut;
 
   // Receipts (debit)
@@ -272,7 +323,7 @@ async function buildAccountStatement(opts: {
     eq(receiptVouchersTable.paymentType, paymentType),
     eq(idCol, accountId),
   ];
-  if (bid)  recConds.push(eq(receiptVouchersTable.branchId, bid));
+  pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
   if (from) recConds.push(gte(receiptVouchersTable.date, from));
   if (to)   recConds.push(lte(receiptVouchersTable.date, to));
   const receipts = await db.select({
@@ -288,7 +339,7 @@ async function buildAccountStatement(opts: {
     eq(paymentVouchersTable.paymentType, paymentType),
     eq(idCol2, accountId),
   ];
-  if (bid)  payConds.push(eq(paymentVouchersTable.branchId, bid));
+  pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
   if (from) payConds.push(gte(paymentVouchersTable.date, from));
   if (to)   payConds.push(lte(paymentVouchersTable.date, to));
   const payments = await db.select({
@@ -297,13 +348,12 @@ async function buildAccountStatement(opts: {
     entityName: paymentVouchersTable.entityName, description: paymentVouchersTable.description,
   }).from(paymentVouchersTable).where(and(...payConds));
 
-  // Transfers in (debit) and out (credit)
+  // Transfers in (debit) and out (credit) — no branch filter (see note above).
   const trInConds: any[] = [
     eq(cashTransfersTable.companyId, cid),
     eq(cashTransfersTable.status, "posted"),
     eq(trToCol, accountId),
   ];
-  if (bid)  trInConds.push(eq(cashTransfersTable.branchId, bid));
   if (from) trInConds.push(gte(cashTransfersTable.date, from));
   if (to)   trInConds.push(lte(cashTransfersTable.date, to));
   const transfersIn = await db.select({
@@ -317,7 +367,6 @@ async function buildAccountStatement(opts: {
     eq(cashTransfersTable.status, "posted"),
     eq(trFromCol, accountId),
   ];
-  if (bid)  trOutConds.push(eq(cashTransfersTable.branchId, bid));
   if (from) trOutConds.push(gte(cashTransfersTable.date, from));
   if (to)   trOutConds.push(lte(cashTransfersTable.date, to));
   const transfersOut = await db.select({
@@ -360,7 +409,14 @@ router.get("/cash-box-statement", async (req, res) => {
     const { cashBoxId, from, to } = req.query as Record<string, string>;
     const id = Number(cashBoxId);
     if (!cashBoxId || !Number.isFinite(id)) { res.status(400).json({ error: "cashBoxId مطلوب" }); return; }
-    const data = await buildAccountStatement({ cid, kind: "cash", accountId: id, from, to, bid });
+    // Authorize: ensure cash box belongs to the user's allowed branches
+    const scope = resolveAllowedBranchSet(req, bid);
+    if (scope.deny) { res.json({ opening: 0, lines: [] }); return; }
+    const [box] = await db.select({ branchId: cashBoxesTable.branchId, companyId: cashBoxesTable.companyId })
+      .from(cashBoxesTable).where(eq(cashBoxesTable.id, id)).limit(1);
+    if (!box || box.companyId !== cid) { res.json({ opening: 0, lines: [] }); return; }
+    if (scope.allowedSet && !scope.allowedSet.includes(box.branchId)) { res.json({ opening: 0, lines: [] }); return; }
+    const data = await buildAccountStatement({ req, cid, kind: "cash", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -373,7 +429,14 @@ router.get("/bank-statement", async (req, res) => {
     const { bankAccountId, from, to } = req.query as Record<string, string>;
     const id = Number(bankAccountId);
     if (!bankAccountId || !Number.isFinite(id)) { res.status(400).json({ error: "bankAccountId مطلوب" }); return; }
-    const data = await buildAccountStatement({ cid, kind: "bank", accountId: id, from, to, bid });
+    // Authorize: ensure bank account belongs to the user's allowed branches
+    const scope = resolveAllowedBranchSet(req, bid);
+    if (scope.deny) { res.json({ opening: 0, lines: [] }); return; }
+    const [bank] = await db.select({ branchId: bankAccountsTable.branchId, companyId: bankAccountsTable.companyId })
+      .from(bankAccountsTable).where(eq(bankAccountsTable.id, id)).limit(1);
+    if (!bank || bank.companyId !== cid) { res.json({ opening: 0, lines: [] }); return; }
+    if (scope.allowedSet && !scope.allowedSet.includes(bank.branchId)) { res.json({ opening: 0, lines: [] }); return; }
+    const data = await buildAccountStatement({ req, cid, kind: "bank", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -389,7 +452,7 @@ router.get("/daily-summary", async (req, res) => {
     const { from, to, scope = "all" } = req.query as Record<string, string>;
 
     const recConds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
-    if (bid) recConds.push(eq(receiptVouchersTable.branchId, bid));
+    pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (scope === "cash") recConds.push(eq(receiptVouchersTable.paymentType, "cash"));
     else if (scope === "bank") recConds.push(eq(receiptVouchersTable.paymentType, "bank"));
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
@@ -403,7 +466,7 @@ router.get("/daily-summary", async (req, res) => {
       .groupBy(receiptVouchersTable.date);
 
     const payConds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
-    if (bid) payConds.push(eq(paymentVouchersTable.branchId, bid));
+    pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
     if (scope === "cash") payConds.push(eq(paymentVouchersTable.paymentType, "cash"));
     else if (scope === "bank") payConds.push(eq(paymentVouchersTable.paymentType, "bank"));
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -448,7 +511,7 @@ router.get("/receipts", async (req, res) => {
     const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
     const conds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
-    if (bid)  conds.push(eq(receiptVouchersTable.branchId, bid));
+    pushBranchScope(req, conds, receiptVouchersTable.branchId, bid);
     if (from) conds.push(gte(receiptVouchersTable.date, from));
     if (to)   conds.push(lte(receiptVouchersTable.date, to));
     if (paymentType === "cash" || paymentType === "bank") conds.push(eq(receiptVouchersTable.paymentType, paymentType));
@@ -477,7 +540,7 @@ router.get("/payments", async (req, res) => {
     const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
     const conds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
-    if (bid)  conds.push(eq(paymentVouchersTable.branchId, bid));
+    pushBranchScope(req, conds, paymentVouchersTable.branchId, bid);
     if (from) conds.push(gte(paymentVouchersTable.date, from));
     if (to)   conds.push(lte(paymentVouchersTable.date, to));
     if (paymentType === "cash" || paymentType === "bank") conds.push(eq(paymentVouchersTable.paymentType, paymentType));
@@ -506,7 +569,42 @@ router.get("/transfers", async (req, res) => {
     const bid = getBid(req);
     const { from, to, transferType } = req.query as Record<string, string>;
     const conds: any[] = [eq(cashTransfersTable.companyId, cid), eq(cashTransfersTable.status, "posted")];
-    if (bid)  conds.push(eq(cashTransfersTable.branchId, bid));
+
+    // Branch scoping for transfers: cashTransfersTable has no branchId, so
+    // derive scope from the source/dest cash box and bank account branchIds.
+    // A transfer is visible if EITHER endpoint belongs to an allowed branch.
+    const allowed = getAllowedBranchIds(req);
+    let allowedSet: number[] | null = null;
+    if (bid !== undefined) {
+      // explicit branch filter
+      if (allowed !== null && !allowed.includes(bid)) {
+        // restricted user requested forbidden branch → empty
+        res.json([]); return;
+      }
+      allowedSet = [bid];
+    } else if (allowed !== null) {
+      if (allowed.length === 0) { res.json([]); return; }
+      allowedSet = allowed;
+    }
+    if (allowedSet) {
+      const cbIds = (await db.select({ id: cashBoxesTable.id })
+        .from(cashBoxesTable)
+        .where(and(eq(cashBoxesTable.companyId, cid), inArray(cashBoxesTable.branchId, allowedSet)))).map(r => r.id);
+      const baIds = (await db.select({ id: bankAccountsTable.id })
+        .from(bankAccountsTable)
+        .where(and(eq(bankAccountsTable.companyId, cid), inArray(bankAccountsTable.branchId, allowedSet)))).map(r => r.id);
+      const branchClauses: any[] = [];
+      if (cbIds.length) {
+        branchClauses.push(inArray(cashTransfersTable.fromCashBoxId, cbIds));
+        branchClauses.push(inArray(cashTransfersTable.toCashBoxId,   cbIds));
+      }
+      if (baIds.length) {
+        branchClauses.push(inArray(cashTransfersTable.fromBankId, baIds));
+        branchClauses.push(inArray(cashTransfersTable.toBankId,   baIds));
+      }
+      if (branchClauses.length === 0) { res.json([]); return; }
+      conds.push(or(...branchClauses));
+    }
     if (from) conds.push(gte(cashTransfersTable.date, from));
     if (to)   conds.push(lte(cashTransfersTable.date, to));
     if (transferType === "cash_to_cash" || transferType === "cash_to_bank" ||
@@ -516,8 +614,18 @@ router.get("/transfers", async (req, res) => {
     const rows = await db.select().from(cashTransfersTable).where(and(...conds))
       .orderBy(asc(cashTransfersTable.date), asc(cashTransfersTable.id));
 
-    const boxes = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
-    const banks = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
+    // Name lookups must be scoped to allowed branches too — otherwise a
+    // restricted user viewing a transfer with one allowed and one forbidden
+    // endpoint would see the forbidden account's name. Unauthorized
+    // counterparts are masked as "—" below.
+    const boxConds: any[] = [eq(cashBoxesTable.companyId, cid)];
+    const bankConds: any[] = [eq(bankAccountsTable.companyId, cid)];
+    if (allowedSet) {
+      boxConds.push(inArray(cashBoxesTable.branchId, allowedSet));
+      bankConds.push(inArray(bankAccountsTable.branchId, allowedSet));
+    }
+    const boxes = await db.select().from(cashBoxesTable).where(and(...boxConds));
+    const banks = await db.select().from(bankAccountsTable).where(and(...bankConds));
     const boxMap  = new Map(boxes.map(b => [b.id, b.nameAr]));
     const bankMap = new Map(banks.map(b => [b.id, b.nameAr]));
 

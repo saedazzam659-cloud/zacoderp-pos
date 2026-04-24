@@ -10,7 +10,7 @@ import {
   accountsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
 
 const router = Router();
@@ -836,8 +836,11 @@ router.get("/stock-balance", async (req, res) => {
   const cid = getCompanyId(req);
   if (!cid) { res.json([]); return; }
   const { warehouseId } = req.query as Record<string, string>;
-  const conditions = [eq(stockBalanceTable.companyId, cid)];
+  const conditions: any[] = [eq(stockBalanceTable.companyId, cid)];
   if (warehouseId) conditions.push(eq(stockBalanceTable.warehouseId, Number(warehouseId)));
+  // NOTE: `warehousesTable` has no branchId column, so stock balance is
+  // intentionally not filterable by branch. See ALLOWLIST entry for
+  // LowStockReport.tsx in audit-branch-filter.cjs for rationale.
   const rows = await db.select({ bal: stockBalanceTable, item: itemsTable, wh: warehousesTable, group: itemGroupsTable, unit: unitsTable })
     .from(stockBalanceTable)
     .leftJoin(itemsTable,       eq(stockBalanceTable.itemId,      itemsTable.id))

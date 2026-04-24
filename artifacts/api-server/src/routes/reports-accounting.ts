@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -26,15 +26,19 @@ function getBid(req: any): number | undefined {
 }
 
 // ─── helper: get account balances (aggregated from lines) ─────────────────────
-async function getAccountBalances(cid: number, fromDate?: string, toDate?: string, branchId?: number) {
+async function getAccountBalances(req: Request, cid: number, fromDate?: string, toDate?: string, branchId?: number) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
     .orderBy(asc(accountsTable.code));
 
-  // Build date filter for journal entries
+  // Build date filter for journal entries (per-user branch scope is enforced
+  // through pushBranchScope so a restricted user can only ever aggregate
+  // balances over the journal entries of their linked branches).
   const entryFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
-  if (branchId) entryFilters.push(eq(journalEntriesTable.branchId, branchId));
+  if (pushBranchScope(req, entryFilters, journalEntriesTable.branchId, branchId) === "deny") {
+    return [] as any[];
+  }
   if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
   if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
 
@@ -72,7 +76,7 @@ router.get("/trial-balance", async (req, res) => {
     if (!cid) { res.json([]); return; }
     const bid = getBid(req);
     const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(cid, fromDate, toDate, bid);
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid);
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -84,7 +88,7 @@ router.get("/balance-sheet", async (req, res) => {
     if (!cid) { res.json({}); return; }
     const bid = getBid(req);
     const { asOfDate } = req.query as any;
-    const rows = await getAccountBalances(cid, undefined, asOfDate, bid);
+    const rows = await getAccountBalances(req, cid, undefined, asOfDate, bid);
 
     const assets      = rows.filter(r => r.accountType === "asset");
     const liabilities = rows.filter(r => r.accountType === "liability");
@@ -110,7 +114,7 @@ router.get("/income-statement", async (req, res) => {
     if (!cid) { res.json({}); return; }
     const bid = getBid(req);
     const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(cid, fromDate, toDate, bid);
+    const rows = await getAccountBalances(req, cid, fromDate, toDate, bid);
 
     const revenues  = rows.filter(r => r.accountType === "revenue");
     const expenses  = rows.filter(r => r.accountType === "expense");
@@ -141,7 +145,7 @@ router.get("/account-statement", async (req, res) => {
     const entryFilters: any[] = [
       eq(journalEntriesTable.companyId, cid),
     ];
-    if (bid)      entryFilters.push(eq(journalEntriesTable.branchId, bid));
+    pushBranchScope(req, entryFilters, journalEntriesTable.branchId, bid);
     if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
     if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
 

@@ -7,7 +7,7 @@ import {
   receiptVouchersTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -41,7 +41,7 @@ router.get("/by-customer", async (req, res) => {
     const { from, to } = req.query as Record<string, string>;
 
     const invConds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
-    if (bid)  invConds.push(eq(salesInvoicesTable.branchId, bid));
+    pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
 
@@ -58,7 +58,7 @@ router.get("/by-customer", async (req, res) => {
       .groupBy(salesInvoicesTable.customerId);
 
     const retConds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
-    if (bid)  retConds.push(eq(salesReturnsTable.branchId, bid));
+    pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
 
@@ -76,7 +76,7 @@ router.get("/by-customer", async (req, res) => {
       eq(receiptVouchersTable.status, "posted"),
       eq(receiptVouchersTable.entityType, "customer"),
     ];
-    if (bid)  recConds.push(eq(receiptVouchersTable.branchId, bid));
+    pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
     if (to)   recConds.push(lte(receiptVouchersTable.date, to));
     const recAgg = await db
@@ -152,7 +152,7 @@ router.get("/by-item", async (req, res) => {
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
-    if (bid)  conds.push(eq(salesInvoicesTable.branchId, bid));
+    pushBranchScope(req, conds, salesInvoicesTable.branchId, bid);
     if (from) conds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(salesInvoicesTable.invoiceDate, to));
 
@@ -193,7 +193,7 @@ router.get("/by-period", async (req, res) => {
     const bid = getBid(req);
     const { from, to, groupBy } = req.query as Record<string, string>;
     const conds = [eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.status, "posted")];
-    if (bid)  conds.push(eq(salesInvoicesTable.branchId, bid));
+    pushBranchScope(req, conds, salesInvoicesTable.branchId, bid);
     if (from) conds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(salesInvoicesTable.invoiceDate, to));
 
@@ -248,7 +248,7 @@ router.get("/customer-statement", async (req, res) => {
           eq(salesInvoicesTable.status, "posted"),
           eq(salesInvoicesTable.paymentType, "credit"),
           sql`${salesInvoicesTable.invoiceDate} < ${date}`,
-          ...(bid ? [eq(salesInvoicesTable.branchId, bid)] : []),
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
         ));
       const [ret] = await db.select({ s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)` })
         .from(salesReturnsTable)
@@ -258,7 +258,7 @@ router.get("/customer-statement", async (req, res) => {
           eq(salesReturnsTable.status, "posted"),
           eq(salesReturnsTable.paymentType, "credit"),
           sql`${salesReturnsTable.returnDate} < ${date}`,
-          ...(bid ? [eq(salesReturnsTable.branchId, bid)] : []),
+          ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
         ));
       const [rec] = await db.select({ s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)` })
         .from(receiptVouchersTable)
@@ -268,7 +268,7 @@ router.get("/customer-statement", async (req, res) => {
           eq(receiptVouchersTable.entityId, ccid),
           eq(receiptVouchersTable.status, "posted"),
           sql`${receiptVouchersTable.date} < ${date}`,
-          ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
+          ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
         ));
       return Number(inv.s) - Number(ret.s) - Number(rec.s);
     }
@@ -281,7 +281,7 @@ router.get("/customer-statement", async (req, res) => {
       eq(salesInvoicesTable.status, "posted"),
       eq(salesInvoicesTable.paymentType, "credit"),
     ];
-    if (bid)  invConds.push(eq(salesInvoicesTable.branchId, bid));
+    pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
     const invs = await db.select({
@@ -295,7 +295,7 @@ router.get("/customer-statement", async (req, res) => {
       eq(salesReturnsTable.status, "posted"),
       eq(salesReturnsTable.paymentType, "credit"),
     ];
-    if (bid)  retConds.push(eq(salesReturnsTable.branchId, bid));
+    pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
     const rets = await db.select({
@@ -309,7 +309,7 @@ router.get("/customer-statement", async (req, res) => {
       eq(receiptVouchersTable.entityId, ccid),
       eq(receiptVouchersTable.status, "posted"),
     ];
-    if (bid)  recConds.push(eq(receiptVouchersTable.branchId, bid));
+    pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
     if (to)   recConds.push(lte(receiptVouchersTable.date, to));
     const recs = await db.select({
@@ -354,7 +354,7 @@ router.get("/aging", async (req, res) => {
         eq(salesInvoicesTable.status, "posted"),
         eq(salesInvoicesTable.paymentType, "credit"),
         lte(salesInvoicesTable.invoiceDate, asOf),
-        ...(bid ? [eq(salesInvoicesTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .orderBy(asc(salesInvoicesTable.invoiceDate), asc(salesInvoicesTable.id));
 
@@ -370,7 +370,7 @@ router.get("/aging", async (req, res) => {
         eq(salesReturnsTable.status, "posted"),
         eq(salesReturnsTable.paymentType, "credit"),
         lte(salesReturnsTable.returnDate, asOf),
-        ...(bid ? [eq(salesReturnsTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ))
       .groupBy(salesReturnsTable.customerId);
 
@@ -385,7 +385,7 @@ router.get("/aging", async (req, res) => {
         eq(receiptVouchersTable.entityType, "customer"),
         eq(receiptVouchersTable.status, "posted"),
         lte(receiptVouchersTable.date, asOf),
-        ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
+        ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.entityId);
 
@@ -452,7 +452,7 @@ router.get("/returns-by-customer", async (req, res) => {
     const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(salesReturnsTable.companyId, cid), eq(salesReturnsTable.status, "posted")];
-    if (bid)  conds.push(eq(salesReturnsTable.branchId, bid));
+    pushBranchScope(req, conds, salesReturnsTable.branchId, bid);
     if (from) conds.push(gte(salesReturnsTable.returnDate, from));
     if (to)   conds.push(lte(salesReturnsTable.returnDate, to));
     const agg = await db

@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, accountsTable } from "@workspace/db";
 import { and, eq, sql, like, or } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 // Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
@@ -66,6 +66,7 @@ router.get("/balances", async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
     if (!companyId) { res.json([]); return; }
+    const bid = req.query.branchId ? Number(req.query.branchId) : undefined;
 
     const invs = await db
       .select({
@@ -77,6 +78,7 @@ router.get("/balances", async (req, res) => {
         eq(salesInvoicesTable.companyId, companyId),
         eq(salesInvoicesTable.status, "posted"),
         eq(salesInvoicesTable.paymentType, "credit"),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ))
       .groupBy(salesInvoicesTable.customerId);
 
@@ -89,6 +91,7 @@ router.get("/balances", async (req, res) => {
       .where(and(
         eq(salesReturnsTable.companyId, companyId),
         eq(salesReturnsTable.status, "posted"),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ))
       .groupBy(salesReturnsTable.customerId);
 
@@ -102,6 +105,7 @@ router.get("/balances", async (req, res) => {
         eq(receiptVouchersTable.companyId, companyId),
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.entityType, "customer"),
+        ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
       ))
       .groupBy(receiptVouchersTable.entityId);
 
