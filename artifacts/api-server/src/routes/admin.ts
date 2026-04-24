@@ -2686,13 +2686,21 @@ router.get("/reports/summary", requireSuperAdmin, async (_req, res) => {
     interface CountRow { n: number }
 
     const [revenueResult, billedResult, activeCompaniesResult, overLimitResult] = await Promise.all([
-      // Posted (non-draft) sales invoices in the current month, across all tenants.
+      // Posted (non-draft) sales invoices in the current month, restricted to
+      // companies with an active subscription (matches the spec's revenue rule
+      // and keeps this card consistent with the per-plan revenue report).
       db.execute<SumRow>(sql`
-        SELECT COALESCE(SUM(total_amount), 0)::text AS v
-          FROM sales_invoices
-         WHERE status = 'posted'
-           AND invoice_date >= ${monthStart}
-           AND invoice_date <= ${monthEnd}
+        SELECT COALESCE(SUM(si.total_amount), 0)::text AS v
+          FROM sales_invoices si
+         WHERE si.status = 'posted'
+           AND si.invoice_date >= ${monthStart}
+           AND si.invoice_date <= ${monthEnd}
+           AND EXISTS (
+             SELECT 1 FROM subscriptions s
+              WHERE s.company_id = si.company_id
+                AND s.is_active  = true
+                AND s.end_date  >= ${todayISO()}
+           )
       `),
       // Billed amount = SUM(price) of subscriptions that are currently active.
       db.execute<SumRow>(sql`
@@ -2846,35 +2854,38 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     const search = typeof req.query?.search === "string" ? req.query.search : undefined;
     const format = req.query?.format === "csv" ? "csv" : "json";
     const onlyInactive = req.query?.onlyInactive === "true" || req.query?.onlyInactive === "1";
+    const period = parsePeriod(req);
+    if ("error" in period) { res.status(400).json({ error: period.error }); return; }
+    const periodStart = period.from + "T00:00:00";
+    const periodEnd   = period.to   + "T23:59:59";
 
     const [opsResult, backupsResult, companiesList] = await Promise.all([
       // Per-company KPI roll-up. The outer FROM `companies` ensures every
       // tenant appears in the result even if all the join CTEs are empty.
-      // Per spec: counts are totals (no period), audit/denied are fixed
-      // last-7-days windows, and "last activity" is overall MAX(invoice_date).
+      // Audit events, denied attempts, and last-activity respect the
+      // selected reporting period.
       db.execute<OperationalRow>(sql`
         WITH c   AS (SELECT company_id, COUNT(*)::int n FROM customers GROUP BY company_id),
              s   AS (SELECT company_id, COUNT(*)::int n FROM suppliers GROUP BY company_id),
              i   AS (SELECT company_id, COUNT(*)::int n FROM items     GROUP BY company_id),
              pos AS (SELECT company_id, COUNT(*)::int n FROM pos_sessions WHERE status = 'open' GROUP BY company_id),
              la  AS (
-               -- Most recent posted invoice ever (used for the inactivity flag).
+               -- Last posted invoice within the selected period.
                SELECT company_id, MAX(invoice_date) AS last_invoice_at
                  FROM sales_invoices
                 WHERE status = 'posted'
+                  AND invoice_date BETWEEN ${period.from} AND ${period.to}
                 GROUP BY company_id
              ),
              ae  AS (
-               -- audit events within the last 7 days (fixed window per spec)
                SELECT company_id, COUNT(*)::int n FROM audit_log
-                WHERE created_at >= now() - interval '7 days'
+                WHERE created_at BETWEEN ${periodStart}::timestamp AND ${periodEnd}::timestamp
                 GROUP BY company_id
              ),
              de  AS (
-               -- denied attempts within the last 7 days (fixed window per spec)
                SELECT company_id, COUNT(*)::int n FROM audit_log
                 WHERE action = 'denied'
-                  AND created_at >= now() - interval '7 days'
+                  AND created_at BETWEEN ${periodStart}::timestamp AND ${periodEnd}::timestamp
                 GROUP BY company_id
              )
         SELECT co.id                       AS company_id,
@@ -2912,13 +2923,12 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     }
     const companyMap = new Map(companiesList.map(c => [c.id, c]));
 
-    // "Inactive" threshold = no posted invoice in the last 30 days (or ever).
-    const inactiveCutoffMs = Date.now() - 30 * 86_400_000;
     let rows = sqlRows<OperationalRow>(opsResult as SqlExecuteResult<OperationalRow>).map(r => {
       const cid = Number(r.company_id);
       const company = companyMap.get(cid);
       const lastInvoiceAt = r.last_invoice_at ?? null;
-      const inactive = !lastInvoiceAt || new Date(lastInvoiceAt).getTime() < inactiveCutoffMs;
+      // "Inactive" = no posted invoice within the selected reporting period.
+      const inactive = !lastInvoiceAt;
       const backup = backups.get(cid);
       return {
         companyId: cid,
@@ -2927,8 +2937,8 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
         customers: r.customers, suppliers: r.suppliers, items: r.items,
         openPosSessions: r.open_pos_sessions,
         lastInvoiceAt, inactive,
-        auditEvents7d: r.audit_events_period,
-        denied7d:      r.denied_period,
+        auditEventsPeriod: r.audit_events_period,
+        deniedPeriod:      r.denied_period,
         latestBackupReason: backup?.reason ?? null,
         latestBackupAt:     backup?.created_at ?? null,
       };
@@ -2938,17 +2948,17 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     rows.sort((a, b) => a.companyName.localeCompare(b.companyName, "ar"));
 
     if (format === "csv") {
-      sendCsv(res, `operational-summary.csv`,
-        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط", "أحداث التدقيق (7 أيام)", "محاولات مرفوضة (7 أيام)", "آخر نسخة احتياطية", "نوع النسخة", "راكدة"],
+      sendCsv(res, `operational-summary-${period.from}_${period.to}.csv`,
+        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط في الفترة", "أحداث التدقيق في الفترة", "محاولات مرفوضة في الفترة", "آخر نسخة احتياطية", "نوع النسخة", "غير نشطة في الفترة"],
         rows.map(r => [
           r.companyName, r.companyStatus, r.customers, r.suppliers, r.items,
-          r.openPosSessions, r.lastInvoiceAt ?? "—", r.auditEvents7d, r.denied7d,
+          r.openPosSessions, r.lastInvoiceAt ?? "—", r.auditEventsPeriod, r.deniedPeriod,
           r.latestBackupAt ?? "—", r.latestBackupReason ?? "—", r.inactive ? "نعم" : "لا",
         ]),
       );
       return;
     }
-    res.json({ rows });
+    res.json({ period, rows });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب الملخص التشغيلي";
     res.status(500).json({ error: msg });
@@ -3092,21 +3102,23 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
   try {
     const format = req.query?.format === "csv" ? "csv" : "json";
     const search = typeof req.query?.search === "string" ? req.query.search.trim() : "";
-    // Per spec: "billed amount grouped by plan + cycle" — sum the SUBSCRIPTION
-    // price (recurring billed amount) for each company's latest active
-    // subscription, grouped by (plan, cycle). No reporting period.
+    const period = parsePeriod(req);
+    if ("error" in period) { res.status(400).json({ error: period.error }); return; }
+    // Use ILIKE for case-insensitive Arabic-friendly substring match. The
+    // pattern is parameterised through Drizzle's sql template (no injection).
     const namePattern = search ? `%${search}%` : null;
 
     const result = await db.execute<RevenueByPlanRow>(sql`
       WITH active_sub AS (
-        -- Latest active subscription per company.
+        -- Latest active subscription per company (plan + cycle).
+        -- Active = is_active AND not yet expired (matches /reports/summary).
         SELECT DISTINCT ON (company_id)
                company_id,
                plan,
-               CASE WHEN billing_cycle = 'annual' THEN 'yearly' ELSE billing_cycle END AS billing_cycle,
-               price::numeric AS price
+               CASE WHEN billing_cycle = 'annual' THEN 'yearly' ELSE billing_cycle END AS billing_cycle
           FROM subscriptions
          WHERE is_active = true
+           AND end_date >= ${todayISO()}
          ORDER BY company_id, end_date DESC, id DESC
       ),
       eligible_co AS (
@@ -3114,13 +3126,26 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
         SELECT co.id
           FROM companies co
          WHERE ${namePattern}::text IS NULL OR co.name_ar ILIKE ${namePattern}::text
+      ),
+      rev AS (
+        -- Period-scoped posted invoice revenue, restricted to companies with
+        -- an active subscription (matches the spec rule).
+        SELECT si.company_id,
+               COALESCE(SUM(si.total_amount::numeric), 0) AS revenue
+          FROM sales_invoices si
+          JOIN active_sub a  ON a.company_id  = si.company_id
+          JOIN eligible_co e ON e.id          = si.company_id
+         WHERE si.status = 'posted'
+           AND si.invoice_date BETWEEN ${period.from} AND ${period.to}
+         GROUP BY si.company_id
       )
       SELECT a.plan,
              a.billing_cycle                              AS billing_cycle,
              COUNT(DISTINCT a.company_id)::int            AS subscription_count,
-             COALESCE(SUM(a.price), 0)::text              AS total_billed
+             COALESCE(SUM(r.revenue), 0)::text            AS total_billed
         FROM active_sub a
         JOIN eligible_co e ON e.id = a.company_id
+        LEFT JOIN rev    r ON r.company_id = a.company_id
        GROUP BY a.plan, a.billing_cycle
        ORDER BY a.plan, a.billing_cycle
     `);
@@ -3133,8 +3158,8 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
     const total = rows.reduce((s, r) => s + r.totalBilled, 0);
 
     if (format === "csv") {
-      sendCsv(res, `revenue-by-plan.csv`,
-        ["الباقة", "الدورة", "عدد الشركات", "إجمالي المبلغ المفوتر", "الحصة %"],
+      sendCsv(res, `revenue-by-plan-${period.from}_${period.to}.csv`,
+        ["الباقة", "الدورة", "عدد الشركات", "إجمالي الإيرادات", "الحصة %"],
         rows.map(r => [
           r.plan, r.billingCycle, r.subscriptionCount, r.totalBilled.toFixed(2),
           total > 0 ? ((r.totalBilled / total) * 100).toFixed(2) : "0.00",
@@ -3142,7 +3167,7 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
       );
       return;
     }
-    res.json({ rows, total });
+    res.json({ period, rows, total });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب تقرير الإيرادات حسب الباقة";
     res.status(500).json({ error: msg });

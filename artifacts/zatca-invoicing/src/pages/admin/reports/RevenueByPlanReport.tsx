@@ -8,12 +8,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
+import { PeriodSelector, periodToQuery, usePeriodState } from "./shared/PeriodSelector";
 
 interface PlanRow {
   plan: string; billingCycle: string;
   subscriptionCount: number; totalBilled: number;
 }
-interface Resp { rows: PlanRow[]; total: number }
+interface ReportPeriod { from: string; to: string; days: number; prevFrom: string; prevTo: string }
+interface Resp { period: ReportPeriod; rows: PlanRow[]; total: number }
 
 const fmt = new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const fmtSAR = (n: number) => `${fmt.format(n)} ر.س`;
@@ -27,21 +29,19 @@ const CYCLE_LABEL: Record<string, string> = { monthly: "شهري", yearly: "سن
 
 export default function RevenueByPlanReport() {
   const { token } = useAuth();
+  const period = usePeriodState();
   const [search, setSearch] = useState("");
 
   const queryString = useMemo(() => {
-    const qs = new URLSearchParams();
+    const qs = new URLSearchParams(periodToQuery(period));
     if (search.trim()) qs.set("search", search.trim());
     return qs.toString();
-  }, [search]);
+  }, [period.preset, period.from, period.to, search]);
 
   const { data, isLoading, error } = useQuery<Resp>({
     queryKey: ["report-revenue-by-plan", queryString],
     queryFn: async () => {
-      const url = queryString
-        ? `/api/admin/reports/revenue-by-plan?${queryString}`
-        : `/api/admin/reports/revenue-by-plan`;
-      const r = await fetch(url, {
+      const r = await fetch(`/api/admin/reports/revenue-by-plan?${queryString}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "تعذر التحميل");
@@ -71,7 +71,7 @@ export default function RevenueByPlanReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/revenue-by-plan?${queryString}&format=csv`, `revenue-by-plan.csv`)}
+          onClick={() => downloadCsv(token, `/api/admin/reports/revenue-by-plan?${queryString}&format=csv`, `revenue-by-plan-${period.from}_${period.to}.csv`)}
           disabled={!data || data.rows.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV
@@ -79,15 +79,13 @@ export default function RevenueByPlanReport() {
       </div>
 
       <div className="flex items-end gap-3 flex-wrap bg-muted/40 border rounded-lg p-3">
+        <PeriodSelector period={period} />
         <div className="flex-1 min-w-[200px]">
           <label className="text-xs text-muted-foreground block mb-1">بحث باسم الشركة</label>
           <div className="relative">
             <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} className="pr-8" placeholder="اسم الشركة..." />
           </div>
-        </div>
-        <div className="text-xs text-muted-foreground pb-2 max-w-md leading-relaxed">
-          المبلغ المعروض هو إجمالي الاشتراكات النشطة (سعر الباقة × عدد الشركات لكل باقة/دورة).
         </div>
       </div>
 
@@ -97,7 +95,7 @@ export default function RevenueByPlanReport() {
         <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
       ) : (data?.rows.length ?? 0) === 0 ? (
         <div className="text-center text-muted-foreground py-16 border rounded-lg">
-          لا توجد اشتراكات نشطة.
+          لا توجد إيرادات في الفترة المحددة.
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -133,7 +131,7 @@ export default function RevenueByPlanReport() {
                   <TableHead className="text-right">الباقة</TableHead>
                   <TableHead className="text-right">الدورة</TableHead>
                   <TableHead className="text-right">عدد الشركات</TableHead>
-                  <TableHead className="text-right">إجمالي المبلغ المفوتر</TableHead>
+                  <TableHead className="text-right">إجمالي الإيرادات</TableHead>
                   <TableHead className="text-right">الحصة %</TableHead>
                 </TableRow>
               </TableHeader>
