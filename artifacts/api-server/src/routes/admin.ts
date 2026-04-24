@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable } from "@workspace/db";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { persistSnapshot } from "./backup.js";
+import { randomBytes } from "crypto";
 
 const router = Router();
 
@@ -1647,6 +1649,469 @@ router.post("/ai-fix/notify", requireSuperAdmin, async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل إرسال التنبيه" });
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Backup Operations Center
+// SuperAdmin oversight across ALL companies. NEVER selects autoBackups.data
+// jsonb (it can be megabytes per row); only metadata + sizeBytes/counts.
+// Per-company backup actions still go through /api/backup/* — these
+// endpoints exist purely to aggregate the cross-company view and to bulk-
+// trigger snapshots in the background.
+// ═════════════════════════════════════════════════════════════════════════
+
+interface OverviewLatest {
+  id: number;
+  createdAt: Date;
+  reason: string;
+  sizeBytes: number;
+  counts: Record<string, number> | null;
+}
+interface OverviewCompanyRow {
+  id: number;
+  nameAr: string;
+  vatNumber: string;
+  status: string;
+  autoBackupEnabled: boolean;
+  autoBackupFrequencyHours: number;
+  autoBackupRetention: number;
+  lastAutoBackupAt: string | null;
+  // Aggregates
+  snapshotsLast30d: number;
+  totalSizeBytes30d: number;
+  latest: OverviewLatest | null;
+  // Health bucket. `disabled` = autoBackup off; otherwise green/amber/red
+  // based on age vs frequency.
+  bucket: "green" | "amber" | "red" | "disabled";
+  ageHours: number | null;
+}
+
+function backupBucket(
+  enabled: boolean,
+  frequencyHours: number,
+  lastAtISO: string | null,
+): { bucket: OverviewCompanyRow["bucket"]; ageHours: number | null } {
+  if (!enabled) return { bucket: "disabled", ageHours: lastAtISO ? hoursSince(lastAtISO) : null };
+  if (!lastAtISO) return { bucket: "red", ageHours: null };
+  const age = hoursSince(lastAtISO);
+  // Healthy: within 1.5x frequency. Overdue: 1.5x–3x. Critical: >3x or never.
+  if (age <= frequencyHours * 1.5) return { bucket: "green", ageHours: age };
+  if (age <= frequencyHours * 3)   return { bucket: "amber", ageHours: age };
+  return { bucket: "red", ageHours: age };
+}
+function hoursSince(iso: string): number {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, (Date.now() - t) / 3_600_000);
+}
+
+// GET /api/admin/backups/overview — per-company backup health for ALL companies
+router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
+  try {
+    // 1. All companies (we want disabled & suspended too, so admin can see them).
+    const companies = await db.select({
+      id: companiesTable.id,
+      nameAr: companiesTable.nameAr,
+      vatNumber: companiesTable.vatNumber,
+      status: companiesTable.status,
+      autoBackupEnabled: companiesTable.autoBackupEnabled,
+      autoBackupFrequencyHours: companiesTable.autoBackupFrequencyHours,
+      autoBackupRetention: companiesTable.autoBackupRetention,
+      lastAutoBackupAt: companiesTable.lastAutoBackupAt,
+    }).from(companiesTable).orderBy(asc(companiesTable.nameAr));
+
+    if (companies.length === 0) {
+      res.json({
+        kpis: { total: 0, green: 0, amber: 0, red: 0, disabled: 0,
+                snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0 },
+        rows: [],
+        generatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const companyIds = companies.map(c => c.id);
+    const since30d = new Date(Date.now() - 30 * 24 * 3_600_000);
+
+    // 2. 30-day aggregate per company (count + total size). Never touch `data`.
+    const aggRows = await db.select({
+      companyId: autoBackupsTable.companyId,
+      cnt: count(),
+      total: sql<number>`COALESCE(SUM(${autoBackupsTable.sizeBytes}), 0)::bigint`,
+    })
+      .from(autoBackupsTable)
+      .where(and(
+        inArray(autoBackupsTable.companyId, companyIds),
+        gte(autoBackupsTable.createdAt, since30d),
+      ))
+      .groupBy(autoBackupsTable.companyId);
+    const agg30 = new Map<number, { cnt: number; total: number }>();
+    for (const r of aggRows) {
+      agg30.set(Number(r.companyId), { cnt: Number(r.cnt), total: Number(r.total) });
+    }
+
+    // 3. All-time total size per company (one row).
+    const allTimeRows = await db.select({
+      companyId: autoBackupsTable.companyId,
+      total: sql<number>`COALESCE(SUM(${autoBackupsTable.sizeBytes}), 0)::bigint`,
+    })
+      .from(autoBackupsTable)
+      .where(inArray(autoBackupsTable.companyId, companyIds))
+      .groupBy(autoBackupsTable.companyId);
+    const sizeAll = new Map<number, number>();
+    for (const r of allTimeRows) sizeAll.set(Number(r.companyId), Number(r.total));
+
+    // 4. Latest snapshot per company via DISTINCT ON. Selects metadata only.
+    interface LatestRow {
+      id: number; company_id: number; created_at: Date; reason: string;
+      size_bytes: number; counts: Record<string, number> | null;
+    }
+    const latestRes = await db.execute<LatestRow>(sql`
+      SELECT DISTINCT ON (company_id)
+             id, company_id, created_at, reason, size_bytes, counts
+        FROM auto_backups
+       WHERE company_id IN (${sql.join(companyIds.map(id => sql`${id}`), sql`, `)})
+       ORDER BY company_id, created_at DESC, id DESC
+    `);
+    const latestRowsArr: LatestRow[] = Array.isArray(latestRes)
+      ? latestRes
+      : ((latestRes as { rows?: LatestRow[] }).rows ?? []);
+    const latestByCompany = new Map<number, OverviewLatest>();
+    for (const r of latestRowsArr) {
+      latestByCompany.set(Number(r.company_id), {
+        id: Number(r.id),
+        createdAt: r.created_at,
+        reason: r.reason,
+        sizeBytes: Number(r.size_bytes),
+        counts: r.counts,
+      });
+    }
+
+    // 5. Build rows + KPIs.
+    const rows: OverviewCompanyRow[] = [];
+    const kpis = { total: companies.length, green: 0, amber: 0, red: 0, disabled: 0,
+                   snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0 };
+
+    for (const c of companies) {
+      const lastIso = c.lastAutoBackupAt ? new Date(c.lastAutoBackupAt).toISOString() : null;
+      const { bucket, ageHours } = backupBucket(
+        c.autoBackupEnabled, c.autoBackupFrequencyHours, lastIso,
+      );
+      const a = agg30.get(c.id) ?? { cnt: 0, total: 0 };
+      const latest = latestByCompany.get(c.id) ?? null;
+
+      kpis[bucket]++;
+      kpis.snapshots30d  += a.cnt;
+      kpis.totalSize30d  += a.total;
+      kpis.totalSizeAll  += sizeAll.get(c.id) ?? 0;
+      if (!latest) kpis.missing++;
+
+      rows.push({
+        id: c.id,
+        nameAr: c.nameAr,
+        vatNumber: c.vatNumber,
+        status: c.status,
+        autoBackupEnabled: c.autoBackupEnabled,
+        autoBackupFrequencyHours: c.autoBackupFrequencyHours,
+        autoBackupRetention: c.autoBackupRetention,
+        lastAutoBackupAt: lastIso,
+        snapshotsLast30d: a.cnt,
+        totalSizeBytes30d: a.total,
+        latest,
+        bucket,
+        ageHours,
+      });
+    }
+
+    res.json({ kpis, rows, generatedAt: new Date().toISOString() });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/backups/auto/settings/:companyId — admin-side proxy that
+// updates per-company backup settings without forcing the SuperAdmin to
+// switch tenants. Mirrors POST /api/backup/auto/settings.
+router.post("/backups/auto/settings/:companyId", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = Number(req.params.companyId);
+    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
+    const [exists] = await db.select({ id: companiesTable.id }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!exists) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    const patch: Record<string, unknown> = {};
+    if (typeof req.body?.enabled === "boolean") patch.autoBackupEnabled = req.body.enabled;
+    if (Number.isFinite(Number(req.body?.frequencyHours))) {
+      patch.autoBackupFrequencyHours = Math.max(1, Math.min(168, Number(req.body.frequencyHours)));
+    }
+    if (Number.isFinite(Number(req.body?.retention))) {
+      patch.autoBackupRetention = Math.max(1, Math.min(30, Number(req.body.retention)));
+    }
+    if (Object.keys(patch).length === 0) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
+
+    await db.update(companiesTable).set(patch).where(eq(companiesTable.id, companyId));
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId,
+      module: "backups",
+      action: "edit",
+      entityType: "auto_backup_settings",
+      entityId: String(companyId),
+      metadata: { fields: Object.keys(patch) },
+    });
+    res.json({ ok: true, settings: patch });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/backups/run-now/:companyId — admin-triggered single snapshot
+router.post("/backups/run-now/:companyId", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = Number(req.params.companyId);
+    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
+    const [exists] = await db.select({ id: companiesTable.id }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!exists) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    const id = await persistSnapshot(companyId, "manual");
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId,
+      module: "backups",
+      action: "create",
+      entityType: "auto_backup",
+      entityId: String(id),
+      metadata: { op: "run-now" },
+    });
+    res.json({ ok: true, id });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "فشل أخذ النسخة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// DELETE /api/admin/backups/auto/:id — admin-side delete (not company-scoped)
+router.delete("/backups/auto/:id", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [row] = await db.select({ id: autoBackupsTable.id, companyId: autoBackupsTable.companyId })
+      .from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
+    await db.delete(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: row.companyId,
+      module: "backups",
+      action: "delete",
+      entityType: "auto_backup",
+      entityId: String(id),
+    });
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/backups/auto/:id/download — download a snapshot's JSON
+router.get("/backups/auto/:id/download", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!row) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
+    res.json(row.data);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/backups/auto/list/:companyId — snapshot history for one company
+router.get("/backups/auto/list/:companyId", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = Number(req.params.companyId);
+    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
+    const rows = await db.select({
+      id:        autoBackupsTable.id,
+      createdAt: autoBackupsTable.createdAt,
+      reason:    autoBackupsTable.reason,
+      sizeBytes: autoBackupsTable.sizeBytes,
+      counts:    autoBackupsTable.counts,
+    }).from(autoBackupsTable)
+      .where(eq(autoBackupsTable.companyId, companyId))
+      .orderBy(desc(autoBackupsTable.createdAt));
+    res.json({ snapshots: rows });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── Bulk run-all (background job with polling) ─────────────────────────
+// Persisting snapshots for many companies can take minutes (each one
+// re-reads every master-data table). We can't keep the HTTP request open
+// that long, so we kick off an in-memory job and let the client poll.
+//
+// Job retention: completed jobs stay in memory for 1 hour, then are GC'd.
+// On API restart all in-flight jobs are lost — superadmin can simply
+// re-run; per-snapshot persistence in PostgreSQL is durable.
+
+interface BulkRunItem {
+  companyId: number;
+  companyName: string;
+  status: "pending" | "running" | "ok" | "error";
+  snapshotId?: number;
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+interface BulkRunJob {
+  id: string;
+  startedBy: number | null;
+  startedAt: number;
+  finishedAt?: number;
+  total: number;
+  completed: number;
+  failed: number;
+  items: BulkRunItem[];
+  status: "running" | "done";
+}
+const bulkJobs = new Map<string, BulkRunJob>();
+function gcBulkJobs() {
+  const cutoff = Date.now() - 60 * 60_000;
+  for (const [id, job] of bulkJobs) {
+    if (job.status === "done" && (job.finishedAt ?? job.startedAt) < cutoff) {
+      bulkJobs.delete(id);
+    }
+  }
+}
+
+async function runBulkJob(job: BulkRunJob, adminUser: { id: number; username: string } | null) {
+  for (const item of job.items) {
+    item.status = "running";
+    item.startedAt = Date.now();
+    try {
+      const id = await persistSnapshot(item.companyId, "manual");
+      item.snapshotId = id;
+      item.status = "ok";
+      job.completed++;
+      await writeAudit({
+        userId: adminUser?.id ?? null,
+        username: adminUser?.username ?? null,
+        role: "superadmin",
+        companyId: item.companyId,
+        module: "backups",
+        action: "create",
+        entityType: "auto_backup",
+        entityId: String(id),
+        metadata: { op: "bulk-run-all", jobId: job.id },
+      });
+    } catch (e: unknown) {
+      item.status = "error";
+      item.error = e instanceof Error ? e.message : "خطأ غير متوقع";
+      job.failed++;
+    } finally {
+      item.finishedAt = Date.now();
+    }
+  }
+  job.status = "done";
+  job.finishedAt = Date.now();
+  gcBulkJobs();
+}
+
+// POST /api/admin/backups/run-all  body: { scope?: "enabled" | "all" }
+// Returns immediately with { jobId, total }. Use GET /backups/run-all/:jobId
+// to poll progress.
+router.post("/backups/run-all", requireSuperAdmin, async (req, res) => {
+  try {
+    gcBulkJobs();
+    const scope = req.body?.scope === "all" ? "all" : "enabled";
+    // "Enabled" = autoBackupEnabled AND status=active. "all" = every active company.
+    const where = scope === "enabled"
+      ? and(eq(companiesTable.status, "active"), eq(companiesTable.autoBackupEnabled, true))
+      : eq(companiesTable.status, "active");
+    const companies = await db.select({
+      id: companiesTable.id,
+      nameAr: companiesTable.nameAr,
+    }).from(companiesTable).where(where).orderBy(asc(companiesTable.nameAr));
+
+    if (companies.length === 0) {
+      res.status(400).json({ error: scope === "enabled"
+        ? "لا توجد شركات مفعّل لها النسخ التلقائي"
+        : "لا توجد شركات نشطة" });
+      return;
+    }
+
+    // Reject if another bulk run is still in flight (keeps audit clean).
+    for (const j of bulkJobs.values()) {
+      if (j.status === "running") {
+        res.status(409).json({ error: "هناك تشغيل جماعي قيد التنفيذ بالفعل", runningJobId: j.id });
+        return;
+      }
+    }
+
+    const jobId = randomBytes(8).toString("hex");
+    const job: BulkRunJob = {
+      id: jobId,
+      startedBy: req.adminUser?.id ?? null,
+      startedAt: Date.now(),
+      total: companies.length,
+      completed: 0,
+      failed: 0,
+      items: companies.map(c => ({
+        companyId: c.id,
+        companyName: c.nameAr,
+        status: "pending",
+      })),
+      status: "running",
+    };
+    bulkJobs.set(jobId, job);
+
+    const adminUser = req.adminUser
+      ? { id: req.adminUser.id, username: req.adminUser.username }
+      : null;
+    // Fire-and-forget: don't await; surface any unhandled rejection via console.
+    void runBulkJob(job, adminUser).catch(e => {
+      // Should never happen — runBulkJob catches per-item — but keep the trace.
+      console.error("[bulk-run-all] unexpected job failure:", e);
+      job.status = "done";
+      job.finishedAt = Date.now();
+    });
+
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: null,
+      module: "backups",
+      action: "create",
+      entityType: "bulk_run",
+      entityId: jobId,
+      metadata: { op: "start", scope, total: companies.length },
+    });
+
+    res.json({ jobId, total: companies.length, scope });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "فشل بدء التشغيل الجماعي";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/backups/run-all/:jobId — poll progress / final results
+router.get("/backups/run-all/:jobId", requireSuperAdmin, async (req, res) => {
+  const job = bulkJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "المهمة غير موجودة أو انتهت صلاحيتها" }); return; }
+  res.json(job);
 });
 
 export default router;

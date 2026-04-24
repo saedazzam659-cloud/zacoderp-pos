@@ -12,7 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
-  ScrollText, Database, ListOrdered,
+  ScrollText, Database, ListOrdered, HardDrive,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.dashboard",            href: "/",                         icon: LayoutDashboard, exact: true },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
   { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
+  { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.subscriptions",        href: "/admin/subscriptions",      icon: Package },
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
   { nameKey: "nav.menuPermissions",      href: "/admin/menu-permissions",   icon: SlidersHorizontal },

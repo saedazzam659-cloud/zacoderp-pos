@@ -325,6 +325,7 @@
     "dashboard": "Dashboard",
     "registrationRequests": "Registration Requests",
     "licenses": "License",
+    "backupOperations": "Backup Operations",
     "subscriptions": "Subscriptions",
     "plans": "Plans Settings",
     "menuPermissions": "Menu Permissions",

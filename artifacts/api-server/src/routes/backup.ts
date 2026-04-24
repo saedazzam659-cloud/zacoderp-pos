@@ -323,7 +323,7 @@ export async function buildSnapshot(companyId: number): Promise<{ payload: any; 
 }
 
 /** Write a snapshot row and enforce per-company retention. */
-async function persistSnapshot(companyId: number, reason: "scheduled" | "manual"): Promise<number> {
+export async function persistSnapshot(companyId: number, reason: "scheduled" | "manual"): Promise<number> {
   const { payload, counts } = await buildSnapshot(companyId);
   const sizeBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   const [row] = await db.insert(autoBackupsTable).values({

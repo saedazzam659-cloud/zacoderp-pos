@@ -398,7 +398,7 @@ export default function SuperAdminDashboard() {
               href: "/admin/licenses", icon: KeyRound, bg: "bg-blue-100", color: "text-blue-700" },
             // ── Control-Center pillars ────────────────────────────────
             { title: "مركز النسخ الاحتياطي", desc: `${b?.last7d ?? 0} نسخة آخر 7 أيام${(b?.missingCount ?? 0) > 0 ? ` • ${b?.missingCount} شركة متأخرة` : ""}`,
-              href: "/admin/backups", icon: HardDrive, bg: "bg-emerald-100", color: "text-emerald-700", soon: true },
+              href: "/admin/backups", icon: HardDrive, bg: "bg-emerald-100", color: "text-emerald-700" },
             { title: "مركز الأمان", desc: `${a?.logins24h ?? 0} دخول • ${a?.denied7d ?? 0} رفض (7 أيام)`,
               href: "/admin/security", icon: ShieldCheck, bg: "bg-rose-100", color: "text-rose-700", soon: true },
             { title: "تقارير عابرة للشركات", desc: "أداء وتشغيل وباقات",

@@ -36,6 +36,7 @@ import ZatcaReport from "@/pages/ZatcaReport";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
 import LicenseManagement from "@/pages/LicenseManagement";
+import BackupOperations from "@/pages/BackupOperations";
 import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
 // HR
@@ -195,6 +196,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/backups" component={BackupOperations} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
