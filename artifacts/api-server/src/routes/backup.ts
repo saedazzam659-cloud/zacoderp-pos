@@ -204,6 +204,11 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
  * the same idempotent restore logic without HTTP-forwarding into this
  * tenant-scoped router.
  */
+// A snapshot row. Backup payloads are user-supplied JSON, so individual rows
+// are unknown shapes — we narrow with a Record<string, unknown> and read each
+// field defensively below. This avoids `any` casts entirely.
+type SnapshotRow = Record<string, unknown>;
+
 export async function restoreFromSnapshotPayload(
   companyId: number,
   payload: { data?: Record<string, unknown> } | null | undefined,
@@ -217,24 +222,27 @@ export async function restoreFromSnapshotPayload(
   }
   const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
   const idMap: Record<string, Map<number, number>> = {};
+  const data = payload.data;
 
   await db.transaction(async (tx) => {
       for (const t of TABLES) {
         idMap[t.key] = new Map();
-        const rows: any[] = Array.isArray((payload.data as any)[t.key]) ? (payload.data as any)[t.key] : [];
+        const raw = data[t.key];
+        const rows: SnapshotRow[] = Array.isArray(raw) ? raw as SnapshotRow[] : [];
         report[t.key] = { received: rows.length, inserted: 0, matched: 0, failed: 0 };
         if (!rows.length) continue;
 
         const existingByKey = new Map<string, number>();
         if (t.businessKeys.length) {
-          const existing = t.hasCompanyId
+          const existing: SnapshotRow[] = t.hasCompanyId
             ? await tx.select().from(t.table).where(eq(t.table.companyId, companyId))
             : await tx.select().from(t.table);
-          for (const r of existing as any[]) {
+          for (const r of existing) {
             for (const k of t.businessKeys) {
               const v = r[k];
               if (v != null && String(v).trim() !== "") {
-                existingByKey.set(`${k}:${String(v).trim()}`, r.id);
+                const idVal = Number(r.id);
+                if (Number.isFinite(idVal)) existingByKey.set(`${k}:${String(v).trim()}`, idVal);
               }
             }
           }
@@ -244,18 +252,22 @@ export async function restoreFromSnapshotPayload(
           ? sortByParentDepth(rows, "id", t.selfRef)
           : rows;
 
-        for (const raw of ordered) {
-          const oldId = raw.id;
-          const bkComposite = makeBusinessKey(raw, t.businessKeys);
+        for (const r of ordered) {
+          const oldId = typeof r.id === "number" ? r.id : Number(r.id);
+          const bkComposite = makeBusinessKey(r, t.businessKeys);
 
           if (bkComposite && existingByKey.has(bkComposite)) {
             const existingId = existingByKey.get(bkComposite)!;
-            if (oldId != null) idMap[t.key].set(oldId, existingId);
+            if (Number.isFinite(oldId)) idMap[t.key].set(oldId, existingId);
             report[t.key].matched++;
             continue;
           }
 
-          const { id: _i, createdAt: _c, updatedAt: _u, ...rest } = raw;
+          // Build the insert payload by stripping system fields and remapping FKs.
+          const rest: Record<string, unknown> = { ...r };
+          delete rest.id;
+          delete rest.createdAt;
+          delete rest.updatedAt;
           if (t.hasCompanyId) rest.companyId = companyId;
 
           for (const fk of t.fks) {
@@ -274,17 +286,20 @@ export async function restoreFromSnapshotPayload(
           }
 
           try {
-            const inserted = await tx.transaction(async (inner) => {
+            const inserted: SnapshotRow[] = await tx.transaction(async (inner) => {
               return await inner.insert(t.table).values(rest).returning();
             });
-            const newId = (inserted as any[])[0]?.id;
-            if (newId != null && oldId != null) idMap[t.key].set(oldId, newId);
+            const newIdRaw = inserted[0]?.id;
+            const newId = typeof newIdRaw === "number" ? newIdRaw : Number(newIdRaw);
+            if (Number.isFinite(newId) && Number.isFinite(oldId)) idMap[t.key].set(oldId, newId);
             // Re-index the just-inserted row by every business key so
             // subsequent rows in the same payload can dedup against it.
-            for (const k of t.businessKeys) {
-              const v = (rest as any)[k];
-              if (v != null && String(v).trim() !== "") {
-                existingByKey.set(`${k}:${String(v).trim()}`, newId);
+            if (Number.isFinite(newId)) {
+              for (const k of t.businessKeys) {
+                const v = rest[k];
+                if (v != null && String(v).trim() !== "") {
+                  existingByKey.set(`${k}:${String(v).trim()}`, newId);
+                }
               }
             }
             report[t.key].inserted++;

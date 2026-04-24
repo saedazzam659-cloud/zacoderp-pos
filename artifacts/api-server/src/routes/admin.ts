@@ -2031,6 +2031,9 @@ router.get("/backups/auto/list/:companyId", requireSuperAdmin, async (req, res) 
   try {
     const companyId = Number(req.params.companyId);
     if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
+    // Spec: cap history at the last 30 snapshots — older snapshots are still
+    // retained per the company's retention setting and visible via direct
+    // download by id, but the on-screen list never exceeds 30 rows.
     const rows = await db.select({
       id:        autoBackupsTable.id,
       createdAt: autoBackupsTable.createdAt,
@@ -2039,7 +2042,8 @@ router.get("/backups/auto/list/:companyId", requireSuperAdmin, async (req, res) 
       counts:    autoBackupsTable.counts,
     }).from(autoBackupsTable)
       .where(eq(autoBackupsTable.companyId, companyId))
-      .orderBy(desc(autoBackupsTable.createdAt));
+      .orderBy(desc(autoBackupsTable.createdAt))
+      .limit(30);
     // Lightweight audit — operator opened a company's backup history panel.
     await writeAudit({
       userId: req.adminUser?.id ?? null,

@@ -177,6 +177,12 @@ export default function BackupOperations() {
   const [restoreVat, setRestoreVat]   = useState("");
   // Per-snapshot delete confirmation — inline (no browser confirm popup).
   const [deleteFor, setDeleteFor]     = useState<{ snapshotId: number; companyId: number } | null>(null);
+  // Inline confirmation for "delete latest snapshot" triggered from a row-action.
+  const [rowDeleteFor, setRowDeleteFor] = useState<{ companyId: number; snapshotId: number } | null>(null);
+  // Which sub-panel a given expanded row should open to: "history" | "settings".
+  // Independent from `expandedRow` so row-level "view history" / "settings"
+  // buttons can deep-link the user to the right section.
+  const [expandSection, setExpandSection] = useState<"history" | "settings">("history");
   // Bulk run job tracking — default scope = all active companies (per spec).
   const [bulkJobId, setBulkJobId] = useState<string | null>(null);
   const [bulkScope, setBulkScope] = useState<"enabled" | "all">("all");
@@ -630,9 +636,25 @@ export default function BackupOperations() {
 
                   <BucketBadge bucket={r.bucket} ageHours={r.ageHours} />
 
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Calendar className="h-3.5 w-3.5 shrink-0" />
-                    {formatDate(r.lastAutoBackupAt)}
+                  <div className="text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5 shrink-0" />
+                      {formatDate(r.lastAutoBackupAt)}
+                    </div>
+                    {/* Last backup reason badge — required by spec */}
+                    {r.latest && (
+                      <span
+                        className={cn(
+                          "inline-block mt-1 text-[10px] font-mono px-1.5 py-0.5 rounded",
+                          r.latest.reason === "manual"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-zinc-100 text-zinc-700",
+                        )}
+                        data-testid={`row-reason-${r.id}`}
+                      >
+                        {r.latest.reason === "manual" ? "يدوي" : "تلقائي"}
+                      </span>
+                    )}
                   </div>
 
                   <div className="text-xs text-muted-foreground tabular-nums">
@@ -648,14 +670,115 @@ export default function BackupOperations() {
                     {r.autoBackupRetention} نسخ
                   </div>
 
-                  <button
-                    className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
-                    onClick={e => { e.stopPropagation(); setExpandedRow(isExp ? null : r.id); }}
-                    aria-label={isExp ? "طي" : "توسيع"}
-                  >
-                    {isExp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  </button>
+                  {/* ─── Row-level action toolbar (required by spec):
+                      تشغيل الآن / عرض السجل / تنزيل آخر نسخة / حذف / إعدادات.
+                      All buttons stop click propagation so they don't toggle expand. */}
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-primary/10 text-primary transition-colors disabled:opacity-50"
+                      title="تشغيل الآن"
+                      disabled={runNowMutation.isPending}
+                      onClick={e => { e.stopPropagation(); runNowMutation.mutate(r.id); }}
+                      data-testid={`row-action-run-${r.id}`}
+                    >
+                      <PlayCircle className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                      title="عرض السجل"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setExpandSection("history");
+                        setExpandedRow(isExp && expandSection === "history" ? null : r.id);
+                      }}
+                      data-testid={`row-action-history-${r.id}`}
+                    >
+                      <Activity className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground transition-colors disabled:opacity-30"
+                      title="تنزيل آخر نسخة"
+                      disabled={!r.latest}
+                      onClick={e => { e.stopPropagation(); if (r.latest) downloadSnapshot(r.latest.id); }}
+                      data-testid={`row-action-download-${r.id}`}
+                    >
+                      <Download className="h-4 w-4" />
+                    </button>
+                    <button
+                      className={cn(
+                        "h-7 w-7 flex items-center justify-center rounded-md transition-colors disabled:opacity-30",
+                        rowDeleteFor?.companyId === r.id
+                          ? "bg-red-100 text-red-700"
+                          : "hover:bg-red-50 text-red-600",
+                      )}
+                      title="حذف آخر نسخة"
+                      disabled={!r.latest}
+                      onClick={e => {
+                        e.stopPropagation();
+                        if (!r.latest) return;
+                        if (rowDeleteFor?.companyId === r.id) setRowDeleteFor(null);
+                        else setRowDeleteFor({ companyId: r.id, snapshotId: r.latest.id });
+                      }}
+                      data-testid={`row-action-delete-${r.id}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                      title="إعدادات"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setExpandSection("settings");
+                        setExpandedRow(isExp && expandSection === "settings" ? null : r.id);
+                      }}
+                      data-testid={`row-action-settings-${r.id}`}
+                    >
+                      <SettingsIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
+                      onClick={e => { e.stopPropagation(); setExpandedRow(isExp ? null : r.id); }}
+                      aria-label={isExp ? "طي" : "توسيع"}
+                      data-testid={`row-action-expand-${r.id}`}
+                    >
+                      {isExp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
+
+                {/* Inline confirmation for the row-level "delete latest" action. */}
+                {rowDeleteFor?.companyId === r.id && (
+                  <div className="px-4 pb-2 -mt-1">
+                    <div className="p-2.5 rounded-md bg-red-50 border border-red-300 flex items-center gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-red-700 shrink-0" />
+                      <span className="text-[11px] text-red-900 flex-1">
+                        حذف آخر نسخة لـ <strong>{r.nameAr}</strong> — لا يمكن التراجع.
+                      </span>
+                      <Button
+                        size="sm" variant="ghost" className="h-7 text-xs"
+                        onClick={() => setRowDeleteFor(null)}
+                      >
+                        إلغاء
+                      </Button>
+                      <Button
+                        size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700"
+                        disabled={deleteSnapshotMutation.isPending}
+                        onClick={() => {
+                          if (rowDeleteFor) {
+                            deleteSnapshotMutation.mutate({
+                              snapshotId: rowDeleteFor.snapshotId,
+                              companyId: rowDeleteFor.companyId,
+                            });
+                            setRowDeleteFor(null);
+                          }
+                        }}
+                        data-testid={`row-delete-confirm-${r.id}`}
+                      >
+                        تأكيد الحذف
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* ─── Inline expand panel: history + settings ─────── */}
                 {isExp && (
