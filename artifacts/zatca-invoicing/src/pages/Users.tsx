@@ -129,6 +129,7 @@ export default function Users() {
 
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: ["branches-for-users", cid],
+    enabled: fetchEnabled,
     queryFn: async () => {
       const r = await fetch(burl, { headers: authH });
       if (!r.ok) return [];

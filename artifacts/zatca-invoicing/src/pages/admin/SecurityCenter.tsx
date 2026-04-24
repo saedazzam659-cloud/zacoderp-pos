@@ -39,6 +39,11 @@ interface AnomalyResp {
   deniedSpikes: { userId: number | null; username: string | null; count: number }[];
   newIps:       { userId: number; username: string; role: string; ip: string; createdAt: string }[];
   superadminNewIps: { userId: number; username: string; ip: string; createdAt: string }[];
+  baselineDeviations: {
+    userId: number; username: string; role: string;
+    todayIps: number; baselineIps: number;
+    todayDenied: number; baselineDenied: number;
+  }[];
 }
 type PermCellState = "inherited" | "granted" | "denied" | "none";
 interface PermsMatrixResp {
@@ -642,7 +647,8 @@ function AnomaliesBanner({ token }: { token: string | null }) {
     refetchInterval: 60_000,
   });
   if (!data) return null;
-  const total = data.deniedSpikes.length + data.newIps.length + data.superadminNewIps.length;
+  const total = data.deniedSpikes.length + data.newIps.length
+    + data.superadminNewIps.length + data.baselineDeviations.length;
   if (total === 0) {
     return (
       <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex items-center gap-2">
@@ -674,6 +680,15 @@ function AnomaliesBanner({ token }: { token: string | null }) {
           <strong>دخول من IP جديد (آخر 24س):</strong>{" "}
           {data.newIps.slice(0, 5).map(r => `${r.username} (${r.ip})`).join("، ")}
           {data.newIps.length > 5 && ` +${data.newIps.length - 5}`}
+        </div>
+      )}
+      {data.baselineDeviations.length > 0 && (
+        <div className="text-xs text-amber-900" data-testid="anomalies-baseline">
+          <strong>انحرافات عن السلوك المعتاد (مقارنة بآخر 7 أيام):</strong>{" "}
+          {data.baselineDeviations.slice(0, 5).map(r =>
+            `${r.username}: ${r.todayIps} IP اليوم (المعتاد ${r.baselineIps})، ${r.todayDenied} مرفوضة (المعتاد ${r.baselineDenied})`
+          ).join("؛ ")}
+          {data.baselineDeviations.length > 5 && ` +${data.baselineDeviations.length - 5}`}
         </div>
       )}
     </div>
