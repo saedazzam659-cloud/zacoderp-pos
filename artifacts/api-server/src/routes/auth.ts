@@ -35,6 +35,18 @@ router.post("/login", async (req, res) => {
     return;
   }
 
+  // Block login for tenants whose company has been suspended (e.g. by the
+  // automatic-suspension job after subscription expiry). Superadmin is
+  // tenant-less and is exempt.
+  if (user.companyId && user.role !== "superadmin") {
+    const [co] = await db.select({ status: companiesTable.status })
+      .from(companiesTable).where(eq(companiesTable.id, user.companyId));
+    if (co?.status === "suspended") {
+      res.status(403).json({ error: "الاشتراك منتهي والشركة موقوفة. تواصل مع الدعم لتجديد الاشتراك." });
+      return;
+    }
+  }
+
   // Single-session enforcement — generate new token (invalidates old)
   const sessionToken = generateToken();
   const sessionId = randomUUID();

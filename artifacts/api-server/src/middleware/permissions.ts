@@ -227,7 +227,7 @@ interface WriteRow {
   metadata?: any;
 }
 
-async function writeAudit(row: WriteRow): Promise<void> {
+export async function writeAudit(row: WriteRow): Promise<void> {
   try {
     await db.insert(auditLogTable).values({
       userId:     row.userId,

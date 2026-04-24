@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable } from "@workspace/db";
-import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull } from "drizzle-orm";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable } from "@workspace/db";
+import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
+import { writeAudit } from "../middleware/permissions.js";
 
 const router = Router();
 
@@ -169,8 +170,10 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
     updates.plan = plan;
   }
   if (billingCycle != null) {
-    if (!ALLOWED_CYCLES.has(billingCycle)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
-    updates.billingCycle = billingCycle;
+    // Accept legacy "annual" from older rows and normalize to "yearly".
+    const bc = billingCycle === "annual" ? "yearly" : billingCycle;
+    if (!ALLOWED_CYCLES.has(bc)) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
+    updates.billingCycle = bc;
   }
   for (const [key, val] of Object.entries({ maxUsers, maxBranches, maxWarehouses, maxInvoices })) {
     if (val == null) continue;
@@ -198,7 +201,324 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
 
   const [updated] = await db.update(subscriptionsTable).set(updates).where(eq(subscriptionsTable.id, id)).returning();
   if (!updated) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: updated.companyId,
+    module: "subscriptions",
+    action: "edit",
+    entityType: "subscription",
+    entityId: String(updated.id),
+    metadata: { fields: Object.keys(updates) },
+  });
   res.json({ ok: true, subscription: updated });
+});
+
+// ─── Subscription Lifecycle (extend / change-plan / bulk / usage) ──────────
+const ALLOWED_EXTEND_MONTHS = new Set([1, 3, 6, 12]);
+
+function addMonthsISO(dateISO: string, months: number): string {
+  // Anchor on the existing endDate (or today if invalid), then add N months.
+  // Day-of-month is preserved; for shorter months it clamps to last valid day.
+  const base = new Date(dateISO);
+  const d = isNaN(base.getTime()) ? new Date() : base;
+  const day = d.getUTCDate();
+  const newMonth = d.getUTCMonth() + months;
+  const candidate = new Date(Date.UTC(d.getUTCFullYear(), newMonth, 1));
+  const lastDay = new Date(Date.UTC(candidate.getUTCFullYear(), candidate.getUTCMonth() + 1, 0)).getUTCDate();
+  candidate.setUTCDate(Math.min(day, lastDay));
+  return candidate.toISOString().slice(0, 10);
+}
+
+function todayISO(): string { return new Date().toISOString().slice(0, 10); }
+
+// Treat both "annual" (legacy in DB) and "yearly" as the same yearly cycle.
+function normalizeCycle(c: string): "monthly" | "yearly" | null {
+  if (c === "monthly") return "monthly";
+  if (c === "yearly" || c === "annual") return "yearly";
+  return null;
+}
+
+// POST /api/admin/subscriptions/:id/extend — adds N months to endDate
+// Atomic: the read+compute+write happens inside one UPDATE so two concurrent
+// extends don't overwrite each other (the race was flagged in code review).
+router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const months = Number(req.body?.months);
+  if (!ALLOWED_EXTEND_MONTHS.has(months)) {
+    res.status(400).json({ error: "عدد الأشهر يجب أن يكون 1 أو 3 أو 6 أو 12" }); return;
+  }
+  // Postgres serializes concurrent UPDATEs on the same row, so this single
+  // statement is race-free vs. the previous read-then-write.
+  const result: any = await db.execute(sql`
+    UPDATE subscriptions
+       SET end_date = ((end_date::date + (${months} || ' months')::interval)::date)::text
+     WHERE id = ${id}
+     RETURNING id, company_id, end_date
+  `);
+  const row = (result.rows ?? result)[0];
+  if (!row) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
+  const [updated] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: updated?.companyId ?? null,
+    module: "subscriptions",
+    action: "edit",
+    entityType: "subscription",
+    entityId: String(id),
+    metadata: { op: "extend", months, newEnd: updated?.endDate ?? row.end_date },
+  });
+  res.json({ ok: true, subscription: updated });
+});
+
+// POST /api/admin/subscriptions/:id/change-plan — switch plan template
+router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const planKey = String(req.body?.planKey ?? "");
+  const cycleRaw = String(req.body?.billingCycle ?? "monthly");
+  const cycle = normalizeCycle(cycleRaw);
+  if (!cycle) { res.status(400).json({ error: "دورة فوترة غير صالحة" }); return; }
+  if (!ALLOWED_PLANS.has(planKey)) { res.status(400).json({ error: "باقة غير معروفة" }); return; }
+
+  const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
+  const [planConfig] = await db.select().from(planConfigsTable).where(eq(planConfigsTable.key, planKey));
+  if (!planConfig) { res.status(404).json({ error: "قالب الباقة غير موجود" }); return; }
+
+  const start = todayISO();
+  const end   = addMonthsISO(start, cycle === "yearly" ? 12 : 1);
+  const price = cycle === "yearly" ? planConfig.annualPrice : planConfig.monthlyPrice;
+
+  const [updated] = await db.update(subscriptionsTable).set({
+    plan: planKey,
+    billingCycle: cycle,
+    maxUsers: planConfig.maxUsers,
+    maxInvoices: planConfig.maxInvoices,
+    price: String(price),
+    startDate: start,
+    endDate: end,
+    isActive: true,
+  }).where(eq(subscriptionsTable.id, id)).returning();
+
+  // If the company was previously suspended for expiry, revive it.
+  if (updated) {
+    await db.update(companiesTable)
+      .set({ status: "active" })
+      .where(and(eq(companiesTable.id, updated.companyId), eq(companiesTable.status, "suspended")));
+  }
+
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: updated.companyId,
+    module: "subscriptions",
+    action: "edit",
+    entityType: "subscription",
+    entityId: String(id),
+    metadata: {
+      op: "change-plan",
+      from: { plan: existing.plan, billingCycle: existing.billingCycle, price: existing.price, endDate: existing.endDate },
+      to:   { plan: planKey,       billingCycle: cycle,                price,                  endDate: end },
+    },
+  });
+  res.json({ ok: true, subscription: updated });
+});
+
+// POST /api/admin/subscriptions/bulk-extend — atomic per-row UPDATE
+router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) => {
+  const requestedIds: number[] = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(Number).filter(Number.isFinite)
+    : [];
+  const months = Number(req.body?.months);
+  if (requestedIds.length === 0)         { res.status(400).json({ error: "حدد اشتراكاً واحداً على الأقل" }); return; }
+  if (!ALLOWED_EXTEND_MONTHS.has(months)) {
+    res.status(400).json({ error: "عدد الأشهر يجب أن يكون 1 أو 3 أو 6 أو 12" }); return;
+  }
+  // Single race-free UPDATE — Postgres date arithmetic per row.
+  // requestedIds were already validated as finite numbers above, so inlining
+  // them as a literal array is injection-safe.
+  const idList = sql.raw(requestedIds.join(","));
+  const result: any = await db.execute(sql`
+    UPDATE subscriptions
+       SET end_date = ((end_date::date + (${months} || ' months')::interval)::date)::text
+     WHERE id IN (${idList})
+     RETURNING id, company_id, end_date
+  `);
+  const rows: any[] = result.rows ?? result;
+  const updatedIds = rows.map(r => Number(r.id));
+  const missingIds = requestedIds.filter(id => !updatedIds.includes(id));
+  for (const r of rows) {
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: Number(r.company_id),
+      module: "subscriptions",
+      action: "edit",
+      entityType: "subscription",
+      entityId: String(r.id),
+      metadata: { op: "bulk-extend", months, newEnd: r.end_date },
+    });
+  }
+  res.json({
+    ok: true,
+    requestedIds, updatedIds, missingIds,
+    processed: updatedIds.length,
+    results: rows.map(r => ({ id: Number(r.id), ok: true, newEnd: r.end_date })),
+  });
+});
+
+// POST /api/admin/subscriptions/bulk-freeze
+router.post("/subscriptions/bulk-freeze", requireSuperAdmin, async (req, res) => {
+  const requestedIds: number[] = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(Number).filter(Number.isFinite)
+    : [];
+  const isActive = !!req.body?.isActive;
+  if (requestedIds.length === 0) { res.status(400).json({ error: "حدد اشتراكاً واحداً على الأقل" }); return; }
+  // RETURNING gives us the actual updated rows so we can compute missingIds.
+  const updated = await db.update(subscriptionsTable)
+    .set({ isActive })
+    .where(inArray(subscriptionsTable.id, requestedIds))
+    .returning({ id: subscriptionsTable.id, companyId: subscriptionsTable.companyId });
+  const updatedIds = updated.map(r => r.id);
+  const missingIds = requestedIds.filter(id => !updatedIds.includes(id));
+  for (const u of updated) {
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: u.companyId,
+      module: "subscriptions",
+      action: "edit",
+      entityType: "subscription",
+      entityId: String(u.id),
+      metadata: { op: isActive ? "bulk-activate" : "bulk-freeze" },
+    });
+  }
+  res.json({
+    ok: true,
+    requestedIds, updatedIds, missingIds,
+    processed: updatedIds.length,
+    isActive,
+  });
+});
+
+// GET /api/admin/subscriptions/usage — actual vs allowed per company
+// Picks the LATEST subscription per company (in case multiple historical rows
+// exist) so usage isn't multi-counted across superseded subscriptions.
+router.get("/subscriptions/usage", requireSuperAdmin, async (_req, res) => {
+  const userCounts     = await db.select({ companyId: usersTable.companyId, n: count() })
+    .from(usersTable).groupBy(usersTable.companyId);
+  const branchCounts   = await db.select({ companyId: branchesTable.companyId, n: count() })
+    .from(branchesTable).groupBy(branchesTable.companyId);
+  const warehouseCounts = await db.select({ companyId: warehousesTable.companyId, n: count() })
+    .from(warehousesTable).groupBy(warehousesTable.companyId);
+
+  // Latest subscription per company via DISTINCT ON.
+  const latestSubsRows: any[] = await db.execute<any>(sql`
+    SELECT DISTINCT ON (company_id)
+           id, company_id, plan, billing_cycle, max_users, max_branches,
+           max_warehouses, max_invoices, start_date, end_date, is_active
+      FROM subscriptions
+     ORDER BY company_id, end_date DESC, id DESC
+  `).then((r: any) => r.rows ?? r);
+
+  const companyIds = latestSubsRows.map(s => Number(s.company_id));
+  const companies = companyIds.length === 0 ? [] : await db.select({
+    id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status,
+  }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
+  const companyMap = new Map(companies.map(c => [c.id, c]));
+
+  // Invoices within current subscription period of the LATEST sub only.
+  const invoiceRows: any[] = await db.execute<any>(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (company_id) company_id, start_date
+        FROM subscriptions
+       ORDER BY company_id, end_date DESC, id DESC
+    )
+    SELECT l.company_id AS "companyId", COUNT(i.id)::int AS "n"
+      FROM latest l
+      LEFT JOIN sales_invoices i
+        ON i.company_id = l.company_id
+       AND i.created_at >= (l.start_date::date)::timestamp
+     GROUP BY l.company_id
+  `).then((r: any) => r.rows ?? r);
+
+  const userMap     = new Map(userCounts.map(r => [r.companyId, Number(r.n)]));
+  const branchMap   = new Map(branchCounts.map(r => [r.companyId, Number(r.n)]));
+  const warehouseMap = new Map(warehouseCounts.map(r => [r.companyId, Number(r.n)]));
+  const invoiceMap  = new Map(invoiceRows.map(r => [r.companyId, Number(r.n)]));
+
+  const out = latestSubsRows.map((sub: any) => {
+    const cid = Number(sub.company_id);
+    const company = companyMap.get(cid);
+    const allowed = {
+      users:     Number(sub.max_users),
+      branches:  Number(sub.max_branches),
+      warehouses: Number(sub.max_warehouses),
+      invoices:  Number(sub.max_invoices),
+    };
+    const actual = {
+      users:     userMap.get(cid) ?? 0,
+      branches:  branchMap.get(cid) ?? 0,
+      warehouses: warehouseMap.get(cid) ?? 0,
+      invoices:  invoiceMap.get(cid) ?? 0,
+    };
+    const overFields: string[] = [];
+    (Object.keys(allowed) as Array<keyof typeof allowed>).forEach(k => {
+      if (actual[k] > allowed[k]) overFields.push(k);
+    });
+    return {
+      subscriptionId: Number(sub.id),
+      companyId: cid,
+      companyName: company?.nameAr ?? null,
+      companyStatus: company?.status ?? null,
+      plan: sub.plan,
+      billingCycle: sub.billing_cycle,
+      isActive: !!sub.is_active,
+      startDate: sub.start_date,
+      endDate: sub.end_date,
+      allowed, actual,
+      overLimit: overFields.length > 0,
+      overFields,
+    };
+  });
+  res.json(out);
+});
+
+// ─── System Settings (currently only auto-suspend flag) ────────────────────
+const AUTO_SUSPEND_KEY = "auto_suspend_expired";
+
+router.get("/system-settings/auto-suspend", requireSuperAdmin, async (_req, res) => {
+  const [row] = await db.select().from(systemSettingsTable).where(eq(systemSettingsTable.key, AUTO_SUSPEND_KEY));
+  res.json({ enabled: row?.value === "on", updatedAt: row?.updatedAt ?? null });
+});
+
+router.put("/system-settings/auto-suspend", requireSuperAdmin, async (req, res) => {
+  const enabled = !!req.body?.enabled;
+  const value = enabled ? "on" : "off";
+  await db.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at) VALUES (${AUTO_SUSPEND_KEY}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+  await writeAudit({
+    userId: req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role: "superadmin",
+    companyId: null,
+    module: "subscriptions",
+    action: "edit",
+    entityType: "system_setting",
+    entityId: AUTO_SUSPEND_KEY,
+    metadata: { enabled },
+  });
+  res.json({ ok: true, enabled });
 });
 
 // POST /api/admin/licenses — upsert a license/subscription for a company

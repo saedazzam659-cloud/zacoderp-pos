@@ -1,9 +1,70 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
-import { usersTable, planConfigsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { usersTable, planConfigsTable, subscriptionsTable, companiesTable, systemSettingsTable, auditLogTable } from "@workspace/db";
+import { eq, inArray, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+
+const AUTO_SUSPEND_KEY = "auto_suspend_expired";
+const AUTO_SUSPEND_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+const AUTO_SUSPEND_INITIAL_DELAY_MS = 30 * 1000;     // first run 30s after start
+
+async function runAutoSuspendOnce() {
+  try {
+    const [flag] = await db.select().from(systemSettingsTable)
+      .where(eq(systemSettingsTable.key, AUTO_SUSPEND_KEY));
+    if (flag?.value !== "on") return;
+
+    // Find companies where the LATEST (max end_date) subscription is in the past
+    // AND the company isn't already suspended. Using a CTE with DISTINCT ON
+    // ensures we don't suspend a company that has any newer/active subscription
+    // row alongside an old expired one.
+    const result: any = await db.execute(sql`
+      WITH latest AS (
+        SELECT DISTINCT ON (company_id)
+               company_id, end_date
+          FROM subscriptions
+         ORDER BY company_id, end_date DESC, id DESC
+      )
+      SELECT l.company_id, l.end_date, c.status AS prev_status
+        FROM latest l
+        JOIN companies c ON c.id = l.company_id
+       WHERE l.end_date::date < CURRENT_DATE
+         AND c.status <> 'suspended'
+    `);
+    const candidates: any[] = result.rows ?? result;
+    if (candidates.length === 0) return;
+
+    const cids = candidates.map(c => Number(c.company_id));
+    await db.update(companiesTable).set({ status: "suspended" }).where(inArray(companiesTable.id, cids));
+
+    for (const c of candidates) {
+      try {
+        await db.insert(auditLogTable).values({
+          userId: null,
+          username: "system",
+          role: "system",
+          companyId: Number(c.company_id),
+          module: "subscriptions",
+          action: "edit",
+          entityType: "company",
+          entityId: String(c.company_id),
+          metadata: { op: "auto-suspend", reason: "subscription expired", endDate: c.end_date, previousStatus: c.prev_status },
+        });
+      } catch { /* never break the job on audit failure */ }
+    }
+    logger.info({ count: candidates.length }, "auto-suspend: companies suspended due to expired subscription");
+  } catch (err) {
+    logger.error({ err }, "auto-suspend job failed");
+  }
+}
+
+function startAutoSuspendScheduler() {
+  setTimeout(() => {
+    void runAutoSuspendOnce();
+    setInterval(() => { void runAutoSuspendOnce(); }, AUTO_SUSPEND_INTERVAL_MS);
+  }, AUTO_SUSPEND_INITIAL_DELAY_MS);
+}
 
 async function seedSuperAdmin() {
   try {
@@ -104,4 +165,6 @@ app.listen(port, (err) => {
   // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
   // company on its configured frequency).
   import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});
+  // Auto-suspend expired subscriptions (only when superadmin enables the flag).
+  startAutoSuspendScheduler();
 });
