@@ -1813,12 +1813,18 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
     const sevenDaysAgoMs = Date.now() - 7 * 24 * 3_600_000;
 
     for (const c of companies) {
-      const lastIso = c.lastAutoBackupAt ? new Date(c.lastAutoBackupAt).toISOString() : null;
+      const a = agg30.get(c.id) ?? { cnt: 0, total: 0 };
+      const latest = latestByCompany.get(c.id) ?? null;
+      // Source of truth for "latest backup" is the actual latest snapshot row
+      // in auto_backups, NOT companies.lastAutoBackupAt — the cached column on
+      // companies can drift after snapshot deletions and would falsely report
+      // a recent/healthy state for a company whose snapshots were all removed.
+      const lastIso = latest?.createdAt
+        ? new Date(latest.createdAt).toISOString()
+        : null;
       const { bucket, ageHours } = backupBucket(
         c.autoBackupEnabled, c.autoBackupFrequencyHours, lastIso,
       );
-      const a = agg30.get(c.id) ?? { cnt: 0, total: 0 };
-      const latest = latestByCompany.get(c.id) ?? null;
 
       kpis[bucket]++;
       kpis.snapshots30d  += a.cnt;
