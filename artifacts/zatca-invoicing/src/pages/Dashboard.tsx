@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import SupportMessageCard from "@/components/SupportMessageCard";
+import { usePermission } from "@/hooks/usePermission";
 
 // ─── KPI Tile (SAP Fiori-style) ────────────────────────────────────────────────
 type Tone = "primary" | "success" | "warning" | "danger" | "info";
@@ -101,8 +102,10 @@ export default function Dashboard() {
   const ownCompany = user?.company;
   const isNotRegistered = ownCompany && !ownCompany.zatcaPcsid;
 
+  const canViewRecentInvoices = usePermission("dashboard_recent_invoices", "view");
+
   const { data: recentInvoices, isLoading: loadingRecent } = useGetRecentInvoices(undefined, {
-    query: { queryKey: ["recent-invoices", companyId] },
+    query: { queryKey: ["recent-invoices", companyId], enabled: canViewRecentInvoices },
   });
 
   const { data: monthlyStats, isLoading: loadingStats } = useGetMonthlyStats(undefined, {
@@ -266,7 +269,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Recent invoices side panel */}
+        {/* Recent invoices side panel — gated by `dashboard_recent_invoices` permission */}
+        {canViewRecentInvoices && (
         <Card className="xl:col-span-1">
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
             <div>
@@ -338,6 +342,7 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
 
       {/* Support message — bottom of dashboard */}

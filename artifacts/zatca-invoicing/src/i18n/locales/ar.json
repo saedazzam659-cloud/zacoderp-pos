@@ -1130,6 +1130,7 @@
     },
     "modules": {
       "dashboard": "لوحة التحكم",
+      "dashboard_recent_invoices": "قائمة الفواتير في لوحة التحكم",
       "regions": "المناطق الجغرافية",
       "branches": "الفروع",
       "zatca_setup": "ربط ZATCA",

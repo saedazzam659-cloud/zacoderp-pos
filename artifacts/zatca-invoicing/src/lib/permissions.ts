@@ -29,6 +29,7 @@ const G = {
 
 export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "dashboard",            label: "perms.modules.dashboard",            group: G.dashboard,  actions: VO },
+  { key: "dashboard_recent_invoices", label: "perms.modules.dashboard_recent_invoices", group: G.dashboard, actions: VO },
   { key: "regions",              label: "perms.modules.regions",              group: G.dashboard,  actions: VC },
   { key: "branches",             label: "perms.modules.branches",             group: G.dashboard,  actions: VC },
   { key: "zatca_setup",          label: "perms.modules.zatca_setup",          group: G.dashboard,  actions: ["view", "edit"] },

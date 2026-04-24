@@ -1098,6 +1098,7 @@
     },
     "modules": {
       "dashboard": "Dashboard",
+      "dashboard_recent_invoices": "Dashboard Invoices List",
       "regions": "Regions",
       "branches": "Branches",
       "zatca_setup": "ZATCA Setup",

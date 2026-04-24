@@ -4,6 +4,7 @@ import { invoicesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { GetDashboardSummaryQueryParams, GetRecentInvoicesQueryParams, GetMonthlyStatsQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -52,7 +53,7 @@ router.get("/summary", async (req, res) => {
   });
 });
 
-router.get("/recent-invoices", async (req, res) => {
+router.get("/recent-invoices", requirePermission("dashboard_recent_invoices", "view"), async (req, res) => {
   const params = GetRecentInvoicesQueryParams.safeParse(req.query);
   const rawCompanyId = params.success ? params.data.companyId : undefined;
   const companyId = resolveCompanyId(req, rawCompanyId);
