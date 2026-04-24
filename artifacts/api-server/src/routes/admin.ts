@@ -218,6 +218,23 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
 // ─── Subscription Lifecycle (extend / change-plan / bulk / usage) ──────────
 const ALLOWED_EXTEND_MONTHS = new Set([1, 3, 6, 12]);
 
+// Drizzle's `db.execute(sql\`...\`)` returns the underlying driver's QueryResult
+// shape. The pg driver returns `{ rows: T[] }`; some drivers return the rows
+// array directly. This helper normalizes both into a typed row array so we
+// don't have to spread `any` through every call site.
+type SqlExecuteResult<T> = { rows?: T[] } | T[];
+function sqlRows<T>(result: SqlExecuteResult<T>): T[] {
+  return Array.isArray(result) ? result : (result.rows ?? []);
+}
+
+interface ExtendedRow      { id: number; company_id: number; end_date: string }
+interface LatestSubRow {
+  id: number; company_id: number; plan: string; billing_cycle: string;
+  max_users: number; max_branches: number; max_warehouses: number;
+  max_invoices: number; start_date: string; end_date: string; is_active: boolean;
+}
+interface InvoiceCountRow  { companyId: number; n: number }
+
 function addMonthsISO(dateISO: string, months: number): string {
   // Anchor on the existing endDate (or today if invalid), then add N months.
   // Day-of-month is preserved; for shorter months it clamps to last valid day.
@@ -252,13 +269,13 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
   }
   // Postgres serializes concurrent UPDATEs on the same row, so this single
   // statement is race-free vs. the previous read-then-write.
-  const result: any = await db.execute(sql`
+  const result = await db.execute<ExtendedRow>(sql`
     UPDATE subscriptions
        SET end_date = ((end_date::date + (${months} || ' months')::interval)::date)::text
      WHERE id = ${id}
      RETURNING id, company_id, end_date
   `);
-  const row = (result.rows ?? result)[0];
+  const row = sqlRows<ExtendedRow>(result as SqlExecuteResult<ExtendedRow>)[0];
   if (!row) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
   const [updated] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
   // Renewal restores access: if the company was auto-suspended for expiry
@@ -358,13 +375,13 @@ router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) =>
   // requestedIds were already validated as finite numbers above, so inlining
   // them as a literal array is injection-safe.
   const idList = sql.raw(requestedIds.join(","));
-  const result: any = await db.execute(sql`
+  const result = await db.execute<ExtendedRow>(sql`
     UPDATE subscriptions
        SET end_date = ((end_date::date + (${months} || ' months')::interval)::date)::text
      WHERE id IN (${idList})
      RETURNING id, company_id, end_date
   `);
-  const rows: any[] = result.rows ?? result;
+  const rows = sqlRows<ExtendedRow>(result as SqlExecuteResult<ExtendedRow>);
   const updatedIds = rows.map(r => Number(r.id));
   const missingIds = requestedIds.filter(id => !updatedIds.includes(id));
   // Reactivate any companies that were auto-suspended for expiry now that
@@ -461,13 +478,14 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
     .from(warehousesTable).groupBy(warehousesTable.companyId);
 
   // Latest subscription per company via DISTINCT ON.
-  const latestSubsRows: any[] = await db.execute<any>(sql`
+  const latestSubsResult = await db.execute<LatestSubRow>(sql`
     SELECT DISTINCT ON (company_id)
            id, company_id, plan, billing_cycle, max_users, max_branches,
            max_warehouses, max_invoices, start_date, end_date, is_active
       FROM subscriptions
      ORDER BY company_id, end_date DESC, id DESC
-  `).then((r: any) => r.rows ?? r);
+  `);
+  const latestSubsRows = sqlRows<LatestSubRow>(latestSubsResult as SqlExecuteResult<LatestSubRow>);
 
   const companyIds = latestSubsRows.map(s => Number(s.company_id));
   const companies = companyIds.length === 0 ? [] : await db.select({
@@ -476,7 +494,7 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
   const companyMap = new Map(companies.map(c => [c.id, c]));
 
   // Invoices within current subscription period of the LATEST sub only.
-  const invoiceRows: any[] = await db.execute<any>(sql`
+  const invoiceResult = await db.execute<InvoiceCountRow>(sql`
     WITH latest AS (
       SELECT DISTINCT ON (company_id) company_id, start_date
         FROM subscriptions
@@ -488,7 +506,8 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
         ON i.company_id = l.company_id
        AND i.created_at >= (l.start_date::date)::timestamp
      GROUP BY l.company_id
-  `).then((r: any) => r.rows ?? r);
+  `);
+  const invoiceRows = sqlRows<InvoiceCountRow>(invoiceResult as SqlExecuteResult<InvoiceCountRow>);
 
   const userMap     = new Map(userCounts.map(r => [r.companyId, Number(r.n)]));
   const branchMap   = new Map(branchCounts.map(r => [r.companyId, Number(r.n)]));
