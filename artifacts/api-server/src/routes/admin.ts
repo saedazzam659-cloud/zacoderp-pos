@@ -3094,10 +3094,13 @@ router.get("/reports/plan-usage", requireSuperAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 //  GET /api/admin/reports/revenue-by-plan
 // ───────────────────────────────────────────────────────────────────────────
-//  Actual revenue (SUM(total_amount) on posted sales_invoices within the
-//  selected period) grouped by the plan a company was on at the time. We
-//  attribute each company to its currently-active subscription's plan; this
-//  matches how the SuperAdmin understands "tenants on plan X earned Y".
+//  Revenue source = SUM(sales_invoices.total_amount) for posted invoices
+//  inside the selected period — i.e. ACTUAL invoice-earned revenue, NOT
+//  subscription billing. Each tenant is attributed to its currently-active
+//  subscription's plan + billing cycle, then totals are grouped by
+//  (plan, billing_cycle). This is intentionally different from the hub
+//  preview KPI `billedActive` (sum of active subscription prices), which
+//  is shown only as a reference figure — they answer different questions.
 //  Optional ?search filters by company nameAr BEFORE aggregation so totals
 //  match the visible CSV output.
 //  Subscription `billing_cycle` value "annual" (legacy) is normalized to

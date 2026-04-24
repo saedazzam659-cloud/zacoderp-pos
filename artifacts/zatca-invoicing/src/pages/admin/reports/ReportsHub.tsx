@@ -51,11 +51,11 @@ const REPORTS = [
   {
     href: "/admin/reports/revenue-by-plan",
     title: "الإيرادات حسب الباقة",
-    desc: "توزيع إجمالي الفوترة حسب الباقة ودورة الفوترة في رسم بياني وجدول.",
+    desc: "إيرادات الفواتير المرحَّلة، موزَّعة على باقة الشركة ودورة الاشتراك، خلال الفترة المختارة.",
     icon: PieIcon,
     color: "from-purple-50 to-purple-100/40 text-purple-700 border-purple-200",
     previewKey: "billedActive" as const,
-    previewLabel: "إجمالي الفوترة من الاشتراكات النشطة",
+    previewLabel: "إجمالي قيمة الاشتراكات النشطة (مرجعي)",
     previewFmt: (s: SummaryResp) => fmtSAR(s.billedActive),
   },
 ];
