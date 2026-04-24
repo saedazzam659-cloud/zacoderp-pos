@@ -5,13 +5,26 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send } from "lucide-react";
+import {
+  Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
+  Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
+} from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type CheckResult = {
   key: string; label: string; severity: "high" | "medium" | "low";
   count: number; samples: any[];
+};
+
+type SystemTree = {
+  generatedAt: string;
+  scopeFilter: "superadmin" | "tenant" | "shared" | "all";
+  apiModules:       Array<{ mount: string; scope: string; endpoints: Array<{ method: string; path: string; scope: string }> }>;
+  dbDomains:        Array<{ table: string; rowCountApprox: number | null }>;
+  screens:          Array<{ file: string; route: string; scope: string; category: string }>;
+  dashboardWidgets: Array<{ title: string; kind: "kpi" | "card" | "section"; source: string }>;
+  totals: { apiModules: number; apiEndpoints: number; dbTables: number; screens: number; dashboardWidgets: number };
 };
 
 const SEV_STYLE: Record<string, { bg: string; border: string; text: string; icon: any; label: string }> = {
@@ -35,12 +48,43 @@ function renderMarkdown(md: string) {
 }
 
 export default function AICompanyFix() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { toast } = useToast();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const isSuperAdmin = user?.role === "superadmin";
 
   const [companyId, setCompanyId] = useState<string>("");
   const [aiSummary, setAiSummary] = useState<string>("");
+  const [sysSummary, setSysSummary] = useState<string>("");
+  const [openCat, setOpenCat] = useState<string | null>("apiModules");
+
+  // Auto-discovered system tree — fetched eagerly when a SuperAdmin opens the
+  // page so they immediately see the full SuperAdmin scope (modules, screens,
+  // tables, dashboard widgets) without any manual registration.
+  const sysTreeQ = useQuery<SystemTree>({
+    queryKey: ["ai-fix-system-tree", "superadmin"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/ai-fix/system-tree?scope=superadmin`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل اكتشاف هيكل النظام");
+      return r.json();
+    },
+    enabled: isSuperAdmin,
+    staleTime: 5 * 60 * 1000,
+  });
+  const sysSummarizeMut = useMutation({
+    mutationFn: async () => {
+      setSysSummary("");
+      if (!sysTreeQ.data) throw new Error("لم يتم تحميل هيكل النظام بعد");
+      const r = await fetch(`${API}/api/admin/ai-fix/system-summarize`, {
+        method: "POST", headers,
+        body: JSON.stringify({ tree: sysTreeQ.data }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل التحليل");
+      return r.json() as Promise<{ summary: string }>;
+    },
+    onSuccess: (d) => setSysSummary(d.summary || ""),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   const { data: companies = [] } = useQuery({
     queryKey: ["admin-companies"],
@@ -94,6 +138,88 @@ export default function AICompanyFix() {
   const checks = diag?.checks ?? [];
   const totalIssues = diag?.totalIssues ?? 0;
 
+  // Helpers for the system-tree section.
+  const tree   = sysTreeQ.data;
+  const totals = tree?.totals;
+  const cats: Array<{ key: string; label: string; icon: any; count: number; render: () => any }> = tree ? [
+    {
+      key: "apiModules", label: "الموديولات (Backend APIs)", icon: Server, count: totals!.apiModules,
+      render: () => (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {tree.apiModules.map((m, i) => (
+            <div key={`${m.mount}#${i}`} className="border rounded p-2 text-xs bg-muted/30">
+              <div className="flex items-center justify-between gap-2">
+                <code className="font-mono text-violet-700">{m.mount || "/"}</code>
+                <span className="text-muted-foreground tabular-nums">{m.endpoints.length}</span>
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {Array.from(new Set(m.endpoints.flatMap(e => e.method.split("|")))).join(" · ")}
+              </div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "screens", label: "الشاشات (Frontend Pages)", icon: MonitorSmartphone, count: totals!.screens,
+      render: () => {
+        const byCat = new Map<string, typeof tree.screens>();
+        for (const s of tree.screens) {
+          const k = s.category || "general";
+          if (!byCat.has(k)) byCat.set(k, []);
+          byCat.get(k)!.push(s);
+        }
+        return (
+          <div className="space-y-2">
+            {Array.from(byCat.entries()).map(([cat, items]) => (
+              <div key={cat} className="border rounded p-2 bg-muted/30">
+                <div className="text-xs font-semibold mb-1.5 flex items-center justify-between">
+                  <span>{cat}</span>
+                  <span className="text-muted-foreground tabular-nums">{items.length}</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {items.map(s => (
+                    <code key={s.file} className="text-[11px] bg-background border rounded px-1.5 py-0.5 font-mono">
+                      {s.file}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      },
+    },
+    {
+      key: "dashboardWidgets", label: "عناصر لوحة تحكم SuperAdmin", icon: LayoutGrid, count: totals!.dashboardWidgets,
+      render: () => (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+          {tree.dashboardWidgets.map((w, i) => (
+            <div key={i} className="text-xs border rounded px-2 py-1.5 bg-muted/30 flex items-center justify-between gap-2">
+              <span className="truncate">{w.title}</span>
+              <span className="text-[10px] text-muted-foreground shrink-0">{w.kind} · {w.source}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "dbDomains", label: "جداول قاعدة البيانات", icon: Database, count: totals!.dbTables,
+      render: () => (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+          {tree.dbDomains.map(d => (
+            <div key={d.table} className="text-[11px] border rounded px-2 py-1 bg-muted/30 flex items-center justify-between gap-1">
+              <code className="font-mono truncate">{d.table}</code>
+              <span className="text-muted-foreground tabular-nums shrink-0">
+                {d.rowCountApprox == null ? "—" : Intl.NumberFormat("ar").format(d.rowCountApprox)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ] : [];
+
   return (
     <div className="space-y-5">
       <div>
@@ -106,6 +232,135 @@ export default function AICompanyFix() {
           هذه الصفحة <strong>للقراءة فقط</strong> ولا تنفذ أي تعديل تلقائي.
         </p>
       </div>
+
+      {/* SuperAdmin-only: auto-discovered system tree (Modules + Screens +
+          Dashboard Widgets + DB Domains). Updates itself with no code changes
+          whenever a new router, page, table, or widget is added. */}
+      {isSuperAdmin && (
+        <Card className="border-violet-200">
+          <CardHeader className="pb-3 bg-violet-50/40">
+            <CardTitle className="text-base flex items-center justify-between gap-2 text-violet-900">
+              <span className="flex items-center gap-2">
+                <Network className="h-4 w-4" />
+                هيكل النظام (اكتشاف تلقائي · نطاق المشرف العام)
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => sysTreeQ.refetch()}
+                  disabled={sysTreeQ.isFetching}
+                  title="إعادة اكتشاف الهيكل من الكود الفعلي"
+                >
+                  {sysTreeQ.isFetching
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <RefreshCw className="h-3 w-3" />}
+                  تحديث
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs gap-1 bg-violet-600 hover:bg-violet-700"
+                  disabled={!tree || sysSummarizeMut.isPending}
+                  onClick={() => sysSummarizeMut.mutate()}
+                  title="تحليل الهيكل المكتشف بالذكاء الاصطناعي"
+                >
+                  {sysSummarizeMut.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Sparkles className="h-3 w-3" />}
+                  تحليل بالذكاء الاصطناعي
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-3">
+            {sysTreeQ.isLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> جارٍ اكتشاف هيكل النظام...
+              </div>
+            )}
+            {sysTreeQ.isError && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                {(sysTreeQ.error as any)?.message || "فشل اكتشاف هيكل النظام"}
+              </div>
+            )}
+            {tree && (
+              <>
+                {/* KPI strip */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  {[
+                    { l: "الموديولات",  v: totals!.apiModules,       i: Server,            c: "text-violet-700"  },
+                    { l: "نقاط الـAPI", v: totals!.apiEndpoints,     i: Network,           c: "text-violet-700"  },
+                    { l: "الشاشات",     v: totals!.screens,          i: MonitorSmartphone, c: "text-blue-700"    },
+                    { l: "عناصر لوحة التحكم", v: totals!.dashboardWidgets, i: LayoutGrid,    c: "text-amber-700"   },
+                    { l: "جداول DB",   v: totals!.dbTables,         i: Database,          c: "text-emerald-700" },
+                  ].map(s => (
+                    <div key={s.l} className="border rounded p-2 bg-background flex items-center gap-2">
+                      <s.i className={`h-4 w-4 ${s.c} shrink-0`} />
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-muted-foreground truncate">{s.l}</p>
+                        <p className={`text-lg font-bold leading-tight ${s.c} tabular-nums`}>{s.v}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Collapsible category sections */}
+                <div className="space-y-1.5">
+                  {cats.map(c => {
+                    const open = openCat === c.key;
+                    const Chev = open ? ChevronDown : ChevronRight;
+                    return (
+                      <div key={c.key} className="border rounded">
+                        <button
+                          type="button"
+                          onClick={() => setOpenCat(open ? null : c.key)}
+                          className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium bg-muted/40 hover:bg-muted/60 rounded-t"
+                        >
+                          <span className="flex items-center gap-2"><c.icon className="h-4 w-4" />{c.label}</span>
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <span className="tabular-nums">{c.count}</span>
+                            <Chev className="h-4 w-4" />
+                          </span>
+                        </button>
+                        {open && <div className="p-2.5">{c.render()}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className="text-[11px] text-muted-foreground italic">
+                  مصدر البيانات: انعكاس على Express router stack + جداول pg_class + مسح ملفات pages/ + استخراج عناصر SuperAdmin*.tsx — لا تسجيل يدوي.
+                  آخر اكتشاف: {new Date(tree.generatedAt).toLocaleString("ar")}.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AI summary of the discovered system tree */}
+      {isSuperAdmin && (sysSummarizeMut.isPending || sysSummary) && (
+        <Card className="border-violet-200">
+          <CardHeader className="pb-3 bg-violet-50/50">
+            <CardTitle className="text-base flex items-center gap-2 text-violet-900">
+              <Sparkles className="h-4 w-4" />
+              تحليل النظام بالذكاء الاصطناعي
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {sysSummarizeMut.isPending ? (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                جارٍ توليد التحليل...
+              </div>
+            ) : (
+              <div className="prose prose-sm max-w-none text-sm leading-7 [&_li]:my-0.5"
+                   dir="rtl"
+                   dangerouslySetInnerHTML={renderMarkdown(sysSummary)} />
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">اختر الشركة وافحص</CardTitle></CardHeader>

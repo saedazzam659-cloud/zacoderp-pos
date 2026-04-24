@@ -4,6 +4,7 @@ import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoi
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
+import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 
 const router = Router();
 
@@ -710,6 +711,93 @@ ${JSON.stringify(compact, null, 2)}
         max_completion_tokens: 2048,
         messages: [
           { role: "system", content: "أنت مدقق محاسبي ومخزني خبير. ترد بالعربية الفصحى وبصيغة Markdown منظمة. لا تخترع بيانات، واستخدم فقط المدخلات." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const summary = data?.choices?.[0]?.message?.content ?? "";
+    res.json({ summary });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التلخيص" });
+  }
+});
+
+// ─── System Auto-Discovery (SuperAdmin AI Repair) ─────────────────────────────
+// GET /api/admin/ai-fix/system-tree?scope=superadmin|tenant|all
+//
+// Returns the auto-discovered structure of the entire system: every Express
+// router (via reflection on app.router.stack), every public DB table (via
+// pg_class), every frontend page file (filesystem scan of pages/), and every
+// dashboard widget label (regex over SuperAdmin*.tsx + admin/*.tsx). NOTHING
+// is hand-maintained — adding a new route, table, page, or widget shows up
+// here automatically on the next request.
+router.get("/ai-fix/system-tree", requireSuperAdmin, async (req, res) => {
+  try {
+    const raw = String(req.query.scope ?? "superadmin");
+    const scope: Scope | "all" =
+      raw === "tenant" || raw === "shared" || raw === "all" ? raw : "superadmin";
+    const tree = await buildSystemTree(scope);
+    res.json(tree);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل اكتشاف هيكل النظام" });
+  }
+});
+
+// POST /api/admin/ai-fix/system-summarize  body: { tree }
+//   AI-generated Arabic markdown report on the discovered system structure.
+//   Read-only: never mutates anything; never executes auto-fixes.
+router.post("/ai-fix/system-summarize", requireSuperAdmin, async (req, res) => {
+  const tree = (req.body?.tree ?? null) as SystemTree | null;
+  if (!tree || typeof tree !== "object") { res.status(400).json({ error: "tree مطلوب" }); return; }
+  if (!OPENAI_BASE || !OPENAI_KEY) {
+    res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" }); return;
+  }
+
+  // Compact payload — keep only what the LLM needs to reason about coverage.
+  // Drop endpoint paths to a count per module (full list would be wasteful).
+  const compact = {
+    generatedAt: tree.generatedAt,
+    scope: tree.scopeFilter,
+    totals: tree.totals,
+    apiModules: tree.apiModules.map(m => ({
+      mount: m.mount, scope: m.scope, endpointCount: m.endpoints.length,
+      sampleMethods: Array.from(new Set(m.endpoints.flatMap(e => e.method.split("|")))).slice(0, 6),
+    })),
+    dbDomains: tree.dbDomains.map(d => ({ table: d.table, rows: d.rowCountApprox })),
+    screensByCategory: Array.from(
+      tree.screens.reduce((acc, s) => {
+        acc.set(s.category, (acc.get(s.category) ?? 0) + 1);
+        return acc;
+      }, new Map<string, number>()),
+    ).map(([category, count]) => ({ category, count })),
+    dashboardWidgets: tree.dashboardWidgets.slice(0, 80),
+  };
+
+  const userPrompt = `أنت مهندس أنظمة ERP خبير. لديك خريطة شاملة (مكتشفة تلقائياً) لنظام ERP سعودي يدعم فاتورة ZATCA من نطاق المشرف العام (SuperAdmin):
+
+${JSON.stringify(compact, null, 2)}
+
+اكتب تقريراً موجزاً بالعربية الفصحى المهنية وبصيغة Markdown يتضمن:
+1. **نظرة عامة على البنية**: عدد الموديولات، الشاشات، الجداول، عناصر لوحة التحكم.
+2. **تغطية SuperAdmin**: ما الموديولات والشاشات التي تخدم المشرف العام تحديداً، وما الذي يبدو غائباً أو ناقصاً مقارنة بنظام ERP متكامل (مثل: تقارير اشتراكات، إعدادات أمان، سجل تدقيق، إدارة خطط، صيانة بيانات).
+3. **توصيات للمشرف العام**: قائمة مرقمة (٣-٧ بنود) بأولويات التطوير أو الفحوص التشغيلية المقترحة، مع ربط كل توصية باسم موديول/شاشة فعلية من الخريطة.
+4. لا تختلق أسماء موديولات أو جداول غير موجودة في المدخلات. ولا تذكر تنفيذ أي إصلاح تلقائي.`;
+
+  try {
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 2048,
+        messages: [
+          { role: "system", content: "أنت مهندس أنظمة ERP خبير. ترد بالعربية الفصحى وبصيغة Markdown منظمة. استخدم فقط ما ورد في المدخلات." },
           { role: "user", content: userPrompt },
         ],
       }),
