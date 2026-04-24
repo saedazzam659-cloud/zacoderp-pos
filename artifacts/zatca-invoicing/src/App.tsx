@@ -12,6 +12,7 @@ import AICompanyFix from "@/pages/admin/AICompanyFix";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
+import SecurityCenter from "@/pages/admin/SecurityCenter";
 import Notifications from "@/pages/Notifications";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
@@ -196,6 +197,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             {isSuperAdmin && <Route path="/admin/backups" component={BackupOperations} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}

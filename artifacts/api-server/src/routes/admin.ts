@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable } from "@workspace/db";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -2055,6 +2055,354 @@ router.get("/backups/run-all/:jobId", requireSuperAdmin, async (req, res) => {
   const job = bulkJobs.get(req.params.jobId);
   if (!job) { res.status(404).json({ error: "المهمة غير موجودة أو انتهت صلاحيتها" }); return; }
   res.json(job);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECURITY CENTER (task #4) — Centralized session, login-history, anomaly
+// and permissions surfaces. All endpoints requireSuperAdmin and write audit
+// rows under module="security" for every mutation. Never returns raw
+// passwordHash/sessionToken values.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface LatestLoginRow {
+  user_id: number;
+  ip: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+// GET /api/admin/security/sessions — list every user with a non-null sessionToken.
+// Augments each row with the IP/User-Agent of their latest successful login
+// from audit_log (action="login", module="auth").
+router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
+  try {
+    // Active sessions = any user with a non-null sessionToken. We deliberately
+    // do NOT return the token itself; only the sessionId (UUID, opaque).
+    const sessions = await db.select({
+      id:          usersTable.id,
+      username:    usersTable.username,
+      email:       usersTable.email,
+      role:        usersTable.role,
+      companyId:   usersTable.companyId,
+      sessionId:   usersTable.sessionId,
+      lastLoginAt: usersTable.lastLoginAt,
+    })
+      .from(usersTable)
+      .where(sql`${usersTable.sessionToken} IS NOT NULL`);
+
+    const userIds = sessions.map(s => s.id);
+    const companyIds = Array.from(new Set(sessions.map(s => s.companyId).filter((x): x is number => x != null)));
+
+    // Fetch the latest login audit row per user so we can show IP/UA without
+    // adding any new column to the users table.
+    const latestLogins = userIds.length === 0 ? [] : sqlRows<LatestLoginRow>(
+      await db.execute<LatestLoginRow>(sql`
+        SELECT DISTINCT ON (user_id) user_id, ip, user_agent, created_at
+          FROM audit_log
+         WHERE module = 'auth' AND action = 'login'
+           AND user_id IN (${sql.raw(userIds.join(",") || "NULL")})
+         ORDER BY user_id, created_at DESC
+      `) as SqlExecuteResult<LatestLoginRow>
+    );
+    const loginByUser = new Map(latestLogins.map(r => [Number(r.user_id), r]));
+
+    const companyMap = new Map<number, { id: number; nameAr: string }>();
+    if (companyIds.length > 0) {
+      const cos = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr })
+        .from(companiesTable).where(inArray(companiesTable.id, companyIds));
+      for (const c of cos) companyMap.set(c.id, c);
+    }
+
+    const rows = sessions.map(s => {
+      const lg = loginByUser.get(s.id);
+      return {
+        userId:      s.id,
+        username:    s.username,
+        email:       s.email,
+        role:        s.role,
+        companyId:   s.companyId,
+        companyName: s.companyId != null ? companyMap.get(s.companyId)?.nameAr ?? null : null,
+        sessionId:   s.sessionId,
+        lastLoginAt: s.lastLoginAt,
+        ip:          lg?.ip ?? null,
+        userAgent:   lg?.user_agent ?? null,
+      };
+    });
+    res.json({ rows, total: rows.length });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب الجلسات النشطة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/security/sessions/:userId/end — force a single user logout
+// by clearing both sessionToken AND sessionId (the auth middleware checks
+// sessionToken so this immediately invalidates the bearer token).
+router.post("/security/sessions/:userId/end", requireSuperAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [target] = await db.select({
+      id: usersTable.id, username: usersTable.username, role: usersTable.role,
+      companyId: usersTable.companyId, sessionToken: usersTable.sessionToken,
+    }).from(usersTable).where(eq(usersTable.id, userId));
+    if (!target)             { res.status(404).json({ error: "المستخدم غير موجود" }); return; }
+    if (!target.sessionToken){ res.status(400).json({ error: "لا توجد جلسة نشطة لهذا المستخدم" }); return; }
+
+    await db.update(usersTable)
+      .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
+      .where(eq(usersTable.id, userId));
+
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: target.companyId,
+      module: "security",
+      action: "edit",
+      entityType: "user_session",
+      entityId: String(userId),
+      metadata: { op: "force-logout", target: target.username, targetRole: target.role },
+    });
+    res.json({ ok: true, userId });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إنهاء الجلسة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/security/sessions/bulk-end — force-logout many users at once.
+router.post("/security/sessions/bulk-end", requireSuperAdmin, async (req, res) => {
+  try {
+    const userIds: number[] = Array.isArray(req.body?.userIds)
+      ? req.body.userIds.map(Number).filter((n: number) => Number.isFinite(n))
+      : [];
+    if (userIds.length === 0) { res.status(400).json({ error: "حدد مستخدماً واحداً على الأقل" }); return; }
+
+    const targets = await db.select({
+      id: usersTable.id, username: usersTable.username, companyId: usersTable.companyId,
+    }).from(usersTable)
+      .where(and(inArray(usersTable.id, userIds), sql`${usersTable.sessionToken} IS NOT NULL`));
+
+    if (targets.length === 0) { res.json({ ok: true, ended: 0, skipped: userIds.length }); return; }
+
+    const targetIds = targets.map(t => t.id);
+    await db.update(usersTable)
+      .set({ sessionToken: null, sessionId: null, updatedAt: new Date() })
+      .where(inArray(usersTable.id, targetIds));
+
+    for (const t of targets) {
+      await writeAudit({
+        userId: req.adminUser?.id ?? null,
+        username: req.adminUser?.username ?? null,
+        role: "superadmin",
+        companyId: t.companyId,
+        module: "security",
+        action: "edit",
+        entityType: "user_session",
+        entityId: String(t.id),
+        metadata: { op: "bulk-force-logout", target: t.username },
+      });
+    }
+    res.json({ ok: true, ended: targets.length, skipped: userIds.length - targets.length, endedIds: targetIds });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إنهاء الجلسات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/security/login-history — paginated audit_log filter for
+// login/logout/denied. Query: from, to, username, companyId, success
+// ("true"|"false"), limit (default 100, max 500), offset.
+router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
+  try {
+    // Scope strictly to auth-flow events. `requirePermission` writes denied
+    // rows for RBAC failures across every module, so without the auth
+    // scope this list would conflate "wrong password" with "no permission
+    // to view sales invoices" — a misleading security signal.
+    const conds: any[] = [
+      eq(auditLogTable.module, "auth"),
+      inArray(auditLogTable.action, ["login", "logout", "denied"]),
+    ];
+    const username = typeof req.query.username === "string" ? req.query.username.trim().slice(0, 80) : "";
+    const companyId = req.query.companyId ? Number(req.query.companyId) : NaN;
+    const from = typeof req.query.from === "string" ? new Date(req.query.from) : null;
+    const to   = typeof req.query.to   === "string" ? new Date(req.query.to)   : null;
+    const succ = typeof req.query.success === "string" ? req.query.success : "";
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 500);
+    const offset = Math.max(Number(req.query.offset ?? 0), 0);
+
+    if (username)                      conds.push(sql`${auditLogTable.username} ILIKE ${"%" + username + "%"}`);
+    if (Number.isFinite(companyId))    conds.push(eq(auditLogTable.companyId, companyId));
+    if (from && !isNaN(from.getTime())) conds.push(gte(auditLogTable.createdAt, from));
+    if (to   && !isNaN(to.getTime()))   conds.push(lte(auditLogTable.createdAt, to));
+    if (succ === "true")               conds.push(sql`${auditLogTable.action} IN ('login','logout')`);
+    if (succ === "false")              conds.push(eq(auditLogTable.action, "denied"));
+
+    const where = and(...conds);
+    const [{ count: total }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(auditLogTable).where(where as any);
+    const rows = await db
+      .select({
+        id: auditLogTable.id, userId: auditLogTable.userId, username: auditLogTable.username,
+        role: auditLogTable.role, companyId: auditLogTable.companyId, action: auditLogTable.action,
+        method: auditLogTable.method, path: auditLogTable.path, statusCode: auditLogTable.statusCode,
+        ip: auditLogTable.ip, userAgent: auditLogTable.userAgent, metadata: auditLogTable.metadata,
+        createdAt: auditLogTable.createdAt,
+      })
+      .from(auditLogTable).where(where as any)
+      .orderBy(desc(auditLogTable.createdAt))
+      .limit(limit).offset(offset);
+
+    // Lightweight 30-day denied-per-day series for the UI mini-chart.
+    const seriesResult = await db.execute<{ day: string; n: number }>(sql`
+      SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+             count(*)::int AS n
+        FROM audit_log
+       WHERE action = 'denied'
+         AND created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY 1
+       ORDER BY 1
+    `);
+    const series = sqlRows<{ day: string; n: number }>(seriesResult as SqlExecuteResult<{ day: string; n: number }>);
+
+    res.json({ rows, total: Number(total ?? 0), limit, offset, deniedSeries30d: series });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب تاريخ الدخول";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/security/anomalies — best-effort anomaly detector on top of
+// audit_log. Three simple heuristics:
+//   1. Any user with ≥5 denied audit rows in the trailing 60 minutes.
+//   2. Any user logging in today from an IP that never appeared in their
+//      last 30 days of login history.
+//   3. Any superadmin login at all from a new IP (more sensitive bar).
+router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
+  try {
+    interface DeniedSpikeRow { user_id: number | null; username: string | null; n: number }
+    interface NewIpRow {
+      user_id: number; username: string; role: string;
+      ip: string; created_at: string;
+    }
+
+    // Scoped to module='auth' so RBAC denials don't drown out the
+    // authentication-spike signal this anomaly is meant to surface.
+    const deniedSpikesResult = await db.execute<DeniedSpikeRow>(sql`
+      SELECT user_id, username, count(*)::int AS n
+        FROM audit_log
+       WHERE module = 'auth' AND action = 'denied'
+         AND created_at >= NOW() - INTERVAL '1 hour'
+       GROUP BY user_id, username
+      HAVING count(*) >= 5
+       ORDER BY n DESC
+       LIMIT 50
+    `);
+    const deniedSpikes = sqlRows<DeniedSpikeRow>(deniedSpikesResult as SqlExecuteResult<DeniedSpikeRow>);
+
+    // New-IP heuristic: a login row in the last 24h whose IP is NOT present
+    // in any login row for the SAME user within the prior 30 days.
+    const newIpsResult = await db.execute<NewIpRow>(sql`
+      WITH today_logins AS (
+        SELECT a.user_id, a.username, a.role, a.ip, a.created_at
+          FROM audit_log a
+         WHERE a.action = 'login'
+           AND a.module = 'auth'
+           AND a.ip IS NOT NULL
+           AND a.user_id IS NOT NULL
+           AND a.created_at >= NOW() - INTERVAL '24 hours'
+      ), historical AS (
+        SELECT DISTINCT user_id, ip
+          FROM audit_log
+         WHERE action = 'login'
+           AND module = 'auth'
+           AND ip IS NOT NULL
+           AND created_at <  NOW() - INTERVAL '24 hours'
+           AND created_at >= NOW() - INTERVAL '30 days'
+      )
+      SELECT t.user_id, t.username, t.role, t.ip, t.created_at
+        FROM today_logins t
+        LEFT JOIN historical h ON h.user_id = t.user_id AND h.ip = t.ip
+       WHERE h.ip IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 50
+    `);
+    const newIps = sqlRows<NewIpRow>(newIpsResult as SqlExecuteResult<NewIpRow>);
+
+    // Superadmin-only subset (more sensitive — even one new-IP login matters).
+    const superadminNewIps = newIps.filter(r => r.role === "superadmin");
+
+    res.json({
+      deniedSpikes:  deniedSpikes.map(r => ({ userId: r.user_id, username: r.username, count: r.n })),
+      newIps:        newIps.map(r => ({
+        userId: r.user_id, username: r.username, role: r.role, ip: r.ip, createdAt: r.created_at,
+      })),
+      superadminNewIps: superadminNewIps.map(r => ({
+        userId: r.user_id, username: r.username, ip: r.ip, createdAt: r.created_at,
+      })),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حساب التنبيهات الأمنية";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /api/admin/security/permissions-matrix — every admin/superadmin/owner
+// user with their company, role, and granted permission groups. Read-only.
+// Also returns per-role headcount per company for the role-distribution panel.
+router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) => {
+  try {
+    const adminUsers = await db.select({
+      id: usersTable.id, username: usersTable.username, email: usersTable.email,
+      role: usersTable.role, companyId: usersTable.companyId,
+      permissions: usersTable.permissions, isActive: usersTable.isActive,
+      lastLoginAt: usersTable.lastLoginAt,
+    })
+      .from(usersTable)
+      .where(inArray(usersTable.role, ["superadmin", "admin", "owner"]));
+
+    const cids = Array.from(new Set(adminUsers.map(u => u.companyId).filter((x): x is number => x != null)));
+    const companyMap = new Map<number, { id: number; nameAr: string }>();
+    if (cids.length > 0) {
+      const cos = await db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr })
+        .from(companiesTable).where(inArray(companiesTable.id, cids));
+      for (const c of cos) companyMap.set(c.id, c);
+    }
+
+    // Role distribution per company (every role, not just admin-tier).
+    interface RoleCountRow { company_id: number | null; role: string; n: number }
+    const roleResult = await db.execute<RoleCountRow>(sql`
+      SELECT company_id, role, count(*)::int AS n
+        FROM users
+       GROUP BY company_id, role
+       ORDER BY company_id NULLS FIRST, role
+    `);
+    const roleDist = sqlRows<RoleCountRow>(roleResult as SqlExecuteResult<RoleCountRow>);
+
+    res.json({
+      users: adminUsers.map(u => ({
+        id: u.id, username: u.username, email: u.email, role: u.role,
+        companyId: u.companyId,
+        companyName: u.companyId != null ? companyMap.get(u.companyId)?.nameAr ?? null : null,
+        // Surface ONLY the permission group keys (e.g. ["sales_invoices","items"]),
+        // never the underlying granular flags — keeps response slim and avoids
+        // accidental leakage of internal action names.
+        permissionGroups: u.permissions && typeof u.permissions === "object"
+          ? Object.keys(u.permissions as Record<string, unknown>)
+          : [],
+        isActive: u.isActive,
+        lastLoginAt: u.lastLoginAt,
+      })),
+      roleDistribution: roleDist.map(r => ({
+        companyId: r.company_id, role: r.role, count: r.n,
+      })),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب مصفوفة الصلاحيات";
+    res.status(500).json({ error: msg });
+  }
 });
 
 export default router;

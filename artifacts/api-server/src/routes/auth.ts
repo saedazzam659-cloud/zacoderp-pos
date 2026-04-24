@@ -4,11 +4,21 @@ import { usersTable, subscriptionsTable, companiesTable, userBranchesTable } fro
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
+import { writeAudit } from "../middleware/permissions.js";
 
 const router = Router();
 
 function generateToken(): string {
   return randomUUID() + "-" + randomUUID();
+}
+
+// Pull a usable client IP out of the request, mirroring the helper inside
+// permissions.ts (kept private there to avoid widening its API surface).
+function loginClientIp(req: any): string | null {
+  const xf = req.headers["x-forwarded-for"];
+  if (typeof xf === "string" && xf.length) return xf.split(",")[0].trim().slice(0, 64);
+  if (Array.isArray(xf) && xf.length) return String(xf[0]).slice(0, 64);
+  return (req.socket?.remoteAddress ?? null)?.slice(0, 64) ?? null;
 }
 
 // POST /api/auth/login
@@ -19,18 +29,41 @@ router.post("/login", async (req, res) => {
     return;
   }
 
+  const ip = loginClientIp(req);
+  const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
+
   const [user] = await db.select().from(usersTable).where(eq(usersTable.username, username));
   if (!user) {
+    // Failed login → record as denied so the Security Center can show it.
+    await writeAudit({
+      userId: null, username: String(username).slice(0, 80),
+      role: null, companyId: null,
+      module: "auth", action: "denied",
+      method: "POST", path: "/api/auth/login", statusCode: 401,
+      ip, userAgent: ua, metadata: { reason: "unknown_user" },
+    });
     res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
     return;
   }
   if (!user.isActive) {
+    await writeAudit({
+      userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+      module: "auth", action: "denied",
+      method: "POST", path: "/api/auth/login", statusCode: 403,
+      ip, userAgent: ua, metadata: { reason: "user_inactive" },
+    });
     res.status(403).json({ error: "الحساب موقوف. تواصل مع الدعم." });
     return;
   }
 
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
+    await writeAudit({
+      userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+      module: "auth", action: "denied",
+      method: "POST", path: "/api/auth/login", statusCode: 401,
+      ip, userAgent: ua, metadata: { reason: "bad_password" },
+    });
     res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
     return;
   }
@@ -57,6 +90,14 @@ router.post("/login", async (req, res) => {
     lastLoginAt: new Date(),
     updatedAt: new Date(),
   }).where(eq(usersTable.id, user.id));
+
+  // Successful login → audit row so the Security Center can list it.
+  await writeAudit({
+    userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+    module: "auth", action: "login",
+    method: "POST", path: "/api/auth/login", statusCode: 200,
+    ip, userAgent: ua, metadata: null,
+  });
 
   // Get subscription
   const [subscription] = user.companyId
@@ -106,6 +147,16 @@ router.post("/logout", async (req, res) => {
         sessionId: null,
         updatedAt: new Date(),
       }).where(eq(usersTable.id, user.id));
+      // Audit logout (module="auth"). Driven from the user row found via
+      // session token so we know exactly which session was torn down.
+      await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+        module: "auth", action: "logout",
+        method: "POST", path: "/api/auth/logout", statusCode: 200,
+        ip: loginClientIp(req),
+        userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+        metadata: null,
+      });
     }
   }
   res.json({ ok: true });
