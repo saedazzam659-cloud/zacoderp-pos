@@ -28,7 +28,12 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
-type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string };
+type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string;
+  /** When true, hide this entry from non-admin users even if they were granted the matching permission.
+   *  Use for screens whose backend is hard-coded admin-only (e.g. user management) so non-admins
+   *  don't see a menu link that would 404 / 403 when clicked. */
+  requireAdmin?: boolean;
+};
 
 // Returns true when this nav item should be visible to the given user.
 // Rules:
@@ -39,6 +44,9 @@ type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permK
 function navItemAllowed(item: NavDef, user: any): boolean {
   if (!user) return false;
   if (user.role === "superadmin" || user.role === "admin") return true;
+  // Admin-only items stay hidden for regular users regardless of granted perms,
+  // because their backend endpoints require admin role and would 403/404.
+  if (item.requireAdmin) return false;
   if (!item.permKey) return true;
   const perm = (user.permissions ?? {})[item.permKey];
   return !!perm?.view;
@@ -113,7 +121,7 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
   { nameKey: "nav.zatcaLink",       href: "/zatca",               icon: Link2,      permKey: "zatca_setup" },
   { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders,    permKey: "general_settings" },
-  { nameKey: "nav.users",           href: "/users",               icon: Users,      permKey: "users" },
+  { nameKey: "nav.users",           href: "/users",               icon: Users,      permKey: "users", requireAdmin: true },
   { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign, permKey: "currencies" },
   // accountingMappings: gate under "general_settings" since it's a chart-of-accounts wiring screen.
   { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked, permKey: "general_settings" },
