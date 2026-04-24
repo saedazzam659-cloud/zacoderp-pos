@@ -18,6 +18,34 @@ Whenever a new screen, page, or backend module is added to the system, it MUST b
 
 `admin` and `superadmin` always bypass step 5's granular checks (handled inside the middleware), so existing privileged users keep working without manual intervention. The result of these five steps is that the new screen is automatically hidden in the sidebar, blocked at the URL, blocked at the API, and immediately visible/toggleable in the Users → Permissions tab — all from the same commit.
 
+## Branch Filter Policy (MANDATORY)
+
+Every new **report** added to the system MUST support filtering by branch out of the box, with no manual workaround. A report is defined as any read-only page that renders aggregated, transactional, or analytical data (sales/purchasing/cash/inventory/accounting/tax/HR/POS reports, statements, ledgers, agings, dashboards, exports). The rule applies whether the report is new or being modified. Pull requests that introduce a new report without branch support must be rejected.
+
+The five steps required for every new report:
+
+1. **Frontend filter (UI):**
+   - Use the shared `artifacts/zatca-invoicing/src/components/BranchFilter.tsx` component. Do NOT build a custom branch picker — the shared component already handles loading state, RTL, label/icon, the "كل الفروع / All branches" sentinel option, and (when extended) multi-select.
+   - Place the `<BranchFilter value={branchId} onChange={setBranchId} />` control at the **top of the report**, in the same toolbar/filter bar as the date range and any other filters, before the data table/chart. Must be visible without scrolling.
+   - Default value is `undefined` ⇒ the option labelled `common.allBranches` ("كل الفروع") is selected. Single-branch (`number`) and multi-branch (`number[]`, when the report opts into the multi-select variant) are both supported.
+
+2. **State + cache key:**
+   - Store the selected branch in component state (`useState<number | undefined>(undefined)`).
+   - Include `branchId` in the React-Query `queryKey` (e.g. `["sales-by-customer", cid, from, to, branchId]`) so changing the filter triggers a refetch and does not return stale cached rows.
+
+3. **API helper / route:**
+   - Thread `branchId` through the corresponding helper in `artifacts/zatca-invoicing/src/lib/{sales,purchase,cash}AnalyticsApi.ts` (or the relevant lib module) and append it via the existing `qs()` query-string builder. Never append it ad-hoc inside the page component.
+   - On the backend (`artifacts/api-server/src/routes/*.ts`), parse `req.query.branchId` and apply it inside the SQL/Drizzle WHERE clause via the shared helper `branchScopeFilter(req, <table>.branchId)` from `middleware/auth.ts`. Filtering happens in the database query, not in JS post-processing, so pagination and aggregates stay correct.
+
+4. **Per-user branch scoping (server-enforced, automatic):**
+   - The shared `branchScopeFilter(req, branchColumn)` helper already AND-combines the explicit `?branchId=…` filter with the caller's `viewAllBranches` / `userBranches` grants. A user limited to specific branches will only ever receive rows for those branches, even if they tamper with the query string. `admin` and `superadmin` always bypass.
+   - Therefore: **never write a raw `eq(table.branchId, req.query.branchId)`**. Always go through the helper, so per-user permissions are enforced as a single source of truth.
+
+5. **Exports inherit the filter:**
+   - PDF, Excel, CSV and print views of the report MUST honour the same `branchId` (and the same per-user scope from step 4). Concretely: pass `branchId` into the export endpoint / client-side export builder so the exported rows match exactly what is on screen. Do not regenerate the export from a separate unfiltered query.
+
+**Enforcement:** the audit script `scripts/audit-branch-filter.cjs` (`pnpm audit:branch-filter` from the repo root) scans every page under `artifacts/zatca-invoicing/src/pages/**` whose name matches a report pattern (`*Report.tsx`, `*Statement.tsx`, `*Balances.tsx`, `*Aging*.tsx`, `*ByCustomer.tsx`, `*ByItem.tsx`, `*ByPeriod.tsx`, `*BySupplier.tsx`, `VATDeclaration.tsx`, `ZatcaReport.tsx`, `IncomeStatement.tsx`, `AccountStatement.tsx`, `CashFlowReport.tsx`, etc.) and warns on any file that does not import `BranchFilter`. Run it locally before opening a PR; a failing run is a blocker, not a warning.
+
 # System Architecture
 
 The system is built as a pnpm workspace monorepo, leveraging Node.js and TypeScript.

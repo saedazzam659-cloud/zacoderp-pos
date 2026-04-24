@@ -1,3 +1,30 @@
+/**
+ * Canonical Branch Filter for ALL reports.
+ *
+ * Per the **Branch Filter Policy (MANDATORY)** in `replit.md`, every new
+ * report (sales / purchasing / cash / inventory / accounting / tax / HR /
+ * POS — anything that renders aggregated or transactional data) MUST mount
+ * this component at the top of its filter bar. Do NOT roll your own branch
+ * picker.
+ *
+ * Contract:
+ *   <BranchFilter value={branchId} onChange={setBranchId} />
+ *
+ *   - `value: number | undefined`   → undefined ⇒ "All branches" sentinel.
+ *   - `onChange(id | undefined)`    → wire the value into:
+ *        1. the React-Query `queryKey` (so changes refetch),
+ *        2. the API helper's `qs({ branchId })`,
+ *        3. any export (PDF / Excel / CSV / print) builder so exports
+ *           match the on-screen rows.
+ *
+ * Backend enforcement is automatic via `branchScopeFilter(req, table.branchId)`
+ * in `artifacts/api-server/src/middleware/auth.ts` — it intersects the
+ * caller's `viewAllBranches` / `userBranches` grants with the explicit
+ * `?branchId=…` from the query string. Never bypass it.
+ *
+ * The audit script `pnpm audit:branch-filter` will flag any report file
+ * that does not import this component.
+ */
 import { useTranslation } from "react-i18next";
 import { Building2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
