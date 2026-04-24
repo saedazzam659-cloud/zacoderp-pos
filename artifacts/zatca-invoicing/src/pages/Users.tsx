@@ -37,6 +37,7 @@ type UserRow = {
   nameAr: string | null;
   nameEn: string | null;
   permissions: PermissionMap | null;
+  viewAllBranches: boolean;
   isActive: boolean;
   lastLoginAt: string | null;
   branchIds: number[];
@@ -54,6 +55,7 @@ const emptyForm = () => ({
   email: "",
   role: "user" as "user" | "admin",
   isActive: true,
+  viewAllBranches: true,
   branchIds: [] as number[],
   permissions: viewOnlyPermissions(),
 });
@@ -130,6 +132,7 @@ export default function Users() {
       email: u.email ?? "",
       role: (u.role === "admin" ? "admin" : "user"),
       isActive: u.isActive,
+      viewAllBranches: u.viewAllBranches ?? true,
       branchIds: u.branchIds ?? [],
       permissions: { ...viewOnlyPermissions(), ...(u.permissions ?? {}) },
     });
@@ -156,6 +159,7 @@ export default function Users() {
         email: form.email,
         role: form.role,
         isActive: form.isActive,
+        viewAllBranches: form.viewAllBranches,
         branchIds: form.branchIds,
         permissions: form.permissions,
       };
@@ -354,7 +358,28 @@ export default function Users() {
 
               {/* Branches Tab */}
               <TabsContent value="branches" className="space-y-3 pt-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
+                {/* عرض جميع الفروع — when on, the user can see data from every branch */}
+                <label
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                    form.viewAllBranches
+                      ? "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30"
+                      : "hover:bg-muted/50"
+                  }`}
+                  data-testid="checkbox-view-all-branches"
+                >
+                  <Checkbox
+                    checked={form.viewAllBranches}
+                    onCheckedChange={(v) => setForm(f => ({ ...f, viewAllBranches: !!v }))}
+                  />
+                  <div>
+                    <div className="font-medium">{t("users.viewAllBranches")}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {t("users.viewAllBranchesHint")}
+                    </div>
+                  </div>
+                </label>
+
+                <div className={`flex items-center justify-between flex-wrap gap-2 ${form.viewAllBranches ? "opacity-50 pointer-events-none" : ""}`}>
                   <div className="text-sm text-muted-foreground">{t("users.branchesHint")}</div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setForm({ ...form, branchIds: branches.map(b => b.id) })}>

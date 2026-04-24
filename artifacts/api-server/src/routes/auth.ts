@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -55,6 +55,12 @@ router.post("/login", async (req, res) => {
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId))
     : [null];
 
+  // Load branch grants so the client can scope BranchFilter dropdowns.
+  const branchLinks = await db
+    .select({ branchId: userBranchesTable.branchId })
+    .from(userBranchesTable)
+    .where(eq(userBranchesTable.userId, user.id));
+
   res.json({
     token: sessionToken,
     sessionId,
@@ -68,6 +74,8 @@ router.post("/login", async (req, res) => {
       nameAr: (user as any).nameAr ?? null,
       nameEn: (user as any).nameEn ?? null,
       permissions: (user as any).permissions ?? {},
+      viewAllBranches: (user as any).viewAllBranches ?? true,
+      branchIds: branchLinks.map(l => l.branchId),
       company,
       subscription,
     },
@@ -114,6 +122,11 @@ router.get("/me", async (req, res) => {
     ? await db.select().from(companiesTable).where(eq(companiesTable.id, user.companyId))
     : [null];
 
+  const branchLinks = await db
+    .select({ branchId: userBranchesTable.branchId })
+    .from(userBranchesTable)
+    .where(eq(userBranchesTable.userId, user.id));
+
   res.json({
     id: user.id,
     username: user.username,
@@ -125,6 +138,8 @@ router.get("/me", async (req, res) => {
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
+    viewAllBranches: (user as any).viewAllBranches ?? true,
+    branchIds: branchLinks.map(l => l.branchId),
     company,
     subscription,
   });

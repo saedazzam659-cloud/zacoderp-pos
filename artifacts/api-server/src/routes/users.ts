@@ -38,6 +38,7 @@ router.get("/", async (req, res) => {
       nameAr: usersTable.nameAr,
       nameEn: usersTable.nameEn,
       permissions: usersTable.permissions,
+      viewAllBranches: usersTable.viewAllBranches,
       isActive: usersTable.isActive,
       lastLoginAt: usersTable.lastLoginAt,
       createdAt: usersTable.createdAt,
@@ -82,7 +83,7 @@ router.post("/", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const {
       username, password, email, role, code, nameAr, nameEn,
-      isActive, branchIds, permissions,
+      isActive, branchIds, permissions, viewAllBranches,
     } = req.body ?? {};
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
     if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
@@ -113,6 +114,8 @@ router.post("/", async (req, res) => {
       nameAr: nameAr || null,
       nameEn: nameEn || null,
       permissions: permissions ?? null,
+      // Default true if not provided (matches the column default).
+      viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
       isActive: isActive !== false,
     }).returning();
 
@@ -139,7 +142,7 @@ router.patch("/:id", async (req, res) => {
 
     const {
       password, email, role, code, nameAr, nameEn,
-      isActive, branchIds, permissions,
+      isActive, branchIds, permissions, viewAllBranches,
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
@@ -149,6 +152,7 @@ router.patch("/:id", async (req, res) => {
     if (nameAr !== undefined) update.nameAr = nameAr || null;
     if (nameEn !== undefined) update.nameEn = nameEn || null;
     if (typeof isActive === "boolean") update.isActive = isActive;
+    if (typeof viewAllBranches === "boolean") update.viewAllBranches = viewAllBranches;
     if (permissions !== undefined) update.permissions = permissions;
     if (password) {
       if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }

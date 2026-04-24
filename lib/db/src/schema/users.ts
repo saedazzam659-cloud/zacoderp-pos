@@ -19,6 +19,11 @@ export const usersTable = pgTable("users", {
   // Shape: { "<moduleKey>": { view, create, edit, delete, post, export, ... } }
   // For admin/superadmin, full access is granted regardless of this map.
   permissions: jsonb("permissions"),
+  // Branch-visibility scope. When true (default), the user can see data from
+  // every branch of their company. When false, the user can only see data
+  // belonging to the branches linked through `user_branches`. Admin and
+  // superadmin roles always bypass this restriction.
+  viewAllBranches: boolean("view_all_branches").notNull().default(true),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
   lastLoginAt: timestamp("last_login_at"),
