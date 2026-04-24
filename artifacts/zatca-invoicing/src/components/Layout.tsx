@@ -29,6 +29,23 @@ import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 // ─── Nav definitions ───────────────────────────────────────────────────────────
 type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permKey?: string };
 
+// Returns true when this nav item should be visible to the given user.
+// Rules:
+//   - admins and superadmins always see everything (skip per-screen filtering).
+//   - items without a permKey have no per-screen gate and stay visible.
+//   - otherwise, the user must have permissions[permKey].view === true.
+// Centralized so leaf-level (NavItem) and group-level filtering stay in sync.
+function navItemAllowed(item: NavDef, user: any): boolean {
+  if (!user) return false;
+  if (user.role === "superadmin" || user.role === "admin") return true;
+  if (!item.permKey) return true;
+  const perm = (user.permissions ?? {})[item.permKey];
+  return !!perm?.view;
+}
+function filterNav(items: NavDef[], user: any): NavDef[] {
+  return items.filter(i => navItemAllowed(i, user));
+}
+
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.dashboard",            href: "/",                         icon: LayoutDashboard, exact: true },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
@@ -60,67 +77,73 @@ const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings },
 ];
 const dashboardSubNav: NavDef[] = [
-  { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin     },
-  { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon },
-  { nameKey: "nav.zatcaLink",       href: "/zatca",               icon: Link2      },
-  { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders    },
-  { nameKey: "nav.users",           href: "/users",               icon: Users      },
-  { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign },
-  { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked },
-  { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText   },
-  { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3  },
+  { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
+  { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
+  { nameKey: "nav.zatcaLink",       href: "/zatca",               icon: Link2,      permKey: "zatca_setup" },
+  { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders,    permKey: "general_settings" },
+  { nameKey: "nav.users",           href: "/users",               icon: Users,      permKey: "users" },
+  { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign, permKey: "currencies" },
+  // accountingMappings: gate under "general_settings" since it's a chart-of-accounts wiring screen.
+  { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked, permKey: "general_settings" },
+  { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText,   permKey: "sales_invoices" },
+  { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
 ];
 
 const purchasingSubNav: NavDef[] = [
-  { nameKey: "nav.suppliers",            href: "/suppliers",                  icon: Truck        },
-  { nameKey: "nav.supplierGroups",       href: "/purchasing/supplier-groups", icon: Users        },
-  { nameKey: "nav.lc",                   href: "/purchasing/lc",              icon: CreditCard   },
-  { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart },
-  { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw    },
-  { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote     },
+  { nameKey: "nav.suppliers",            href: "/suppliers",                  icon: Truck,        permKey: "suppliers" },
+  // supplier_groups + lc piggy-back on the suppliers permission (no dedicated module key).
+  { nameKey: "nav.supplierGroups",       href: "/purchasing/supplier-groups", icon: Users,        permKey: "suppliers" },
+  { nameKey: "nav.lc",                   href: "/purchasing/lc",              icon: CreditCard,   permKey: "purchase_invoices" },
+  { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart, permKey: "purchase_invoices" },
+  { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,    permKey: "purchase_returns" },
+  { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,     permKey: "supplier_settlements" },
 ];
 const salesSubNav: NavDef[] = [
-  { nameKey: "nav.customers",            href: "/customers",         icon: Users           },
-  { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck      },
-  { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature   },
-  { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag     },
-  { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw       },
-  { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle },
-  { nameKey: "nav.zatcaBridge",          href: "/zatca-bridge",      icon: Link2           },
-  { nameKey: "nav.zatcaReport",          href: "/zatca-report",      icon: BarChart3       },
+  { nameKey: "nav.customers",            href: "/customers",         icon: Users,           permKey: "customers" },
+  // salesReps: no dedicated module key in PERMISSION_MODULES; gate under sales_invoices.
+  { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck,      permKey: "sales_invoices" },
+  { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature,   permKey: "sales_quotations" },
+  { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
+  { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
+  { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },
+  { nameKey: "nav.zatcaBridge",          href: "/zatca-bridge",      icon: Link2,           permKey: "zatca_bridge" },
+  { nameKey: "nav.zatcaReport",          href: "/zatca-report",      icon: BarChart3,       permKey: "zatca_report" },
 ];
 const companySystemNav: NavDef[] = [];
 
 const accountingSubNav: NavDef[] = [
-  { nameKey: "nav.chartOfAccounts", href: "/accounting/accounts",       icon: BookMarked    },
-  { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target        },
-  { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange },
-  { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen      },
+  { nameKey: "nav.chartOfAccounts", href: "/accounting/accounts",       icon: BookMarked,    permKey: "accounts" },
+  // cost_centers + fiscal_periods piggy-back on accounts (no dedicated module key).
+  { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target,        permKey: "accounts" },
+  { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange, permKey: "accounts" },
+  { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
 ];
 const reportsSubNav: NavDef[] = [
-  { nameKey: "nav.accountStatement", href: "/accounting/reports/account-statement", icon: FileText   },
-  { nameKey: "nav.trialBalance",     href: "/accounting/reports/trial-balance",     icon: Scale      },
-  { nameKey: "nav.balanceSheet",     href: "/accounting/reports/balance-sheet",     icon: PieChart   },
-  { nameKey: "nav.incomeStatement",  href: "/accounting/reports/income-statement",  icon: TrendingUp },
+  { nameKey: "nav.accountStatement", href: "/accounting/reports/account-statement", icon: FileText,   permKey: "accounting_reports" },
+  { nameKey: "nav.trialBalance",     href: "/accounting/reports/trial-balance",     icon: Scale,      permKey: "accounting_reports" },
+  { nameKey: "nav.balanceSheet",     href: "/accounting/reports/balance-sheet",     icon: PieChart,   permKey: "accounting_reports" },
+  { nameKey: "nav.incomeStatement",  href: "/accounting/reports/income-statement",  icon: TrendingUp, permKey: "accounting_reports" },
 ];
 const cashSubNav: NavDef[] = [
-  { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet           },
-  { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark         },
-  { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle  },
-  { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle    },
-  { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight   },
+  { nameKey: "nav.cashBoxes",        href: "/cash/boxes",            icon: Wallet,          permKey: "cash_boxes" },
+  { nameKey: "nav.banks",            href: "/cash/banks",            icon: Landmark,        permKey: "bank_accounts" },
+  { nameKey: "nav.receiptVouchers",  href: "/cash/receipt-vouchers", icon: ArrowDownCircle, permKey: "receipt_vouchers" },
+  { nameKey: "nav.paymentVouchers",  href: "/cash/payment-vouchers", icon: ArrowUpCircle,   permKey: "payment_vouchers" },
+  // transfers: no dedicated module key; gate under cash_boxes.
+  { nameKey: "nav.transfers",        href: "/cash/transfers",        icon: ArrowLeftRight,  permKey: "cash_boxes" },
 ];
 
 const inventoryHeader: NavDef = { nameKey: "nav.inventoryDashboard", href: "/inventory", icon: LayoutDashboard, exact: true };
 const inventorySubNav: NavDef[] = [
-  { nameKey: "nav.items",             href: "/inventory/items",            icon: Package           },
-  { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag               },
-  { nameKey: "nav.units",             href: "/inventory/units",            icon: Ruler             },
-  { nameKey: "nav.warehouses",        href: "/inventory/warehouses",       icon: Warehouse         },
-  { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers            },
-  { nameKey: "nav.stockTransfers",    href: "/inventory/transfers",        icon: ArrowRightLeft    },
-  { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal },
-  { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList     },
+  { nameKey: "nav.items",             href: "/inventory/items",            icon: Package,           permKey: "items" },
+  // item_groups + units piggy-back on items (no dedicated module key).
+  { nameKey: "nav.itemGroups",        href: "/inventory/item-groups",      icon: Tag,               permKey: "items" },
+  { nameKey: "nav.units",             href: "/inventory/units",            icon: Ruler,             permKey: "items" },
+  { nameKey: "nav.warehouses",        href: "/inventory/warehouses",       icon: Warehouse,         permKey: "warehouses" },
+  { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers,            permKey: "warehouses" },
+  { nameKey: "nav.stockTransfers",    href: "/inventory/transfers",        icon: ArrowRightLeft,    permKey: "stock_transfers" },
+  { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "stock_adjustments" },
+  { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList,     permKey: "stock_counts" },
 ];
 
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
@@ -229,6 +252,11 @@ function NavItem({
   indent?: boolean;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  // Per-user permission filter — hide entirely when the user lacks .view perm
+  // for this screen. Admins/superadmins always see everything (handled inside
+  // navItemAllowed).
+  if (!navItemAllowed(item, user)) return null;
   const isActive = item.exact
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";

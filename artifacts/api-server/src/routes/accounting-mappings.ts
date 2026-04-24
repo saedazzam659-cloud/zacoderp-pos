@@ -45,6 +45,16 @@ router.use((req, res, next) => {
   next();
 });
 
+// Mutations + AI calls require admin/superadmin. Reads are allowed for any
+// authenticated user of the same company (resolveCompanyId already enforces
+// tenant scoping). This blocks regular employees from rewriting accounting
+// links or burning AI cost.
+function requireAdmin(req: any, res: any, next: any) {
+  const role = req.authUser?.role;
+  if (role === "superadmin" || role === "admin") { next(); return; }
+  res.status(403).json({ error: "صلاحيات غير كافية — مطلوب مدير" });
+}
+
 router.get("/", async (req, res) => {
   try {
     const raw = req.query.companyId ? Number(req.query.companyId) : undefined;
@@ -56,7 +66,7 @@ router.get("/", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-router.put("/bulk", async (req, res) => {
+router.put("/bulk", requireAdmin, async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -122,7 +132,7 @@ router.put("/bulk", async (req, res) => {
 
 // Seed default LC chart-of-accounts and map them to the letter_of_credit document type.
 // Idempotent: accounts with matching code are reused; mappings are upserted.
-router.post("/seed-lc", async (req, res) => {
+router.post("/seed-lc", requireAdmin, async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
@@ -178,7 +188,7 @@ router.post("/seed-lc", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-router.post("/ai-suggest", async (req, res) => {
+router.post("/ai-suggest", requireAdmin, async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }

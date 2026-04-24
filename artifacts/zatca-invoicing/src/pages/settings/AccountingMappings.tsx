@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -60,12 +60,18 @@ export default function AccountingMappings() {
   const [aiReasoning, setAiReasoning] = useState<Record<string, string>>({});
   const [aiBusy, setAiBusy] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
+  // Initialize local state from server data ONCE on first successful load,
+  // then explicitly merge after save responses. Without this guard, any
+  // background refetch (e.g. after qc.invalidateQueries on save success)
+  // would clobber the user's pending edits — including a freshly-toggled
+  // lock checkbox that hasn't been saved yet.
+  const hydratedRef = useRef(false);
+  function rowsToState(rows: MappingRow[]): Record<string, MappingRow> {
     const next: Record<string, MappingRow> = {};
     for (const dt of DOCUMENT_TYPES) {
       for (const r of dt.roles) {
         const key = `${dt.key}.${r.key}`;
-        const found = serverMappings.find(m => m.documentType === dt.key && m.roleKey === r.key);
+        const found = rows.find(m => m.documentType === dt.key && m.roleKey === r.key);
         next[key] = {
           documentType: dt.key,
           roleKey: r.key,
@@ -74,8 +80,15 @@ export default function AccountingMappings() {
         };
       }
     }
-    setState(next);
-  }, [serverMappings]);
+    return next;
+  }
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    if (loadingMaps) return;            // wait for initial fetch to settle
+    if (mapsError) return;               // never hydrate from a failed response
+    setState(rowsToState(serverMappings));
+    hydratedRef.current = true;
+  }, [serverMappings, loadingMaps, mapsError]);
 
   // Group-level isLocked
   const groupLocked = (docType: string) =>
@@ -102,7 +115,8 @@ export default function AccountingMappings() {
     });
   };
 
-  // Save mutation
+  // Save mutation. Per-card save passes a docType so only that group's rows
+  // are sent and reconciled — preserving unsaved edits in OTHER cards.
   const saveMut = useMutation({
     mutationFn: async (docType?: string) => {
       if (loadFailed) throw new Error("لا يمكن الحفظ قبل تحميل البيانات بنجاح");
@@ -117,10 +131,34 @@ export default function AccountingMappings() {
         try { m = JSON.parse(t).error ?? t; } catch {}
         throw new Error(m || "فشل الحفظ");
       }
-      return res.json();
+      return { rows: (await res.json()) as MappingRow[], docType };
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["accounting-mappings", cid] });
+    onSuccess: ({ rows, docType }) => {
+      if (!Array.isArray(rows)) { toast({ title: "تم حفظ الربط المحاسبي" }); return; }
+      // Always refresh the query cache with full authoritative server rows.
+      qc.setQueryData(["accounting-mappings", cid], rows);
+      // For local component state: when saving a single card, ONLY merge rows
+      // for that docType — never touch the user's unsaved edits in other
+      // cards. For "save all" (no docType), it's safe to fully re-hydrate.
+      if (docType) {
+        setState(prev => {
+          const next = { ...prev };
+          const dt = DOCUMENT_TYPES.find(d => d.key === docType);
+          dt?.roles.forEach(r => {
+            const k = `${docType}.${r.key}`;
+            const found = rows.find(m => m.documentType === docType && m.roleKey === r.key);
+            next[k] = {
+              documentType: docType,
+              roleKey: r.key,
+              accountId: found?.accountId ?? null,
+              isLocked: !!found?.isLocked,
+            };
+          });
+          return next;
+        });
+      } else {
+        setState(rowsToState(rows));
+      }
       toast({ title: "تم حفظ الربط المحاسبي" });
     },
     onError: (e: any) => toast({ title: "تعذّر الحفظ", description: e?.message, variant: "destructive" }),
@@ -182,9 +220,32 @@ export default function AccountingMappings() {
       }
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       qc.invalidateQueries({ queryKey: ["accounts", cid] });
-      qc.invalidateQueries({ queryKey: ["accounting-mappings", cid] });
+      // Re-fetch authoritative mappings and merge ONLY the LC group's rows
+      // into local state — other cards keep their unsaved edits intact.
+      try {
+        const r = await fetch(`${API}/api/accounting-mappings?companyId=${cid}`, { headers });
+        if (r.ok) {
+          const rows: MappingRow[] = await r.json();
+          qc.setQueryData(["accounting-mappings", cid], rows);
+          setState(prev => {
+            const next = { ...prev };
+            const dt = DOCUMENT_TYPES.find(d => d.key === "letter_of_credit");
+            dt?.roles.forEach(role => {
+              const k = `letter_of_credit.${role.key}`;
+              const found = rows.find(m => m.documentType === "letter_of_credit" && m.roleKey === role.key);
+              next[k] = {
+                documentType: "letter_of_credit",
+                roleKey: role.key,
+                accountId: found?.accountId ?? null,
+                isLocked: !!found?.isLocked,
+              };
+            });
+            return next;
+          });
+        }
+      } catch { /* tolerate transient fetch failures */ }
       const created = data?.created?.length ?? 0;
       const reused = data?.reused?.length ?? 0;
       toast({
@@ -267,11 +328,22 @@ export default function AccountingMappings() {
                       <h3 className="font-semibold text-base truncate">{doc.label}</h3>
                       <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{doc.description}</p>
                     </div>
-                    <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-xs">
-                      <Checkbox checked={locked} onCheckedChange={(v) => toggleGroupLock(doc.key, !!v)} />
-                      {locked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 text-muted-foreground" />}
-                      <span>{locked ? "محفوظ دائم" : "قفل دائم"}</span>
-                    </label>
+                    {/* Radix Checkbox is a <button>; wrapping it in <label> causes
+                        the click to fire twice (label → forwarded click → button),
+                        which silently cancels out the toggle and explains why the
+                        UI appeared checked once but the state never actually
+                        flipped. Use sibling htmlFor instead. */}
+                    <div className="flex items-center gap-1.5 shrink-0 text-xs">
+                      <Checkbox
+                        id={`lock-${doc.key}`}
+                        checked={locked}
+                        onCheckedChange={(v) => toggleGroupLock(doc.key, !!v)}
+                      />
+                      <label htmlFor={`lock-${doc.key}`} className="flex items-center gap-1.5 cursor-pointer select-none">
+                        {locked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 text-muted-foreground" />}
+                        <span>{locked ? "محفوظ دائم" : "قفل دائم"}</span>
+                      </label>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
