@@ -1034,6 +1034,8 @@
     "roleAdmin": "Company Admin (full permissions)",
     "isActive": "Account Active",
     "branchesHint": "Choose which branches this user can access. Leave empty to allow all branches.",
+    "viewAllBranches": "View all branches",
+    "viewAllBranchesHint": "When on, the user can see data from every branch. When off, they only see data tied to the branches selected below (invoices, customers, warehouses, reports, …).",
     "selectAll": "Select All",
     "clearAll": "Clear All",
     "noBranchesYet": "No branches. Add branches from the \"Branches\" screen first.",

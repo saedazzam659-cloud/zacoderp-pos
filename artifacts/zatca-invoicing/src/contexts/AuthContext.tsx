@@ -13,6 +13,14 @@ export interface AuthUser {
   role: string;
   companyId?: number | null;
   sessionId?: string | null;
+  /**
+   * When true, the user can see data from every branch in the company.
+   * When false, they are restricted to the branches in `branchIds`.
+   * `admin` and `superadmin` always behave as if this were true (server-enforced).
+   */
+  viewAllBranches?: boolean;
+  /** Branches this user is explicitly linked to (used when viewAllBranches=false). */
+  branchIds?: number[];
   company?: any;
   subscription?: any;
 }
