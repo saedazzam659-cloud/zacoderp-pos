@@ -537,8 +537,9 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
       health,
       generatedAt: new Date().toISOString(),
     });
-  } catch (err: any) {
-    console.error("[admin/dashboard] aggregation failed:", err);
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("[admin/dashboard] aggregation failed:", detail);
     res.status(500).json({ error: "تعذر جلب بيانات لوحة التحكم" });
   }
 });
