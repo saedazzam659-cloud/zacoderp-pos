@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { invoicesTable, companiesTable } from "@workspace/db";
 import { eq, and, gte, lte } from "drizzle-orm";
@@ -6,6 +6,13 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
+// Hard auth gate — extractAuth alone is non-blocking; this rejects anonymous
+// access to tenant report endpoints (e.g. /api/reports/vat-declaration) with
+// 401 instead of letting them reach the handler with an undefined company.
+router.use((req: Request, res: Response, next: NextFunction) => {
+  if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+});
 
 // GET /api/reports/vat-declaration?from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get("/vat-declaration", async (req, res) => {

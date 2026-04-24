@@ -210,17 +210,20 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/customers/:id" module="customers" component={CustomerNew} />}
             {!isSuperAdmin && <PermRoute path="/suppliers"     module="suppliers" component={Suppliers} />}
             {!isSuperAdmin && <PermRoute path="/suppliers/new" module="suppliers" action="create" component={SupplierNew} />}
-            {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
-            {!isSuperAdmin && <Route path="/zatca-bridge" component={ZatcaBridge} />}
-            {!isSuperAdmin && <Route path="/zatca-report" component={ZatcaReport} />}
-            {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
+            {!isSuperAdmin && <PermRoute path="/zatca"         module="zatca_setup"   component={ZatcaIntegration} />}
+            {!isSuperAdmin && <PermRoute path="/zatca-bridge"  module="zatca_bridge"  component={ZatcaBridge} />}
+            {!isSuperAdmin && <PermRoute path="/zatca-report"  module="zatca_report"  component={ZatcaReport} />}
+            {!isSuperAdmin && <PermRoute path="/general-settings" module="general_settings" component={GeneralSettings} />}
             {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/users" module="users" component={Users} />}
             {!isSuperAdmin && <PermRoute path="/vat-declaration" module="vat_declaration" component={VATDeclaration} />}
 
+            {/* POS routes (gated behind the "pos" module — same as the sidebar permKey) */}
+            {isSuperAdmin && <Route path="/pos-monitoring" component={PosMonitoring} />}
+            {!isSuperAdmin && <PermRoute path="/pos-monitoring" module="pos" component={PosMonitoring} />}
+            {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
+            {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
+
             {/* HR routes */}
-            <Route path="/pos-monitoring" component={PosMonitoring} />
-            <Route path="/pos-settings" component={PosSettings} />
-            <Route path="/pos-terminals" component={PosTerminals} />
             {!isSuperAdmin && <Route path="/hr/employees" component={Employees} />}
             {!isSuperAdmin && <Route path="/hr/employees/:id/contracts" component={EmployeeContracts} />}
             {!isSuperAdmin && <Route path="/hr/attendance" component={Attendance} />}
@@ -232,7 +235,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/hr/settings" component={HRSettings} />}
 
             {/* Inventory routes */}
-            {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/inventory" module="items" component={InventoryDashboard} />}
             {!isSuperAdmin && <PermRoute path="/inventory/warehouse-groups" module="warehouses"        component={WarehouseGroups} />}
             {!isSuperAdmin && <PermRoute path="/inventory/warehouses"       module="warehouses"        component={Warehouses} />}
             {!isSuperAdmin && <PermRoute path="/inventory/item-groups"      module="items"             component={ItemGroups} />}
@@ -245,16 +248,16 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}
             {!isSuperAdmin && <PermRoute path="/inventory/counts"           module="stock_counts"      component={StockCounting} />}
             {!isSuperAdmin && <PermRoute path="/inventory/counts/new"       module="stock_counts" action="create" component={StockCounting} />}
-            {!isSuperAdmin && <Route path="/inventory/ledger" component={StockLedger} />}
-            {!isSuperAdmin && <Route path="/inventory/balance" component={StockBalance} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/ledger"  module="items" component={StockLedger} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/balance" module="items" component={StockBalance} />}
             {/* Inventory Reports */}
-            {!isSuperAdmin && <Route path="/inventory/reports"                  component={InventoryReportsHub} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/stock-balance"    component={StockBalance} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/stock-ledger"     component={StockLedger} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/item-card"        component={ItemCard} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/low-stock"        component={LowStockReport} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/valuation"        component={ValuationByWarehouse} />}
-            {!isSuperAdmin && <Route path="/inventory/reports/slow-moving"      component={SlowMovingItems} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports"                  module="items" component={InventoryReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-balance"    module="items" component={StockBalance} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/stock-ledger"     module="items" component={StockLedger} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/item-card"        module="items" component={ItemCard} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/low-stock"        module="items" component={LowStockReport} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/valuation"        module="items" component={ValuationByWarehouse} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/reports/slow-moving"      module="items" component={SlowMovingItems} />}
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting"><Redirect to="/accounting/accounts" /></Route>}
@@ -266,25 +269,25 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/journals/:id"   module="journal_entries" component={JournalEntryForm} />}
             {/* Accounting Reports */}
             {!isSuperAdmin && <Route path="/accounting/reports"><Redirect to="/accounting/reports/trial-balance" /></Route>}
-            {!isSuperAdmin && <Route path="/accounting/reports/account-statement" component={AccountStatement} />}
-            {!isSuperAdmin && <Route path="/accounting/reports/trial-balance"     component={TrialBalance} />}
-            {!isSuperAdmin && <Route path="/accounting/reports/balance-sheet"     component={BalanceSheet} />}
-            {!isSuperAdmin && <Route path="/accounting/reports/income-statement"  component={IncomeStatement} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/account-statement" module="accounting_reports" component={AccountStatement} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/trial-balance"     module="accounting_reports" component={TrialBalance} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/balance-sheet"     module="accounting_reports" component={BalanceSheet} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/reports/income-statement"  module="accounting_reports" component={IncomeStatement} />}
 
             {/* Org routes */}
             {!isSuperAdmin && <Route path="/org"><Redirect to="/org/branches" /></Route>}
-            {!isSuperAdmin && <Route path="/org/regions"  component={Regions} />}
-            {!isSuperAdmin && <Route path="/org/branches" component={Branches} />}
+            {!isSuperAdmin && <PermRoute path="/org/regions"  module="regions"  component={Regions} />}
+            {!isSuperAdmin && <PermRoute path="/org/branches" module="branches" component={Branches} />}
 
             {/* Purchasing routes */}
             {!isSuperAdmin && <Route path="/purchasing"><Redirect to="/purchasing/invoices" /></Route>}
-            {!isSuperAdmin && <Route path="/purchasing/supplier-groups" component={SupplierGroups} />}
-            {!isSuperAdmin && <Route path="/purchasing/lc"              component={LetterOfCredit} />}
-            {!isSuperAdmin && <Route path="/purchasing/invoices/new"    component={PurchaseInvoiceForm} />}
-            {!isSuperAdmin && <Route path="/purchasing/invoices/:id"    component={PurchaseInvoiceForm} />}
-            {!isSuperAdmin && <Route path="/purchasing/invoices"        component={PurchaseInvoices} />}
-            {!isSuperAdmin && <Route path="/purchasing/returns"         component={PurchaseReturns} />}
-            {!isSuperAdmin && <Route path="/purchasing/settlements"     component={SupplierSettlement} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/supplier-groups" module="suppliers"             component={SupplierGroups} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/lc"              module="purchase_invoices"     component={LetterOfCredit} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/invoices/new"    module="purchase_invoices" action="create" component={PurchaseInvoiceForm} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/invoices/:id"    module="purchase_invoices"     component={PurchaseInvoiceForm} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/invoices"        module="purchase_invoices"     component={PurchaseInvoices} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/returns"         module="purchase_returns"      component={PurchaseReturns} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/settlements"     module="supplier_settlements"  component={SupplierSettlement} />}
 
             {/* Sales routes */}
             {!isSuperAdmin && <Route path="/sales"><Redirect to="/sales/invoices" /></Route>}
@@ -297,35 +300,35 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/returns"        module="sales_returns"    component={SalesReturns} />}
 
             {/* Customers & Sales Reports */}
-            {!isSuperAdmin && <Route path="/sales/reports/customer-statement" component={CustomerStatement} />}
-            {!isSuperAdmin && <Route path="/sales/reports/customer-balances"  component={CustomerBalances} />}
-            {!isSuperAdmin && <Route path="/sales/reports/aging"              component={AgingReport} />}
-            {!isSuperAdmin && <Route path="/sales/reports/sales-by-customer"  component={SalesByCustomer} />}
-            {!isSuperAdmin && <Route path="/sales/reports/sales-by-item"      component={SalesByItem} />}
-            {!isSuperAdmin && <Route path="/sales/reports/sales-by-period"    component={SalesByPeriod} />}
-            {!isSuperAdmin && <Route path="/sales/reports/top-customers"      component={TopCustomers} />}
-            {!isSuperAdmin && <Route path="/sales/reports/returns"            component={SalesReturnsReport} />}
-            {!isSuperAdmin && <Route path="/sales/reports"                    component={SalesReportsHub} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/supplier-statement"   component={SupplierStatement} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/supplier-balances"    component={SupplierBalances} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/aging"                component={SupplierAgingReport} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-supplier" component={PurchasesBySupplier} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-item"    component={PurchasesByItem} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/purchases-by-period"  component={PurchasesByPeriod} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/top-suppliers"        component={TopSuppliers} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports/returns"              component={PurchaseReturnsReport} />}
-            {!isSuperAdmin && <Route path="/purchasing/reports"                      component={PurchaseReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement" module="customers"      component={CustomerStatement} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-balances"  module="customers"      component={CustomerBalances} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/aging"              module="sales_invoices" component={AgingReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-customer"  module="sales_invoices" component={SalesByCustomer} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-item"      module="sales_invoices" component={SalesByItem} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-period"    module="sales_invoices" component={SalesByPeriod} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_invoices" component={TopCustomers} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_returns"  component={SalesReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_invoices" component={SalesReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-balances"    module="suppliers"          component={SupplierBalances} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/aging"                module="purchase_invoices"  component={SupplierAgingReport} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-supplier" module="purchase_invoices" component={PurchasesBySupplier} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-item"    module="purchase_invoices"  component={PurchasesByItem} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/purchases-by-period"  module="purchase_invoices"  component={PurchasesByPeriod} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/top-suppliers"        module="suppliers"          component={TopSuppliers} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports/returns"              module="purchase_returns"   component={PurchaseReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/reports"                      module="purchase_invoices"  component={PurchaseReportsHub} />}
 
-            {!isSuperAdmin && <Route path="/cash/reports/cash-balances"      component={CashBalances} />}
-            {!isSuperAdmin && <Route path="/cash/reports/bank-balances"      component={BankBalances} />}
-            {!isSuperAdmin && <Route path="/cash/reports/cash-box-statement" component={CashBoxStatement} />}
-            {!isSuperAdmin && <Route path="/cash/reports/bank-statement"     component={BankAccountStatement} />}
-            {!isSuperAdmin && <Route path="/cash/reports/daily-summary"      component={CashFlowReport} />}
-            {!isSuperAdmin && <Route path="/cash/reports/receipts"           component={ReceiptVouchersReport} />}
-            {!isSuperAdmin && <Route path="/cash/reports/payments"           component={PaymentVouchersReport} />}
-            {!isSuperAdmin && <Route path="/cash/reports/transfers"          component={TransfersReport} />}
-            {!isSuperAdmin && <Route path="/cash/reports"                    component={CashReportsHub} />}
-            {!isSuperAdmin && <Route path="/sales/settlements"       component={CustomerSettlement} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/cash-balances"      module="cash_boxes"        component={CashBalances} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/bank-balances"      module="bank_accounts"     component={BankBalances} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/cash-box-statement" module="cash_boxes"        component={CashBoxStatement} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/bank-statement"     module="bank_accounts"     component={BankAccountStatement} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/daily-summary"      module="cash_boxes"        component={CashFlowReport} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/receipts"           module="receipt_vouchers"  component={ReceiptVouchersReport} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/payments"           module="payment_vouchers"  component={PaymentVouchersReport} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports/transfers"          module="cash_boxes"        component={TransfersReport} />}
+            {!isSuperAdmin && <PermRoute path="/cash/reports"                    module="cash_boxes"        component={CashReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/sales/settlements"               module="sales_settlements" component={CustomerSettlement} />}
 
             {/* Cash & Banks */}
             {!isSuperAdmin && <Route path="/cash"><Redirect to="/cash/boxes" /></Route>}
@@ -336,9 +339,9 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/cash/transfers"        module="cash_boxes"        component={CashTransfers}   />}
 
             {/* Settings routes */}
-            {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}
-            {!isSuperAdmin && <Route path="/settings/accounting-mappings" component={AccountingMappings} />}
-            {!isSuperAdmin && <Route path="/sales/reps" component={SalesReps} />}
+            {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
+            {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_invoices"   component={SalesReps} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

@@ -46,6 +46,32 @@ function navItemAllowed(item: NavDef, user: any): boolean {
 function filterNav(items: NavDef[], user: any): NavDef[] {
   return items.filter(i => navItemAllowed(i, user));
 }
+// Group-level visibility: a collapsible group should hide entirely when the
+// user has no .view perm for ANY of the modules it contains. Admins/superadmins
+// always see everything.
+function groupVisible(user: any, moduleKeys: string[]): boolean {
+  if (!user) return false;
+  if (user.role === "superadmin" || user.role === "admin") return true;
+  const perms = user.permissions ?? {};
+  return moduleKeys.some(k => !!perms[k]?.view);
+}
+
+// Module key sets per sidebar group. Keep in sync with the subNav arrays
+// below — if a permKey is added/removed from a subNav, mirror it here so
+// the parent group hides correctly when no children are accessible.
+const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","zatca_bridge","zatca_report"];
+const SALES_REPORTS_PERMS       = ["sales_invoices","customers","sales_returns"];
+const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements"];
+const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
+const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
+const CASH_REPORTS_PERMS        = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
+const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock_adjustments","stock_counts"];
+// All inventory report routes are gated as module="items" in App.tsx, so the
+// group should mirror that exactly — a user with only `warehouses.view` has
+// nothing accessible inside this group.
+const INVENTORY_REPORTS_PERMS   = ["items"];
+const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries"];
+const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
   { nameKey: "nav.dashboard",            href: "/",                         icon: LayoutDashboard, exact: true },
@@ -150,12 +176,12 @@ const inventorySubNav: NavDef[] = [
 
 const inventoryReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/inventory/reports", icon: LayoutDashboard, exact: true };
 const inventoryReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2     },
-  { nameKey: "navExtra.stockLedger",  href: "/inventory/reports/stock-ledger",  icon: BookOpen      },
-  { nameKey: "navExtra.itemCard",     href: "/inventory/reports/item-card",     icon: ClipboardList },
-  { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal },
-  { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet        },
-  { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers        },
+  { nameKey: "navExtra.stockBalance", href: "/inventory/reports/stock-balance", icon: BarChart2,         permKey: "items" },
+  { nameKey: "navExtra.stockLedger",  href: "/inventory/reports/stock-ledger",  icon: BookOpen,          permKey: "items" },
+  { nameKey: "navExtra.itemCard",     href: "/inventory/reports/item-card",     icon: ClipboardList,     permKey: "items" },
+  { nameKey: "navExtra.lowStock",     href: "/inventory/reports/low-stock",     icon: SlidersHorizontal, permKey: "items" },
+  { nameKey: "navExtra.valuation",    href: "/inventory/reports/valuation",     icon: Wallet,            permKey: "items" },
+  { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "items" },
 ];
 
 // ─── CashNavGroup ──────────────────────────────────────────────────────────────
@@ -163,6 +189,8 @@ function CashNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, CASH_GROUP_PERMS)) return null;
   const isOnCash = location.startsWith("/cash") && !location.startsWith("/cash/reports");
   return (
     <div>
@@ -185,14 +213,14 @@ function CashNavGroup({
 
 // ─── CashReportsNavGroup ──────────────────────────────────────────────────────
 const cashReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.cashBalances",   href: "/cash/reports/cash-balances",      icon: FileText },
-  { nameKey: "navExtra.bankBalances",   href: "/cash/reports/bank-balances",      icon: FileText },
-  { nameKey: "navExtra.cashBoxStatement", href: "/cash/reports/cash-box-statement", icon: FileText },
-  { nameKey: "navExtra.bankStatement",  href: "/cash/reports/bank-statement",     icon: FileText },
-  { nameKey: "navExtra.dailySummary",   href: "/cash/reports/daily-summary",      icon: FileText },
-  { nameKey: "navExtra.receiptsReport", href: "/cash/reports/receipts",           icon: FileText },
-  { nameKey: "navExtra.paymentsReport", href: "/cash/reports/payments",           icon: FileText },
-  { nameKey: "navExtra.transfersReport", href: "/cash/reports/transfers",         icon: FileText },
+  { nameKey: "navExtra.cashBalances",     href: "/cash/reports/cash-balances",      icon: FileText, permKey: "cash_boxes" },
+  { nameKey: "navExtra.bankBalances",     href: "/cash/reports/bank-balances",      icon: FileText, permKey: "bank_accounts" },
+  { nameKey: "navExtra.cashBoxStatement", href: "/cash/reports/cash-box-statement", icon: FileText, permKey: "cash_boxes" },
+  { nameKey: "navExtra.bankStatement",    href: "/cash/reports/bank-statement",     icon: FileText, permKey: "bank_accounts" },
+  { nameKey: "navExtra.dailySummary",     href: "/cash/reports/daily-summary",      icon: FileText, permKey: "cash_boxes" },
+  { nameKey: "navExtra.receiptsReport",   href: "/cash/reports/receipts",           icon: FileText, permKey: "receipt_vouchers" },
+  { nameKey: "navExtra.paymentsReport",   href: "/cash/reports/payments",           icon: FileText, permKey: "payment_vouchers" },
+  { nameKey: "navExtra.transfersReport",  href: "/cash/reports/transfers",          icon: FileText, permKey: "cash_boxes" },
 ];
 const cashReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/cash/reports", icon: BarChart2 };
 
@@ -200,6 +228,8 @@ function CashReportsNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, CASH_REPORTS_PERMS)) return null;
   const isOnReports = location.startsWith("/cash/reports");
   return (
     <div>
@@ -305,6 +335,8 @@ function PurchasingNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, PURCHASING_GROUP_PERMS)) return null;
   const isOnPurchasing = ((location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
   return (
     <div>
@@ -346,6 +378,8 @@ function SalesNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, SALES_GROUP_PERMS)) return null;
   const isOnSales = (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers");
   return (
     <div>
@@ -379,14 +413,14 @@ function SalesNavGroup({
 
 // ─── SalesReportsNavGroup ─────────────────────────────────────────────────────
 const salesReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText },
-  { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText },
-  { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText },
-  { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText },
-  { nameKey: "navExtra.salesByItem",        href: "/sales/reports/sales-by-item",      icon: FileText },
-  { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText },
-  { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText },
-  { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText },
+  { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText, permKey: "customers" },
+  { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText, permKey: "customers" },
+  { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "navExtra.salesByItem",        href: "/sales/reports/sales-by-item",      icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText, permKey: "sales_returns" },
 ];
 const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2 };
 
@@ -399,6 +433,8 @@ function SalesReportsNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, SALES_REPORTS_PERMS)) return null;
   const isOnReports = location.startsWith("/sales/reports");
   return (
     <div>
@@ -432,14 +468,14 @@ function SalesReportsNavGroup({
 
 // ─── PurchasingReportsNavGroup ────────────────────────────────────────────────
 const purchasingReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.supplierStatement",      href: "/purchasing/reports/supplier-statement",   icon: FileText },
-  { nameKey: "navExtra.supplierBalances",       href: "/purchasing/reports/supplier-balances",    icon: FileText },
-  { nameKey: "navExtra.purchaseAging",          href: "/purchasing/reports/aging",                icon: FileText },
-  { nameKey: "navExtra.purchasesBySupplier",    href: "/purchasing/reports/purchases-by-supplier", icon: FileText },
-  { nameKey: "navExtra.purchasesByItem",        href: "/purchasing/reports/purchases-by-item",    icon: FileText },
-  { nameKey: "navExtra.purchasesByPeriod",      href: "/purchasing/reports/purchases-by-period",  icon: FileText },
-  { nameKey: "navExtra.topSuppliers",           href: "/purchasing/reports/top-suppliers",        icon: FileText },
-  { nameKey: "navExtra.purchaseReturnsReport",  href: "/purchasing/reports/returns",              icon: FileText },
+  { nameKey: "navExtra.supplierStatement",      href: "/purchasing/reports/supplier-statement",    icon: FileText, permKey: "suppliers" },
+  { nameKey: "navExtra.supplierBalances",       href: "/purchasing/reports/supplier-balances",     icon: FileText, permKey: "suppliers" },
+  { nameKey: "navExtra.purchaseAging",          href: "/purchasing/reports/aging",                 icon: FileText, permKey: "purchase_invoices" },
+  { nameKey: "navExtra.purchasesBySupplier",    href: "/purchasing/reports/purchases-by-supplier", icon: FileText, permKey: "purchase_invoices" },
+  { nameKey: "navExtra.purchasesByItem",        href: "/purchasing/reports/purchases-by-item",     icon: FileText, permKey: "purchase_invoices" },
+  { nameKey: "navExtra.purchasesByPeriod",      href: "/purchasing/reports/purchases-by-period",   icon: FileText, permKey: "purchase_invoices" },
+  { nameKey: "navExtra.topSuppliers",           href: "/purchasing/reports/top-suppliers",         icon: FileText, permKey: "suppliers" },
+  { nameKey: "navExtra.purchaseReturnsReport",  href: "/purchasing/reports/returns",               icon: FileText, permKey: "purchase_returns" },
 ];
 const purchasingReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/purchasing/reports", icon: BarChart2 };
 
@@ -452,6 +488,8 @@ function PurchasingReportsNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, PURCHASING_REPORTS_PERMS)) return null;
   const isOnReports = location.startsWith("/purchasing/reports");
   return (
     <div>
@@ -493,6 +531,8 @@ function InventoryNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, INVENTORY_GROUP_PERMS)) return null;
   const isOnInventory = location.startsWith("/inventory") && !location.startsWith("/inventory/reports");
   return (
     <div>
@@ -538,6 +578,8 @@ function InventoryReportsNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, INVENTORY_REPORTS_PERMS)) return null;
   const isOnReports = location.startsWith("/inventory/reports");
   return (
     <div>
@@ -579,6 +621,8 @@ function ReportsNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, ACCOUNTING_REPORTS_PERMS)) return null;
   const isOnReports = location.startsWith("/accounting/reports");
   return (
     <div>
@@ -714,6 +758,8 @@ function AccountingNavGroup({
   location, onNavigate, open, onToggle,
 }: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth() as any;
+  if (!groupVisible(user, ACCOUNTING_GROUP_PERMS)) return null;
   const isOnSub = accountingSubNav.some(i => location.startsWith(i.href));
   return (
     <div>

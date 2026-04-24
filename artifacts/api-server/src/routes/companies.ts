@@ -1,11 +1,21 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
+import { requirePermission, audit } from "../middleware/permissions.js";
 
 const router = Router();
+
+// Hard auth gate — every endpoint here touches tenant-level data, so anonymous
+// callers must be rejected before reaching any handler. Admin / superadmin then
+// pass all granular permission checks below.
+router.use(extractAuth);
+router.use((req: Request, res: Response, next: NextFunction) => {
+  if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+});
 
 router.get("/", async (req, res) => {
   const companies = await db.select().from(companiesTable).orderBy(companiesTable.createdAt);

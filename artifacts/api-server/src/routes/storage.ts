@@ -1,7 +1,8 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { Readable } from "stream";
 import { z } from "zod";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage";
+import { extractAuth } from "../middleware/auth.js";
 
 const RequestUploadUrlBody = z.object({
   name: z.string().min(1),
@@ -12,6 +13,14 @@ const RequestUploadUrlBody = z.object({
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
 
+// Authenticated-only gate. The PUBLIC bucket route below opts out (it serves
+// public objects by design), but private upload-URL issuance and private
+// object fetches must require a valid Bearer token.
+function requireAuthed(req: Request, res: Response, next: NextFunction) {
+  if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+}
+
 /**
  * POST /storage/uploads/request-url
  *
@@ -19,7 +28,7 @@ const objectStorageService = new ObjectStorageService();
  * The client sends JSON metadata (name, size, contentType) — NOT the file.
  * Then uploads the file directly to the returned presigned URL.
  */
-router.post("/storage/uploads/request-url", async (req: Request, res: Response) => {
+router.post("/storage/uploads/request-url", extractAuth, requireAuthed, async (req: Request, res: Response) => {
   const parsed = RequestUploadUrlBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Missing or invalid required fields" });
@@ -84,7 +93,7 @@ router.get("/storage/public-objects/*filePath", async (req: Request, res: Respon
  * These are served from a separate path from /public-objects and can optionally
  * be protected with authentication or ACL checks based on the use case.
  */
-router.get("/storage/objects/*path", async (req: Request, res: Response) => {
+router.get("/storage/objects/*path", extractAuth, requireAuthed, async (req: Request, res: Response) => {
   try {
     const raw = req.params.path;
     const wildcardPath = Array.isArray(raw) ? raw.join("/") : raw;

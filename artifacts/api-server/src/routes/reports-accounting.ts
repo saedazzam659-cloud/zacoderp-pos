@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
@@ -6,6 +6,13 @@ import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
+// Hard auth gate — extractAuth alone is non-blocking, so anonymous callers
+// could previously read tenant accounting reports by passing ?companyId=. Now
+// every endpoint requires a valid Bearer token.
+router.use((req: Request, res: Response, next: NextFunction) => {
+  if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+});
 
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);

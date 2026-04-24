@@ -5,7 +5,7 @@
  * - POST /api/companies/:id/production-csid → Get PCSID (onboarding)
  * - POST /api/invoices/:id/submit          → Clearance or Reporting
  */
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, invoicesTable, invoiceLineItemsTable, customersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -13,8 +13,20 @@ import { generateCsr } from "../lib/zatca-csr.js";
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { createHash } from "crypto";
+import { extractAuth } from "../middleware/auth.js";
+import { requirePermission, audit } from "../middleware/permissions.js";
 
 const router = Router();
+
+// Hard auth gate: every ZATCA endpoint requires a valid Bearer token. Anonymous
+// callers get 401 instead of being able to mutate company-level CSR / CSID
+// state via direct URL access.
+router.use(extractAuth);
+function requireAuthed(req: Request, res: Response, next: NextFunction) {
+  if (!(req as any).authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+}
+router.use(requireAuthed);
 
 // ─── Sandbox vs Production base URL ──────────────────────────────────────────
 function getZatcaBaseUrl(isSandbox: boolean): string {
@@ -28,7 +40,7 @@ function basicAuth(token: string, secret: string): string {
 }
 
 // ─── 1. Generate CSR ─────────────────────────────────────────────────────────
-router.post("/companies/:id/generate-csr", async (req, res) => {
+router.post("/companies/:id/generate-csr", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) {
     res.status(400).json({ error: "معرف الشركة غير صالح" });
@@ -91,7 +103,7 @@ router.post("/companies/:id/generate-csr", async (req, res) => {
 });
 
 // ─── 2. Compliance (CSID) ────────────────────────────────────────────────────
-router.post("/companies/:id/compliance", async (req, res) => {
+router.post("/companies/:id/compliance", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
   const { otp } = req.body as { otp: string };
 
@@ -169,7 +181,7 @@ router.post("/companies/:id/compliance", async (req, res) => {
 });
 
 // ─── 3. Production CSID (Onboarding) ─────────────────────────────────────────
-router.post("/companies/:id/production-csid", async (req, res) => {
+router.post("/companies/:id/production-csid", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
 
@@ -234,7 +246,7 @@ router.post("/companies/:id/production-csid", async (req, res) => {
 
 // ─── 3.5 Compliance Check — فاتورة تجريبية ──────────────────────────────────
 // يُستخدم للتحقق من صحة الفاتورة مقابل شهادة الامتثال CSID قبل الانتقال للإنتاج
-router.post("/companies/:id/compliance-check", async (req, res) => {
+router.post("/companies/:id/compliance-check", requirePermission("zatca_setup", "create"), audit("zatca_setup", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
   const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
   if (!company) {
@@ -327,7 +339,7 @@ router.post("/companies/:id/compliance-check", async (req, res) => {
 });
 
 // ─── 4. Submit Invoice to ZATCA ───────────────────────────────────────────────
-router.post("/invoices/:id/submit", async (req, res) => {
+router.post("/invoices/:id/submit", requirePermission("zatca_bridge", "create"), audit("zatca_bridge", "create"), async (req, res) => {
   const id = parseInt(req.params.id);
 
   const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
