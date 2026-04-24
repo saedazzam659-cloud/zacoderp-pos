@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Package,
+  Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Plus, Package,
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert,
   HardDrive, ScrollText, Activity, LineChart as LineChartIcon, PieChart as PieChartIcon,
   KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles,
@@ -388,6 +388,8 @@ export default function SuperAdminDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[
             // ── Existing screens ──────────────────────────────────────
+            { title: "إضافة شركة جديدة", desc: "تسجيل شركة جديدة يدوياً وإنشاء حسابها",
+              href: "/companies/new", icon: Plus, bg: "bg-primary/10", color: "text-primary" },
             { title: "طلبات التسجيل", desc: (c?.pending ?? 0) > 0 ? `${c?.pending} طلب بانتظار المراجعة` : "لا توجد طلبات معلقة",
               href: "/admin/requests", icon: Clock, bg: "bg-amber-100", color: "text-amber-700" },
             { title: "إدارة الاشتراكات والباقات", desc: `${s?.active ?? 0} اشتراك نشط${(s?.expiring ?? 0) > 0 ? ` • ${s?.expiring} ينتهي قريباً` : ""}`,
