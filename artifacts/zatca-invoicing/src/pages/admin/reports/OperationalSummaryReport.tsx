@@ -82,7 +82,7 @@ export default function OperationalSummaryReport() {
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
           <input type="checkbox" checked={onlyInactive} onChange={e => setOnlyInactive(e.target.checked)} />
-          الراكدة فقط (>30 يوم بدون نشاط)
+          الراكدة فقط (أكثر من 30 يوم بدون نشاط)
         </label>
         <p className="text-xs text-muted-foreground basis-full">
           أحداث التدقيق والمحاولات المرفوضة تُحسب للأيام السبعة الأخيرة. الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً.
