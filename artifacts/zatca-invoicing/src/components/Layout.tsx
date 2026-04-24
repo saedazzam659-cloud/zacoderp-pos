@@ -117,7 +117,7 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign, permKey: "currencies" },
   // accountingMappings: gate under "general_settings" since it's a chart-of-accounts wiring screen.
   { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked, permKey: "general_settings" },
-  { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,   permKey: "general_settings" },
+  { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,   permKey: "data_io" },
   { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText,   permKey: "sales_invoices" },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
 ];

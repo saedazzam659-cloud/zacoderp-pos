@@ -342,7 +342,7 @@ function AppRoutes() {
             {/* Settings routes */}
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
-            {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="general_settings" component={DataImportExport} />}
+            {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}
