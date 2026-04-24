@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable } from "@workspace/db";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
@@ -11,8 +11,11 @@ import { randomBytes } from "crypto";
 
 const router = Router();
 
-// Middleware: superadmin only
-async function requireSuperAdmin(req: any, res: any, next: any) {
+// Middleware: superadmin only.
+// We attach the resolved superadmin user to `req.adminUser` for downstream
+// handlers via Express's request interface augmentation (see types/express.d.ts
+// in this artifact, where `Request.adminUser?: User` is declared).
+async function requireSuperAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
@@ -2514,6 +2517,602 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب مصفوفة الصلاحيات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CROSS-COMPANY REPORTS HUB  (Task #5)
+// ───────────────────────────────────────────────────────────────────────────
+//  Four SuperAdmin-only reports that aggregate across all tenants:
+//    1. /reports/company-performance — revenue + invoice count + AOV + growth %
+//    2. /reports/operational-summary — operational KPIs (customers, suppliers,
+//       items, open POS sessions, last activity, latest backup, audit events,
+//       denied attempts in last 7d)
+//    3. /reports/plan-usage          — actual vs allowed quotas per subscription
+//    4. /reports/revenue-by-plan     — billed amount grouped by plan + cycle
+//  Plus /reports/summary which feeds the hub cards' live preview numbers.
+//
+//  Hard rules (per task spec):
+//    • requireSuperAdmin on every endpoint.
+//    • All aggregations live in SQL with GROUP BY (never load full transaction
+//      tables into memory) so the system stays fast as tenant count grows.
+//    • Each endpoint accepts ?format=csv → returns a UTF-8 BOM CSV with Arabic
+//      column headers (so Excel opens the file with correct encoding).
+//    • "Revenue" = SUM(total_amount) on sales_invoices where status='posted'
+//      (i.e. issued, non-draft) for active subscriptions, within the requested
+//      period. salesInvoicesTable is the operational sales table users see in
+//      the dashboard; the legacy invoicesTable is reserved for ZATCA submission
+//      tracking and is intentionally excluded here.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Period parsing ────────────────────────────────────────────────────────
+// Accepts either:
+//   ?period=this_month|last_month|this_quarter|last_quarter|this_year|last_year|custom
+//   ?from=YYYY-MM-DD&to=YYYY-MM-DD  (required when period=custom or omitted)
+// Defaults to `this_month`. Returns inclusive [from, to] ISO dates plus a
+// previous-period window of identical length for growth comparisons.
+//
+// Calendar boundaries (UTC):
+//   month   → 1st .. last day of the month
+//   quarter → Jan/Apr/Jul/Oct 1st .. end of Mar/Jun/Sep/Dec
+//   year    → Jan 1 .. Dec 31
+const PERIOD_PRESETS = [
+  "this_month", "last_month",
+  "this_quarter", "last_quarter",
+  "this_year", "last_year",
+  "custom",
+] as const;
+type PeriodPreset = typeof PERIOD_PRESETS[number];
+function isPeriodPreset(v: unknown): v is PeriodPreset {
+  return typeof v === "string" && (PERIOD_PRESETS as readonly string[]).includes(v);
+}
+const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+const utcDate = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d));
+
+interface ReportPeriod {
+  from: string; to: string; prevFrom: string; prevTo: string; days: number;
+}
+function parsePeriod(req: { query?: { from?: unknown; to?: unknown; period?: unknown } }): ReportPeriod | { error: string } {
+  const now = new Date();
+  const Y = now.getUTCFullYear();
+  const M = now.getUTCMonth();           // 0-11
+  const Q = Math.floor(M / 3);           // 0-3
+  const presetRaw = req.query?.period;
+  const preset: PeriodPreset = isPeriodPreset(presetRaw)
+    ? presetRaw
+    : (typeof req.query?.from === "string" || typeof req.query?.to === "string" ? "custom" : "this_month");
+
+  let from: Date, to: Date;
+  switch (preset) {
+    case "this_month":
+      from = utcDate(Y, M,     1);
+      to   = utcDate(Y, M + 1, 0);
+      break;
+    case "last_month":
+      from = utcDate(Y, M - 1, 1);
+      to   = utcDate(Y, M,     0);
+      break;
+    case "this_quarter":
+      from = utcDate(Y, Q * 3,       1);
+      to   = utcDate(Y, Q * 3 + 3,   0);
+      break;
+    case "last_quarter":
+      from = utcDate(Y, (Q - 1) * 3,     1);
+      to   = utcDate(Y, (Q - 1) * 3 + 3, 0);
+      break;
+    case "this_year":
+      from = utcDate(Y,     0,  1);
+      to   = utcDate(Y,    11, 31);
+      break;
+    case "last_year":
+      from = utcDate(Y - 1, 0,  1);
+      to   = utcDate(Y - 1, 11, 31);
+      break;
+    case "custom": {
+      const fromRaw = typeof req.query?.from === "string" ? req.query.from : "";
+      const toRaw   = typeof req.query?.to   === "string" ? req.query.to   : "";
+      if (!isValidISODate(fromRaw)) return { error: "تاريخ البدء غير صالح" };
+      if (!isValidISODate(toRaw))   return { error: "تاريخ الانتهاء غير صالح" };
+      if (toRaw < fromRaw) return { error: "تاريخ الانتهاء يجب ألا يسبق تاريخ البدء" };
+      from = new Date(fromRaw + "T00:00:00Z");
+      to   = new Date(toRaw   + "T00:00:00Z");
+      break;
+    }
+  }
+  // Previous-period window of identical length (inclusive day count) anchored
+  // immediately before `from` so growth %s are apples-to-apples.
+  const fromMs = from.getTime();
+  const toMs   = to.getTime();
+  const days   = Math.round((toMs - fromMs) / 86_400_000) + 1;
+  const prevToMs   = fromMs - 86_400_000;
+  const prevFromMs = prevToMs - (days - 1) * 86_400_000;
+  return {
+    from: isoDate(from), to: isoDate(to), days,
+    prevFrom: isoDate(new Date(prevFromMs)),
+    prevTo:   isoDate(new Date(prevToMs)),
+  };
+}
+
+// ─── CSV helpers ──────────────────────────────────────────────────────────
+// RFC4180-ish escaping: wrap in quotes if the cell contains a comma, quote,
+// or newline; double-up internal quotes. Arabic text is preserved verbatim
+// and the response is prefixed with a UTF-8 BOM so Excel detects encoding.
+function csvEscape(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+function sendCsv(res: import("express").Response, filename: string, headers: string[], rows: unknown[][]) {
+  const lines = [headers.map(csvEscape).join(",")];
+  for (const r of rows) lines.push(r.map(csvEscape).join(","));
+  // \uFEFF = UTF-8 BOM. Excel needs this to display Arabic correctly.
+  const body = "\uFEFF" + lines.join("\r\n") + "\r\n";
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(body);
+}
+
+// ─── Search helper (case-insensitive name match) ──────────────────────────
+function applySearch(rows: { companyName: string }[], search: string | undefined): typeof rows {
+  if (!search) return rows;
+  const needle = search.trim().toLowerCase();
+  if (!needle) return rows;
+  return rows.filter(r => (r.companyName ?? "").toLowerCase().includes(needle));
+}
+
+// ─── Shared row interfaces ────────────────────────────────────────────────
+interface RevenueRow      { company_id: number; revenue: string; invoice_count: number }
+interface OperationalRow  {
+  company_id: number; customers: number; suppliers: number; items: number;
+  open_pos_sessions: number; last_invoice_at: string | null; audit_events_7d: number;
+  denied_7d: number;
+}
+// auto_backups doesn't track an explicit "status" column — every persisted row
+// represents a successful backup (failures aren't recorded). We derive a
+// human-readable status from the trailing reason and timestamp.
+interface BackupOverviewRow { company_id: number; reason: string; created_at: string | null }
+interface PlanUsageRow {
+  subscription_id: number; company_id: number; plan: string; billing_cycle: string;
+  max_users: number; max_branches: number; max_warehouses: number; max_invoices: number;
+  start_date: string; end_date: string; price: string; is_active: boolean;
+  actual_users: number; actual_branches: number; actual_warehouses: number;
+  actual_invoices_period: number;
+}
+interface RevenueByPlanRow {
+  plan: string; billing_cycle: string; subscription_count: number; total_billed: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/reports/summary — feeds the hub cards' live numbers.
+// ───────────────────────────────────────────────────────────────────────────
+//  Returns small aggregate KPIs (no per-row data) for the current month.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/reports/summary", requireSuperAdmin, async (_req, res) => {
+  try {
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+    const monthEnd   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+
+    interface SumRow  { v: string | null }
+    interface CountRow { n: number }
+
+    const [revenueResult, billedResult, activeCompaniesResult, overLimitResult] = await Promise.all([
+      // Posted (non-draft) sales invoices in the current month, across all tenants.
+      db.execute<SumRow>(sql`
+        SELECT COALESCE(SUM(total_amount), 0)::text AS v
+          FROM sales_invoices
+         WHERE status = 'posted'
+           AND invoice_date >= ${monthStart}
+           AND invoice_date <= ${monthEnd}
+      `),
+      // Billed amount = SUM(price) of subscriptions that are currently active.
+      db.execute<SumRow>(sql`
+        SELECT COALESCE(SUM(price::numeric), 0)::text AS v
+          FROM subscriptions
+         WHERE is_active = true
+           AND end_date >= ${todayISO()}
+      `),
+      db.execute<CountRow>(sql`
+        SELECT COUNT(*)::int AS n FROM companies WHERE status = 'active'
+      `),
+      // Subscriptions where any usage metric exceeds its allowance.
+      db.execute<CountRow>(sql`
+        WITH latest AS (
+          SELECT DISTINCT ON (company_id) id, company_id, max_users, max_branches, max_warehouses
+            FROM subscriptions
+           ORDER BY company_id, end_date DESC, id DESC
+        ),
+        u AS (SELECT company_id, COUNT(*)::int n FROM users      GROUP BY company_id),
+        b AS (SELECT company_id, COUNT(*)::int n FROM branches   GROUP BY company_id),
+        w AS (SELECT company_id, COUNT(*)::int n FROM warehouses GROUP BY company_id)
+        SELECT COUNT(*)::int AS n
+          FROM latest l
+          LEFT JOIN u ON u.company_id = l.company_id
+          LEFT JOIN b ON b.company_id = l.company_id
+          LEFT JOIN w ON w.company_id = l.company_id
+         WHERE COALESCE(u.n,0) > l.max_users
+            OR COALESCE(b.n,0) > l.max_branches
+            OR COALESCE(w.n,0) > l.max_warehouses
+      `),
+    ]);
+
+    const revenueMonth = Number(sqlRows<SumRow>(revenueResult as SqlExecuteResult<SumRow>)[0]?.v ?? "0");
+    const billedActive = Number(sqlRows<SumRow>(billedResult as SqlExecuteResult<SumRow>)[0]?.v ?? "0");
+    const activeCompanies = sqlRows<CountRow>(activeCompaniesResult as SqlExecuteResult<CountRow>)[0]?.n ?? 0;
+    const overLimitSubs   = sqlRows<CountRow>(overLimitResult as SqlExecuteResult<CountRow>)[0]?.n ?? 0;
+
+    res.json({
+      period: { from: monthStart, to: monthEnd },
+      revenueMonth, billedActive, activeCompanies, overLimitSubs,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب ملخص التقارير";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/reports/company-performance
+// ───────────────────────────────────────────────────────────────────────────
+//  Per-company revenue, invoice count, AOV, and growth % vs the previous
+//  period of equal length. Sorted by revenue desc by default.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/reports/company-performance", requireSuperAdmin, async (req, res) => {
+  try {
+    const period = parsePeriod(req);
+    if ("error" in period) { res.status(400).json({ error: period.error }); return; }
+    const search = typeof req.query?.search === "string" ? req.query.search : undefined;
+    const format = req.query?.format === "csv" ? "csv" : "json";
+
+    const [currResult, prevResult, companiesList] = await Promise.all([
+      db.execute<RevenueRow>(sql`
+        SELECT company_id,
+               COALESCE(SUM(total_amount), 0)::text AS revenue,
+               COUNT(*)::int                        AS invoice_count
+          FROM sales_invoices
+         WHERE status = 'posted'
+           AND invoice_date >= ${period.from}
+           AND invoice_date <= ${period.to}
+         GROUP BY company_id
+      `),
+      db.execute<RevenueRow>(sql`
+        SELECT company_id,
+               COALESCE(SUM(total_amount), 0)::text AS revenue,
+               COUNT(*)::int                        AS invoice_count
+          FROM sales_invoices
+         WHERE status = 'posted'
+           AND invoice_date >= ${period.prevFrom}
+           AND invoice_date <= ${period.prevTo}
+         GROUP BY company_id
+      `),
+      db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status })
+        .from(companiesTable)
+        .where(eq(companiesTable.status, "active")),
+    ]);
+
+    const currMap = new Map<number, RevenueRow>();
+    for (const r of sqlRows<RevenueRow>(currResult as SqlExecuteResult<RevenueRow>)) {
+      currMap.set(Number(r.company_id), r);
+    }
+    const prevMap = new Map<number, RevenueRow>();
+    for (const r of sqlRows<RevenueRow>(prevResult as SqlExecuteResult<RevenueRow>)) {
+      prevMap.set(Number(r.company_id), r);
+    }
+
+    let rows = companiesList.map(c => {
+      const curr = currMap.get(c.id);
+      const prev = prevMap.get(c.id);
+      const revenue       = Number(curr?.revenue ?? "0");
+      const invoiceCount  = Number(curr?.invoice_count ?? 0);
+      const prevRevenue   = Number(prev?.revenue ?? "0");
+      const aov           = invoiceCount > 0 ? revenue / invoiceCount : 0;
+      // Growth %: (curr - prev) / prev * 100. When prev is zero we report null
+      // (an "infinite" growth rate is meaningless to render).
+      const growthPct = prevRevenue > 0
+        ? ((revenue - prevRevenue) / prevRevenue) * 100
+        : (revenue > 0 ? null : 0);
+      return {
+        companyId: c.id, companyName: c.nameAr,
+        revenue, invoiceCount, avgInvoice: aov,
+        prevRevenue, growthPct,
+      };
+    });
+    rows = applySearch(rows, search);
+    rows.sort((a, b) => b.revenue - a.revenue);
+
+    if (format === "csv") {
+      sendCsv(res, `company-performance-${period.from}_${period.to}.csv`,
+        ["الشركة", "الإيرادات", "عدد الفواتير", "متوسط الفاتورة", "إيرادات الفترة السابقة", "نمو %"],
+        rows.map(r => [
+          r.companyName, r.revenue.toFixed(2), r.invoiceCount, r.avgInvoice.toFixed(2),
+          r.prevRevenue.toFixed(2), r.growthPct == null ? "—" : r.growthPct.toFixed(2),
+        ]),
+      );
+      return;
+    }
+    res.json({ period, rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب تقرير أداء الشركات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/reports/operational-summary
+// ───────────────────────────────────────────────────────────────────────────
+//  Operational health: customer/supplier/item counts, open POS sessions, last
+//  invoice activity, latest auto-backup status, audit events + denied attempts
+//  in the last 7 days. Highlights tenants with no activity in 30+ days.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) => {
+  try {
+    const search = typeof req.query?.search === "string" ? req.query.search : undefined;
+    const format = req.query?.format === "csv" ? "csv" : "json";
+    const now = new Date();
+    const sevenDaysAgo  = new Date(now.getTime() - 7  * 86_400_000).toISOString();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+
+    const [opsResult, backupsResult, companiesList] = await Promise.all([
+      // Per-company KPI roll-up. The outer FROM `companies` ensures every
+      // tenant appears in the result even if all the join CTEs are empty.
+      db.execute<OperationalRow>(sql`
+        WITH c   AS (SELECT company_id, COUNT(*)::int n FROM customers GROUP BY company_id),
+             s   AS (SELECT company_id, COUNT(*)::int n FROM suppliers GROUP BY company_id),
+             i   AS (SELECT company_id, COUNT(*)::int n FROM items     GROUP BY company_id),
+             pos AS (SELECT company_id, COUNT(*)::int n FROM pos_sessions WHERE status = 'open' GROUP BY company_id),
+             la  AS (
+               SELECT company_id, MAX(invoice_date) AS last_invoice_at
+                 FROM sales_invoices WHERE status = 'posted' GROUP BY company_id
+             ),
+             ae  AS (
+               SELECT company_id, COUNT(*)::int n FROM audit_log
+                WHERE created_at >= ${sevenDaysAgo}::timestamp GROUP BY company_id
+             ),
+             de  AS (
+               SELECT company_id, COUNT(*)::int n FROM audit_log
+                WHERE action = 'denied' AND created_at >= ${sevenDaysAgo}::timestamp
+                GROUP BY company_id
+             )
+        SELECT co.id                       AS company_id,
+               COALESCE(c.n,   0)          AS customers,
+               COALESCE(s.n,   0)          AS suppliers,
+               COALESCE(i.n,   0)          AS items,
+               COALESCE(pos.n, 0)          AS open_pos_sessions,
+               la.last_invoice_at          AS last_invoice_at,
+               COALESCE(ae.n,  0)          AS audit_events_7d,
+               COALESCE(de.n,  0)          AS denied_7d
+          FROM companies co
+          LEFT JOIN c   ON c.company_id   = co.id
+          LEFT JOIN s   ON s.company_id   = co.id
+          LEFT JOIN i   ON i.company_id   = co.id
+          LEFT JOIN pos ON pos.company_id = co.id
+          LEFT JOIN la  ON la.company_id  = co.id
+          LEFT JOIN ae  ON ae.company_id  = co.id
+          LEFT JOIN de  ON de.company_id  = co.id
+      `),
+      // Latest auto-backup row per company (DISTINCT ON keeps only the newest).
+      db.execute<BackupOverviewRow>(sql`
+        SELECT DISTINCT ON (company_id) company_id, reason, created_at::text
+          FROM auto_backups
+         ORDER BY company_id, created_at DESC, id DESC
+      `),
+      // Companies list for name + status lookup (kept as Drizzle query
+      // because the column names live in the schema, not the SQL).
+      db.select({ id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status })
+        .from(companiesTable),
+    ]);
+
+    const backups = new Map<number, BackupOverviewRow>();
+    for (const b of sqlRows<BackupOverviewRow>(backupsResult as SqlExecuteResult<BackupOverviewRow>)) {
+      backups.set(Number(b.company_id), b);
+    }
+    const companyMap = new Map(companiesList.map(c => [c.id, c]));
+
+    let rows = sqlRows<OperationalRow>(opsResult as SqlExecuteResult<OperationalRow>).map(r => {
+      const cid = Number(r.company_id);
+      const company = companyMap.get(cid);
+      const lastInvoiceAt = r.last_invoice_at ?? null;
+      const inactive = !lastInvoiceAt || lastInvoiceAt < thirtyDaysAgo.slice(0, 10);
+      const backup = backups.get(cid);
+      return {
+        companyId: cid,
+        companyName: company?.nameAr ?? "—",
+        companyStatus: company?.status ?? "unknown",
+        customers: r.customers, suppliers: r.suppliers, items: r.items,
+        openPosSessions: r.open_pos_sessions,
+        lastInvoiceAt, inactive,
+        auditEvents7d: r.audit_events_7d,
+        denied7d: r.denied_7d,
+        // Frontend renders "success" when a recent backup exists. Older than
+        // 48h or missing → null (the frontend renders that as "—" / warning).
+        latestBackupReason: backup?.reason ?? null,
+        latestBackupAt:     backup?.created_at ?? null,
+      };
+    });
+    rows = applySearch(rows, search);
+    rows.sort((a, b) => a.companyName.localeCompare(b.companyName, "ar"));
+
+    if (format === "csv") {
+      sendCsv(res, `operational-summary.csv`,
+        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط", "أحداث التدقيق (7 أيام)", "محاولات مرفوضة (7 أيام)", "آخر نسخة احتياطية", "نوع النسخة", "غير نشطة (30+ يوم)"],
+        rows.map(r => [
+          r.companyName, r.companyStatus, r.customers, r.suppliers, r.items,
+          r.openPosSessions, r.lastInvoiceAt ?? "—", r.auditEvents7d, r.denied7d,
+          r.latestBackupAt ?? "—", r.latestBackupReason ?? "—", r.inactive ? "نعم" : "لا",
+        ]),
+      );
+      return;
+    }
+    res.json({ rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب الملخص التشغيلي";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/reports/plan-usage
+// ───────────────────────────────────────────────────────────────────────────
+//  Per latest subscription: actual vs allowed (users / branches / warehouses /
+//  invoices for the requested period). Flags any over-limit metric.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/reports/plan-usage", requireSuperAdmin, async (req, res) => {
+  try {
+    const period = parsePeriod(req);
+    if ("error" in period) { res.status(400).json({ error: period.error }); return; }
+    const search = typeof req.query?.search === "string" ? req.query.search : undefined;
+    const format = req.query?.format === "csv" ? "csv" : "json";
+
+    const result = await db.execute<PlanUsageRow>(sql`
+      WITH latest AS (
+        SELECT DISTINCT ON (company_id)
+               id, company_id, plan, billing_cycle, max_users, max_branches,
+               max_warehouses, max_invoices, start_date, end_date, price, is_active
+          FROM subscriptions
+         ORDER BY company_id, end_date DESC, id DESC
+      ),
+      u AS (SELECT company_id, COUNT(*)::int n FROM users      GROUP BY company_id),
+      b AS (SELECT company_id, COUNT(*)::int n FROM branches   GROUP BY company_id),
+      w AS (SELECT company_id, COUNT(*)::int n FROM warehouses GROUP BY company_id),
+      iv AS (
+        SELECT company_id, COUNT(*)::int n
+          FROM sales_invoices
+         WHERE status = 'posted'
+           AND invoice_date >= ${period.from}
+           AND invoice_date <= ${period.to}
+         GROUP BY company_id
+      )
+      SELECT l.id              AS subscription_id,
+             l.company_id      AS company_id,
+             l.plan            AS plan,
+             l.billing_cycle   AS billing_cycle,
+             l.max_users       AS max_users,
+             l.max_branches    AS max_branches,
+             l.max_warehouses  AS max_warehouses,
+             l.max_invoices    AS max_invoices,
+             l.start_date      AS start_date,
+             l.end_date        AS end_date,
+             l.price           AS price,
+             l.is_active       AS is_active,
+             COALESCE(u.n,  0) AS actual_users,
+             COALESCE(b.n,  0) AS actual_branches,
+             COALESCE(w.n,  0) AS actual_warehouses,
+             COALESCE(iv.n, 0) AS actual_invoices_period
+        FROM latest l
+        LEFT JOIN u  ON u.company_id  = l.company_id
+        LEFT JOIN b  ON b.company_id  = l.company_id
+        LEFT JOIN w  ON w.company_id  = l.company_id
+        LEFT JOIN iv ON iv.company_id = l.company_id
+    `);
+
+    const usageRows = sqlRows<PlanUsageRow>(result as SqlExecuteResult<PlanUsageRow>);
+    const companyIds = usageRows.map(r => Number(r.company_id));
+    const companies = companyIds.length === 0 ? [] : await db.select({
+      id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status,
+    }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
+    const companyMap = new Map(companies.map(c => [c.id, c]));
+
+    let rows = usageRows.map(r => {
+      const cid = Number(r.company_id);
+      const company = companyMap.get(cid);
+      const actualUsers      = Number(r.actual_users);
+      const actualBranches   = Number(r.actual_branches);
+      const actualWarehouses = Number(r.actual_warehouses);
+      const actualInvoices   = Number(r.actual_invoices_period);
+      const overLimit =
+        actualUsers      > r.max_users      ||
+        actualBranches   > r.max_branches   ||
+        actualWarehouses > r.max_warehouses ||
+        actualInvoices   > r.max_invoices;
+      return {
+        subscriptionId: Number(r.subscription_id),
+        companyId: cid,
+        companyName: company?.nameAr ?? "—",
+        companyStatus: company?.status ?? "unknown",
+        plan: r.plan, billingCycle: r.billing_cycle,
+        startDate: r.start_date, endDate: r.end_date,
+        price: Number(r.price), isActive: !!r.is_active,
+        users:      { actual: actualUsers,      max: r.max_users },
+        branches:   { actual: actualBranches,   max: r.max_branches },
+        warehouses: { actual: actualWarehouses, max: r.max_warehouses },
+        invoices:   { actual: actualInvoices,   max: r.max_invoices },
+        overLimit,
+      };
+    });
+    rows = applySearch(rows, search);
+    // Over-limit first, then by company name.
+    rows.sort((a, b) => {
+      if (a.overLimit !== b.overLimit) return a.overLimit ? -1 : 1;
+      return a.companyName.localeCompare(b.companyName, "ar");
+    });
+
+    if (format === "csv") {
+      sendCsv(res, `plan-usage-${period.from}_${period.to}.csv`,
+        ["الشركة", "الباقة", "الدورة", "المستخدمون (فعلي/مسموح)", "الفروع (فعلي/مسموح)", "المخازن (فعلي/مسموح)", "الفواتير في الفترة (فعلي/مسموح)", "تجاوز الحد", "السعر", "نشط"],
+        rows.map(r => [
+          r.companyName, r.plan, r.billingCycle,
+          `${r.users.actual}/${r.users.max}`,
+          `${r.branches.actual}/${r.branches.max}`,
+          `${r.warehouses.actual}/${r.warehouses.max}`,
+          `${r.invoices.actual}/${r.invoices.max}`,
+          r.overLimit ? "نعم" : "لا",
+          r.price.toFixed(2),
+          r.isActive ? "نعم" : "لا",
+        ]),
+      );
+      return;
+    }
+    res.json({ period, rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب تقرير استخدام الباقات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/reports/revenue-by-plan
+// ───────────────────────────────────────────────────────────────────────────
+//  Total billed amount grouped by (plan, billing_cycle). Counts only active
+//  subscriptions whose end_date is in the future. Powers the donut + table.
+//  Note "annual" cycle (legacy) is normalized to "yearly" in the SELECT.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
+  try {
+    const format = req.query?.format === "csv" ? "csv" : "json";
+    const result = await db.execute<RevenueByPlanRow>(sql`
+      SELECT plan,
+             CASE WHEN billing_cycle = 'annual' THEN 'yearly' ELSE billing_cycle END AS billing_cycle,
+             COUNT(*)::int                            AS subscription_count,
+             COALESCE(SUM(price::numeric), 0)::text   AS total_billed
+        FROM subscriptions
+       WHERE is_active = true
+         AND end_date >= ${todayISO()}
+       GROUP BY plan, CASE WHEN billing_cycle = 'annual' THEN 'yearly' ELSE billing_cycle END
+       ORDER BY plan, billing_cycle
+    `);
+    const rows = sqlRows<RevenueByPlanRow>(result as SqlExecuteResult<RevenueByPlanRow>).map(r => ({
+      plan: r.plan,
+      billingCycle: r.billing_cycle,
+      subscriptionCount: Number(r.subscription_count),
+      totalBilled: Number(r.total_billed),
+    }));
+    const total = rows.reduce((s, r) => s + r.totalBilled, 0);
+
+    if (format === "csv") {
+      sendCsv(res, `revenue-by-plan.csv`,
+        ["الباقة", "الدورة", "عدد الاشتراكات", "إجمالي الفوترة", "الحصة %"],
+        rows.map(r => [
+          r.plan, r.billingCycle, r.subscriptionCount, r.totalBilled.toFixed(2),
+          total > 0 ? ((r.totalBilled / total) * 100).toFixed(2) : "0.00",
+        ]),
+      );
+      return;
+    }
+    res.json({ rows, total });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب تقرير الإيرادات حسب الباقة";
     res.status(500).json({ error: msg });
   }
 });

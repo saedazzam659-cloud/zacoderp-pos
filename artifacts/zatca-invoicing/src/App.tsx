@@ -13,6 +13,11 @@ import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
+import ReportsHub from "@/pages/admin/reports/ReportsHub";
+import CompanyPerformanceReport from "@/pages/admin/reports/CompanyPerformanceReport";
+import OperationalSummaryReport from "@/pages/admin/reports/OperationalSummaryReport";
+import PlanUsageReport from "@/pages/admin/reports/PlanUsageReport";
+import RevenueByPlanReport from "@/pages/admin/reports/RevenueByPlanReport";
 import Notifications from "@/pages/Notifications";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
@@ -198,6 +203,11 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
+            {isSuperAdmin && <Route path="/admin/reports" component={ReportsHub} />}
+            {isSuperAdmin && <Route path="/admin/reports/company-performance" component={CompanyPerformanceReport} />}
+            {isSuperAdmin && <Route path="/admin/reports/operational-summary" component={OperationalSummaryReport} />}
+            {isSuperAdmin && <Route path="/admin/reports/plan-usage" component={PlanUsageReport} />}
+            {isSuperAdmin && <Route path="/admin/reports/revenue-by-plan" component={RevenueByPlanReport} />}
             {isSuperAdmin && <Route path="/admin/backups" component={BackupOperations} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
