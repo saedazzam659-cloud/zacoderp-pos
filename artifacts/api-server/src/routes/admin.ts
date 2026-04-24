@@ -346,8 +346,17 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
       }>(sql`
         SELECT
           plan,
-          COUNT(*)::text                                                            AS count,
-          COALESCE(SUM(NULLIF(price, '')::numeric), 0)::text                        AS revenue,
+          -- Truly active per plan = is_active=TRUE AND not date-expired.
+          -- Empty/non-date end_date is treated as "no end" (i.e. still active).
+          COUNT(*) FILTER (
+            WHERE end_date !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+               OR end_date::date >= CURRENT_DATE
+          )::text AS count,
+          -- Revenue mirrors the same active scope.
+          COALESCE(SUM(NULLIF(price, '')::numeric) FILTER (
+            WHERE end_date !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+               OR end_date::date >= CURRENT_DATE
+          ), 0)::text AS revenue,
           COUNT(*) FILTER (
             WHERE end_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
               AND end_date::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTEGER '30'
@@ -402,24 +411,22 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
     const totalCompanies = Object.values(byStatus).reduce((a, b) => a + b, 0);
 
     // ─── Subscriptions roll-up across plans ─────────────────────────────
-    // Semantics (the byPlan rows are scoped to is_active = TRUE):
-    //   • flaggedActive — rows where is_active flag is TRUE (admin state)
-    //   • expired       — flaggedActive rows whose end_date is already in the past
-    //                     (rows the operator should deactivate)
-    //   • expiring      — flaggedActive rows whose end_date falls in the next 30 days
-    //   • active        — flaggedActive minus expired (true date-valid actives)
-    let flaggedActive = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
+    // Semantics: byPlan.count and revenue are now scoped to TRULY active rows
+    // (is_active=TRUE AND end_date is empty/non-date OR end_date >= today),
+    // so the headline `active`, the plan-distribution chart, and the revenue
+    // total all share the same definition. `expiring` and `expired` count
+    // is_active=TRUE rows by their date status separately.
+    let totalActiveSubs = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
     const planDistribution: { plan: string; count: number; revenue: number }[] = [];
     for (const row of subsByPlan.rows ?? []) {
       const c = Number(row.count) || 0;
       const r = Number(row.revenue) || 0;
-      flaggedActive += c;
-      totalExpiring += Number(row.expiring) || 0;
-      totalExpired  += Number(row.expired)  || 0;
-      totalRevenue  += r;
+      totalActiveSubs += c;
+      totalExpiring   += Number(row.expiring) || 0;
+      totalExpired    += Number(row.expired)  || 0;
+      totalRevenue    += r;
       planDistribution.push({ plan: row.plan, count: c, revenue: r });
     }
-    const totalActiveSubs = Math.max(0, flaggedActive - totalExpired);
 
     // ─── Trend deltas ──────────────────────────────────────────────────
     const trendRow = signupsTrend.rows?.[0];
@@ -532,7 +539,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
     });
   } catch (err: any) {
     console.error("[admin/dashboard] aggregation failed:", err);
-    res.status(500).json({ error: "تعذر جلب بيانات لوحة التحكم", details: err?.message });
+    res.status(500).json({ error: "تعذر جلب بيانات لوحة التحكم" });
   }
 });
 

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Plus, Package,
+  Building2, Clock, CheckCircle2, XCircle, Users, ArrowLeft, Package,
   TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert,
   HardDrive, ScrollText, Activity, LineChart as LineChartIcon, PieChart as PieChartIcon,
   KeyRound, Inbox, BarChart3, Wrench, FileBarChart, Sparkles,
@@ -32,7 +32,6 @@ type QuickLink = {
 // Recharts tooltip "payload" carries the original datum; we destructure
 // only the known fields below (name + revenue for plan slice tooltips).
 type PlanDatum = { name: string; plan: string; value: number; revenue: number };
-type SignupDatum = { day: string; count: number };
 
 // ─── Types matching the /api/admin/dashboard payload ─────────────────────
 interface DashboardData {
@@ -57,13 +56,6 @@ interface DashboardData {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
-function formatBytes(n: number): string {
-  if (n < 1024)            return `${n} B`;
-  if (n < 1024 * 1024)     return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3)       return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
-}
-
 function formatSAR(n: number): string {
   return `${n.toLocaleString("ar-SA", { maximumFractionDigits: 0 })} ر.س`;
 }
