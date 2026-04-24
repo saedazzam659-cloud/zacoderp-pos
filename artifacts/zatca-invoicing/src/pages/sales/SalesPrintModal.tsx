@@ -471,12 +471,243 @@ function template5(d: PrintData): string {
   </body></html>`;
 }
 
+// ── Template 6: حراري كلاسيكي (80mm) ─────────────────────────────────────────
+function template6(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const isReturn = d.type === "return";
+  const accent = isReturn ? "#b91c1c" : "#111";
+  const itemsRows = lines.map((l) => {
+    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const vat = sub * ((Number(l.vatRate) || 0) / 100);
+    const tot = sub + vat;
+    return `
+      <tr>
+        <td colspan="3" style="padding-top:4px;">${l.itemName ?? l.itemCode ?? "—"}</td>
+      </tr>
+      <tr>
+        <td class="mono" style="padding-bottom:4px;border-bottom:1px dashed #999;">
+          ${Math.round(Number(l.qty) || 0)} × ${fmt(l.unitPrice)}
+        </td>
+        <td class="mono" style="text-align:center;padding-bottom:4px;border-bottom:1px dashed #999;">
+          ${l.vatRate ?? 15}%
+        </td>
+        <td class="mono" style="text-align:left;padding-bottom:4px;border-bottom:1px dashed #999;font-weight:700;">
+          ${fmt(tot)}
+        </td>
+      </tr>`;
+  }).join("");
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { direction: rtl; font-family: 'Courier New', 'Tahoma', monospace; font-size: 11px; color: #000; padding: 4mm 3mm; width: 80mm; }
+    .center { text-align: center; }
+    .mono { font-variant-numeric: tabular-nums; }
+    .name-ar { font-size: 14px; font-weight: 700; }
+    .name-en { font-size: 9px; opacity: .75; margin-top: 2px; }
+    .meta { font-size: 10px; line-height: 1.45; }
+    .doc-type { background: ${accent}; color: #fff; display: inline-block; padding: 3px 10px; margin: 6px 0 4px; font-weight: 700; font-size: 11px; border-radius: 3px; }
+    .doc-num  { font-size: 12px; font-weight: 700; margin-top: 2px; }
+    .sep { border-top: 1px dashed #555; margin: 6px 0; }
+    .sep-solid { border-top: 1.5px solid #000; margin: 6px 0; }
+    .info { font-size: 10px; line-height: 1.5; }
+    .info b { display: inline-block; min-width: 42px; }
+    table.items { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 2px; }
+    table.items th { padding: 3px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 10px; }
+    .totals { margin-top: 4px; font-size: 11px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .grand { font-size: 13px; font-weight: 700; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 4px 0; margin-top: 4px; }
+    .footer { text-align: center; margin-top: 8px; font-size: 9px; line-height: 1.5; }
+    .qr-box { text-align: center; margin: 8px 0 4px; font-size: 9px; }
+    .qr-box .qr-ph { width: 30mm; height: 30mm; margin: 0 auto 4px; border: 1px dashed #999; display: flex; align-items: center; justify-content: center; color: #999; font-size: 9px; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+  </head><body>
+    <div class="center">
+      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
+      <div class="meta">
+        ${company?.vatNumber ? `<div>الرقم الضريبي: ${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div>س.ت: ${company.crNumber}</div>` : ""}
+        ${company?.city      ? `<div>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
+        ${company?.phone     ? `<div>هاتف: ${company.phone}</div>` : ""}
+      </div>
+      <div class="doc-type">${docTitle(d.type)}</div>
+      <div class="doc-num mono">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+      <div class="meta">${docDate(doc, d.type)}</div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="info">
+      <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+      ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
+      ${customer?.phone     ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+      ${d.type !== "quotation"
+        ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
+        : ""}
+      ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
+      ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
+    </div>
+
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="text-align:right;">الصنف / الكمية × السعر</th>
+          <th style="text-align:center;width:18mm;">ض.</th>
+          <th style="text-align:left;width:22mm;">الإجمالي</th>
+        </tr>
+      </thead>
+      <tbody>${itemsRows}</tbody>
+    </table>
+
+    <div class="totals">
+      <div class="row"><span>المجموع قبل الضريبة:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
+      <div class="row"><span>ض.ق.م (15%):</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
+      <div class="row grand"><span>${isReturn ? "إجمالي المرتجع" : "الإجمالي الشامل"}:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    </div>
+
+    ${doc.notes ? `<div class="sep"></div><div class="info"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+    <div class="qr-box">
+      <div class="qr-ph">QR ZATCA</div>
+      <div>رمز ZATCA — تحقّق من الفاتورة</div>
+    </div>
+
+    <div class="sep-solid"></div>
+    <div class="footer">
+      <div>${isReturn ? "شكراً لتعاملكم معنا — تم استلام المرتجع" : "شكراً لزيارتكم — نتمنى لكم يوماً سعيداً"}</div>
+      <div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA")}</div>
+      <div style="margin-top:3px;opacity:.7;">ZATCA e-Invoicing</div>
+    </div>
+  </body></html>`;
+}
+
+// ── Template 7: حراري عصري (80mm) ────────────────────────────────────────────
+function template7(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const isReturn = d.type === "return";
+  const accent = isReturn ? "#dc2626" : "#0f766e";
+  const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
+
+  const itemsRows = lines.map((l, i) => {
+    const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
+    const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
+    const vat = sub * ((Number(l.vatRate) || 0) / 100);
+    const tot = sub + vat;
+    return `
+      <div class="line ${i % 2 === 0 ? "alt" : ""}">
+        <div class="line-top">
+          <span class="line-name">${l.itemName ?? l.itemCode ?? "—"}</span>
+          <span class="mono line-tot">${fmt(tot)}</span>
+        </div>
+        <div class="line-sub mono">
+          ${Math.round(Number(l.qty) || 0)} ${l.unit ?? ""} × ${fmt(l.unitPrice)}
+          ${disc > 0 ? ` <span style="color:#b91c1c;">(خصم ${disc}%)</span>` : ""}
+          <span style="opacity:.7;"> · ض ${l.vatRate ?? 15}%</span>
+        </div>
+      </div>`;
+  }).join("");
+
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', 'Tahoma', sans-serif; }
+    body { direction: rtl; font-size: 11px; color: #1a1a1a; width: 80mm; padding: 0; }
+    .mono { font-variant-numeric: tabular-nums; }
+    .header { background: ${accent}; color: #fff; padding: 8px 4mm 10px; text-align: center; }
+    .header .name-ar { font-size: 14px; font-weight: 800; letter-spacing: .3px; }
+    .header .name-en { font-size: 9px; opacity: .85; margin-top: 2px; }
+    .header .meta { font-size: 9.5px; opacity: .9; margin-top: 4px; line-height: 1.45; }
+    .doc-band { background: ${accentSoft}; padding: 6px 4mm; text-align: center; border-bottom: 1.5px solid ${accent}; }
+    .doc-band .label { font-size: 10px; color: ${accent}; font-weight: 700; }
+    .doc-band .num { font-size: 13px; font-weight: 800; margin-top: 2px; }
+    .doc-band .date { font-size: 10px; color: #555; margin-top: 2px; }
+    .body { padding: 6px 4mm; }
+    .info-card { background: #f9fafb; border-radius: 4px; padding: 6px 8px; font-size: 10px; line-height: 1.55; margin-bottom: 6px; }
+    .info-card b { color: ${accent}; display: inline-block; min-width: 42px; }
+    .lines-title { font-size: 10px; font-weight: 700; color: ${accent}; margin: 8px 0 4px; padding-bottom: 3px; border-bottom: 1.5px solid ${accent}; }
+    .line { padding: 4px 0; border-bottom: 1px dashed #d1d5db; }
+    .line.alt { background: #fafafa; padding-right: 4px; padding-left: 4px; margin: 0 -4px; }
+    .line-top { display: flex; justify-content: space-between; align-items: baseline; }
+    .line-name { font-size: 11px; font-weight: 600; flex: 1; }
+    .line-tot { font-size: 11px; font-weight: 700; color: ${accent}; }
+    .line-sub { font-size: 9.5px; color: #666; margin-top: 2px; }
+    .totals { margin-top: 8px; padding: 6px 8px; background: #f9fafb; border-radius: 4px; font-size: 10.5px; }
+    .totals .row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .totals .grand { font-size: 13px; font-weight: 800; color: ${accent}; border-top: 2px solid ${accent}; padding-top: 5px; margin-top: 4px; }
+    .qr-box { text-align: center; margin: 8px 0 4px; }
+    .qr-box .qr-ph { width: 28mm; height: 28mm; margin: 0 auto 4px; border: 1.5px dashed ${accent}; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: ${accent}; font-size: 9px; font-weight: 700; }
+    .qr-box .qr-cap { font-size: 9px; color: #555; }
+    .footer { background: ${accent}; color: #fff; padding: 8px 4mm; text-align: center; font-size: 9.5px; line-height: 1.5; }
+    .footer .thanks { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+  </head><body>
+    <div class="header">
+      <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
+      <div class="meta">
+        ${company?.vatNumber ? `الرقم الضريبي: ${company.vatNumber}` : ""}
+        ${company?.crNumber ? `<br/>س.ت: ${company.crNumber}` : ""}
+        ${company?.phone ? `<br/>هاتف: ${company.phone}` : ""}
+        ${company?.city ? `<br/>${company.city}${company.country ? ` — ${company.country}` : ""}` : ""}
+      </div>
+    </div>
+
+    <div class="doc-band">
+      <div class="label">${docTitle(d.type)}</div>
+      <div class="num mono">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+      <div class="date">${docDate(doc, d.type)}</div>
+    </div>
+
+    <div class="body">
+      <div class="info-card">
+        <div><b>العميل:</b> ${customer?.nameAr ?? customer?.nameEn ?? "—"}</div>
+        ${customer?.vatNumber ? `<div><b>ر.ض:</b> ${customer.vatNumber}</div>` : ""}
+        ${customer?.phone ? `<div><b>هاتف:</b> ${customer.phone}</div>` : ""}
+        ${d.type !== "quotation"
+          ? `<div><b>الدفع:</b> ${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "تحويل بنكي" : "آجل"}</div>`
+          : ""}
+        ${isReturn && doc.returnReason ? `<div><b>السبب:</b> ${doc.returnReason}</div>` : ""}
+        ${isReturn && doc.originalInvoiceNumber ? `<div><b>الفاتورة الأصلية:</b> ${doc.originalInvoiceNumber}</div>` : ""}
+      </div>
+
+      <div class="lines-title">بنود ${docTitle(d.type)} (${lines.length})</div>
+      ${itemsRows}
+
+      <div class="totals">
+        <div class="row"><span>المجموع قبل الضريبة:</span><span class="mono">${fmt(doc.subtotal)}</span></div>
+        <div class="row"><span>ض.ق.م (15%):</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
+        <div class="row grand"><span>${isReturn ? "إجمالي المرتجع" : "الإجمالي الشامل"}:</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      </div>
+
+      ${doc.notes ? `<div class="info-card" style="margin-top:8px;"><b>ملاحظات:</b> ${doc.notes}</div>` : ""}
+
+      <div class="qr-box">
+        <div class="qr-ph">QR<br/>ZATCA</div>
+        <div class="qr-cap">امسح للتحقق من الفاتورة</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="thanks">${isReturn ? "تم استلام المرتجع — شكراً لتعاملكم" : "شكراً لزيارتكم"}</div>
+      <div>طُبع: ${new Date().toLocaleString("ar-SA")}</div>
+      <div style="opacity:.85;margin-top:2px;">ZATCA e-Invoicing</div>
+    </div>
+  </body></html>`;
+}
+
 const TEMPLATES = [
-  { id: 1, name: "كلاسيكي",    desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1 },
-  { id: 2, name: "حديث",       desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2 },
-  { id: 3, name: "مؤسسي",      desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3 },
-  { id: 4, name: "ملوّن",      desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4 },
-  { id: 5, name: "ZATCA رسمي", desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5 },
+  { id: 1, name: "كلاسيكي",      desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1, thermal: false },
+  { id: 2, name: "حديث",         desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2, thermal: false },
+  { id: 3, name: "مؤسسي",        desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3, thermal: false },
+  { id: 4, name: "ملوّن",        desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4, thermal: false },
+  { id: 5, name: "ZATCA رسمي",   desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5, thermal: false },
+  { id: 6, name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",    color: "#111111", fn: template6, thermal: true  },
+  { id: 7, name: "حراري عصري",   desc: "إيصال 80mm ملوّن",          color: "#0f766e", fn: template7, thermal: true  },
 ];
 
 interface Props {
@@ -518,34 +749,62 @@ export default function SalesPrintModal({ open, onClose, data }: Props) {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-5 gap-3 my-4">
+        <div className="grid grid-cols-4 md:grid-cols-7 gap-3 my-4">
           {TEMPLATES.map(t => (
             <button
               key={t.id}
               onClick={() => setSelected(t.id)}
               className={cn(
-                "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md",
+                "rounded-xl border-2 p-3 text-center transition-all hover:shadow-md relative",
                 selected === t.id
                   ? "shadow-lg scale-105"
                   : "border-border hover:border-muted-foreground"
               )}
               style={selected === t.id ? { borderColor: t.color } : {}}
             >
-              <div
-                className="w-full aspect-[3/4] rounded-md mb-2 flex flex-col overflow-hidden"
-                style={{ background: "#f8f8f8", border: `2px solid ${t.color}` }}
-              >
-                <div className="h-6 w-full flex-shrink-0" style={{ background: t.color }} />
-                <div className="flex-1 p-1 space-y-1">
-                  {[70, 55, 85, 50, 65].map((w, i) => (
-                    <div key={i} className="rounded-sm h-1.5" style={{ width: `${w}%`, background: i === 0 ? t.color : "#ddd", opacity: i === 0 ? .8 : 1 }} />
-                  ))}
-                  <div className="h-px w-full" style={{ background: t.color, opacity: .3 }} />
-                  {[100, 80, 90, 70].map((w, i) => (
-                    <div key={i} className="rounded-sm h-1" style={{ width: `${w}%`, background: "#e5e5e5" }} />
-                  ))}
+              {t.thermal && (
+                <span
+                  className="absolute -top-2 -left-2 rounded-full text-[9px] font-bold px-2 py-0.5 text-white shadow"
+                  style={{ background: t.color }}
+                >
+                  80mm
+                </span>
+              )}
+              {t.thermal ? (
+                <div
+                  className="w-[60%] mx-auto aspect-[2/5] rounded-sm mb-2 flex flex-col overflow-hidden"
+                  style={{ background: "#fff", border: `1.5px solid ${t.color}` }}
+                >
+                  <div className="h-4 w-full flex-shrink-0" style={{ background: t.color }} />
+                  <div className="flex-1 p-1 space-y-1 flex flex-col">
+                    {[80, 50, 70].map((w, i) => (
+                      <div key={`a${i}`} className="rounded-sm h-1 mx-auto" style={{ width: `${w}%`, background: i === 0 ? t.color : "#999", opacity: i === 0 ? .8 : .5 }} />
+                    ))}
+                    <div className="h-px w-full my-0.5" style={{ background: t.color, opacity: .4 }} />
+                    {[90, 70, 90, 60, 90].map((w, i) => (
+                      <div key={`b${i}`} className="rounded-sm h-0.5" style={{ width: `${w}%`, background: "#bbb" }} />
+                    ))}
+                    <div className="h-px w-full my-0.5" style={{ background: t.color, opacity: .4 }} />
+                    <div className="rounded-sm h-1.5 w-[80%] mx-auto" style={{ background: t.color }} />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div
+                  className="w-full aspect-[3/4] rounded-md mb-2 flex flex-col overflow-hidden"
+                  style={{ background: "#f8f8f8", border: `2px solid ${t.color}` }}
+                >
+                  <div className="h-6 w-full flex-shrink-0" style={{ background: t.color }} />
+                  <div className="flex-1 p-1 space-y-1">
+                    {[70, 55, 85, 50, 65].map((w, i) => (
+                      <div key={i} className="rounded-sm h-1.5" style={{ width: `${w}%`, background: i === 0 ? t.color : "#ddd", opacity: i === 0 ? .8 : 1 }} />
+                    ))}
+                    <div className="h-px w-full" style={{ background: t.color, opacity: .3 }} />
+                    {[100, 80, 90, 70].map((w, i) => (
+                      <div key={i} className="rounded-sm h-1" style={{ width: `${w}%`, background: "#e5e5e5" }} />
+                    ))}
+                  </div>
+                </div>
+              )}
               <p className="text-xs font-bold" style={selected === t.id ? { color: t.color } : {}}>{t.name}</p>
               <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{t.desc}</p>
             </button>
