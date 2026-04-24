@@ -397,22 +397,29 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
     for (const row of companiesAgg.rows ?? []) {
       byStatus[row.status] = Number(row.count) || 0;
     }
-    const totalCompanies =
-      (byStatus.active ?? 0) + (byStatus.pending ?? 0) +
-      (byStatus.rejected ?? 0) + (byStatus.suspended ?? 0);
+    // Sum ALL grouped statuses (not just a hard-coded subset) so any future
+    // status value still contributes to the headline total.
+    const totalCompanies = Object.values(byStatus).reduce((a, b) => a + b, 0);
 
     // ─── Subscriptions roll-up across plans ─────────────────────────────
-    let totalActiveSubs = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
+    // Semantics (the byPlan rows are scoped to is_active = TRUE):
+    //   • flaggedActive — rows where is_active flag is TRUE (admin state)
+    //   • expired       — flaggedActive rows whose end_date is already in the past
+    //                     (rows the operator should deactivate)
+    //   • expiring      — flaggedActive rows whose end_date falls in the next 30 days
+    //   • active        — flaggedActive minus expired (true date-valid actives)
+    let flaggedActive = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
     const planDistribution: { plan: string; count: number; revenue: number }[] = [];
     for (const row of subsByPlan.rows ?? []) {
       const c = Number(row.count) || 0;
       const r = Number(row.revenue) || 0;
-      totalActiveSubs += c;
-      totalExpiring   += Number(row.expiring) || 0;
-      totalExpired    += Number(row.expired)  || 0;
-      totalRevenue    += r;
+      flaggedActive += c;
+      totalExpiring += Number(row.expiring) || 0;
+      totalExpired  += Number(row.expired)  || 0;
+      totalRevenue  += r;
       planDistribution.push({ plan: row.plan, count: c, revenue: r });
     }
+    const totalActiveSubs = Math.max(0, flaggedActive - totalExpired);
 
     // ─── Trend deltas ──────────────────────────────────────────────────
     const trendRow = signupsTrend.rows?.[0];
