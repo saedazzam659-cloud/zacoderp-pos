@@ -2289,11 +2289,19 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
 });
 
 // GET /api/admin/security/anomalies — best-effort anomaly detector on top of
-// audit_log. Three simple heuristics:
+// audit_log. Four simple heuristics:
 //   1. Any user with ≥5 denied audit rows in the trailing 60 minutes.
 //   2. Any user logging in today from an IP that never appeared in their
 //      last 30 days of login history.
 //   3. Any superadmin login at all from a new IP (more sensitive bar).
+//   4. Per-user 7-day baseline deviation: today's distinct IP count or denied
+//      count materially exceeds the 7-day baseline average.
+//
+// NOTE — geographic ("outside Saudi Arabia") detection is intentionally NOT
+// implemented here: there is no geo-IP enrichment source wired into the
+// platform yet. The new-IP-for-superadmin signal (rule 3) acts as the
+// best-effort proxy for "unfamiliar location" until a geo provider is added
+// (tracked as follow-up: geo-IP enrichment for security anomalies).
 router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
   try {
     interface DeniedSpikeRow { user_id: number | null; username: string | null; n: number }
@@ -2495,7 +2503,13 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
         };
       }),
       roleDistribution: roleDist.map(r => ({
-        companyId: r.company_id, role: r.role, count: r.n,
+        companyId: r.company_id,
+        // Surface the company name alongside the id so the side panel is
+        // operator-friendly (avoids forcing the UI to do a second lookup).
+        // Falls back to null for tenant-less rows (e.g. superadmin users).
+        companyName: r.company_id != null ? companyMap.get(r.company_id)?.nameAr ?? null : null,
+        role: r.role,
+        count: r.n,
       })),
     });
   } catch (err: unknown) {

@@ -66,7 +66,7 @@ interface PermsMatrixResp {
     cells: Record<string, PermCellState>;
     isActive: boolean; lastLoginAt: string | null;
   }[];
-  roleDistribution: { companyId: number | null; role: string; count: number }[];
+  roleDistribution: { companyId: number | null; companyName: string | null; role: string; count: number }[];
 }
 
 // Arabic labels for permission group columns. Keep in sync with PERMISSION_GROUPS
@@ -534,13 +534,16 @@ function PermissionsTab({ token }: { token: string | null }) {
     },
   });
 
-  // Group role distribution by company for the side panel.
+  // Group role distribution by company for the side panel. We retain the first
+  // companyName seen per companyId so the panel can show the friendly name
+  // instead of a bare numeric id (the backend sends the same name on every row
+  // for a given company, so first-seen is canonical).
   const distByCompany = useMemo(() => {
-    const map = new Map<number | null, { role: string; count: number }[]>();
+    const map = new Map<number | null, { name: string | null; rows: { role: string; count: number }[] }>();
     for (const r of data?.roleDistribution ?? []) {
-      const list = map.get(r.companyId) ?? [];
-      list.push({ role: r.role, count: r.count });
-      map.set(r.companyId, list);
+      const entry = map.get(r.companyId) ?? { name: r.companyName, rows: [] };
+      entry.rows.push({ role: r.role, count: r.count });
+      map.set(r.companyId, entry);
     }
     return Array.from(map.entries());
   }, [data?.roleDistribution]);
@@ -659,13 +662,18 @@ function PermissionsTab({ token }: { token: string | null }) {
         <CardContent className="space-y-2">
           {distByCompany.length === 0 ? (
             <div className="text-xs text-muted-foreground">لا توجد بيانات.</div>
-          ) : distByCompany.map(([cid, list]) => (
+          ) : distByCompany.map(([cid, entry]) => (
             <div key={cid ?? "global"} className="border rounded p-2">
               <div className="text-xs font-semibold mb-1">
-                {cid == null ? "بدون شركة (مشرف عام)" : `شركة #${cid}`}
+                {cid == null
+                  ? "بدون شركة (مشرف عام)"
+                  : entry.name ?? `شركة #${cid}`}
+                {cid != null && entry.name && (
+                  <span className="text-[10px] text-muted-foreground font-normal mx-1">#{cid}</span>
+                )}
               </div>
               <div className="flex flex-wrap gap-1">
-                {list.map(r => (
+                {entry.rows.map(r => (
                   <Badge key={r.role} variant="outline" className="text-[10px] font-mono">
                     {r.role}: {r.count}
                   </Badge>
