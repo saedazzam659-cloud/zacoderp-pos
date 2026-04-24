@@ -34,7 +34,7 @@ const EXTEND_OPTIONS = [
 const TABS = [
   { key: "all",       label: "الكل" },
   { key: "active",    label: "نشطة" },
-  { key: "expiring",  label: "تنتهي قريباً" },
+  { key: "expiring",  label: "تنتهي قريباً (≤30 يوم)" },
   { key: "expired",   label: "منتهية" },
 ] as const;
 
