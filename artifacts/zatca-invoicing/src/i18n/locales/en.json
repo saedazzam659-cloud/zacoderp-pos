@@ -1104,6 +1104,8 @@
       "sales_invoices": "Sales Invoices",
       "sales_returns": "Sales Returns",
       "sales_settlements": "Customer Collections",
+      "sales_reps": "Sales Representatives",
+      "sales_reports": "Customers & Sales Reports",
       "zatca_bridge": "ZATCA Bridge",
       "zatca_report": "ZATCA Invoice Report",
       "suppliers": "Suppliers",

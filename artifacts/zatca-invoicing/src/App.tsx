@@ -300,15 +300,15 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/returns"        module="sales_returns"    component={SalesReturns} />}
 
             {/* Customers & Sales Reports */}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement" module="customers"      component={CustomerStatement} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-balances"  module="customers"      component={CustomerBalances} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/aging"              module="sales_invoices" component={AgingReport} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-customer"  module="sales_invoices" component={SalesByCustomer} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-item"      module="sales_invoices" component={SalesByItem} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-period"    module="sales_invoices" component={SalesByPeriod} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_invoices" component={TopCustomers} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_returns"  component={SalesReturnsReport} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_invoices" component={SalesReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-statement" module="sales_reports"  component={CustomerStatement} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/customer-balances"  module="sales_reports"  component={CustomerBalances} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/aging"              module="sales_reports"  component={AgingReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-customer"  module="sales_reports"  component={SalesByCustomer} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-item"      module="sales_reports"  component={SalesByItem} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-period"    module="sales_reports"  component={SalesByPeriod} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_reports"  component={TopCustomers} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_reports"  component={SalesReturnsReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={SalesReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-statement"   module="suppliers"          component={SupplierStatement} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/supplier-balances"    module="suppliers"          component={SupplierBalances} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/reports/aging"                module="purchase_invoices"  component={SupplierAgingReport} />}
@@ -341,7 +341,7 @@ function AppRoutes() {
             {/* Settings routes */}
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
-            {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_invoices"   component={SalesReps} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

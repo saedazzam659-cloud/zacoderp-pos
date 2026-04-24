@@ -59,8 +59,8 @@ function groupVisible(user: any, moduleKeys: string[]): boolean {
 // Module key sets per sidebar group. Keep in sync with the subNav arrays
 // below — if a permKey is added/removed from a subNav, mirror it here so
 // the parent group hides correctly when no children are accessible.
-const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","zatca_bridge","zatca_report"];
-const SALES_REPORTS_PERMS       = ["sales_invoices","customers","sales_returns"];
+const SALES_GROUP_PERMS         = ["customers","sales_invoices","sales_quotations","sales_returns","sales_settlements","sales_reps","sales_reports","zatca_bridge","zatca_report"];
+const SALES_REPORTS_PERMS       = ["sales_reports"];
 const PURCHASING_GROUP_PERMS    = ["suppliers","purchase_invoices","purchase_returns","supplier_settlements"];
 const PURCHASING_REPORTS_PERMS  = ["suppliers","purchase_invoices","purchase_returns"];
 const CASH_GROUP_PERMS          = ["cash_boxes","bank_accounts","receipt_vouchers","payment_vouchers"];
@@ -132,8 +132,7 @@ const purchasingSubNav: NavDef[] = [
 ];
 const salesSubNav: NavDef[] = [
   { nameKey: "nav.customers",            href: "/customers",         icon: Users,           permKey: "customers" },
-  // salesReps: no dedicated module key in PERMISSION_MODULES; gate under sales_invoices.
-  { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck,      permKey: "sales_invoices" },
+  { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck,      permKey: "sales_reps" },
   { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature,   permKey: "sales_quotations" },
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
@@ -417,16 +416,16 @@ function SalesNavGroup({
 
 // ─── SalesReportsNavGroup ─────────────────────────────────────────────────────
 const salesReportsSubNav: NavDef[] = [
-  { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText, permKey: "customers" },
-  { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText, permKey: "customers" },
-  { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText, permKey: "sales_invoices" },
-  { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText, permKey: "sales_invoices" },
-  { nameKey: "navExtra.salesByItem",        href: "/sales/reports/sales-by-item",      icon: FileText, permKey: "sales_invoices" },
-  { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText, permKey: "sales_invoices" },
-  { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText, permKey: "sales_invoices" },
-  { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText, permKey: "sales_returns" },
+  { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.salesByItem",        href: "/sales/reports/sales-by-item",      icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText, permKey: "sales_reports" },
 ];
-const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2 };
+const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2, permKey: "sales_reports" };
 
 function SalesReportsNavGroup({
   location, onNavigate, open, onToggle,

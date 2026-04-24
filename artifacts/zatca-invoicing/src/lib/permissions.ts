@@ -41,6 +41,8 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "sales_invoices",       label: "perms.modules.sales_invoices",       group: G.sales,      actions: ALL },
   { key: "sales_returns",        label: "perms.modules.sales_returns",        group: G.sales,      actions: ALL },
   { key: "sales_settlements",    label: "perms.modules.sales_settlements",    group: G.sales,      actions: VC },
+  { key: "sales_reps",           label: "perms.modules.sales_reps",           group: G.sales,      actions: VC },
+  { key: "sales_reports",        label: "perms.modules.sales_reports",        group: G.sales,      actions: ["view", "export"] },
   { key: "zatca_bridge",         label: "perms.modules.zatca_bridge",         group: G.sales,      actions: ["view", "post"] },
   { key: "zatca_report",         label: "perms.modules.zatca_report",         group: G.sales,      actions: ["view", "export"] },
 
