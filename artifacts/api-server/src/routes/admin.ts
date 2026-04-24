@@ -2095,16 +2095,28 @@ router.get("/security/sessions", requireSuperAdmin, async (_req, res) => {
 
     // Fetch the latest login audit row per user so we can show IP/UA without
     // adding any new column to the users table.
-    const latestLogins = userIds.length === 0 ? [] : sqlRows<LatestLoginRow>(
-      await db.execute<LatestLoginRow>(sql`
-        SELECT DISTINCT ON (user_id) user_id, ip, user_agent, created_at
-          FROM audit_log
-         WHERE module = 'auth' AND action = 'login'
-           AND user_id IN (${sql.raw(userIds.join(",") || "NULL")})
-         ORDER BY user_id, created_at DESC
-      `) as SqlExecuteResult<LatestLoginRow>
-    );
-    const loginByUser = new Map(latestLogins.map(r => [Number(r.user_id), r]));
+    // Use parameterized inArray (drizzle binds the values) instead of sql.raw —
+    // the IDs are DB-derived but parameterization is still cleaner and safer
+    // against any future caller passing them through. Rows are sorted by
+    // createdAt DESC, so the FIRST row seen per user is the newest; we only
+    // store the first occurrence to guarantee deterministic latest-login.
+    const latestLoginRows = userIds.length === 0 ? [] : await db
+      .select({
+        user_id: auditLogTable.userId, ip: auditLogTable.ip,
+        user_agent: auditLogTable.userAgent, created_at: auditLogTable.createdAt,
+      })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.module, "auth"),
+        eq(auditLogTable.action, "login"),
+        inArray(auditLogTable.userId, userIds),
+      ))
+      .orderBy(desc(auditLogTable.createdAt));
+    const loginByUser = new Map<number, typeof latestLoginRows[number]>();
+    for (const r of latestLoginRows) {
+      const k = Number(r.user_id);
+      if (!loginByUser.has(k)) loginByUser.set(k, r);
+    }
 
     const companyMap = new Map<number, { id: number; nameAr: string }>();
     if (companyIds.length > 0) {
@@ -2216,12 +2228,13 @@ router.post("/security/sessions/bulk-end", requireSuperAdmin, async (req, res) =
 // ("true"|"false"), limit (default 100, max 500), offset.
 router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
   try {
-    // Scope strictly to auth-flow events. `requirePermission` writes denied
-    // rows for RBAC failures across every module, so without the auth
-    // scope this list would conflate "wrong password" with "no permission
-    // to view sales invoices" — a misleading security signal.
+    // Per task spec: include all login/logout/denied audit events. Auth-module
+    // rows cover wrong-password and account-locked attempts; non-auth module
+    // rows cover RBAC permission denials from `requirePermission`. The UI
+    // shows a "module" column so superadmins can distinguish at a glance,
+    // and the existing 'success' filter (true|false) doubles as a way to
+    // isolate denied events when investigating abuse.
     const conds: SQL[] = [
-      eq(auditLogTable.module, "auth"),
       inArray(auditLogTable.action, ["login", "logout", "denied"]),
     ];
     const username = typeof req.query.username === "string" ? req.query.username.trim().slice(0, 80) : "";
@@ -2246,7 +2259,8 @@ router.get("/security/login-history", requireSuperAdmin, async (req, res) => {
     const rows = await db
       .select({
         id: auditLogTable.id, userId: auditLogTable.userId, username: auditLogTable.username,
-        role: auditLogTable.role, companyId: auditLogTable.companyId, action: auditLogTable.action,
+        role: auditLogTable.role, companyId: auditLogTable.companyId,
+        module: auditLogTable.module, action: auditLogTable.action,
         method: auditLogTable.method, path: auditLogTable.path, statusCode: auditLogTable.statusCode,
         ip: auditLogTable.ip, userAgent: auditLogTable.userAgent, metadata: auditLogTable.metadata,
         createdAt: auditLogTable.createdAt,
@@ -2288,12 +2302,14 @@ router.get("/security/anomalies", requireSuperAdmin, async (_req, res) => {
       ip: string; created_at: string;
     }
 
-    // Scoped to module='auth' so RBAC denials don't drown out the
-    // authentication-spike signal this anomaly is meant to surface.
+    // Per task spec: a "denied" spike covers BOTH wrong-password attempts
+    // (module='auth') and RBAC permission denials from `requirePermission`
+    // (module=<business module>). We aggregate across all modules and
+    // surface the top module per user so the banner is actionable.
     const deniedSpikesResult = await db.execute<DeniedSpikeRow>(sql`
       SELECT user_id, username, count(*)::int AS n
         FROM audit_log
-       WHERE module = 'auth' AND action = 'denied'
+       WHERE action = 'denied'
          AND created_at >= NOW() - INTERVAL '1 hour'
        GROUP BY user_id, username
       HAVING count(*) >= 5
@@ -2419,6 +2435,8 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
     type PermissionGroup = typeof PERMISSION_GROUPS[number];
     type CellState = "inherited" | "granted" | "denied" | "none";
 
+    // Per task spec the matrix rows are admin/owner users only; superadmins
+    // are surfaced separately via the role-distribution panel below.
     const adminUsers = await db.select({
       id: usersTable.id, username: usersTable.username, email: usersTable.email,
       role: usersTable.role, companyId: usersTable.companyId,
@@ -2426,7 +2444,7 @@ router.get("/security/permissions-matrix", requireSuperAdmin, async (_req, res) 
       lastLoginAt: usersTable.lastLoginAt,
     })
       .from(usersTable)
-      .where(inArray(usersTable.role, ["superadmin", "admin", "owner"]));
+      .where(inArray(usersTable.role, ["admin", "owner"]));
 
     const cids = Array.from(new Set(adminUsers.map(u => u.companyId).filter((x): x is number => x != null)));
     const companyMap = new Map<number, { id: number; nameAr: string }>();

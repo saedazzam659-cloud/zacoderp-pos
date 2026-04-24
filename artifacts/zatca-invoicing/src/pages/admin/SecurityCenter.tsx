@@ -30,6 +30,7 @@ interface SessionRow {
 interface LoginHistoryRow {
   id: number; userId: number | null; username: string | null;
   role: string | null; companyId: number | null; action: string;
+  module?: string | null;
   method: string | null; path: string | null; statusCode: number | null;
   ip: string | null; userAgent: string | null;
   metadata: any; createdAt: string;
@@ -412,6 +413,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                     <th className="px-3 py-2 font-medium">الوقت</th>
                     <th className="px-3 py-2 font-medium">المستخدم</th>
                     <th className="px-3 py-2 font-medium">الإجراء</th>
+                    <th className="px-3 py-2 font-medium">الوحدة</th>
                     <th className="px-3 py-2 font-medium">السبب</th>
                     <th className="px-3 py-2 font-medium">IP</th>
                     <th className="px-3 py-2 font-medium">المتصفح</th>
@@ -420,6 +422,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                 <tbody>
                   {rows.map(r => {
                     const denied = r.action === "denied";
+                    const isAuth = r.module === "auth";
                     return (
                       <tr key={r.id} className={`border-b last:border-0 ${denied ? "bg-rose-50/40" : ""} hover:bg-muted/20`}>
                         <td className="px-3 py-2 text-xs font-mono whitespace-nowrap">{fmtDateTime(r.createdAt)}</td>
@@ -436,8 +439,17 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
                             {r.action === "login" ? "دخول" : r.action === "logout" ? "خروج" : "مرفوض"}
                           </Badge>
                         </td>
+                        <td className="px-3 py-2">
+                          {/* Distinguish authentication failures from RBAC permission denials */}
+                          <Badge variant="outline" className={isAuth
+                            ? "bg-blue-50 text-blue-700 border-blue-200 text-[10px] font-mono"
+                            : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-mono"
+                          }>
+                            {r.module ?? "—"}
+                          </Badge>
+                        </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {r.metadata?.reason ?? (r.action === "denied" ? "—" : "")}
+                          {r.metadata?.reason ?? r.metadata?.attemptedAction ?? (r.action === "denied" ? "—" : "")}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
                         <td className="px-3 py-2 text-xs text-muted-foreground" title={r.userAgent ?? ""}>{shortUA(r.userAgent)}</td>
