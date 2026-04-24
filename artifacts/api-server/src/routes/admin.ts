@@ -516,12 +516,12 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
 
   const filteredSubs = scope === "all"
     ? latestSubsRows
-    : latestSubsRows.filter((sub: any) => {
+    : latestSubsRows.filter((sub) => {
         const c = companyMap.get(Number(sub.company_id));
         return !!sub.is_active && c?.status !== "suspended";
       });
 
-  const out = filteredSubs.map((sub: any) => {
+  const out = filteredSubs.map((sub) => {
     const cid = Number(sub.company_id);
     const company = companyMap.get(cid);
     const allowed = {

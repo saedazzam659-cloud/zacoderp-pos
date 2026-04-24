@@ -210,9 +210,10 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         WHERE id = ${id} AND company_id = ${cid}
         FOR UPDATE
       `);
-      const existing: any = (lockedRows.rows ?? lockedRows)[0];
+      const lockedValue = (lockedRows as { rows?: unknown }).rows ?? lockedRows;
+      const lockedArr = (Array.isArray(lockedValue) ? lockedValue : []) as Array<Record<string, unknown>>;
+      const existing = lockedArr[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
-      // Normalize snake_case → camelCase to match our schema-typed comparisons.
       existing.startNumber   = existing.start_number   ?? existing.startNumber;
       existing.endNumber     = existing.end_number     ?? existing.endNumber;
       existing.currentNumber = existing.current_number ?? existing.currentNumber;
@@ -319,7 +320,9 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
         WHERE id = ${id} AND company_id = ${cid}
         FOR UPDATE
       `);
-      const existing: any = (lockedRows.rows ?? lockedRows)[0];
+      const lockedValue = (lockedRows as { rows?: unknown }).rows ?? lockedRows;
+      const lockedArr = (Array.isArray(lockedValue) ? lockedValue : []) as Array<Record<string, unknown>>;
+      const existing = lockedArr[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
       const startNumber   = existing.start_number   ?? existing.startNumber;
       const currentNumber = existing.current_number ?? existing.currentNumber;
@@ -365,20 +368,24 @@ router.delete("/:id", audit("sequences", "delete"), async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
     const result = await db.transaction(async (tx) => {
-      const lockedRows = await tx.execute<any>(sql`
+      const lockedExec = await tx.execute<{ id: number; startNumber: number; currentNumber: number }>(sql`
         SELECT id, start_number AS "startNumber", current_number AS "currentNumber"
         FROM sequences
         WHERE id = ${id} AND company_id = ${cid}
         FOR UPDATE
-      `).then((r: any) => r.rows ?? r);
+      `);
+      const lockedValue = (lockedExec as { rows?: unknown }).rows ?? lockedExec;
+      const lockedRows = (Array.isArray(lockedValue) ? lockedValue : []) as Array<{ id: number; startNumber: number; currentNumber: number }>;
       const existing = lockedRows[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
       if (Number(existing.currentNumber) !== Number(existing.startNumber)) {
         return { status: 400, body: { error: "لا يمكن حذف مسلسل تم استخدامه — قم بإلغاء تنشيطه بدلاً من ذلك" } };
       }
-      const logRows = await tx.execute<{ count: string }>(sql`
+      const logExec = await tx.execute<{ count: string }>(sql`
         SELECT COUNT(*)::text AS count FROM sequence_logs WHERE sequence_id = ${id}
-      `).then((r: any) => r.rows ?? r);
+      `);
+      const logValue = (logExec as { rows?: unknown }).rows ?? logExec;
+      const logRows = (Array.isArray(logValue) ? logValue : []) as Array<{ count: string }>;
       if (Number(logRows[0]?.count ?? 0) > 0) {
         return { status: 400, body: { error: "لا يمكن حذف مسلسل له سجل عمليات — قم بإلغاء تنشيطه بدلاً من ذلك" } };
       }

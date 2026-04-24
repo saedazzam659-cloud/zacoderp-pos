@@ -6,8 +6,14 @@ import { eq, inArray, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 const AUTO_SUSPEND_KEY = "auto_suspend_expired";
-const AUTO_SUSPEND_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
-const AUTO_SUSPEND_INITIAL_DELAY_MS = 30 * 1000;     // first run 30s after start
+const AUTO_SUSPEND_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const AUTO_SUSPEND_INITIAL_DELAY_MS = 30 * 1000;
+
+interface ExpiredCompanyRow {
+  company_id: number | string;
+  end_date: string;
+  prev_status: string | null;
+}
 
 async function runAutoSuspendOnce() {
   try {
@@ -15,11 +21,7 @@ async function runAutoSuspendOnce() {
       .where(eq(systemSettingsTable.key, AUTO_SUSPEND_KEY));
     if (flag?.value !== "on") return;
 
-    // Find companies where the LATEST (max end_date) subscription is in the past
-    // AND the company isn't already suspended. Using a CTE with DISTINCT ON
-    // ensures we don't suspend a company that has any newer/active subscription
-    // row alongside an old expired one.
-    const result: any = await db.execute(sql`
+    const result = await db.execute(sql`
       WITH latest AS (
         SELECT DISTINCT ON (company_id)
                company_id, end_date
@@ -32,7 +34,8 @@ async function runAutoSuspendOnce() {
        WHERE l.end_date::date < CURRENT_DATE
          AND c.status <> 'suspended'
     `);
-    const candidates: any[] = result.rows ?? result;
+    const rowsValue = (result as { rows?: unknown }).rows ?? result;
+    const candidates = (Array.isArray(rowsValue) ? rowsValue : []) as ExpiredCompanyRow[];
     if (candidates.length === 0) return;
 
     const cids = candidates.map(c => Number(c.company_id));
