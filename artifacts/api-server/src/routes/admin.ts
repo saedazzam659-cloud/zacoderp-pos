@@ -261,6 +261,17 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
   const row = (result.rows ?? result)[0];
   if (!row) { res.status(404).json({ error: "الاشتراك غير موجود" }); return; }
   const [updated] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
+  // Renewal restores access: if the company was auto-suspended for expiry
+  // and the new endDate is in the future, reactivate it. Otherwise the
+  // login block at /api/auth/login keeps blocking even after renewal.
+  let reactivated = false;
+  if (updated && updated.endDate >= todayISO()) {
+    const reRes = await db.update(companiesTable)
+      .set({ status: "active" })
+      .where(and(eq(companiesTable.id, updated.companyId), eq(companiesTable.status, "suspended")))
+      .returning({ id: companiesTable.id });
+    reactivated = reRes.length > 0;
+  }
   await writeAudit({
     userId: req.adminUser?.id ?? null,
     username: req.adminUser?.username ?? null,
@@ -270,9 +281,9 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
     action: "edit",
     entityType: "subscription",
     entityId: String(id),
-    metadata: { op: "extend", months, newEnd: updated?.endDate ?? row.end_date },
+    metadata: { op: "extend", months, newEnd: updated?.endDate ?? row.end_date, reactivated },
   });
-  res.json({ ok: true, subscription: updated });
+  res.json({ ok: true, subscription: updated, reactivated });
 });
 
 // POST /api/admin/subscriptions/:id/change-plan — switch plan template
@@ -294,23 +305,13 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
   const end   = addMonthsISO(start, cycle === "yearly" ? 12 : 1);
   const price = cycle === "yearly" ? planConfig.annualPrice : planConfig.monthlyPrice;
 
-  // Plan template defines limits & price. Copy ALL caps so over-limit
-  // accounting stays accurate after a plan switch. planConfigs only
-  // stores users/invoices, so branches/warehouses come from the
-  // hard-coded plan defaults below (kept in lockstep with the plan
-  // catalogue used in the registration flow).
-  const planDefaults: Record<string, { maxBranches: number; maxWarehouses: number }> = {
-    starter:      { maxBranches: 1, maxWarehouses: 1 },
-    professional: { maxBranches: 3, maxWarehouses: 5 },
-    enterprise:   { maxBranches: 999, maxWarehouses: 999 },
-  };
-  const caps = planDefaults[planKey] ?? planDefaults.starter;
+  // Plan template (plan_configs) is the canonical source of all caps.
   const [updated] = await db.update(subscriptionsTable).set({
     plan: planKey,
     billingCycle: cycle,
     maxUsers: planConfig.maxUsers,
-    maxBranches: caps.maxBranches,
-    maxWarehouses: caps.maxWarehouses,
+    maxBranches: planConfig.maxBranches,
+    maxWarehouses: planConfig.maxWarehouses,
     maxInvoices: planConfig.maxInvoices,
     price: String(price),
     startDate: start,
@@ -366,24 +367,46 @@ router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) =>
   const rows: any[] = result.rows ?? result;
   const updatedIds = rows.map(r => Number(r.id));
   const missingIds = requestedIds.filter(id => !updatedIds.includes(id));
+  // Reactivate any companies that were auto-suspended for expiry now that
+  // their subscription has a future endDate. Group rows by companyId since a
+  // company could have multiple subscription rows in the bulk batch.
+  const today = todayISO();
+  const companyIdsToReactivate = Array.from(new Set(
+    rows.filter(r => String(r.end_date) >= today).map(r => Number(r.company_id))
+  ));
+  let reactivatedCompanyIds: number[] = [];
+  if (companyIdsToReactivate.length > 0) {
+    const reRes = await db.update(companiesTable)
+      .set({ status: "active" })
+      .where(and(inArray(companiesTable.id, companyIdsToReactivate), eq(companiesTable.status, "suspended")))
+      .returning({ id: companiesTable.id });
+    reactivatedCompanyIds = reRes.map(r => r.id);
+  }
   for (const r of rows) {
+    const cid = Number(r.company_id);
     await writeAudit({
       userId: req.adminUser?.id ?? null,
       username: req.adminUser?.username ?? null,
       role: "superadmin",
-      companyId: Number(r.company_id),
+      companyId: cid,
       module: "subscriptions",
       action: "edit",
       entityType: "subscription",
       entityId: String(r.id),
-      metadata: { op: "bulk-extend", months, newEnd: r.end_date },
+      metadata: { op: "bulk-extend", months, newEnd: r.end_date, reactivated: reactivatedCompanyIds.includes(cid) },
     });
   }
   res.json({
     ok: true,
     requestedIds, updatedIds, missingIds,
     processed: updatedIds.length,
-    results: rows.map(r => ({ id: Number(r.id), ok: true, newEnd: r.end_date })),
+    reactivatedCompanyIds,
+    results: rows.map(r => ({
+      id: Number(r.id),
+      ok: true,
+      newEnd: r.end_date,
+      reactivated: reactivatedCompanyIds.includes(Number(r.company_id)),
+    })),
   });
 });
 

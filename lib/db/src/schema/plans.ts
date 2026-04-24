@@ -8,6 +8,8 @@ export const planConfigsTable = pgTable("plan_configs", {
   monthlyPrice: text("monthly_price").notNull().default("0"),
   annualPrice: text("annual_price").notNull().default("0"),
   maxUsers: integer("max_users").notNull().default(1),
+  maxBranches: integer("max_branches").notNull().default(1),
+  maxWarehouses: integer("max_warehouses").notNull().default(1),
   maxInvoices: integer("max_invoices").notNull().default(50),
   features: text("features").notNull().default("[]"),
   isRecommended: boolean("is_recommended").notNull().default(false),
