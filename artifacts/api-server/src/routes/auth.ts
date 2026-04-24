@@ -75,6 +75,14 @@ router.post("/login", async (req, res) => {
     const [co] = await db.select({ status: companiesTable.status })
       .from(companiesTable).where(eq(companiesTable.id, user.companyId));
     if (co?.status === "suspended") {
+      // Audit denied login for suspended-tenant rejections so they show up in
+      // the Security Center login-history and feed denied-spike anomalies.
+      await writeAudit({
+        userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 403,
+        ip, userAgent: ua, metadata: { reason: "company_suspended" },
+      });
       res.status(403).json({ error: "الاشتراك منتهي والشركة موقوفة. تواصل مع الدعم لتجديد الاشتراك." });
       return;
     }

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -99,10 +100,28 @@ export default function Users() {
   const url   = cid ? `${API}/api/users?companyId=${cid}` : `${API}/api/users`;
   const burl  = cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`;
 
+  // Skip the users/branches fetch entirely for superadmin until they pick a
+  // tenant — avoids a noisy 400 from the server and lets the UI render a
+  // friendly company picker instead of a confusing empty state.
+  const fetchEnabled = user?.role !== "superadmin" || cid != null;
+
   const { data: users = [], isLoading } = useQuery<UserRow[]>({
     queryKey: ["users", cid],
+    enabled: fetchEnabled,
     queryFn: async () => {
       const r = await fetch(url, { headers: authH });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  // Companies dropdown for superadmin (small list — fine to keep cached).
+  interface CompanyMin { id: number; nameAr: string; nameEn?: string | null }
+  const { data: companiesList = [] } = useQuery<CompanyMin[]>({
+    queryKey: ["admin-companies-min"],
+    enabled: user?.role === "superadmin",
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/companies`, { headers: authH });
       if (!r.ok) return [];
       return r.json();
     },
@@ -294,13 +313,48 @@ export default function Users() {
             <p className="text-sm text-muted-foreground">{t("users.subtitle")}</p>
           </div>
         </div>
-        {!openForm && (
-          <Button onClick={openCreate} className={cn("gap-2 hover:from-cyan-700 hover:to-blue-700", isRtl ? "bg-gradient-to-l from-cyan-600 to-blue-600" : "bg-gradient-to-r from-cyan-600 to-blue-600")}>
-            <Plus className="h-4 w-4" />
-            {t("users.addUser")}
-          </Button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Superadmin company picker — lets the superadmin scope the page to a
+              specific tenant. Pre-selected from ?companyId in the URL when the
+              page is opened from the Security Center matrix click-through. */}
+          {user?.role === "superadmin" && (
+            <Select
+              value={cid != null ? String(cid) : ""}
+              onValueChange={(v) => {
+                if (!v) return;
+                handledSelectedRef.current = null;
+                setLocation(`/users?companyId=${v}`, { replace: true });
+              }}
+            >
+              <SelectTrigger className="min-w-[220px]" data-testid="superadmin-company-picker">
+                <SelectValue placeholder={t("users.selectCompany", "اختر الشركة")} />
+              </SelectTrigger>
+              <SelectContent>
+                {companiesList.map(c => (
+                  <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {!openForm && fetchEnabled && (
+            <Button onClick={openCreate} className={cn("gap-2 hover:from-cyan-700 hover:to-blue-700", isRtl ? "bg-gradient-to-l from-cyan-600 to-blue-600" : "bg-gradient-to-r from-cyan-600 to-blue-600")}>
+              <Plus className="h-4 w-4" />
+              {t("users.addUser")}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* Friendly empty state when superadmin hasn't picked a tenant yet —
+          replaces the previous 400-driven blank table. */}
+      {user?.role === "superadmin" && cid == null && (
+        <Card>
+          <CardContent className="p-12 text-center text-muted-foreground space-y-2">
+            <UsersIcon className="h-10 w-10 mx-auto opacity-30" />
+            <div className="text-base">اختر شركة من القائمة أعلاه لإدارة مستخدميها.</div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── Inline Form ─────────────────── */}
       {openForm && (
