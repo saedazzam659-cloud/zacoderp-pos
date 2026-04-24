@@ -67,7 +67,6 @@ export default function Users() {
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH = { Authorization: `Bearer ${token}` };
 
   const [search, setSearch] = useState("");
@@ -76,13 +75,26 @@ export default function Users() {
   const [form, setForm] = useState(emptyForm());
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
-  // Deep-link support: when arriving from Security Center via /users?selected=:id,
-  // auto-open that user's edit panel as soon as the user list loads. Tracked with
-  // a ref so it only fires once per query-string visit (avoids reopening if the
-  // admin manually closes the editor).
+  // Deep-link support: when arriving from Security Center via
+  //   /users?companyId=:cid&selected=:id
+  // we honor the URL-supplied companyId (only meaningful for superadmin —
+  // resolveCompanyId on the server pins normal admins to their own company).
+  // This lets a superadmin open any tenant's user from the permissions matrix.
   const search$ = useSearch();
   const [, setLocation] = useLocation();
   const handledSelectedRef = useRef<string | null>(null);
+
+  const urlCompanyId = useMemo(() => {
+    const v = new URLSearchParams(search$).get("companyId");
+    const n = v != null ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+  }, [search$]);
+
+  // Effective companyId for fetching: superadmin uses the URL param when present
+  // (otherwise fetches across all tenants — server returns 400 in that case so
+  // the UI lands on an empty list and the create-user CTA is the only action).
+  // Non-superadmin always uses their own company.
+  const cid = user?.role === "superadmin" ? urlCompanyId : user?.company?.id;
 
   const url   = cid ? `${API}/api/users?companyId=${cid}` : `${API}/api/users`;
   const burl  = cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`;
@@ -130,8 +142,10 @@ export default function Users() {
   };
 
   // Consume ?selected=:id from the URL once users finish loading and auto-open
-  // the edit panel for that user. Strips the param from the URL afterwards so
-  // the editor doesn't keep reopening on every re-render.
+  // the edit panel for that user. Strips ONLY the `selected` param afterwards
+  // so the editor doesn't keep reopening on re-renders, while preserving the
+  // `companyId` param — that one is required for all subsequent save/delete
+  // mutations to keep targeting the same tenant.
   useEffect(() => {
     if (isLoading) return;
     const params = new URLSearchParams(search$);

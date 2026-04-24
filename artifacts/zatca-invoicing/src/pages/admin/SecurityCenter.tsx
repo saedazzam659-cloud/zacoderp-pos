@@ -534,7 +534,14 @@ function PermissionsTab({ token }: { token: string | null }) {
                     <tr
                       key={u.id}
                       className="border-b last:border-0 hover:bg-muted/20 cursor-pointer"
-                      onClick={() => setLocation(`/users?selected=${u.id}`)}
+                      onClick={() => setLocation(
+                        // Include companyId so the superadmin can open users in
+                        // any tenant (the /api/users endpoint is tenant-scoped
+                        // and only honours ?companyId for superadmin callers).
+                        u.companyId != null
+                          ? `/users?companyId=${u.companyId}&selected=${u.id}`
+                          : `/users?selected=${u.id}`
+                      )}
                       data-testid={`perms-user-row-${u.id}`}
                       title="فتح صفحة المستخدمين"
                     >

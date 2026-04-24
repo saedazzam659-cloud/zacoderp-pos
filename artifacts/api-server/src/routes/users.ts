@@ -9,7 +9,18 @@ const router = Router();
 router.use(extractAuth);
 
 function guard(req: any, res: any): number | null {
-  const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
+  // For superadmin, prefer the explicit ?companyId=N query (or body) so they
+  // can manage users across companies — needed by the Security Center
+  // permissions matrix click-through. resolveCompanyId already enforces that
+  // non-superadmin callers are pinned to their own company regardless of any
+  // companyId they pass in the request.
+  const queryCid = req.query?.companyId != null ? Number(req.query.companyId) : undefined;
+  const bodyCid  = req.body?.companyId  != null ? Number(req.body.companyId)  : undefined;
+  const candidate = (Number.isFinite(queryCid) ? queryCid : undefined)
+    ?? (Number.isFinite(bodyCid) ? bodyCid : undefined)
+    ?? req.authUser?.companyId
+    ?? undefined;
+  const cid = resolveCompanyId(req, candidate);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return null; }
   return cid;
 }
