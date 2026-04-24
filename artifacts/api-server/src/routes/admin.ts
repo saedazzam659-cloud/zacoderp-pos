@@ -2653,8 +2653,8 @@ function applySearch(rows: { companyName: string }[], search: string | undefined
 interface RevenueRow      { company_id: number; revenue: string; invoice_count: number }
 interface OperationalRow  {
   company_id: number; customers: number; suppliers: number; items: number;
-  open_pos_sessions: number; last_invoice_at: string | null;
-  audit_events_period: number; denied_period: number;
+  open_pos_sessions: number; last_activity_at: string | null;
+  audit_events_7d: number; denied_7d: number;
 }
 // auto_backups doesn't track an explicit "status" column — every persisted row
 // represents a successful backup (failures aren't recorded). We derive a
@@ -2854,38 +2854,42 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     const search = typeof req.query?.search === "string" ? req.query.search : undefined;
     const format = req.query?.format === "csv" ? "csv" : "json";
     const onlyInactive = req.query?.onlyInactive === "true" || req.query?.onlyInactive === "1";
-    const period = parsePeriod(req);
-    if ("error" in period) { res.status(400).json({ error: period.error }); return; }
-    const periodStart = period.from + "T00:00:00";
-    const periodEnd   = period.to   + "T23:59:59";
 
     const [opsResult, backupsResult, companiesList] = await Promise.all([
-      // Per-company KPI roll-up. The outer FROM `companies` ensures every
-      // tenant appears in the result even if all the join CTEs are empty.
-      // Audit events, denied attempts, and last-activity respect the
-      // selected reporting period.
+      // Per-company KPI roll-up. Per spec:
+      //  * audit events / denied attempts: fixed last-7-days window.
+      //  * inactivity highlight: no activity in last 30 days (any source).
+      //  * last activity timestamp: MAX over invoice_date and audit_log.
+      // The outer FROM `companies` ensures every tenant appears in the
+      // result even if all the join CTEs are empty.
       db.execute<OperationalRow>(sql`
         WITH c   AS (SELECT company_id, COUNT(*)::int n FROM customers GROUP BY company_id),
              s   AS (SELECT company_id, COUNT(*)::int n FROM suppliers GROUP BY company_id),
              i   AS (SELECT company_id, COUNT(*)::int n FROM items     GROUP BY company_id),
              pos AS (SELECT company_id, COUNT(*)::int n FROM pos_sessions WHERE status = 'open' GROUP BY company_id),
              la  AS (
-               -- Last posted invoice within the selected period.
-               SELECT company_id, MAX(invoice_date) AS last_invoice_at
-                 FROM sales_invoices
-                WHERE status = 'posted'
-                  AND invoice_date BETWEEN ${period.from} AND ${period.to}
-                GROUP BY company_id
+               -- Last activity = latest of (last posted invoice timestamp,
+               -- last audit_log timestamp). Combined into one timestamp so
+               -- the "inactive" check considers all user/system activity.
+               SELECT company_id, MAX(ts) AS last_activity_at FROM (
+                 SELECT company_id, invoice_date::timestamp AS ts
+                   FROM sales_invoices WHERE status = 'posted'
+                 UNION ALL
+                 SELECT company_id, created_at AS ts FROM audit_log
+               ) u
+               GROUP BY company_id
              ),
              ae  AS (
+               -- Audit events within the last 7 days (fixed window per spec).
                SELECT company_id, COUNT(*)::int n FROM audit_log
-                WHERE created_at BETWEEN ${periodStart}::timestamp AND ${periodEnd}::timestamp
+                WHERE created_at >= now() - interval '7 days'
                 GROUP BY company_id
              ),
              de  AS (
+               -- Denied attempts within the last 7 days (fixed window per spec).
                SELECT company_id, COUNT(*)::int n FROM audit_log
                 WHERE action = 'denied'
-                  AND created_at BETWEEN ${periodStart}::timestamp AND ${periodEnd}::timestamp
+                  AND created_at >= now() - interval '7 days'
                 GROUP BY company_id
              )
         SELECT co.id                       AS company_id,
@@ -2893,9 +2897,9 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
                COALESCE(s.n,   0)          AS suppliers,
                COALESCE(i.n,   0)          AS items,
                COALESCE(pos.n, 0)          AS open_pos_sessions,
-               la.last_invoice_at          AS last_invoice_at,
-               COALESCE(ae.n,  0)          AS audit_events_period,
-               COALESCE(de.n,  0)          AS denied_period
+               la.last_activity_at::text   AS last_activity_at,
+               COALESCE(ae.n,  0)          AS audit_events_7d,
+               COALESCE(de.n,  0)          AS denied_7d
           FROM companies co
           LEFT JOIN c   ON c.company_id   = co.id
           LEFT JOIN s   ON s.company_id   = co.id
@@ -2923,12 +2927,13 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     }
     const companyMap = new Map(companiesList.map(c => [c.id, c]));
 
+    // Inactivity threshold = no activity in the last 30 days (any source).
+    const inactiveCutoffMs = Date.now() - 30 * 86_400_000;
     let rows = sqlRows<OperationalRow>(opsResult as SqlExecuteResult<OperationalRow>).map(r => {
       const cid = Number(r.company_id);
       const company = companyMap.get(cid);
-      const lastInvoiceAt = r.last_invoice_at ?? null;
-      // "Inactive" = no posted invoice within the selected reporting period.
-      const inactive = !lastInvoiceAt;
+      const lastActivityAt = r.last_activity_at ?? null;
+      const inactive = !lastActivityAt || new Date(lastActivityAt).getTime() < inactiveCutoffMs;
       const backup = backups.get(cid);
       return {
         companyId: cid,
@@ -2936,9 +2941,9 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
         companyStatus: company?.status ?? "unknown",
         customers: r.customers, suppliers: r.suppliers, items: r.items,
         openPosSessions: r.open_pos_sessions,
-        lastInvoiceAt, inactive,
-        auditEventsPeriod: r.audit_events_period,
-        deniedPeriod:      r.denied_period,
+        lastActivityAt, inactive,
+        auditEvents7d: r.audit_events_7d,
+        denied7d:      r.denied_7d,
         latestBackupReason: backup?.reason ?? null,
         latestBackupAt:     backup?.created_at ?? null,
       };
@@ -2948,17 +2953,17 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     rows.sort((a, b) => a.companyName.localeCompare(b.companyName, "ar"));
 
     if (format === "csv") {
-      sendCsv(res, `operational-summary-${period.from}_${period.to}.csv`,
-        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط في الفترة", "أحداث التدقيق في الفترة", "محاولات مرفوضة في الفترة", "آخر نسخة احتياطية", "نوع النسخة", "غير نشطة في الفترة"],
+      sendCsv(res, `operational-summary.csv`,
+        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط", "أحداث التدقيق (7 أيام)", "محاولات مرفوضة (7 أيام)", "آخر نسخة احتياطية", "نوع النسخة", "راكدة (>30 يوم)"],
         rows.map(r => [
           r.companyName, r.companyStatus, r.customers, r.suppliers, r.items,
-          r.openPosSessions, r.lastInvoiceAt ?? "—", r.auditEventsPeriod, r.deniedPeriod,
+          r.openPosSessions, r.lastActivityAt ?? "—", r.auditEvents7d, r.denied7d,
           r.latestBackupAt ?? "—", r.latestBackupReason ?? "—", r.inactive ? "نعم" : "لا",
         ]),
       );
       return;
     }
-    res.json({ period, rows });
+    res.json({ rows });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب الملخص التشغيلي";
     res.status(500).json({ error: msg });

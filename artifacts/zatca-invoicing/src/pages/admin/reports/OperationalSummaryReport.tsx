@@ -8,35 +8,33 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
-import { PeriodSelector, periodToQuery, usePeriodState } from "./shared/PeriodSelector";
 
 interface OpsRow {
   companyId: number; companyName: string; companyStatus: string;
   customers: number; suppliers: number; items: number;
   openPosSessions: number;
-  lastInvoiceAt: string | null; inactive: boolean;
-  auditEventsPeriod: number; deniedPeriod: number;
+  lastActivityAt: string | null; inactive: boolean;
+  auditEvents7d: number; denied7d: number;
   latestBackupReason: string | null; latestBackupAt: string | null;
 }
-interface ReportPeriod { from: string; to: string; days: number; prevFrom: string; prevTo: string }
-interface OpsResp { period: ReportPeriod; rows: OpsRow[] }
+interface OpsResp { rows: OpsRow[] }
 
 const fmtInt = new Intl.NumberFormat("ar-SA");
 
 export default function OperationalSummaryReport() {
   const { token } = useAuth();
-  const period = usePeriodState();
   const [search, setSearch] = useState("");
   const [onlyInactive, setOnlyInactive] = useState(false);
 
-  // All filters (period + search + onlyInactive) are sent to the backend so
-  // CSV export and the visible table stay in sync.
+  // The KPIs on this report use fixed reporting windows per spec
+  // (audit/denied = trailing 7 days, inactivity = trailing 30 days),
+  // so there is no period selector — only search + inactive filter.
   const queryString = useMemo(() => {
-    const qs = new URLSearchParams(periodToQuery(period));
+    const qs = new URLSearchParams();
     if (search.trim()) qs.set("search", search.trim());
     if (onlyInactive) qs.set("onlyInactive", "true");
     return qs.toString();
-  }, [period.preset, period.from, period.to, search, onlyInactive]);
+  }, [search, onlyInactive]);
 
   const { data, isLoading, error } = useQuery<OpsResp>({
     queryKey: ["report-operational-summary", queryString],
@@ -67,7 +65,7 @@ export default function OperationalSummaryReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/operational-summary?${queryString}&format=csv`, `operational-summary-${period.from}_${period.to}.csv`)}
+          onClick={() => downloadCsv(token, `/api/admin/reports/operational-summary?${queryString}&format=csv`, `operational-summary.csv`)}
           disabled={!data || rows.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV
@@ -75,7 +73,6 @@ export default function OperationalSummaryReport() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3 p-3 border rounded-lg bg-muted/20">
-        <PeriodSelector period={period} />
         <div className="flex-1 min-w-[200px]">
           <label className="text-xs text-muted-foreground block mb-1">بحث باسم الشركة</label>
           <div className="relative">
@@ -85,8 +82,11 @@ export default function OperationalSummaryReport() {
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
           <input type="checkbox" checked={onlyInactive} onChange={e => setOnlyInactive(e.target.checked)} />
-          غير نشطة في الفترة فقط
+          الراكدة فقط (>30 يوم بدون نشاط)
         </label>
+        <p className="text-xs text-muted-foreground basis-full">
+          أحداث التدقيق والمحاولات المرفوضة تُحسب للأيام السبعة الأخيرة. الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً.
+        </p>
       </div>
 
       {error && <div className="text-rose-700 bg-rose-50 border border-rose-200 rounded p-3 text-sm">{(error as Error).message}</div>}
@@ -104,8 +104,8 @@ export default function OperationalSummaryReport() {
                 <TableHead className="text-right">أصناف</TableHead>
                 <TableHead className="text-right">جلسات POS</TableHead>
                 <TableHead className="text-right">آخر نشاط</TableHead>
-                <TableHead className="text-right">أحداث التدقيق</TableHead>
-                <TableHead className="text-right">مرفوضة</TableHead>
+                <TableHead className="text-right">أحداث التدقيق (7 أيام)</TableHead>
+                <TableHead className="text-right">مرفوضة (7 أيام)</TableHead>
                 <TableHead className="text-right">نسخة احتياطية</TableHead>
               </TableRow>
             </TableHeader>
@@ -137,10 +137,10 @@ export default function OperationalSummaryReport() {
                       <Badge variant="outline" className="text-[10px] border-emerald-400 text-emerald-700">{r.openPosSessions}</Badge>
                     ) : <span className="text-muted-foreground">0</span>}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{r.lastInvoiceAt ?? "—"}</TableCell>
-                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEventsPeriod)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{r.lastActivityAt ? r.lastActivityAt.slice(0, 19).replace("T", " ") : "—"}</TableCell>
+                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEvents7d)}</TableCell>
                   <TableCell className="tabular-nums">
-                    {r.deniedPeriod > 0 ? <span className="text-rose-700 font-bold">{r.deniedPeriod}</span> : <span className="text-muted-foreground">0</span>}
+                    {r.denied7d > 0 ? <span className="text-rose-700 font-bold">{r.denied7d}</span> : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs">
                     {r.latestBackupAt == null ? (
