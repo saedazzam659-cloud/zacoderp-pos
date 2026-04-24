@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -118,6 +119,12 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
 
 const router = Router();
 router.use(extractAuth);
+router.use(pathRbac([
+  ["/sales-invoices",        "sales_invoices"],
+  ["/sales-returns",         "sales_returns"],
+  ["/sales-quotations",      "sales_quotations"],
+  ["/customer-settlements",  "sales_invoices"],
+]));
 
 // Strict boolean parser for API boundary — accepts true|false (and "true"/"false") only.
 // Anything else becomes false (the safe default for priceIncludesVat).

@@ -12,6 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
+  ScrollText,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.aiCompanyFix",         href: "/admin/ai-fix",             icon: Sparkles },
   { nameKey: "nav.supportInbox",         href: "/admin/support",            icon: Inbox },
   { nameKey: "nav.supportSettings",      href: "/admin/support-settings",   icon: MessageSquare },
+  { nameKey: "nav.auditLog",             href: "/admin/audit-log",          icon: ScrollText },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];
@@ -1025,6 +1027,16 @@ function SidebarInner({
                 {filteredSystem.map(item => (
                   <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
                 ))}
+              </div>
+            )}
+
+            {user?.role === "admin" && (
+              <div className="space-y-0.5">
+                <NavItem
+                  item={{ nameKey: "nav.auditLog", href: "/admin/audit-log", icon: ScrollText }}
+                  location={location}
+                  onClick={onNavigate}
+                />
               </div>
             )}
           </>

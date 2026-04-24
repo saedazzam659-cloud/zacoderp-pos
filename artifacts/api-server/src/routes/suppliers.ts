@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { suppliersTable, purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable, accountsTable } from "@workspace/db";
 import { eq, and, sql, like, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 // Auto-create a sub-account under the "Accounts Payable — Suppliers" parent.
 // Returns the new account id, or null if no suitable parent exists.
@@ -58,6 +59,8 @@ async function ensureSupplierAccount(companyId: number, supplierName: string): P
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("suppliers"));
+router.use(moduleAudit("suppliers"));
 
 router.get("/", async (req, res) => {
   const rawCompanyId = req.query.companyId ? parseInt(req.query.companyId as string) : undefined;

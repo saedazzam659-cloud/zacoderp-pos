@@ -40,6 +40,7 @@ import supportMessagesRouter from "./support-messages";
 import accountingMappingsRouter from "./accounting-mappings";
 import backupRouter from "./backup";
 import salesRepsRouter from "./sales-reps";
+import auditLogRouter from "./audit-log";
 
 const router: IRouter = Router();
 
@@ -82,6 +83,7 @@ router.use("/support-messages", supportMessagesRouter);
 router.use("/accounting-mappings", accountingMappingsRouter);
 router.use("/backup", backupRouter);
 router.use("/sales-reps", salesRepsRouter);
+router.use("/audit-log", auditLogRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

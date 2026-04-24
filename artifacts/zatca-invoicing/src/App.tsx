@@ -4,12 +4,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Layout from "@/components/Layout";
+import PermRoute from "@/components/PermRoute";
 import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
+import AuditLog from "@/pages/admin/AuditLog";
 import Notifications from "@/pages/Notifications";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
@@ -195,24 +197,25 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
+            {(isSuperAdmin || user?.role === "admin") && <Route path="/admin/audit-log" component={AuditLog} />}
             <Route path="/notifications" component={Notifications} />
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}
-            {!isSuperAdmin && <Route path="/invoices" component={Invoices} />}
-            {!isSuperAdmin && <Route path="/invoices/new" component={InvoiceNew} />}
-            {!isSuperAdmin && <Route path="/invoices/:id" component={InvoiceDetails} />}
-            {!isSuperAdmin && <Route path="/customers" component={Customers} />}
-            {!isSuperAdmin && <Route path="/customers/new" component={CustomerNew} />}
-            {!isSuperAdmin && <Route path="/customers/:id" component={CustomerNew} />}
-            {!isSuperAdmin && <Route path="/suppliers" component={Suppliers} />}
-            {!isSuperAdmin && <Route path="/suppliers/new" component={SupplierNew} />}
+            {!isSuperAdmin && <PermRoute path="/invoices"      module="sales_invoices" component={Invoices} />}
+            {!isSuperAdmin && <PermRoute path="/invoices/new"  module="sales_invoices" action="create" component={InvoiceNew} />}
+            {!isSuperAdmin && <PermRoute path="/invoices/:id"  module="sales_invoices" component={InvoiceDetails} />}
+            {!isSuperAdmin && <PermRoute path="/customers"     module="customers" component={Customers} />}
+            {!isSuperAdmin && <PermRoute path="/customers/new" module="customers" action="create" component={CustomerNew} />}
+            {!isSuperAdmin && <PermRoute path="/customers/:id" module="customers" component={CustomerNew} />}
+            {!isSuperAdmin && <PermRoute path="/suppliers"     module="suppliers" component={Suppliers} />}
+            {!isSuperAdmin && <PermRoute path="/suppliers/new" module="suppliers" action="create" component={SupplierNew} />}
             {!isSuperAdmin && <Route path="/zatca">{() => <ZatcaIntegration />}</Route>}
             {!isSuperAdmin && <Route path="/zatca-bridge" component={ZatcaBridge} />}
             {!isSuperAdmin && <Route path="/zatca-report" component={ZatcaReport} />}
             {!isSuperAdmin && <Route path="/general-settings" component={GeneralSettings} />}
-            {!isSuperAdmin && user?.role === "admin" && <Route path="/users" component={Users} />}
-            {!isSuperAdmin && <Route path="/vat-declaration" component={VATDeclaration} />}
+            {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/users" module="users" component={Users} />}
+            {!isSuperAdmin && <PermRoute path="/vat-declaration" module="vat_declaration" component={VATDeclaration} />}
 
             {/* HR routes */}
             <Route path="/pos-monitoring" component={PosMonitoring} />
@@ -230,18 +233,18 @@ function AppRoutes() {
 
             {/* Inventory routes */}
             {!isSuperAdmin && <Route path="/inventory" component={InventoryDashboard} />}
-            {!isSuperAdmin && <Route path="/inventory/warehouse-groups" component={WarehouseGroups} />}
-            {!isSuperAdmin && <Route path="/inventory/warehouses" component={Warehouses} />}
-            {!isSuperAdmin && <Route path="/inventory/item-groups" component={ItemGroups} />}
-            {!isSuperAdmin && <Route path="/inventory/units" component={Units} />}
-            {!isSuperAdmin && <Route path="/inventory/items" component={Items} />}
-            {!isSuperAdmin && <Route path="/inventory/items/new" component={Items} />}
-            {!isSuperAdmin && <Route path="/inventory/transfers" component={StockTransfer} />}
-            {!isSuperAdmin && <Route path="/inventory/transfers/new" component={StockTransfer} />}
-            {!isSuperAdmin && <Route path="/inventory/adjustments" component={StockAdjustment} />}
-            {!isSuperAdmin && <Route path="/inventory/adjustments/new" component={StockAdjustment} />}
-            {!isSuperAdmin && <Route path="/inventory/counts" component={StockCounting} />}
-            {!isSuperAdmin && <Route path="/inventory/counts/new" component={StockCounting} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/warehouse-groups" module="warehouses"        component={WarehouseGroups} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/warehouses"       module="warehouses"        component={Warehouses} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/item-groups"      module="items"             component={ItemGroups} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/units"            module="items"             component={Units} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/items"            module="items"             component={Items} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/items/new"        module="items" action="create" component={Items} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/transfers"        module="stock_transfers"   component={StockTransfer} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/transfers/new"    module="stock_transfers" action="create" component={StockTransfer} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/adjustments/new"  module="stock_adjustments" action="create" component={StockAdjustment} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/counts"           module="stock_counts"      component={StockCounting} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/counts/new"       module="stock_counts" action="create" component={StockCounting} />}
             {!isSuperAdmin && <Route path="/inventory/ledger" component={StockLedger} />}
             {!isSuperAdmin && <Route path="/inventory/balance" component={StockBalance} />}
             {/* Inventory Reports */}
@@ -255,12 +258,12 @@ function AppRoutes() {
 
             {/* Accounting routes */}
             {!isSuperAdmin && <Route path="/accounting"><Redirect to="/accounting/accounts" /></Route>}
-            {!isSuperAdmin && <Route path="/accounting/accounts" component={ChartOfAccounts} />}
-            {!isSuperAdmin && <Route path="/accounting/cost-centers" component={CostCenters} />}
-            {!isSuperAdmin && <Route path="/accounting/fiscal-periods" component={FiscalPeriods} />}
-            {!isSuperAdmin && <Route path="/accounting/journals"     component={JournalEntries} />}
-            {!isSuperAdmin && <Route path="/accounting/journals/new" component={JournalEntryForm} />}
-            {!isSuperAdmin && <Route path="/accounting/journals/:id" component={JournalEntryForm} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/accounts"       module="accounts"        component={ChartOfAccounts} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/fiscal-periods" module="accounts"        component={FiscalPeriods} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/journals"       module="journal_entries" component={JournalEntries} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/journals/new"   module="journal_entries" action="create" component={JournalEntryForm} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/journals/:id"   module="journal_entries" component={JournalEntryForm} />}
             {/* Accounting Reports */}
             {!isSuperAdmin && <Route path="/accounting/reports"><Redirect to="/accounting/reports/trial-balance" /></Route>}
             {!isSuperAdmin && <Route path="/accounting/reports/account-statement" component={AccountStatement} />}
@@ -285,13 +288,13 @@ function AppRoutes() {
 
             {/* Sales routes */}
             {!isSuperAdmin && <Route path="/sales"><Redirect to="/sales/invoices" /></Route>}
-            {!isSuperAdmin && <Route path="/sales/invoices/new"      component={SalesInvoiceForm} />}
-            {!isSuperAdmin && <Route path="/sales/invoices/:id"      component={SalesInvoiceForm} />}
-            {!isSuperAdmin && <Route path="/sales/invoices"          component={SalesInvoices} />}
-            {!isSuperAdmin && <Route path="/sales/quotations/new"    component={SalesQuotationForm} />}
-            {!isSuperAdmin && <Route path="/sales/quotations/:id"    component={SalesQuotationForm} />}
-            {!isSuperAdmin && <Route path="/sales/quotations"        component={SalesQuotations} />}
-            {!isSuperAdmin && <Route path="/sales/returns"           component={SalesReturns} />}
+            {!isSuperAdmin && <PermRoute path="/sales/invoices/new"   module="sales_invoices"   action="create" component={SalesInvoiceForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesInvoices} />}
+            {!isSuperAdmin && <PermRoute path="/sales/quotations/new" module="sales_quotations" action="create" component={SalesQuotationForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/quotations/:id" module="sales_quotations" component={SalesQuotationForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/quotations"     module="sales_quotations" component={SalesQuotations} />}
+            {!isSuperAdmin && <PermRoute path="/sales/returns"        module="sales_returns"    component={SalesReturns} />}
 
             {/* Customers & Sales Reports */}
             {!isSuperAdmin && <Route path="/sales/reports/customer-statement" component={CustomerStatement} />}
@@ -326,11 +329,11 @@ function AppRoutes() {
 
             {/* Cash & Banks */}
             {!isSuperAdmin && <Route path="/cash"><Redirect to="/cash/boxes" /></Route>}
-            {!isSuperAdmin && <Route path="/cash/boxes"            component={CashBoxes}       />}
-            {!isSuperAdmin && <Route path="/cash/banks"            component={BankAccounts}    />}
-            {!isSuperAdmin && <Route path="/cash/receipt-vouchers" component={ReceiptVouchers} />}
-            {!isSuperAdmin && <Route path="/cash/payment-vouchers" component={PaymentVouchers} />}
-            {!isSuperAdmin && <Route path="/cash/transfers"        component={CashTransfers}   />}
+            {!isSuperAdmin && <PermRoute path="/cash/boxes"            module="cash_boxes"        component={CashBoxes}       />}
+            {!isSuperAdmin && <PermRoute path="/cash/banks"            module="bank_accounts"     component={BankAccounts}    />}
+            {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers" module="receipt_vouchers"  component={ReceiptVouchers} />}
+            {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers" module="payment_vouchers"  component={PaymentVouchers} />}
+            {!isSuperAdmin && <PermRoute path="/cash/transfers"        module="cash_boxes"        component={CashTransfers}   />}
 
             {/* Settings routes */}
             {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}

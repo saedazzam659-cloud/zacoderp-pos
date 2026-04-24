@@ -9,11 +9,14 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import Anthropic from "@anthropic-ai/sdk";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("sales_invoices"));
+router.use(moduleAudit("sales_invoices"));
 // Require an authenticated user for every sales-reps endpoint — these contain
 // PII (phone/email/address) and commission terms; never serve to anonymous callers.
 router.use((req, res, next) => {

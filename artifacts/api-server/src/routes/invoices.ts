@@ -7,9 +7,12 @@ import { CreateInvoiceBody, UpdateInvoiceBody, ListInvoicesQueryParams } from "@
 import { generateZatcaQr } from "../lib/zatca-tlv.js";
 import { generateZatcaXml, hashXml } from "../lib/zatca-xml.js";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("sales_invoices"));
+router.use(moduleAudit("sales_invoices"));
 
 const GENESIS_HASH = "NWZlY2ViNjZmZmM4NmYzOGQ5NTI3ODZmNTI5OWIxNmI2ZjRiMmUyNjY5MDkwMzBiMzdhZGZiMzU3NGI0OTJiNA==";
 

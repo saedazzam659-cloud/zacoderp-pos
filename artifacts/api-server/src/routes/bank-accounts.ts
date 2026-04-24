@@ -3,9 +3,12 @@ import { db } from "@workspace/db";
 import { bankAccountsTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("bank_accounts"));
+router.use(moduleAudit("bank_accounts"));
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);

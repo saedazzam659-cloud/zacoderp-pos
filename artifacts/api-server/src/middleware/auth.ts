@@ -8,6 +8,10 @@ export interface AuthUser {
   username: string;
   role: string;
   companyId: number | null;
+  // Granular per-module action map. Shape: { [moduleKey]: { view?: bool, ... } }
+  // Loaded from users.permissions jsonb. May be null/undefined for legacy users
+  // and is always undefined for superadmin/admin (they bypass granular checks).
+  permissions?: Record<string, Record<string, boolean>> | null;
 }
 
 declare global {
@@ -27,10 +31,22 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
   if (!auth?.startsWith("Bearer ")) { next(); return; }
   const token = auth.slice(7);
   const [user] = await db
-    .select({ id: usersTable.id, username: usersTable.username, role: usersTable.role, companyId: usersTable.companyId, isActive: usersTable.isActive })
+    .select({
+      id:          usersTable.id,
+      username:    usersTable.username,
+      role:        usersTable.role,
+      companyId:   usersTable.companyId,
+      isActive:    usersTable.isActive,
+      permissions: usersTable.permissions,
+    })
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
-  if (user?.isActive) req.authUser = user;
+  if (user?.isActive) {
+    req.authUser = {
+      id: user.id, username: user.username, role: user.role,
+      companyId: user.companyId, permissions: user.permissions as any,
+    };
+  }
   next();
 }
 

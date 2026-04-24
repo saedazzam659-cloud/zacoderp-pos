@@ -3,9 +3,12 @@ import { db } from "@workspace/db";
 import { cashTransfersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("cash_boxes"));
+router.use(moduleAudit("cash_boxes"));
 
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);

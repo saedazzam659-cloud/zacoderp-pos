@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { accountingMappingsTable, accountsTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
@@ -44,6 +45,7 @@ router.use((req, res, next) => {
   if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
   next();
 });
+router.use(moduleAudit("accounting_mappings"));
 
 // Mutations + AI calls require admin/superadmin. Reads are allowed for any
 // authenticated user of the same company (resolveCompanyId already enforces

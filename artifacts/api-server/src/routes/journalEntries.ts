@@ -3,10 +3,13 @@ import { db } from "@workspace/db";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("journal_entries"));
+router.use(moduleAudit("journal_entries"));
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);

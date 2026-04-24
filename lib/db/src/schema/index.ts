@@ -21,3 +21,4 @@ export * from "./supportMessages";
 export * from "./accountingMappings";
 export * from "./autoBackups";
 export * from "./salesReps";
+export * from "./auditLog";

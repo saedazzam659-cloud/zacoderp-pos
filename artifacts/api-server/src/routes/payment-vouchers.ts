@@ -8,9 +8,12 @@ import {
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("payment_vouchers"));
+router.use(moduleAudit("payment_vouchers"));
 
 // Build & insert a balanced journal entry for a payment voucher
 async function buildPaymentJournal(cid: number, v: any): Promise<number> {

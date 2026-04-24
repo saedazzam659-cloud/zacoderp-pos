@@ -11,9 +11,20 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { pathRbac } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(pathRbac([
+  ["/warehouse-groups",    "warehouses"],
+  ["/warehouses",          "warehouses"],
+  ["/item-groups",         "items"],
+  ["/units",               "items"],
+  ["/items",               "items"],
+  ["/stock-transfers",     "stock_transfers"],
+  ["/stock-adjustments",   "stock_adjustments"],
+  ["/stock-counts",        "stock_counts"],
+]));
 
 // ─── GUARD: require auth ──────────────────────────────────────────────────────
 function guard(req: any, res: any): number | null {

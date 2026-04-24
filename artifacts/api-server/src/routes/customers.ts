@@ -4,6 +4,7 @@ import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersT
 import { and, eq, sql, like, or } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 // Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
 // Returns the new account id, or null if no suitable parent exists.
@@ -56,6 +57,8 @@ async function ensureCustomerAccount(companyId: number, customerName: string): P
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("customers"));
+router.use(moduleAudit("customers"));
 
 // Customer balances: + posted credit sales invoices, − posted sales returns,
 // − posted receipt vouchers (cash collected). Positive ⇒ مدين (owes us), Negative ⇒ دائن.

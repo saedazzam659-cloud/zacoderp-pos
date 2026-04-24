@@ -3,9 +3,12 @@ import { db } from "@workspace/db";
 import { regionsTable, branchesTable } from "@workspace/db";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
+router.use(requireModulePermission("branches"));
+router.use(moduleAudit("branches"));
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);

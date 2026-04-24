@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -97,6 +98,13 @@ async function loadWarehouseInfo(cid: number, ids: number[]): Promise<Record<num
 
 const router = Router();
 router.use(extractAuth);
+router.use(pathRbac([
+  ["/purchase-invoices",      "purchase_invoices"],
+  ["/purchase-returns",       "purchase_returns"],
+  ["/supplier-settlements",   "purchase_invoices"],
+  ["/letters-of-credit",      "purchase_invoices"],
+  ["/supplier-groups",        "suppliers"],
+]));
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
