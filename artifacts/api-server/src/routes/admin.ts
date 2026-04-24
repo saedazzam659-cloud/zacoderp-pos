@@ -290,6 +290,245 @@ router.get("/stats", requireSuperAdmin, async (_req, res) => {
   res.json({ total: companies.length, pending, active, rejected, users: users.length });
 });
 
+// GET /api/admin/dashboard — single aggregated payload for the SuperAdmin
+// Control Center home page. Every figure is derived from a SQL aggregate
+// (no full table loads) so this stays fast as the system grows.
+router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
+  try {
+    const [
+      companiesAgg,
+      signupsTimeline,
+      signupsTrend,
+      usersAgg,
+      subsByPlan,
+      backupsAgg,
+      missingBackups,
+      auditAgg,
+    ] = await Promise.all([
+      // A) Companies grouped by status
+      db.execute<{ status: string; count: string }>(sql`
+        SELECT status, COUNT(*)::text AS count
+        FROM companies
+        GROUP BY status
+      `),
+      // B) New-company timeline for last 90 days, bucketed by day
+      db.execute<{ day: string; count: string }>(sql`
+        SELECT DATE_TRUNC('day', created_at)::date::text AS day, COUNT(*)::text AS count
+        FROM companies
+        WHERE created_at >= NOW() - INTERVAL '90 days'
+        GROUP BY day
+        ORDER BY day
+      `),
+      // C) Signups this week vs prior week (for delta tile)
+      db.execute<{ this_week: string; last_week: string }>(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::text  AS this_week,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '14 days'
+                       AND created_at <  NOW() - INTERVAL '7 days')::text         AS last_week
+        FROM companies
+      `),
+      // D) User counts (total, active in last 24h, by role)
+      db.execute<{ total: string; active_today: string; superadmins: string; admins: string }>(sql`
+        SELECT
+          COUNT(*)::text                                                            AS total,
+          COUNT(*) FILTER (WHERE last_login_at > NOW() - INTERVAL '24 hours')::text AS active_today,
+          COUNT(*) FILTER (WHERE role = 'superadmin')::text                         AS superadmins,
+          COUNT(*) FILTER (WHERE role = 'admin')::text                              AS admins
+        FROM users
+      `),
+      // E) Subscription distribution + revenue + expiry buckets per plan.
+      //    end_date is stored as TEXT (default ''); we therefore guard every
+      //    cast with a regex check so legacy/empty rows never crash the
+      //    aggregate. price is also TEXT — coerce safely with NULLIF + cast.
+      db.execute<{
+        plan: string; count: string; revenue: string;
+        expiring: string; expired: string;
+      }>(sql`
+        SELECT
+          plan,
+          COUNT(*)::text                                                            AS count,
+          COALESCE(SUM(NULLIF(price, '')::numeric), 0)::text                        AS revenue,
+          COUNT(*) FILTER (
+            WHERE end_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+              AND end_date::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTEGER '30'
+          )::text AS expiring,
+          COUNT(*) FILTER (
+            WHERE end_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+              AND end_date::date < CURRENT_DATE
+          )::text AS expired
+        FROM subscriptions
+        WHERE is_active = TRUE
+        GROUP BY plan
+      `),
+      // F) Backup totals (last 7 days + storage used)
+      db.execute<{ backups_7d: string; total_size: string; distinct_companies_7d: string }>(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::text          AS backups_7d,
+          COALESCE(SUM(size_bytes), 0)::text                                             AS total_size,
+          COUNT(DISTINCT company_id) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::text
+                                                                                         AS distinct_companies_7d
+        FROM auto_backups
+      `),
+      // G) Active companies that have NOT been backed up in 7+ days (or never)
+      db.execute<{ id: number; name_ar: string; last_backup: string | null }>(sql`
+        SELECT c.id, c.name_ar, MAX(b.created_at)::text AS last_backup
+        FROM companies c
+        LEFT JOIN auto_backups b ON b.company_id = c.id
+        WHERE c.status = 'active'
+        GROUP BY c.id, c.name_ar
+        HAVING MAX(b.created_at) IS NULL
+            OR MAX(b.created_at) < NOW() - INTERVAL '7 days'
+        ORDER BY c.name_ar
+      `),
+      // H) Audit log summary
+      db.execute<{ events_today: string; denied_7d: string; logins_24h: string }>(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::text                          AS events_today,
+          COUNT(*) FILTER (WHERE action = 'denied'
+                       AND created_at > NOW() - INTERVAL '7 days')::text                    AS denied_7d,
+          COUNT(*) FILTER (WHERE action = 'login'
+                       AND created_at > NOW() - INTERVAL '24 hours')::text                  AS logins_24h
+        FROM audit_log
+      `),
+    ]);
+
+    // ─── Companies summary ──────────────────────────────────────────────
+    const byStatus: Record<string, number> = {};
+    for (const row of companiesAgg.rows ?? []) {
+      byStatus[row.status] = Number(row.count) || 0;
+    }
+    const totalCompanies =
+      (byStatus.active ?? 0) + (byStatus.pending ?? 0) +
+      (byStatus.rejected ?? 0) + (byStatus.suspended ?? 0);
+
+    // ─── Subscriptions roll-up across plans ─────────────────────────────
+    let totalActiveSubs = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
+    const planDistribution: { plan: string; count: number; revenue: number }[] = [];
+    for (const row of subsByPlan.rows ?? []) {
+      const c = Number(row.count) || 0;
+      const r = Number(row.revenue) || 0;
+      totalActiveSubs += c;
+      totalExpiring   += Number(row.expiring) || 0;
+      totalExpired    += Number(row.expired)  || 0;
+      totalRevenue    += r;
+      planDistribution.push({ plan: row.plan, count: c, revenue: r });
+    }
+
+    // ─── Trend deltas ──────────────────────────────────────────────────
+    const trendRow = signupsTrend.rows?.[0];
+    const signupsThisWeek = Number(trendRow?.this_week ?? 0);
+    const signupsLastWeek = Number(trendRow?.last_week ?? 0);
+
+    // ─── Users ─────────────────────────────────────────────────────────
+    const u = usersAgg.rows?.[0];
+
+    // ─── Backups ───────────────────────────────────────────────────────
+    const b = backupsAgg.rows?.[0];
+    const missingBackupCompanies = (missingBackups.rows ?? []).map(r => ({
+      id: r.id,
+      nameAr: r.name_ar,
+      lastBackup: r.last_backup,
+    }));
+
+    // ─── Audit ─────────────────────────────────────────────────────────
+    const a = auditAgg.rows?.[0];
+
+    // ─── Health flags (for the System Health card) ─────────────────────
+    type HealthFlag = {
+      level: "red" | "amber" | "green";
+      message: string;
+      href?: string;
+    };
+    const health: HealthFlag[] = [];
+    if (missingBackupCompanies.length > 0) {
+      health.push({
+        level: "red",
+        message: `${missingBackupCompanies.length} شركة لم تأخذ نسخة احتياطية منذ 7 أيام أو أكثر`,
+        href: "/admin/backups",
+      });
+    }
+    if (totalExpired > 0) {
+      health.push({
+        level: "red",
+        message: `${totalExpired} اشتراك منتهي يحتاج تجديداً`,
+        href: "/admin/subscriptions",
+      });
+    }
+    if (totalExpiring > 0) {
+      health.push({
+        level: "amber",
+        message: `${totalExpiring} اشتراك سينتهي خلال 30 يوماً`,
+        href: "/admin/subscriptions",
+      });
+    }
+    if ((byStatus.pending ?? 0) > 0) {
+      health.push({
+        level: "amber",
+        message: `${byStatus.pending} طلب تسجيل بانتظار المراجعة`,
+        href: "/admin/requests",
+      });
+    }
+    const deniedCount = Number(a?.denied_7d ?? 0);
+    if (deniedCount >= 5) {
+      health.push({
+        level: "amber",
+        message: `${deniedCount} محاولة وصول مرفوضة خلال آخر 7 أيام`,
+        href: "/admin/audit-log",
+      });
+    }
+    if (health.length === 0) {
+      health.push({ level: "green", message: "النظام يعمل بكفاءة — لا توجد تنبيهات" });
+    }
+
+    res.json({
+      companies: {
+        total:      totalCompanies,
+        active:     byStatus.active     ?? 0,
+        pending:    byStatus.pending    ?? 0,
+        rejected:   byStatus.rejected   ?? 0,
+        suspended:  byStatus.suspended  ?? 0,
+        signupsThisWeek,
+        signupsLastWeek,
+        signupsDelta: signupsThisWeek - signupsLastWeek,
+      },
+      users: {
+        total:        Number(u?.total        ?? 0),
+        activeToday:  Number(u?.active_today ?? 0),
+        superadmins:  Number(u?.superadmins  ?? 0),
+        admins:       Number(u?.admins       ?? 0),
+      },
+      subscriptions: {
+        active:    totalActiveSubs,
+        expiring:  totalExpiring,   // within next 30 days
+        expired:   totalExpired,
+        revenue:   totalRevenue,    // sum of price across active subs
+        byPlan:    planDistribution,
+      },
+      backups: {
+        last7d:                Number(b?.backups_7d            ?? 0),
+        totalSizeBytes:        Number(b?.total_size            ?? 0),
+        distinctCompanies7d:   Number(b?.distinct_companies_7d ?? 0),
+        missingCount:          missingBackupCompanies.length,
+        missing:               missingBackupCompanies.slice(0, 10), // cap for payload size
+      },
+      audit: {
+        eventsToday: Number(a?.events_today ?? 0),
+        denied7d:    deniedCount,
+        logins24h:   Number(a?.logins_24h   ?? 0),
+      },
+      signupsTimeline: (signupsTimeline.rows ?? []).map(r => ({
+        day:   r.day,
+        count: Number(r.count) || 0,
+      })),
+      health,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[admin/dashboard] aggregation failed:", err);
+    res.status(500).json({ error: "تعذر جلب بيانات لوحة التحكم", details: err?.message });
+  }
+});
+
 // GET /api/admin/companies/:id — full company profile for superadmin
 router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   const id = parseInt(req.params.id);
