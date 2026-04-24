@@ -7,14 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Package, Search, RefreshCw, Pencil, CheckCircle2, XCircle,
+  Package, Search, RefreshCw, CheckCircle2, XCircle,
   Calendar, Users, FileText, ChevronDown, ChevronUp, BadgeCheck,
   CalendarPlus, Repeat, AlertTriangle, Zap, ShieldAlert, PlayCircle, PauseCircle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -122,8 +119,6 @@ export default function SubscriptionManagement() {
   const [expandedRow, setExpandedRow]   = useState<number | null>(null);
   const [selected, setSelected]         = useState<Set<number>>(new Set());
   const [bulkMonths, setBulkMonths]     = useState<number>(1);
-  const [editDialog, setEditDialog]     = useState<any | null>(null);
-  const [editForm, setEditForm]         = useState<any>({});
   const [extendForms, setExtendForms]   = useState<Record<number, number>>({});
   const [planForms, setPlanForms]       = useState<Record<number, { plan: string; cycle: "monthly" | "yearly" }>>({});
   const [overLimitOpen, setOverLimitOpen] = useState(false);
@@ -176,7 +171,6 @@ export default function SubscriptionManagement() {
       toast({ title: "✓ تم تحديث الاشتراك بنجاح" });
       qc.invalidateQueries({ queryKey: ["admin-subscriptions"] });
       qc.invalidateQueries({ queryKey: ["admin-subscriptions-usage"] });
-      setEditDialog(null);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -296,16 +290,6 @@ export default function SubscriptionManagement() {
     return d != null && d < 0;
   }).length;
   const overLimitCount = (usage as any[]).filter(u => u.overLimit).length;
-
-  const openEdit = (row: any) => {
-    setEditForm({ ...row.subscription });
-    setEditDialog(row);
-  };
-  const applyPlanDefaults = (plan: string) => {
-    const p = PLAN_MAP[plan];
-    if (!p) return;
-    setEditForm((f: any) => ({ ...f, plan, maxUsers: p.maxUsers, maxInvoices: p.maxInvoices, price: p.price }));
-  };
 
   const allFilteredIds = filtered.map((r: any) => r.subscription?.id).filter(Boolean) as number[];
   const allSelectedOnPage = allFilteredIds.length > 0 && allFilteredIds.every(id => selected.has(id));
@@ -664,9 +648,6 @@ export default function SubscriptionManagement() {
                     </div>
 
                     <div className="flex gap-2 pt-1 flex-wrap">
-                      <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={() => openEdit(row)}>
-                        <Pencil className="h-3.5 w-3.5" />تعديل تفصيلي
-                      </Button>
                       <Button size="sm" variant="outline" className={cn("gap-1.5 h-8",
                         sub?.isActive ? "border-red-300 text-red-700 hover:bg-red-50" : "border-green-300 text-green-700 hover:bg-green-50")}
                         onClick={() => updateMutation.mutate({ id: sub.id, data: { isActive: !sub.isActive } })}>
@@ -688,103 +669,6 @@ export default function SubscriptionManagement() {
         )}
       </div>
 
-      {/* Edit Dialog (full edit fallback) */}
-      <Dialog open={!!editDialog} onOpenChange={() => setEditDialog(null)}>
-        <DialogContent dir="rtl" className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Pencil className="h-5 w-5 text-primary" />
-              تعديل اشتراك: {editDialog?.company?.nameAr}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>الباقة</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {PLANS.map(p => (
-                  <button key={p.key} type="button"
-                    onClick={() => applyPlanDefaults(p.key)}
-                    className={cn("rounded-lg border p-3 text-center transition-all text-sm font-semibold",
-                      editForm.plan === p.key
-                        ? "border-primary bg-primary/10 text-primary ring-2 ring-primary/30"
-                        : "border-border hover:border-primary/50 text-muted-foreground")}>
-                    {p.label}
-                    <p className="text-xs font-normal mt-0.5">{p.price} ر.س</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>دورة الفوترة</Label>
-              <div className="flex rounded-lg border overflow-hidden">
-                {[{ v: "monthly", l: "شهرية" }, { v: "yearly", l: "سنوية" }].map((opt, i) => (
-                  <button key={opt.v} type="button"
-                    onClick={() => setEditForm((f: any) => ({ ...f, billingCycle: opt.v }))}
-                    className={cn("flex-1 py-2 text-sm font-medium transition-colors", i > 0 && "border-r",
-                      (editForm.billingCycle === opt.v || (opt.v === "yearly" && editForm.billingCycle === "annual"))
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted/60")}>
-                    {opt.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">الحد الأقصى للمستخدمين</Label>
-                <Input type="number" value={editForm.maxUsers ?? ""} min={1}
-                  onChange={e => setEditForm((f: any) => ({ ...f, maxUsers: parseInt(e.target.value) }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">الحد الأقصى للفواتير</Label>
-                <Input type="number" value={editForm.maxInvoices ?? ""} min={1}
-                  onChange={e => setEditForm((f: any) => ({ ...f, maxInvoices: parseInt(e.target.value) }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">السعر (ر.س)</Label>
-                <Input type="number" value={editForm.price ?? ""} min={0}
-                  onChange={e => setEditForm((f: any) => ({ ...f, price: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">الحالة</Label>
-                <div className="flex rounded-lg border overflow-hidden h-9">
-                  <button type="button" onClick={() => setEditForm((f: any) => ({ ...f, isActive: true }))}
-                    className={cn("flex-1 text-sm font-medium border-r transition-colors",
-                      editForm.isActive ? "bg-green-600 text-white" : "text-muted-foreground hover:bg-muted/60")}>
-                    نشط
-                  </button>
-                  <button type="button" onClick={() => setEditForm((f: any) => ({ ...f, isActive: false }))}
-                    className={cn("flex-1 text-sm font-medium transition-colors",
-                      !editForm.isActive ? "bg-red-600 text-white" : "text-muted-foreground hover:bg-muted/60")}>
-                    موقوف
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">تاريخ البداية</Label>
-                <Input type="date" value={editForm.startDate ?? ""}
-                  onChange={e => setEditForm((f: any) => ({ ...f, startDate: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">تاريخ الانتهاء</Label>
-                <Input type="date" value={editForm.endDate ?? ""}
-                  onChange={e => setEditForm((f: any) => ({ ...f, endDate: e.target.value }))} />
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setEditDialog(null)}>إلغاء</Button>
-            <Button className="gap-2"
-              onClick={() => updateMutation.mutate({ id: editDialog.subscription.id, data: editForm })}
-              disabled={updateMutation.isPending}>
-              <CheckCircle2 className="h-4 w-4" />
-              {updateMutation.isPending ? "جاري الحفظ..." : "حفظ التغييرات"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
