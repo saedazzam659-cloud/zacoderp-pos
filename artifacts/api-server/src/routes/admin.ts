@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable } from "@workspace/db";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -3179,6 +3179,381 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب تقرير الإيرادات حسب الباقة";
     res.status(500).json({ error: msg });
+  }
+});
+
+// ─── Maintenance Toolbox (deterministic one-click checkers + fixes) ─────────
+// Sits above the AI scanner on the AICompanyFix screen. Every endpoint is
+// `requireSuperAdmin`, scoped per `companyId`, and writes an `audit_log` row
+// with `module='maintenance'`. Fixes run inside a single DB transaction so a
+// partial failure rolls back cleanly.
+
+// Common helpers ────────────────────────────────────────────────────────────
+function maintGuard(req: Request, res: Response): { companyId: number } | null {
+  const companyId = Number(req.query.companyId ?? req.body?.companyId);
+  if (!Number.isInteger(companyId) || companyId <= 0) {
+    res.status(400).json({ error: "companyId مطلوب وصحيح" });
+    return null;
+  }
+  return { companyId };
+}
+function clampInt(v: any, min: number, max: number, def: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+async function logMaint(
+  req: Request, companyId: number, action: string,
+  entityType: string, metadata: Record<string, any>,
+) {
+  await writeAudit({
+    userId:   req.adminUser?.id ?? null,
+    username: req.adminUser?.username ?? null,
+    role:     "superadmin",
+    companyId,
+    module:   "maintenance",
+    action,
+    method:   req.method,
+    path:     req.originalUrl,
+    entityType,
+    entityId: null,
+    metadata,
+  });
+}
+
+// 1. Pending journal entries (status='draft' older than N days) ─────────────
+router.get("/maintenance/journal-pending", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.query.days, 0, 3650, 30);
+  try {
+    const exec = await db.execute<any>(sql`
+      SELECT je.id, je.doc_number AS "docNumber", je.entry_date AS "entryDate",
+             je.description, je.created_at AS "createdAt",
+             COALESCE(SUM(jel.debit),0)::text  AS "totalDebit",
+             COALESCE(SUM(jel.credit),0)::text AS "totalCredit"
+        FROM journal_entries je
+        LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
+       WHERE je.company_id = ${g.companyId}
+         AND je.status = 'draft'
+         AND je.created_at < NOW() - (${days}::int || ' days')::interval
+       GROUP BY je.id, je.doc_number, je.entry_date, je.description, je.created_at
+       ORDER BY je.created_at ASC
+       LIMIT 500
+    `);
+    const items = (exec as any).rows ?? [];
+    res.json({ count: items.length, days, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/journal-pending/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const action = String(req.body?.action ?? "");
+  if (action !== "post" && action !== "delete") {
+    res.status(400).json({ error: "action يجب أن يكون post أو delete" }); return;
+  }
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((n: any) => Number(n)).filter(Number.isInteger)
+    : [];
+  if (!ids.length) { res.json({ ok: true, processed: 0 }); return; }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Re-validate scope: only this tenant + still draft.
+      const candidates = await tx.select({ id: journalEntriesTable.id })
+        .from(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, g.companyId),
+          eq(journalEntriesTable.status, "draft"),
+          inArray(journalEntriesTable.id, ids),
+        ));
+      const validIds = candidates.map(c => c.id);
+      if (!validIds.length) return { processed: 0, skipped: ids.length };
+
+      if (action === "post") {
+        // Only post entries whose debit equals credit (rounded to 2 dp).
+        const balExec = await tx.execute<{ id: number; balanced: boolean }>(sql`
+          SELECT je.id,
+                 (ROUND(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0), 2) = 0) AS balanced
+            FROM journal_entries je
+            LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
+           WHERE je.id = ANY(${sql.raw(`ARRAY[${validIds.join(",")}]::int[]`)})
+           GROUP BY je.id
+        `);
+        const balRows = (balExec as any).rows ?? [];
+        const postable = balRows.filter((r: any) => r.balanced).map((r: any) => Number(r.id));
+        const unbalanced = balRows.filter((r: any) => !r.balanced).map((r: any) => Number(r.id));
+        if (postable.length) {
+          await tx.update(journalEntriesTable)
+            .set({ status: "posted", updatedAt: new Date() })
+            .where(and(
+              eq(journalEntriesTable.companyId, g.companyId),
+              inArray(journalEntriesTable.id, postable),
+            ));
+        }
+        return { processed: postable.length, skipped: unbalanced.length, unbalancedIds: unbalanced };
+      }
+
+      // delete: remove lines first (FK cascade is set on lines, but be explicit
+      // for clarity and to record exact counts).
+      await tx.delete(journalEntryLinesTable)
+        .where(inArray(journalEntryLinesTable.entryId, validIds));
+      const deleted = await tx.delete(journalEntriesTable)
+        .where(and(
+          eq(journalEntriesTable.companyId, g.companyId),
+          inArray(journalEntriesTable.id, validIds),
+        ))
+        .returning({ id: journalEntriesTable.id });
+      return { processed: deleted.length };
+    });
+    await logMaint(req, g.companyId, "fix", "journal_pending", { action, requested: ids.length, ...result });
+    res.json({ ok: true, action, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 2. Broken references — posted invoices with NULL or missing JE id ─────────
+router.get("/maintenance/broken-refs", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    const sExec = await db.execute<any>(sql`
+      SELECT si.id, si.doc_number AS "docNumber", si.invoice_date AS "invoiceDate",
+             si.total_amount AS "totalAmount", si.journal_entry_id AS "journalEntryId",
+             CASE
+               WHEN si.journal_entry_id IS NULL THEN 'missing'
+               ELSE 'stale'
+             END AS reason
+        FROM sales_invoices si
+       WHERE si.company_id = ${g.companyId}
+         AND si.status = 'posted'
+         AND (si.journal_entry_id IS NULL
+              OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = si.journal_entry_id))
+       ORDER BY si.id DESC LIMIT 500
+    `);
+    const pExec = await db.execute<any>(sql`
+      SELECT pi.id, pi.doc_number AS "docNumber", pi.invoice_date AS "invoiceDate",
+             pi.total_amount AS "totalAmount", pi.journal_entry_id AS "journalEntryId",
+             CASE
+               WHEN pi.journal_entry_id IS NULL THEN 'missing'
+               ELSE 'stale'
+             END AS reason
+        FROM purchase_invoices pi
+       WHERE pi.company_id = ${g.companyId}
+         AND pi.status = 'posted'
+         AND (pi.journal_entry_id IS NULL
+              OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = pi.journal_entry_id))
+       ORDER BY pi.id DESC LIMIT 500
+    `);
+    const sales = ((sExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "sales" }));
+    const purchases = ((pExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "purchase" }));
+    const items = [...sales, ...purchases];
+    res.json({ count: items.length, salesCount: sales.length, purchaseCount: purchases.length, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/broken-refs/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  // Items shape: [{ kind: "sales"|"purchase", id: number }]. Returning to
+  // status='draft' lets the operator re-post via the existing UI which will
+  // recreate the journal entry through the normal posting flow.
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const sales: number[] = [];
+  const purchases: number[] = [];
+  for (const it of items) {
+    const id = Number(it?.id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    if (it.kind === "sales")    sales.push(id);
+    if (it.kind === "purchase") purchases.push(id);
+  }
+  if (!sales.length && !purchases.length) { res.json({ ok: true, processed: 0 }); return; }
+  try {
+    const result = await db.transaction(async (tx) => {
+      let salesUpdated = 0, purchasesUpdated = 0;
+      if (sales.length) {
+        const upd = await tx.update(salesInvoicesTable)
+          .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+          .where(and(
+            eq(salesInvoicesTable.companyId, g.companyId),
+            eq(salesInvoicesTable.status, "posted"),
+            inArray(salesInvoicesTable.id, sales),
+          ))
+          .returning({ id: salesInvoicesTable.id });
+        salesUpdated = upd.length;
+      }
+      if (purchases.length) {
+        const upd = await tx.update(purchaseInvoicesTable)
+          .set({ status: "draft", journalEntryId: null, updatedAt: new Date() })
+          .where(and(
+            eq(purchaseInvoicesTable.companyId, g.companyId),
+            eq(purchaseInvoicesTable.status, "posted"),
+            inArray(purchaseInvoicesTable.id, purchases),
+          ))
+          .returning({ id: purchaseInvoicesTable.id });
+        purchasesUpdated = upd.length;
+      }
+      return { salesUpdated, purchasesUpdated, processed: salesUpdated + purchasesUpdated };
+    });
+    await logMaint(req, g.companyId, "fix", "broken_refs", {
+      requested: { sales: sales.length, purchases: purchases.length }, ...result,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 3. Unlinked accounts — JE lines whose accountId is missing from accounts ──
+router.get("/maintenance/unlinked-accounts", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    // Account ids referenced by JE lines (of this tenant's JEs) that don't
+    // exist as an `accounts` row scoped to this company. Includes both:
+    //   - hard-orphaned (account_id missing entirely from accounts table)
+    //   - cross-tenant (account_id belongs to a different company)
+    const exec = await db.execute<any>(sql`
+      SELECT jel.account_id AS "accountId",
+             COUNT(*)::int  AS "lineCount",
+             MIN(je.id)     AS "sampleEntryId",
+             MIN(je.doc_number) AS "sampleDocNumber"
+        FROM journal_entry_lines jel
+        JOIN journal_entries je ON je.id = jel.entry_id
+       WHERE je.company_id = ${g.companyId}
+         AND jel.account_id IS NOT NULL
+         AND NOT EXISTS (
+              SELECT 1 FROM accounts a
+               WHERE a.id = jel.account_id AND a.company_id = ${g.companyId}
+         )
+       GROUP BY jel.account_id
+       ORDER BY "lineCount" DESC
+       LIMIT 200
+    `);
+    const items = (exec as any).rows ?? [];
+    res.json({ count: items.length, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+// 4. Sequence gaps — issued numbers in [startNumber, currentNumber-1] with no log row
+router.get("/maintenance/sequence-gaps", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    const seqs = await db.select({
+      id: sequencesTable.id, code: sequencesTable.code, nameAr: sequencesTable.nameAr,
+      prefix: sequencesTable.prefix, padLength: sequencesTable.padLength,
+      startNumber: sequencesTable.startNumber, currentNumber: sequencesTable.currentNumber,
+    }).from(sequencesTable).where(eq(sequencesTable.companyId, g.companyId));
+
+    const items: any[] = [];
+    for (const s of seqs) {
+      const start = Number(s.startNumber);
+      const next  = Number(s.currentNumber);
+      // currentNumber is the NEXT to be issued, so issued range = [start, next-1].
+      if (next <= start) continue;
+      const exec = await db.execute<{ n: number }>(sql`
+        WITH issued AS (SELECT generate_series(${start}::int, ${next - 1}::int) AS n),
+             present AS (
+               SELECT DISTINCT NULLIF(regexp_replace(generated_number, '\D', '', 'g'), '')::bigint AS n
+                 FROM sequence_logs
+                WHERE sequence_id = ${s.id} AND company_id = ${g.companyId}
+             )
+        SELECT i.n FROM issued i
+          LEFT JOIN present p ON p.n = i.n
+         WHERE p.n IS NULL
+         ORDER BY i.n
+         LIMIT 200
+      `);
+      const gapRows = (exec as any).rows ?? [];
+      if (gapRows.length === 0) continue;
+      const pad = Math.max(0, Number(s.padLength ?? 0));
+      const fmt = (n: number) => `${s.prefix ?? ""}${pad > 0 ? String(n).padStart(pad, "0") : String(n)}`;
+      items.push({
+        sequenceId: s.id, code: s.code, nameAr: s.nameAr,
+        gapCount: gapRows.length,
+        sampleGaps: gapRows.slice(0, 20).map((r: any) => ({ number: Number(r.n), formatted: fmt(Number(r.n)) })),
+      });
+    }
+    const total = items.reduce((s, it) => s + it.gapCount, 0);
+    res.json({ count: total, sequencesAffected: items.length, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+// 5. Dormant users — last login > N days ago or never logged in ─────────────
+router.get("/maintenance/dormant-users", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.query.days, 1, 3650, 90);
+  try {
+    const exec = await db.execute<any>(sql`
+      SELECT id, username, email, name_ar AS "nameAr", role,
+             last_login_at AS "lastLoginAt", is_active AS "isActive",
+             created_at AS "createdAt"
+        FROM users
+       WHERE company_id = ${g.companyId}
+         AND role <> 'superadmin'
+         AND is_active = true
+         AND (last_login_at IS NULL OR last_login_at < NOW() - (${days}::int || ' days')::interval)
+       ORDER BY COALESCE(last_login_at, created_at) ASC
+       LIMIT 500
+    `);
+    const items = (exec as any).rows ?? [];
+    res.json({ count: items.length, days, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/dormant-users/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((n: any) => Number(n)).filter(Number.isInteger)
+    : [];
+  if (!ids.length) { res.json({ ok: true, processed: 0 }); return; }
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Never touch superadmins; never cross tenant boundary.
+      const upd = await tx.update(usersTable)
+        .set({ isActive: false, sessionToken: null, sessionId: null, updatedAt: new Date() })
+        .where(and(
+          eq(usersTable.companyId, g.companyId),
+          inArray(usersTable.id, ids),
+          sql`${usersTable.role} <> 'superadmin'`,
+        ))
+        .returning({ id: usersTable.id });
+      return { processed: upd.length };
+    });
+    await logMaint(req, g.companyId, "fix", "dormant_users", { requested: ids.length, ...result });
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 6. Maintenance history — last N audit_log rows (module='maintenance') ─────
+router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const limit = clampInt(req.query.limit, 1, 200, 50);
+  try {
+    const rows = await db.select({
+      id: auditLogTable.id, action: auditLogTable.action,
+      entityType: auditLogTable.entityType, username: auditLogTable.username,
+      metadata: auditLogTable.metadata, createdAt: auditLogTable.createdAt,
+    })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.companyId, g.companyId),
+        eq(auditLogTable.module, "maintenance"),
+      ))
+      .orderBy(desc(auditLogTable.createdAt))
+      .limit(limit);
+    res.json({ count: rows.length, items: rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب السجل" });
   }
 });
 

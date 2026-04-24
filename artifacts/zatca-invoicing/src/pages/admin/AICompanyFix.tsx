@@ -5,9 +5,11 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import MaintenanceTool from "@/components/admin/MaintenanceTool";
 import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
+  Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -362,24 +364,34 @@ export default function AICompanyFix() {
         </Card>
       )}
 
+      {/* Company selector — shared by maintenance toolbox and AI scanner. */}
       <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">اختر الشركة وافحص</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">اختر الشركة</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">الشركة</label>
-              <Select value={companyId} onValueChange={setCompanyId}>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر الشركة —" /></SelectTrigger>
-                <SelectContent>
-                  {companies.map((c: any) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      {c.nameAr || c.nameEn || `#${c.id}`}
-                      {c.status !== "active" && <span className="text-muted-foreground"> ({c.status})</span>}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">الشركة</label>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="— اختر الشركة —" /></SelectTrigger>
+              <SelectContent>
+                {companies.map((c: any) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.nameAr || c.nameEn || `#${c.id}`}
+                    {c.status !== "active" && <span className="text-muted-foreground"> ({c.status})</span>}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Deterministic maintenance toolbox — sits above the AI scanner. */}
+      <MaintenanceSection companyId={companyId ? Number(companyId) : null} />
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">فحص بالذكاء الاصطناعي</CardTitle></CardHeader>
+        <CardContent>
+          <div className="flex justify-end">
             <Button
               onClick={handleScan}
               disabled={!companyId || isFetching || summarizeMut.isPending}
@@ -495,5 +507,365 @@ export default function AICompanyFix() {
         </Card>
       )}
     </div>
+  );
+}
+
+// ─── Maintenance Toolbox section + History panel ─────────────────────────────
+// One-click deterministic data-integrity checkers for the SuperAdmin. Each
+// card runs an independent backend probe and lets the operator inspect /
+// remediate inline (no popup modals). All fix actions are audit-logged with
+// `module='maintenance'` and replayed in the history panel below.
+function MaintenanceSection({ companyId }: { companyId: number | null }) {
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyTick, setHistoryTick] = useState(0);   // bump after fixes
+
+  const historyQ = useQuery({
+    queryKey: ["maintenance-history", companyId, historyTick],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/history?companyId=${companyId}&limit=50`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب السجل");
+      return r.json() as Promise<{ count: number; items: any[] }>;
+    },
+    enabled: !!companyId && historyOpen,
+    refetchOnWindowFocus: false,
+  });
+  const onFixed = () => setHistoryTick((t) => t + 1);
+
+  return (
+    <Card className="border-violet-200">
+      <CardHeader className="pb-3 bg-violet-50/40">
+        <CardTitle className="text-base flex items-center gap-2 text-violet-900">
+          <Wrench className="h-4 w-4" />
+          أدوات الصيانة
+          <span className="text-xs font-normal text-muted-foreground mr-2">
+            فحوصات حتمية بنقرة واحدة (تعمل قبل الذكاء الاصطناعي وتُسجَّل في سجل التدقيق)
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-4 space-y-3">
+        {!companyId && (
+          <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded p-2">
+            اختر شركة من الأعلى لبدء الفحص.
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {/* 1. القيود المعلقة (drafts older than 30 days) */}
+          <MaintenanceTool
+            toolKey="journal-pending"
+            label="القيود المعلقة"
+            description="قيود يومية مسوّدة لم تُرحَّل منذ أكثر من 30 يوماً — رحّلها بالجملة أو احذفها."
+            icon={FileText}
+            checkEndpoint="maintenance/journal-pending"
+            fixEndpoint="maintenance/journal-pending/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            buildFixBody={(cid, ids) => ({ companyId: cid, ids, action: "post" })}
+            confirmTitle="ترحيل القيود المختارة"
+            confirmDescription={(n) => `سيتم ترحيل ${n} قيد محاسبي (المتوازن منها فقط). متابعة؟`}
+            fixActions={[{
+              key: "delete",
+              label: "حذف",
+              destructive: true,
+              confirmTitle: "حذف القيود المسوّدة نهائياً",
+              confirmDescription: (n) => `سيتم حذف ${n} قيد ومسوّدته نهائياً ولا يمكن التراجع. متابعة؟`,
+              buildBody: (cid, ids) => ({ companyId: cid, ids, action: "delete" }),
+            }]}
+            renderDetails={({ data, selectedIds, toggle, toggleAll, allSelected }) => {
+              const items = data.items ?? [];
+              const ids = items.map((it: any) => it.id);
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">
+                          <input type="checkbox" checked={allSelected} onChange={() => toggleAll(ids)} />
+                        </th>
+                        <th className="px-2 py-1 text-right">#</th>
+                        <th className="px-2 py-1 text-right">رقم المستند</th>
+                        <th className="px-2 py-1 text-right">التاريخ</th>
+                        <th className="px-2 py-1 text-right">مدين</th>
+                        <th className="px-2 py-1 text-right">دائن</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => (
+                        <tr key={it.id}>
+                          <td className="px-2 py-1">
+                            <input type="checkbox" checked={selectedIds.includes(it.id)} onChange={() => toggle(it.id)} />
+                          </td>
+                          <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                          <td className="px-2 py-1 font-mono">{it.docNumber || "—"}</td>
+                          <td className="px-2 py-1">{it.entryDate}</td>
+                          <td className="px-2 py-1 font-mono">{Number(it.totalDebit).toFixed(2)}</td>
+                          <td className="px-2 py-1 font-mono">{Number(it.totalCredit).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+
+          {/* 2. مرجعيات مكسورة */}
+          <MaintenanceTool
+            toolKey="broken-refs"
+            label="مرجعيات مكسورة"
+            description="فواتير مرحّلة بدون قيد محاسبي أو ترتبط بقيد محذوف — يعيدها لمسوّدة لإعادة الترحيل."
+            icon={Link2}
+            checkEndpoint="maintenance/broken-refs"
+            fixEndpoint="maintenance/broken-refs/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            buildFixBody={(cid, ids) => {
+              // Selected ids may be plain numeric ids of items; we need to
+              // re-attach `kind`. The render-prop passes composite "kind:id"
+              // strings to disambiguate sales vs purchase.
+              const items = ids.map((raw) => {
+                const s = String(raw);
+                const [kind, id] = s.includes(":") ? s.split(":") : ["sales", s];
+                return { kind, id: Number(id) };
+              });
+              return { companyId: cid, items };
+            }}
+            confirmTitle="إعادة الفواتير لمسوّدة"
+            confirmDescription={(n) => `سيتم تحويل ${n} فاتورة لحالة "مسوّدة" حتى تعيد ترحيلها وإنشاء قيدها يدوياً. متابعة؟`}
+            renderDetails={({ data, selectedIds, toggle, toggleAll, allSelected }) => {
+              const items = data.items ?? [];
+              const composite: string[] = items.map((it: any) => `${it.kind}:${it.id}`);
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">
+                          <input type="checkbox" checked={allSelected} onChange={() => toggleAll(composite)} />
+                        </th>
+                        <th className="px-2 py-1 text-right">النوع</th>
+                        <th className="px-2 py-1 text-right">رقم</th>
+                        <th className="px-2 py-1 text-right">التاريخ</th>
+                        <th className="px-2 py-1 text-right">المبلغ</th>
+                        <th className="px-2 py-1 text-right">السبب</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => {
+                        const k = `${it.kind}:${it.id}`;
+                        return (
+                          <tr key={k}>
+                            <td className="px-2 py-1">
+                              <input type="checkbox" checked={selectedIds.includes(k)} onChange={() => toggle(k)} />
+                            </td>
+                            <td className="px-2 py-1">{it.kind === "sales" ? "مبيعات" : "مشتريات"}</td>
+                            <td className="px-2 py-1 font-mono">{it.docNumber || `#${it.id}`}</td>
+                            <td className="px-2 py-1">{it.invoiceDate}</td>
+                            <td className="px-2 py-1 font-mono">{Number(it.totalAmount ?? 0).toFixed(2)}</td>
+                            <td className="px-2 py-1">{it.reason === "missing" ? "بدون قيد" : "قيد محذوف"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+
+          {/* 3. حسابات غير مربوطة (read-only) */}
+          <MaintenanceTool
+            toolKey="unlinked-accounts"
+            label="حسابات غير مربوطة"
+            description="حسابات مشار إليها في القيود ولكنها غير موجودة في دليل الحسابات للشركة — قائمة فحص فقط."
+            icon={Unlink}
+            checkEndpoint="maintenance/unlinked-accounts"
+            companyId={companyId}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">معرّف الحساب</th>
+                        <th className="px-2 py-1 text-right">عدد السطور</th>
+                        <th className="px-2 py-1 text-right">قيد عيّنة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => (
+                        <tr key={it.accountId}>
+                          <td className="px-2 py-1 font-mono">#{it.accountId}</td>
+                          <td className="px-2 py-1 font-mono tabular-nums">{it.lineCount}</td>
+                          <td className="px-2 py-1 font-mono">{it.sampleDocNumber || `#${it.sampleEntryId}`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+
+          {/* 4. فجوات في المسلسلات (read-only) */}
+          <MaintenanceTool
+            toolKey="sequence-gaps"
+            label="فجوات في المسلسلات"
+            description="أرقام داخل نطاق المسلسلات لا يقابلها سجل في sequence_logs — قد تشير لتعديل يدوي."
+            icon={ListOrdered}
+            checkEndpoint="maintenance/sequence-gaps"
+            companyId={companyId}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="space-y-2">
+                  {items.map((seq: any) => (
+                    <div key={seq.sequenceId} className="border rounded p-2 bg-muted/30">
+                      <div className="flex items-center justify-between text-xs font-medium mb-1">
+                        <span>{seq.nameAr} <span className="text-muted-foreground">({seq.code})</span></span>
+                        <span className="text-amber-900">عدد الفجوات: {seq.gapCount}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {seq.sampleGaps.map((g: any) => (
+                          <code key={g.number} className="text-[11px] bg-background border rounded px-1.5 py-0.5 font-mono">
+                            {g.formatted}
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            }}
+          />
+
+          {/* 5. مستخدمون خاملون */}
+          <MaintenanceTool
+            toolKey="dormant-users"
+            label="مستخدمون خاملون"
+            description="مستخدمون لم يدخلوا للنظام منذ أكثر من 90 يوماً أو لم يدخلوا أبداً — يمكن تعطيلهم."
+            icon={UserX}
+            checkEndpoint="maintenance/dormant-users"
+            fixEndpoint="maintenance/dormant-users/fix"
+            destructive
+            companyId={companyId}
+            onFixed={onFixed}
+            buildFixBody={(cid, ids) => ({ companyId: cid, ids })}
+            confirmTitle="تعطيل المستخدمين المختارين"
+            confirmDescription={(n) => `سيتم تعطيل ${n} مستخدم وإلغاء جلساتهم. يمكن إعادة تفعيلهم لاحقاً من إدارة المستخدمين. متابعة؟`}
+            renderDetails={({ data, selectedIds, toggle, toggleAll, allSelected }) => {
+              const items = data.items ?? [];
+              const ids = items.map((it: any) => it.id);
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">
+                          <input type="checkbox" checked={allSelected} onChange={() => toggleAll(ids)} />
+                        </th>
+                        <th className="px-2 py-1 text-right">المستخدم</th>
+                        <th className="px-2 py-1 text-right">الاسم</th>
+                        <th className="px-2 py-1 text-right">الدور</th>
+                        <th className="px-2 py-1 text-right">آخر دخول</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((u: any) => (
+                        <tr key={u.id}>
+                          <td className="px-2 py-1">
+                            <input type="checkbox" checked={selectedIds.includes(u.id)} onChange={() => toggle(u.id)} />
+                          </td>
+                          <td className="px-2 py-1 font-mono">{u.username}</td>
+                          <td className="px-2 py-1">{u.nameAr || "—"}</td>
+                          <td className="px-2 py-1 text-muted-foreground">{u.role}</td>
+                          <td className="px-2 py-1">
+                            {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString("ar") : <span className="text-amber-700">لم يدخل أبداً</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} مستخدم.</p>}
+                </div>
+              );
+            }}
+          />
+
+          {/* 6. حركات مخزون يتيمة — يستخدم الصفحة المخصّصة */}
+          <MaintenanceTool
+            toolKey="orphan-stock-link"
+            label="حركات مخزون يتيمة"
+            description="حركات مخزون مرتبطة بفواتير محذوفة — يتم إصلاحها من شاشة تنظيف حركات المخزون اليتيمة المخصّصة."
+            icon={PackageX}
+            checkEndpoint="orphan-stock"
+            companyId={companyId}
+            externalCta={{ label: "فتح صفحة التنظيف", href: "/admin/orphan-stock" }}
+          />
+        </div>
+
+        {/* History panel — last 50 maintenance actions for the selected company */}
+        <div className="border rounded">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(o => !o)}
+            disabled={!companyId}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium bg-muted/40 hover:bg-muted/60 rounded-t disabled:opacity-50"
+          >
+            <span className="flex items-center gap-2"><History className="h-4 w-4" /> سجل الإصلاحات</span>
+            {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
+          {historyOpen && (
+            <div className="p-2.5">
+              {historyQ.isLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> جارٍ تحميل السجل...
+                </div>
+              )}
+              {historyQ.isError && (
+                <p className="text-xs text-red-700">{(historyQ.error as any)?.message || "فشل جلب السجل"}</p>
+              )}
+              {historyQ.data && historyQ.data.items.length === 0 && (
+                <p className="text-xs text-muted-foreground">لا توجد عمليات صيانة مسجّلة لهذه الشركة بعد.</p>
+              )}
+              {historyQ.data && historyQ.data.items.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">التاريخ</th>
+                        <th className="px-2 py-1 text-right">المستخدم</th>
+                        <th className="px-2 py-1 text-right">الفئة</th>
+                        <th className="px-2 py-1 text-right">الإجراء</th>
+                        <th className="px-2 py-1 text-right">التفاصيل</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {historyQ.data.items.map((row: any) => (
+                        <tr key={row.id}>
+                          <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
+                          <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
+                          <td className="px-2 py-1">{row.entityType || "—"}</td>
+                          <td className="px-2 py-1">{row.action}</td>
+                          <td className="px-2 py-1 font-mono text-[10px] text-muted-foreground truncate max-w-[280px]">
+                            {row.metadata ? JSON.stringify(row.metadata) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
