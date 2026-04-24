@@ -39,6 +39,7 @@ import notificationsRouter from "./notifications";
 import supportMessagesRouter from "./support-messages";
 import accountingMappingsRouter from "./accounting-mappings";
 import backupRouter from "./backup";
+import dataIoRouter from "./data-io";
 import salesRepsRouter from "./sales-reps";
 import auditLogRouter from "./audit-log";
 
@@ -82,6 +83,7 @@ router.use("/notifications", notificationsRouter);
 router.use("/support-messages", supportMessagesRouter);
 router.use("/accounting-mappings", accountingMappingsRouter);
 router.use("/backup", backupRouter);
+router.use("/data-io", dataIoRouter);
 router.use("/sales-reps", salesRepsRouter);
 router.use("/audit-log", auditLogRouter);
 router.use(deviceInfoRouter);

@@ -22,6 +22,7 @@
     "google-auth-library": "^10.6.2",
     "pino": "^9",
     "pino-http": "^10",
+    "xlsx": "^0.18.5",
     "zod": "catalog:"
   },
   "devDependencies": {

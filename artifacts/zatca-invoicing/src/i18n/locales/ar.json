@@ -341,6 +341,7 @@
     "users": "المستخدمون",
     "currencies": "العملات والتحويل",
     "accountingMappings": "ربط القيود المحاسبية",
+    "dataIo": "استيراد وتصدير البيانات",
     "invoices": "الفواتير",
     "vatDeclaration": "الإقرار الضريبي",
     "posMonitoring": "مراقبة نقاط البيع",

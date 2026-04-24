@@ -100,4 +100,20 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 - **bcryptjs:** Password hashing library.
 - **qrcode.react:** React component for QR code generation.
 - **openssl:** Used for CSR generation for ZATCA.
-- **OpenAI:** For AI-powered suggestions and validations (e.g., Journal Entry Validation).
+- **OpenAI:** For AI-powered suggestions and validations (e.g., Journal Entry Validation, Data Import column mapping).
+- **xlsx (SheetJS):** Excel/CSV parsing and generation for Import/Export center.
+
+## Recent Features
+
+### AI-Powered Data Import/Export Center (`/settings/data-io`)
+Unified Settings module accessible to company admins (gated by `general_settings` permission). Supports lossless export and arbitrary file import for 8 entities: accounts, customers, suppliers, items, warehouses, branches, cashBoxes, bankAccounts.
+
+- **Backend:** `artifacts/api-server/src/routes/data-io.ts` — `ENTITIES` catalog defines per-entity `FieldDef` (type, required, enum, FK refs, business keys). Endpoints under `/api/data-io`:
+  - `GET /entities` — catalog for client UI
+  - `POST /export` — JSON or `xlsx` download (multi-sheet; metadata wrapper `{meta, data}`)
+  - `POST /import/analyze` — AI mapping (OpenAI proxy `gpt-5.4`, JSON-mode) with deterministic fuzzy fallback; returns `{src: {field, confidence}}`
+  - `POST /import/process` — applies mapping, normalizes (dates/numbers/booleans), resolves FKs (`parentCode`→`parentId`), detects issues (`missing_required`, `invalid_format`, `fk_unresolved`, `fk_resolved`, `duplicate`, `value_normalized`)
+  - `POST /import/commit` — transactional upsert with chunking (CHUNK=200), per-row log
+- **Frontend:** `artifacts/zatca-invoicing/src/pages/settings/DataImportExport.tsx` (4-step wizard: upload → analyze/map → review → result) + `artifacts/zatca-invoicing/src/lib/dataIoApi.ts` (typed client). Uses `xlsx` client-side to parse `.xlsx`/`.csv`/`.json`. Downloadable post-import Excel report.
+- **Auth & Multi-tenant safety:** Admin-only via existing branch isolation middleware. All reads/writes filtered by `companyId`. Defense-in-depth: (1) commit re-resolves `existingId` server-side from business-keys (client-supplied `__existingId` ignored), update WHERE includes `companyId` guard; (2) any client-supplied `*Id` column (parentId, currencyId, etc.) is validated against a tenant-scoped valid-id set in `cleanRow` and stripped + warned-on if foreign; (3) strict mode (`skipErrors:false`) returns 422 with structured per-row log on validation OR tx-time DB failure.
+- **Operational caps:** Express body limit raised to 25MB for import payloads. Export capped at 12 entities × 50,000 rows per request (returns 413 / `meta.truncated` respectively).

@@ -79,6 +79,7 @@ import JournalEntries from "@/pages/accounting/JournalEntries";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
+import DataImportExport from "@/pages/settings/DataImportExport";
 import SalesReps from "@/pages/sales/SalesReps";
 // Accounting Reports
 import AccountStatement from "@/pages/accounting/reports/AccountStatement";
@@ -341,6 +342,7 @@ function AppRoutes() {
             {/* Settings routes */}
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
+            {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="general_settings" component={DataImportExport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}

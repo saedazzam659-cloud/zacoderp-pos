@@ -340,6 +340,7 @@
     "generalSettings": "General Settings",
     "users": "Users",
     "currencies": "Currencies",
+    "dataIo": "Data Import / Export",
     "invoices": "Invoices",
     "vatDeclaration": "VAT Declaration",
     "posMonitoring": "POS Monitoring",

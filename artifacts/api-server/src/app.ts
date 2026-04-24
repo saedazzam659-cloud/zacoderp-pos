@@ -29,8 +29,10 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Bumped from 100kb default so the Settings → Data Import/Export wizard
+// can post realistic Excel/CSV payloads (5k–20k rows ≈ several MB of JSON).
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 // Prevent HTTP caching on all API responses so clients always get fresh data
 app.use((_req, res, next) => {
