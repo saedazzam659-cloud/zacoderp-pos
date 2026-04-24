@@ -14,15 +14,12 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
-import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X } from "lucide-react";
 
 const EMPTY_FORM = {
   code: "",
@@ -276,135 +273,162 @@ export default function Sequences() {
         </CardContent>
       </Card>
 
-      {/* ─── Create / Edit dialog ─────────────────────────────────────────── */}
-      <Dialog open={showForm} onOpenChange={(o) => { if (!o) reset(); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{editingId ? t("sequences.editTitle") : t("sequences.newTitle")}</DialogTitle>
-            <DialogDescription>{t("sequences.formHelp")}</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={submit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>{t("sequences.col.code")} *</Label>
-                <Input value={form.code} onChange={e => setForm({ ...form, code: e.target.value })}
-                       placeholder="SALES_INV" data-testid="input-code" />
-              </div>
-              <div className="flex items-center gap-2 self-end pb-2">
-                <Switch checked={form.isActive} onCheckedChange={v => setForm({ ...form, isActive: v })}
-                        data-testid="switch-active" />
-                <Label>{t("sequences.statusActive")}</Label>
-              </div>
-              <div>
-                <Label>{t("sequences.nameAr")} *</Label>
-                <Input value={form.nameAr} onChange={e => setForm({ ...form, nameAr: e.target.value })}
-                       data-testid="input-name-ar" />
-              </div>
-              <div>
-                <Label>{t("sequences.nameEn")}</Label>
-                <Input value={form.nameEn} onChange={e => setForm({ ...form, nameEn: e.target.value })}
-                       data-testid="input-name-en" />
-              </div>
-              <div>
-                <Label>{t("sequences.col.prefix")}</Label>
-                <Input value={form.prefix} onChange={e => setForm({ ...form, prefix: e.target.value })}
-                       placeholder="INV-" data-testid="input-prefix" />
-              </div>
-              <div>
-                <Label>{t("sequences.padLength")}</Label>
-                <Input type="number" min={0} max={12} value={form.padLength}
-                       onChange={e => setForm({ ...form, padLength: Number(e.target.value) })}
-                       data-testid="input-pad" />
-              </div>
-              <div>
-                <Label>{t("sequences.startNumber")} *</Label>
-                <Input type="number" min={0} value={form.startNumber}
-                       onChange={e => setForm({ ...form, startNumber: Number(e.target.value) })}
-                       data-testid="input-start" />
-              </div>
-              <div>
-                <Label>{t("sequences.endNumber")} *</Label>
-                <Input type="number" min={0} value={form.endNumber}
-                       onChange={e => setForm({ ...form, endNumber: Number(e.target.value) })}
-                       data-testid="input-end" />
-              </div>
-              <div>
-                <Label>{t("sequences.currentNumber")}</Label>
-                <Input type="number" min={0} value={form.currentNumber}
-                       onChange={e => setForm({ ...form, currentNumber: Number(e.target.value) })}
-                       data-testid="input-current" />
-                <p className="text-xs text-muted-foreground mt-1">{t("sequences.currentHelp")}</p>
-              </div>
-              <div className="self-end pb-2">
-                <Label className="text-xs text-muted-foreground">{t("sequences.preview")}</Label>
-                <div className="font-mono text-base font-semibold mt-1" data-testid="text-preview">{previewNumber}</div>
-              </div>
-            </div>
-
+      {/* ─── Inline Create / Edit form (replaces popup) ───────────────────── */}
+      {showForm && (
+        <Card className="border-primary/40" data-testid="inline-form-sequence">
+          <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3 space-y-0">
             <div>
-              <Label className="block mb-2">{t("sequences.boundScreens")} *</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-auto border rounded p-2">
-                {txTypes.map(tx => {
-                  const checked = form.transactionTypes.includes(tx);
-                  return (
-                    <label key={tx} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/40 rounded px-1 py-1">
-                      <Checkbox checked={checked} onCheckedChange={() => toggleType(tx)}
-                                data-testid={`checkbox-tx-${tx}`} />
-                      <span>{txLabel(t, tx)}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{t("sequences.boundHelp")}</p>
+              <CardTitle className="text-base">
+                {editingId ? t("sequences.editTitle") : t("sequences.newTitle")}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">{t("sequences.formHelp")}</p>
             </div>
+            <Button size="icon" variant="ghost" onClick={reset} title={t("common.cancel")}
+                    data-testid="button-close-form">
+              <X className="w-4 h-4" />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={submit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>{t("sequences.col.code")} *</Label>
+                  <Input value={form.code} onChange={e => setForm({ ...form, code: e.target.value })}
+                         placeholder="SALES_INV" data-testid="input-code" />
+                </div>
+                <div className="flex items-center gap-2 self-end pb-2">
+                  <Switch checked={form.isActive} onCheckedChange={v => setForm({ ...form, isActive: v })}
+                          data-testid="switch-active" />
+                  <Label>{t("sequences.statusActive")}</Label>
+                </div>
+                <div>
+                  <Label>{t("sequences.nameAr")} *</Label>
+                  <Input value={form.nameAr} onChange={e => setForm({ ...form, nameAr: e.target.value })}
+                         data-testid="input-name-ar" />
+                </div>
+                <div>
+                  <Label>{t("sequences.nameEn")}</Label>
+                  <Input value={form.nameEn} onChange={e => setForm({ ...form, nameEn: e.target.value })}
+                         data-testid="input-name-en" />
+                </div>
+                <div>
+                  <Label>{t("sequences.col.prefix")}</Label>
+                  <Input value={form.prefix} onChange={e => setForm({ ...form, prefix: e.target.value })}
+                         placeholder="INV-" data-testid="input-prefix" />
+                </div>
+                <div>
+                  <Label>{t("sequences.padLength")}</Label>
+                  <Input type="number" min={0} max={12} value={form.padLength}
+                         onChange={e => setForm({ ...form, padLength: Number(e.target.value) })}
+                         data-testid="input-pad" />
+                </div>
+                <div>
+                  <Label>{t("sequences.startNumber")} *</Label>
+                  <Input type="number" min={0} value={form.startNumber}
+                         onChange={e => setForm({ ...form, startNumber: Number(e.target.value) })}
+                         data-testid="input-start" />
+                </div>
+                <div>
+                  <Label>{t("sequences.endNumber")} *</Label>
+                  <Input type="number" min={0} value={form.endNumber}
+                         onChange={e => setForm({ ...form, endNumber: Number(e.target.value) })}
+                         data-testid="input-end" />
+                </div>
+                <div>
+                  <Label>{t("sequences.currentNumber")}</Label>
+                  <Input type="number" min={0} value={form.currentNumber}
+                         onChange={e => setForm({ ...form, currentNumber: Number(e.target.value) })}
+                         data-testid="input-current" />
+                  <p className="text-xs text-muted-foreground mt-1">{t("sequences.currentHelp")}</p>
+                </div>
+                <div className="self-end pb-2">
+                  <Label className="text-xs text-muted-foreground">{t("sequences.preview")}</Label>
+                  <div className="font-mono text-base font-semibold mt-1" data-testid="text-preview">{previewNumber}</div>
+                </div>
+              </div>
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={reset} data-testid="button-cancel">{t("common.cancel")}</Button>
-              <Button type="submit" disabled={create.isPending || update.isPending} data-testid="button-save">
-                {create.isPending || update.isPending ? t("common.saving") : t("common.save")}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+              <div>
+                <Label className="block mb-2">{t("sequences.boundScreens")} *</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-auto border rounded p-2">
+                  {txTypes.map(tx => {
+                    const checked = form.transactionTypes.includes(tx);
+                    return (
+                      <label key={tx} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/40 rounded px-1 py-1">
+                        <Checkbox checked={checked} onCheckedChange={() => toggleType(tx)}
+                                  data-testid={`checkbox-tx-${tx}`} />
+                        <span>{txLabel(t, tx)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">{t("sequences.boundHelp")}</p>
+              </div>
 
-      {/* ─── Logs drawer (modal) ──────────────────────────────────────────── */}
-      <Dialog open={logsId != null} onOpenChange={(o) => { if (!o) setLogsId(null); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("sequences.logsTitle")}</DialogTitle>
-            <DialogDescription>{t("sequences.logsDesc")}</DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-auto">
-            {logs.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">{t("sequences.noLogs")}</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-background">
-                  <tr className="border-b">
-                    <th className="text-start px-2 py-2">{t("sequences.col.time")}</th>
-                    <th className="text-start px-2 py-2">{t("sequences.col.tx")}</th>
-                    <th className="text-start px-2 py-2">{t("sequences.col.number")}</th>
-                    <th className="text-start px-2 py-2">{t("sequences.col.ref")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.map(l => (
-                    <tr key={l.id} className="border-b">
-                      <td className="px-2 py-1 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
-                      <td className="px-2 py-1">{txLabel(t, l.transactionType)}</td>
-                      <td className="px-2 py-1 font-mono">{l.generatedNumber}</td>
-                      <td className="px-2 py-1 text-xs text-muted-foreground">
-                        {l.refTable ? `${l.refTable}#${l.refId ?? "—"}` : "—"}
-                      </td>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                <Button type="button" variant="outline" onClick={reset} data-testid="button-cancel">
+                  {t("common.cancel")}
+                </Button>
+                <Button type="submit" disabled={create.isPending || update.isPending} data-testid="button-save">
+                  {create.isPending || update.isPending ? t("common.saving") : t("common.save")}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── Inline Logs panel (replaces popup) ───────────────────────────── */}
+      {logsId != null && (
+        <Card data-testid="inline-logs-panel">
+          <CardHeader className="pb-3 flex flex-row items-start justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <History className="w-4 h-4" />
+                {t("sequences.logsTitle")}
+                {(() => {
+                  const r = rows.find(x => x.id === logsId);
+                  return r ? <span className="font-mono text-xs text-muted-foreground">{r.code}</span> : null;
+                })()}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">{t("sequences.logsDesc")}</p>
+            </div>
+            <Button size="icon" variant="ghost" onClick={() => setLogsId(null)} title={t("common.close") || "إغلاق"}
+                    data-testid="button-close-logs">
+              <X className="w-4 h-4" />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-[50vh] overflow-auto">
+              {logs.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">{t("sequences.noLogs")}</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b">
+                      <th className="text-start px-2 py-2">{t("sequences.col.time")}</th>
+                      <th className="text-start px-2 py-2">{t("sequences.col.tx")}</th>
+                      <th className="text-start px-2 py-2">{t("sequences.col.number")}</th>
+                      <th className="text-start px-2 py-2">{t("sequences.col.ref")}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+                  </thead>
+                  <tbody>
+                    {logs.map(l => (
+                      <tr key={l.id} className="border-b">
+                        <td className="px-2 py-1 text-xs whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
+                        <td className="px-2 py-1">{txLabel(t, l.transactionType)}</td>
+                        <td className="px-2 py-1 font-mono">{l.generatedNumber}</td>
+                        <td className="px-2 py-1 text-xs text-muted-foreground">
+                          {l.refTable ? `${l.refTable}#${l.refId ?? "—"}` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ─── Reset confirm ────────────────────────────────────────────────── */}
       <AlertDialog open={resetId != null} onOpenChange={(o) => { if (!o) setResetId(null); }}>
