@@ -10,7 +10,7 @@ import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
-  Clock, Repeat, Trash, History, Play
+  Clock, Repeat, Trash, History, Play, Zap, Hand
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
@@ -37,6 +37,8 @@ export default function GeneralSettings() {
   const [decimals, setDecimals] = useState<number>(user?.company?.decimalPlaces ?? 2);
   const [dragging, setDragging] = useState(false);
   const [logoError, setLogoError] = useState("");
+  const autoPostingEnabled = user?.company?.autoPostingEnabled !== false;
+  const [postingSaving, setPostingSaving] = useState(false);
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -98,6 +100,31 @@ export default function GeneralSettings() {
   const handleSave = () => {
     saveMutation.mutate({ logo: logo ?? null, decimalPlaces: decimals });
   };
+
+  // ─── Auto-posting toggle (saves immediately on toggle) ────────────────────
+  async function togglePostingMode(next: boolean) {
+    const cid = user?.company?.id ?? user?.companyId;
+    if (!cid || postingSaving) return;
+    setPostingSaving(true);
+    try {
+      const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ autoPostingEnabled: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t("pages.generalSettings.saveFailed"));
+      if (setUser) {
+        setUser((u: any) => u ? { ...u, company: { ...u.company, autoPostingEnabled: data.autoPostingEnabled } } : u);
+      }
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: t("pages.generalSettings.postingModeSaved") });
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    } finally {
+      setPostingSaving(false);
+    }
+  }
 
   const isDirty =
     logo !== (user?.company?.logo ?? null) ||
@@ -395,6 +422,82 @@ export default function GeneralSettings() {
 
         {logoError && (
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{logoError}</p>
+        )}
+      </div>
+
+      {/* ─── Posting Mode Section (immediate-save toggle) ──────────────────── */}
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Repeat className="h-4 w-4 text-muted-foreground" />
+          {t("pages.generalSettings.postingMode")}
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          {t("pages.generalSettings.postingModeDesc")}
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Auto */}
+          <button
+            type="button"
+            disabled={postingSaving}
+            onClick={() => togglePostingMode(true)}
+            className={cn(
+              "text-start rounded-xl border-2 p-4 transition-all flex items-start gap-3",
+              autoPostingEnabled
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-muted hover:border-primary/50 hover:bg-muted/40",
+              postingSaving && "opacity-60 cursor-not-allowed"
+            )}
+          >
+            <div className={cn(
+              "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+              autoPostingEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            )}>
+              <Zap className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-sm">{t("pages.generalSettings.autoPosting")}</span>
+                {autoPostingEnabled && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{t("pages.generalSettings.autoPostingDesc")}</p>
+            </div>
+          </button>
+
+          {/* Manual */}
+          <button
+            type="button"
+            disabled={postingSaving}
+            onClick={() => togglePostingMode(false)}
+            className={cn(
+              "text-start rounded-xl border-2 p-4 transition-all flex items-start gap-3",
+              !autoPostingEnabled
+                ? "border-primary bg-primary/5 shadow-sm"
+                : "border-muted hover:border-primary/50 hover:bg-muted/40",
+              postingSaving && "opacity-60 cursor-not-allowed"
+            )}
+          >
+            <div className={cn(
+              "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+              !autoPostingEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            )}>
+              <Hand className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-sm">{t("pages.generalSettings.manualPosting")}</span>
+                {!autoPostingEnabled && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{t("pages.generalSettings.manualPostingDesc")}</p>
+            </div>
+          </button>
+        </div>
+
+        {postingSaving && (
+          <p className="text-xs text-muted-foreground flex items-center gap-2">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {t("common.loading")}
+          </p>
         )}
       </div>
 

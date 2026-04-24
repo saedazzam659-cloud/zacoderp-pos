@@ -702,58 +702,12 @@ function DashboardNavGroup({
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
-          <AutoPostingToggle />
           {dashboardSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
         </div>
       )}
     </div>
-  );
-}
-
-// ─── AutoPostingToggle ─────────────────────────────────────────────────────────
-// System-wide checkbox controlling whether invoices are auto-posted after save.
-function AutoPostingToggle() {
-  const { user, setUser } = useAuth() as any;
-  const cid = user?.company?.id ?? user?.companyId;
-  const enabled = user?.company?.autoPostingEnabled !== false;
-  const [saving, setSaving] = useState(false);
-
-  async function toggle(next: boolean) {
-    if (!cid || saving) return;
-    setSaving(true);
-    try {
-      const token = localStorage.getItem("zatca_token");
-      const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-      const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ autoPostingEnabled: next }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (setUser) {
-          setUser((u: any) => u ? { ...u, company: { ...u.company, autoPostingEnabled: data.autoPostingEnabled } } : u);
-        }
-      }
-    } finally { setSaving(false); }
-  }
-
-  return (
-    <label
-      className="ms-[42px] me-2 my-1 flex items-center gap-2 text-[12px] text-sidebar-foreground/80 hover:text-sidebar-foreground cursor-pointer select-none"
-      title={enabled ? "الترحيل المحاسبي يتم تلقائياً بعد حفظ الفواتير" : "الترحيل المحاسبي يدوي — يجب الضغط على زر الترحيل"}
-    >
-      <input
-        type="checkbox"
-        className="h-3.5 w-3.5 accent-sidebar-primary"
-        checked={enabled}
-        disabled={saving || !cid}
-        onChange={(e) => toggle(e.target.checked)}
-      />
-      <span>{enabled ? "ترحيل تلقائي" : "ترحيل يدوي"}</span>
-    </label>
   );
 }
 
