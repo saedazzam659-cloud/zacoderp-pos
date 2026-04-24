@@ -1950,6 +1950,17 @@ async function runBulkJob(job: BulkRunJob, adminUser: { id: number; username: st
       item.status = "error";
       item.error = e instanceof Error ? e.message : "خطأ غير متوقع";
       job.failed++;
+      // Audit per-company failure inside bulk job for full mutation accountability.
+      await writeAudit({
+        userId: adminUser?.id ?? null,
+        username: adminUser?.username ?? null,
+        role: "superadmin",
+        companyId: item.companyId,
+        module: "backups",
+        action: "create",
+        entityType: "auto_backup",
+        metadata: { op: "bulk-run-all", jobId: job.id, success: false, error: item.error },
+      });
     } finally {
       item.finishedAt = Date.now();
     }
