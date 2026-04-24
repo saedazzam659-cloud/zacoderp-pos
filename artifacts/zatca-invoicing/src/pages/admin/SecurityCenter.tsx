@@ -33,7 +33,19 @@ interface LoginHistoryRow {
   module?: string | null;
   method: string | null; path: string | null; statusCode: number | null;
   ip: string | null; userAgent: string | null;
-  metadata: any; createdAt: string;
+  // audit_log.metadata is a free-form JSON column written by writeAudit.
+  // Documented keys we currently surface in this UI: `reason` (e.g. invalid
+  // password / company_suspended) and `attemptedAction` (RBAC denial action).
+  metadata: { reason?: string; attemptedAction?: string } | Record<string, unknown> | null;
+  createdAt: string;
+}
+
+// Small helper: extract a human-readable message from an unknown error
+// (TanStack Query mutationFn errors are typed as unknown by default).
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  return "تعذر التحميل";
 }
 interface AnomalyResp {
   deniedSpikes: { userId: number | null; username: string | null; count: number }[];
@@ -111,7 +123,11 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
   // always invalidates on settle to reconcile with the server. SessionRow keys
   // each row by `userId` (not `id`) — see the interface at the top of this file.
   type SessionsCache = { rows: SessionRow[]; total: number };
-  const removeFromCache = async (userIds: number[]) => {
+  // Snapshot of the cache returned from removeFromCache so onError can roll back.
+  type MutationCtx = { previous: SessionsCache | undefined };
+  // Bulk-end response shape from /api/admin/security/sessions/bulk-end.
+  type BulkEndResp = { ended: number };
+  const removeFromCache = async (userIds: number[]): Promise<SessionsCache | undefined> => {
     await qc.cancelQueries({ queryKey: ["security-sessions"] });
     const previous = qc.getQueryData<SessionsCache>(["security-sessions"]);
     if (previous) {
@@ -133,10 +149,12 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onMutate: (userId: number) => removeFromCache([userId]).then(previous => ({ previous })),
-    onError: (e: any, _vars, ctx: any) => {
+    onMutate: async (userId: number): Promise<MutationCtx> => ({
+      previous: await removeFromCache([userId]),
+    }),
+    onError: (e: unknown, _vars: number, ctx: MutationCtx | undefined) => {
       if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
-      toast({ title: "تعذر إنهاء الجلسة", description: e?.message, variant: "destructive" });
+      toast({ title: "تعذر إنهاء الجلسة", description: errorMessage(e), variant: "destructive" });
     },
     onSuccess: () => {
       toast({ title: "✓ تم إنهاء الجلسة" });
@@ -145,8 +163,8 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
     onSettled: () => qc.invalidateQueries({ queryKey: ["security-sessions"] }),
   });
 
-  const endBulk = useMutation({
-    mutationFn: async (userIds: number[]) => {
+  const endBulk = useMutation<BulkEndResp, unknown, number[], MutationCtx>({
+    mutationFn: async (userIds: number[]): Promise<BulkEndResp> => {
       const r = await fetch(`${API}/api/admin/security/sessions/bulk-end`, {
         method: "POST", headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({ userIds }),
@@ -154,12 +172,14 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onMutate: (userIds: number[]) => removeFromCache(userIds).then(previous => ({ previous })),
-    onError: (e: any, _vars, ctx: any) => {
+    onMutate: async (userIds: number[]): Promise<MutationCtx> => ({
+      previous: await removeFromCache(userIds),
+    }),
+    onError: (e: unknown, _vars: number[], ctx: MutationCtx | undefined) => {
       if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
-      toast({ title: "تعذر إنهاء الجلسات", description: e?.message, variant: "destructive" });
+      toast({ title: "تعذر إنهاء الجلسات", description: errorMessage(e), variant: "destructive" });
     },
-    onSuccess: (out: any) => {
+    onSuccess: (out: BulkEndResp) => {
       toast({ title: `✓ تم إنهاء ${out.ended} جلسة` });
       setConfirmEnd(null);
       setSelected(new Set());
@@ -210,7 +230,7 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
           {isLoading ? (
             <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
           ) : error ? (
-            <div className="p-8 text-center text-rose-600">{(error as any)?.message ?? "تعذر التحميل"}</div>
+            <div className="p-8 text-center text-rose-600">{errorMessage(error)}</div>
           ) : rows.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">لا توجد جلسات نشطة حالياً.</div>
           ) : (
@@ -434,7 +454,7 @@ function LoginAttemptsTab({ token }: { token: string | null }) {
           {isLoading ? (
             <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
           ) : error ? (
-            <div className="p-8 text-center text-rose-600">{(error as any)?.message ?? "تعذر التحميل"}</div>
+            <div className="p-8 text-center text-rose-600">{errorMessage(error)}</div>
           ) : rows.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">لا توجد محاولات مطابقة.</div>
           ) : (
@@ -526,7 +546,7 @@ function PermissionsTab({ token }: { token: string | null }) {
   }, [data?.roleDistribution]);
 
   if (isLoading) return <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
-  if (error)     return <div className="p-8 text-center text-rose-600">{(error as any)?.message ?? "تعذر التحميل"}</div>;
+  if (error)     return <div className="p-8 text-center text-rose-600">{errorMessage(error)}</div>;
 
   const users = data?.users ?? [];
 
