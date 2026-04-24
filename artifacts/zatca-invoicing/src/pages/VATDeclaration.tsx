@@ -89,10 +89,18 @@ interface VATData {
   invoiceBreakdown: { standardTypeCount: number; simplifiedTypeCount: number; totalCount: number };
 }
 
-async function fetchVAT(from: string, to: string): Promise<VATData> {
+async function fetchVAT(from: string, to: string, token: string | null): Promise<VATData> {
   const qs = `from=${from}&to=${to}`;
-  const res = await fetch(`${API}/api/reports/vat-declaration?${qs}`, { credentials: "include" });
-  if (!res.ok) throw new Error("فشل في تحميل البيانات");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API}/api/reports/vat-declaration?${qs}`, {
+    headers,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => null);
+    throw new Error(msg?.error ?? "فشل في تحميل بيانات الإقرار. يرجى المحاولة مرة أخرى.");
+  }
   return res.json();
 }
 
@@ -173,13 +181,14 @@ function InfoPill({ label, value, icon: Icon }: { label: string; value: string; 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function VATDeclaration() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [selectedKey, setSelectedKey] = useState<PeriodKey>("this_month");
   const period = PERIODS.find(p => p.key === selectedKey) ?? PERIODS[0];
 
   const { data, isLoading, error } = useQuery<VATData>({
-    queryKey: ["vat-declaration", period.from, period.to],
-    queryFn: () => fetchVAT(period.from, period.to),
+    queryKey: ["vat-declaration", period.from, period.to, token],
+    queryFn: () => fetchVAT(period.from, period.to, token),
+    enabled: !!token,
   });
 
   const netVat      = data?.netVat ?? 0;
