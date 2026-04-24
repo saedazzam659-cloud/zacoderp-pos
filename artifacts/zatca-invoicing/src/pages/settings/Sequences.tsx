@@ -55,9 +55,11 @@ export default function Sequences() {
 
   const [showForm, setShowForm]   = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingRow, setEditingRow] = useState<SequenceRow | null>(null);
   const [form, setForm]           = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [deleteId, setDeleteId]   = useState<number | null>(null);
   const [resetId, setResetId]     = useState<number | null>(null);
+  const [resetAck, setResetAck]   = useState(false);
   const [logsId,  setLogsId]      = useState<number | null>(null);
 
   const { data: rows = [], isLoading } = useQuery<SequenceRow[]>({
@@ -99,20 +101,23 @@ export default function Sequences() {
     onError:    (e: any) => { setDeleteId(null); errToast(e); },
   });
   const resetMut = useMutation({
-    mutationFn: (id: number) => sequencesApi.reset(id),
-    onSuccess:  () => { inv(); setResetId(null); toast({ title: t("sequences.resetDone") }); },
-    onError:    (e: any) => { setResetId(null); errToast(e); },
+    mutationFn: ({ id, acknowledgeReuse }: { id: number; acknowledgeReuse: boolean }) =>
+      sequencesApi.reset(id, { acknowledgeReuse }),
+    onSuccess:  () => { inv(); setResetId(null); setResetAck(false); toast({ title: t("sequences.resetDone") }); },
+    onError:    (e: any) => { setResetId(null); setResetAck(false); errToast(e); },
   });
 
   function reset() {
     setForm(EMPTY_FORM);
     setEditingId(null);
+    setEditingRow(null);
     setShowForm(false);
   }
 
   function openNew() {
     setForm(EMPTY_FORM);
     setEditingId(null);
+    setEditingRow(null);
     setShowForm(true);
   }
 
@@ -130,8 +135,17 @@ export default function Sequences() {
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
     });
     setEditingId(r.id);
+    setEditingRow(r);
     setShowForm(true);
   }
+
+  // A sequence is "in use" once it's issued at least one number
+  // (currentNumber moves past startNumber). When in use, the SHAPE-defining
+  // fields (prefix, startNumber, padLength) become immutable on the server,
+  // and currentNumber may only increase. The UI mirrors that contract.
+  const editingIsUsed = !!editingRow && editingRow.currentNumber !== editingRow.startNumber;
+  const minCurrent    = editingIsUsed ? (editingRow?.currentNumber ?? 0) : 0;
+  const minEnd        = editingIsUsed ? Math.max(0, (editingRow?.currentNumber ?? 1) - 1) : 0;
 
   function toggleType(key: string) {
     setForm(f => ({
@@ -257,8 +271,13 @@ export default function Sequences() {
                                     title={t("common.edit")} data-testid={`button-edit-${r.id}`}>
                               <Pencil className="w-4 h-4" />
                             </Button>
-                            <Button size="icon" variant="ghost" onClick={() => setDeleteId(r.id)}
-                                    title={t("common.delete")} data-testid={`button-delete-${r.id}`}>
+                            <Button
+                              size="icon" variant="ghost"
+                              onClick={() => setDeleteId(r.id)}
+                              disabled={(r.usedCount ?? 0) > 0}
+                              title={(r.usedCount ?? 0) > 0 ? t("sequences.deleteBlockedUsed") : t("common.delete")}
+                              data-testid={`button-delete-${r.id}`}
+                            >
                               <Trash2 className="w-4 h-4 text-destructive" />
                             </Button>
                           </div>
@@ -290,6 +309,18 @@ export default function Sequences() {
           </CardHeader>
           <CardContent>
             <form onSubmit={submit} className="space-y-4">
+              {editingIsUsed && (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                  data-testid="banner-locked"
+                >
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <div className="font-semibold">{t("sequences.lockedTitle")}</div>
+                    <div className="text-xs">{t("sequences.lockedDesc")}</div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label>{t("sequences.col.code")} *</Label>
@@ -314,29 +345,29 @@ export default function Sequences() {
                 <div>
                   <Label>{t("sequences.col.prefix")}</Label>
                   <Input value={form.prefix} onChange={e => setForm({ ...form, prefix: e.target.value })}
-                         placeholder="INV-" data-testid="input-prefix" />
+                         placeholder="INV-" disabled={editingIsUsed} data-testid="input-prefix" />
                 </div>
                 <div>
                   <Label>{t("sequences.padLength")}</Label>
                   <Input type="number" min={0} max={12} value={form.padLength}
                          onChange={e => setForm({ ...form, padLength: Number(e.target.value) })}
-                         data-testid="input-pad" />
+                         disabled={editingIsUsed} data-testid="input-pad" />
                 </div>
                 <div>
                   <Label>{t("sequences.startNumber")} *</Label>
                   <Input type="number" min={0} value={form.startNumber}
                          onChange={e => setForm({ ...form, startNumber: Number(e.target.value) })}
-                         data-testid="input-start" />
+                         disabled={editingIsUsed} data-testid="input-start" />
                 </div>
                 <div>
                   <Label>{t("sequences.endNumber")} *</Label>
-                  <Input type="number" min={0} value={form.endNumber}
+                  <Input type="number" min={minEnd} value={form.endNumber}
                          onChange={e => setForm({ ...form, endNumber: Number(e.target.value) })}
                          data-testid="input-end" />
                 </div>
                 <div>
                   <Label>{t("sequences.currentNumber")}</Label>
-                  <Input type="number" min={0} value={form.currentNumber}
+                  <Input type="number" min={minCurrent} value={form.currentNumber}
                          onChange={e => setForm({ ...form, currentNumber: Number(e.target.value) })}
                          data-testid="input-current" />
                   <p className="text-xs text-muted-foreground mt-1">{t("sequences.currentHelp")}</p>
@@ -431,7 +462,10 @@ export default function Sequences() {
       )}
 
       {/* ─── Reset confirm ────────────────────────────────────────────────── */}
-      <AlertDialog open={resetId != null} onOpenChange={(o) => { if (!o) setResetId(null); }}>
+      <AlertDialog
+        open={resetId != null}
+        onOpenChange={(o) => { if (!o) { setResetId(null); setResetAck(false); } }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
@@ -440,10 +474,41 @@ export default function Sequences() {
             </AlertDialogTitle>
             <AlertDialogDescription>{t("sequences.resetConfirmDesc")}</AlertDialogDescription>
           </AlertDialogHeader>
+          {(() => {
+            const r = resetId != null ? rows.find(x => x.id === resetId) : null;
+            const used = !!r && r.currentNumber !== r.startNumber;
+            if (!used) return null;
+            return (
+              <div
+                className="flex items-start gap-2 text-sm cursor-pointer mt-2 px-1 select-none"
+                data-testid="label-ack-reuse"
+                onClick={() => setResetAck(v => !v)}
+              >
+                <Checkbox
+                  checked={resetAck}
+                  onCheckedChange={(v) => setResetAck(v === true)}
+                  data-testid="checkbox-ack-reuse"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <span>{t("sequences.ackReuseLabel")}</span>
+              </div>
+            );
+          })()}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => resetId && resetMut.mutate(resetId)}
+              onClick={() => {
+                if (!resetId) return;
+                const r = rows.find(x => x.id === resetId);
+                const used = !!r && r.currentNumber !== r.startNumber;
+                if (used && !resetAck) return;
+                resetMut.mutate({ id: resetId, acknowledgeReuse: used });
+              }}
+              disabled={(() => {
+                const r = resetId != null ? rows.find(x => x.id === resetId) : null;
+                const used = !!r && r.currentNumber !== r.startNumber;
+                return used && !resetAck;
+              })()}
               className="bg-orange-500 hover:bg-orange-600"
               data-testid="button-confirm-reset"
             >

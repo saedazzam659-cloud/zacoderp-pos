@@ -1803,6 +1803,10 @@
     "errCodeNameRequired": "Code and Arabic name are required",
     "errSelectTx": "Pick at least one transaction type",
     "errEndBeforeStart": "End number must be greater than or equal to start",
+    "lockedTitle": "Locked fields",
+    "lockedDesc": "This sequence has already issued numbers. The prefix, start number, and pad length cannot be changed, and the current number cannot be lowered — to preserve numbering integrity.",
+    "ackReuseLabel": "I understand that resetting may re-issue previously issued numbers, and I accept responsibility.",
+    "deleteBlockedUsed": "Used sequences cannot be deleted — deactivate instead",
     "col": {
       "code": "Code",
       "name": "Name",

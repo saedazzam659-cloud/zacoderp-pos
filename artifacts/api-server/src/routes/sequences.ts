@@ -197,12 +197,30 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
 
     // Same per-company advisory lock as CREATE so we can't race when two
     // admins simultaneously toggle two sequences active for the same tx-type.
+    // ALSO: lock the target row with FOR UPDATE so we serialize against the
+    // issuance path (`nextSequenceNumber` also takes FOR UPDATE on this row).
+    // Without this, PATCH could read a stale `currentNumber`, validate
+    // invariants against it, then overwrite a newer value written by an
+    // in-flight issuance — re-enabling duplicate document numbers.
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEQ_LOCK_NS}, ${cid})`);
 
-      const [existing] = await tx.select().from(sequencesTable)
-        .where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
+      const lockedRows = await tx.execute(sql`
+        SELECT * FROM sequences
+        WHERE id = ${id} AND company_id = ${cid}
+        FOR UPDATE
+      `);
+      const existing: any = (lockedRows.rows ?? lockedRows)[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
+      // Normalize snake_case → camelCase to match our schema-typed comparisons.
+      existing.startNumber   = existing.start_number   ?? existing.startNumber;
+      existing.endNumber     = existing.end_number     ?? existing.endNumber;
+      existing.currentNumber = existing.current_number ?? existing.currentNumber;
+      existing.padLength     = existing.pad_length     ?? existing.padLength;
+      existing.isActive      = existing.is_active      ?? existing.isActive;
+      existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
+      existing.nameAr        = existing.name_ar        ?? existing.nameAr;
+      existing.nameEn        = existing.name_en        ?? existing.nameEn;
 
       const merged = {
         code:             req.body.code             ?? existing.code,
@@ -218,6 +236,32 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       };
       const err = validatePayload(merged);
       if (err) return { status: 400, body: { error: err } };
+
+      // ── Integrity guard: once a sequence has issued at least one number
+      // (currentNumber != startNumber), the fields that determine the SHAPE
+      // of every issued document number become immutable. Allowing edits
+      // here would let an admin re-issue a previously-used number — a
+      // business-critical violation of audit/numbering integrity.
+      // Mutable while in use: name, isActive, endNumber (raise only),
+      //                       currentNumber (raise only), transactionTypes.
+      const isUsed = existing.currentNumber !== existing.startNumber;
+      if (isUsed) {
+        if (Number(merged.startNumber) !== existing.startNumber) {
+          return { status: 409, body: { error: "لا يمكن تعديل رقم البداية لمسلسل تم استخدامه" } };
+        }
+        if (String(merged.prefix ?? "") !== (existing.prefix ?? "")) {
+          return { status: 409, body: { error: "لا يمكن تعديل البادئة لمسلسل تم استخدامه — أنشئ مسلسلاً جديداً بدلاً من ذلك" } };
+        }
+        if (Number(merged.padLength) !== existing.padLength) {
+          return { status: 409, body: { error: "لا يمكن تعديل طول التعبئة بالأصفار لمسلسل تم استخدامه" } };
+        }
+        if (Number(merged.currentNumber) < existing.currentNumber) {
+          return { status: 409, body: { error: "لا يمكن تخفيض الرقم الحالي لمسلسل مُستخدم — قد يؤدي إلى تكرار أرقام صادرة سابقاً" } };
+        }
+        if (Number(merged.endNumber) < existing.currentNumber - 1) {
+          return { status: 409, body: { error: "رقم النهاية يجب أن يكون أكبر من أو يساوي آخر رقم صادر" } };
+        }
+      }
 
       if (merged.isActive) {
         const conflict = await ensureNoTypeConflict(tx, cid, merged.transactionTypes as string[], id);
@@ -251,32 +295,64 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
 });
 
 // ─── RESET ────────────────────────────────────────────────────────────────────
-// Resets currentNumber back to startNumber. Destructive — could allow number
-// reuse — so it's gated to admin and explicitly logged.
+// Resets currentNumber back to startNumber. Destructive — would allow number
+// reuse — so it requires both admin role AND, if the sequence has already
+// issued numbers, an explicit `acknowledgeReuse: true` flag in the body so
+// the operator opts in to the reuse risk. Logged as a synthetic __reset__
+// event and audit-tagged.
 router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
-    const [existing] = await db.select().from(sequencesTable)
-      .where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
-    if (!existing) { res.status(404).json({ error: "المسلسل غير موجود" }); return; }
 
-    const [row] = await db.update(sequencesTable).set({
-      currentNumber: existing.startNumber,
-      updatedAt:     new Date(),
-    }).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid))).returning();
+    // All work runs inside one transaction so:
+    //   (a) `SELECT ... FOR UPDATE` blocks any concurrent issuance from
+    //       transitioning unused→used after we read `isUsed` but before we
+    //       write — without this lock, a concurrent journal-entry POST could
+    //       slip in and bypass the acknowledgeReuse opt-in;
+    //   (b) the synthetic __reset__ log row is committed atomically with the
+    //       counter rewind, so we never have a numbering change without an
+    //       audit entry.
+    const result = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`
+        SELECT * FROM sequences
+        WHERE id = ${id} AND company_id = ${cid}
+        FOR UPDATE
+      `);
+      const existing: any = (lockedRows.rows ?? lockedRows)[0];
+      if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
+      const startNumber   = existing.start_number   ?? existing.startNumber;
+      const currentNumber = existing.current_number ?? existing.currentNumber;
 
-    // Log the reset as a synthetic entry so admins can see who reset and when.
-    await db.insert(sequenceLogsTable).values({
-      sequenceId:      id,
-      companyId:       cid,
-      transactionType: "__reset__",
-      generatedNumber: `reset → ${existing.startNumber}`,
-      userId:          (req as any).authUser?.id ?? null,
-      refTable:        null,
-      refId:           null,
+      const isUsed = currentNumber !== startNumber;
+      if (isUsed && req.body?.acknowledgeReuse !== true) {
+        return {
+          status: 409,
+          body: {
+            error: "هذا المسلسل أصدر أرقاماً سابقاً. التصفير سيؤدي إلى احتمال تكرار أرقام صادرة. أكّد إعادة الاستخدام صراحةً للمتابعة.",
+            requiresAcknowledgement: true,
+          },
+        };
+      }
+
+      const [row] = await tx.update(sequencesTable).set({
+        currentNumber: startNumber,
+        updatedAt:     new Date(),
+      }).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid))).returning();
+
+      await tx.insert(sequenceLogsTable).values({
+        sequenceId:      id,
+        companyId:       cid,
+        transactionType: "__reset__",
+        generatedNumber: `reset → ${startNumber}`,
+        userId:          (req as any).authUser?.id ?? null,
+        refTable:        null,
+        refId:           null,
+      });
+      return { status: 200, body: withUsage(row) };
     });
-    res.json(withUsage(row));
+
+    res.status(result.status).json(result.body);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -288,22 +364,28 @@ router.delete("/:id", audit("sequences", "delete"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
-    const [existing] = await db.select().from(sequencesTable)
-      .where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
-    if (!existing) { res.status(404).json({ error: "المسلسل غير موجود" }); return; }
-    if (existing.currentNumber !== existing.startNumber) {
-      res.status(400).json({ error: "لا يمكن حذف مسلسل تم استخدامه — قم بإلغاء تنشيطه بدلاً من ذلك" });
-      return;
-    }
-    const [{ count }] = await db.execute<{ count: string }>(sql`
-      SELECT COUNT(*)::text AS count FROM sequence_logs WHERE sequence_id = ${id}
-    `).then((r: any) => r.rows ?? r);
-    if (Number(count) > 0) {
-      res.status(400).json({ error: "لا يمكن حذف مسلسل له سجل عمليات — قم بإلغاء تنشيطه بدلاً من ذلك" });
-      return;
-    }
-    await db.delete(sequencesTable).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
-    res.json({ ok: true });
+    const result = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute<any>(sql`
+        SELECT id, start_number AS "startNumber", current_number AS "currentNumber"
+        FROM sequences
+        WHERE id = ${id} AND company_id = ${cid}
+        FOR UPDATE
+      `).then((r: any) => r.rows ?? r);
+      const existing = lockedRows[0];
+      if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
+      if (Number(existing.currentNumber) !== Number(existing.startNumber)) {
+        return { status: 400, body: { error: "لا يمكن حذف مسلسل تم استخدامه — قم بإلغاء تنشيطه بدلاً من ذلك" } };
+      }
+      const logRows = await tx.execute<{ count: string }>(sql`
+        SELECT COUNT(*)::text AS count FROM sequence_logs WHERE sequence_id = ${id}
+      `).then((r: any) => r.rows ?? r);
+      if (Number(logRows[0]?.count ?? 0) > 0) {
+        return { status: 400, body: { error: "لا يمكن حذف مسلسل له سجل عمليات — قم بإلغاء تنشيطه بدلاً من ذلك" } };
+      }
+      await tx.delete(sequencesTable).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid)));
+      return { status: 200, body: { ok: true } };
+    });
+    res.status(result.status).json(result.body);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

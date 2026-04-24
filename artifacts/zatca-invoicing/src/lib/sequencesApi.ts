@@ -61,7 +61,8 @@ export const sequencesApi = {
   create:           (data: Partial<SequenceRow>) => request<SequenceRow>("POST", "/sequences", data),
   update:           (id: number, data: Partial<SequenceRow>) => request<SequenceRow>("PATCH", `/sequences/${id}`, data),
   remove:           (id: number)   => request<{ ok: true }>("DELETE", `/sequences/${id}`),
-  reset:            (id: number)   => request<SequenceRow>("POST", `/sequences/${id}/reset`, {}),
+  reset:            (id: number, opts: { acknowledgeReuse?: boolean } = {}) =>
+                      request<SequenceRow>("POST", `/sequences/${id}/reset`, opts),
   logs:             (id: number, limit = 50) => request<SequenceLogRow[]>("GET", `/sequences/${id}/logs?limit=${limit}`),
   transactionTypes: () => request<string[]>("GET", "/sequences/transaction-types"),
 };
