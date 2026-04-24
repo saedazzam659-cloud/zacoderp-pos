@@ -19,10 +19,24 @@ import {
   accountsTable,
   cashBoxesTable, bankAccountsTable,
   currenciesTable,
+  journalEntriesTable, journalEntryLinesTable,
 } from "@workspace/db";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { ensureLeafAccounts } from "../lib/leafAccount.js";
+
+// Auto-generated journal-entry types that must NEVER be created or modified
+// directly via the import center — they are owned by their source documents
+// (invoices, vouchers, transfers, etc.). Mirrors the list in routes/journalEntries.ts.
+const LOCKED_JE_TYPES = new Set([
+  "purchase_invoice", "purchase_return",
+  "sales_invoice", "sales_return",
+  "receipt_voucher", "payment_voucher",
+  "stock_transfer", "stock_adjustment",
+  "supplier_settlement", "customer_settlement",
+  "payroll_run", "employee_loan", "eos_payment",
+]);
 
 const router = Router();
 router.use(extractAuth);
@@ -69,6 +83,23 @@ interface EntityDef {
   /** When true, the entity is hidden from the public /entities listing
    * (used only as an FK lookup target — e.g. `currencies` for cashBoxes/bankAccounts). */
   internal?: boolean;
+  /**
+   * Composite parent+children entity (e.g. journal entries with their lines).
+   * - `linesTable`: drizzle table for the child rows
+   * - `lineFkCol`: column on `linesTable` that points back to `table.id` (FK)
+   * - `headerFieldNames`: subset of `fields[]` that belong on the header row
+   * - `lineFieldNames`: subset of `fields[]` that belong on each line row
+   * - `groupKey`: field used to group import rows into one parent doc (and to upsert by)
+   * - `validateBalanced`: if true, sum(debit)===sum(credit) per group is enforced
+   */
+  composite?: {
+    linesTable: any;
+    lineFkCol: string;
+    headerFieldNames: string[];
+    lineFieldNames: string[];
+    groupKey: string;
+    validateBalanced?: boolean;
+  };
 }
 
 const ENTITIES: Record<string, EntityDef> = {
@@ -253,6 +284,56 @@ const ENTITIES: Record<string, EntityDef> = {
       { name: "accountNumber", labelAr: "رقم الحساب", labelEn: "Account Number", type: "string", aliases: ["account number", "رقم الحساب", "iban"] },
       { name: "currencyCode",  labelAr: "العملة", labelEn: "Currency", type: "fk", default: "SAR",
         fkRef: "currencies", fkLookupBy: "code", aliases: ["currency", "عملة", "ccy"] },
+    ],
+  },
+  // ─── Composite entity: each import row = one journal entry LINE.
+  // Lines that share the same `docNumber` are grouped into a single header.
+  // Header fields (entryDate, description, currency, …) are taken from the FIRST row
+  // of each group; subsequent rows in the same group only contribute lines.
+  journalEntries: {
+    key: "journalEntries",
+    labelAr: "القيود المحاسبية",
+    labelEn: "Journal Entries",
+    table: journalEntriesTable,
+    hasCompanyId: true,
+    businessKeys: ["docNumber"],
+    composite: {
+      linesTable: journalEntryLinesTable,
+      lineFkCol: "entryId",
+      headerFieldNames: ["docNumber", "entryDate", "description", "currency", "exchangeRate", "entryType", "branchCode", "status"],
+      lineFieldNames: ["accountCode", "debit", "credit", "lineDescription", "costCenter"],
+      groupKey: "docNumber",
+      validateBalanced: true,
+    },
+    fields: [
+      // ── Header columns (repeated on every line of the same docNumber) ──
+      { name: "docNumber",   labelAr: "رقم القيد", labelEn: "Doc Number", type: "string", required: true,
+        aliases: ["doc number", "رقم المستند", "doc no", "document number", "رقم"] },
+      { name: "entryDate",   labelAr: "تاريخ القيد", labelEn: "Entry Date", type: "date", required: true,
+        aliases: ["date", "تاريخ", "entry date", "التاريخ"] },
+      { name: "description", labelAr: "البيان", labelEn: "Description", type: "string",
+        aliases: ["البيان", "وصف", "description", "memo", "الوصف"] },
+      { name: "currency",    labelAr: "العملة", labelEn: "Currency", type: "string", default: "SAR",
+        aliases: ["currency", "العملة", "ccy"] },
+      { name: "exchangeRate", labelAr: "سعر الصرف", labelEn: "Exchange Rate", type: "number", default: 1,
+        aliases: ["exchange rate", "سعر الصرف", "rate"] },
+      { name: "entryType",   labelAr: "نوع القيد", labelEn: "Entry Type", type: "string", default: "general",
+        aliases: ["type", "نوع", "entry type"] },
+      { name: "branchCode",  labelAr: "كود الفرع", labelEn: "Branch Code", type: "fk",
+        fkRef: "branches", fkLookupBy: "code", aliases: ["branch", "الفرع", "كود الفرع", "branch code"] },
+      { name: "status",      labelAr: "الحالة", labelEn: "Status", type: "string", default: "draft",
+        aliases: ["status", "الحالة"] },
+      // ── Line columns (one per row) ──
+      { name: "accountCode",     labelAr: "كود الحساب", labelEn: "Account Code", type: "fk", required: true,
+        fkRef: "accounts", fkLookupBy: "code", aliases: ["account", "الحساب", "كود الحساب", "account code"] },
+      { name: "debit",           labelAr: "مدين", labelEn: "Debit", type: "number", default: 0,
+        aliases: ["debit", "مدين", "دائن=0"] },
+      { name: "credit",          labelAr: "دائن", labelEn: "Credit", type: "number", default: 0,
+        aliases: ["credit", "دائن"] },
+      { name: "lineDescription", labelAr: "بيان السطر", labelEn: "Line Description", type: "string",
+        aliases: ["line description", "بيان السطر", "تفاصيل السطر", "line memo"] },
+      { name: "costCenter",      labelAr: "مركز التكلفة", labelEn: "Cost Center", type: "string",
+        aliases: ["cost center", "مركز التكلفة", "cc"] },
     ],
   },
   // currencies is *not* user-exportable / importable from the Settings UI on its own,
@@ -524,6 +605,14 @@ router.get("/entities", (_req, res) => {
         name: f.name, labelAr: f.labelAr, labelEn: f.labelEn,
         type: f.type, required: !!f.required, enum: f.enum,
       })),
+      ...(e.composite ? {
+        composite: {
+          groupKey: e.composite.groupKey,
+          headerFieldNames: e.composite.headerFieldNames,
+          lineFieldNames:   e.composite.lineFieldNames,
+          validateBalanced: !!e.composite.validateBalanced,
+        },
+      } : {}),
     }));
   res.json(out);
 });
@@ -559,6 +648,85 @@ router.post("/export", async (req, res) => {
       if (!ent) continue;
       // Read one extra row so we can detect (and report) truncation cleanly.
       const limit = EXPORT_MAX_ROWS_PER_ENTITY + 1;
+
+      if (ent.composite) {
+        // Composite entity: emit one row per LINE with header columns repeated.
+        // We also resolve FK ids back to their source codes (branchId→branchCode, accountId→accountCode)
+        // so the exported file is round-trippable through /import/commit.
+        const headers = ent.hasCompanyId
+          ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid)).limit(limit)
+          : await db.select().from(ent.table).limit(limit);
+        const headerIds = headers.map((h) => (h as any).id as number);
+        const lines = headerIds.length
+          ? await db.select().from(ent.composite.linesTable).where(inArray((ent.composite.linesTable as any)[ent.composite.lineFkCol], headerIds))
+          : [];
+
+        // Build FK code lookups so we can flatten *Id back into *Code on export.
+        const codeLookups: Record<string, Map<number, string>> = {};
+        for (const f of ent.fields) {
+          if (f.type !== "fk" || !f.fkRef || !f.fkLookupBy) continue;
+          const refEnt = ENTITIES[f.fkRef];
+          if (!refEnt) continue;
+          const refRows = refEnt.hasCompanyId
+            ? await db.select().from(refEnt.table).where(eq(refEnt.table.companyId, cid))
+            : await db.select().from(refEnt.table);
+          const m = new Map<number, string>();
+          for (const r of refRows) {
+            const code = (r as any)[f.fkLookupBy];
+            if (code != null) m.set((r as any).id, String(code));
+          }
+          codeLookups[f.name] = m;
+        }
+
+        const headersById = new Map<number, any>();
+        for (const h of headers) headersById.set((h as any).id, h);
+
+        const flat: any[] = [];
+        for (const ln of lines) {
+          const headerId = (ln as any)[ent.composite.lineFkCol];
+          const h = headersById.get(headerId);
+          if (!h) continue;
+          const row: any = { id: (ln as any).id, __headerId: headerId };
+          // Header fields
+          for (const fname of ent.composite.headerFieldNames) {
+            const f = ent.fields.find((ff) => ff.name === fname);
+            if (!f) continue;
+            if (f.type === "fk") {
+              const idCol = f.name.replace(/Code$/, "Id");
+              const id = (h as any)[idCol];
+              const code = id != null ? codeLookups[f.name]?.get(Number(id)) : null;
+              row[fname] = code ?? "";
+            } else {
+              row[fname] = (h as any)[fname];
+            }
+          }
+          // Line fields
+          for (const fname of ent.composite.lineFieldNames) {
+            const f = ent.fields.find((ff) => ff.name === fname);
+            if (!f) continue;
+            // line description is stored as `description` on the lines table (per schema), so map it.
+            const lineCol = fname === "lineDescription" ? "description" : fname;
+            if (f.type === "fk") {
+              const idCol = f.name.replace(/Code$/, "Id");
+              const id = (ln as any)[idCol];
+              const code = id != null ? codeLookups[f.name]?.get(Number(id)) : null;
+              row[fname] = code ?? "";
+            } else {
+              row[fname] = (ln as any)[lineCol];
+            }
+          }
+          flat.push(row);
+        }
+
+        if (flat.length > EXPORT_MAX_ROWS_PER_ENTITY) {
+          truncated[t] = EXPORT_MAX_ROWS_PER_ENTITY;
+          data[t] = flat.slice(0, EXPORT_MAX_ROWS_PER_ENTITY);
+        } else {
+          data[t] = flat;
+        }
+        continue;
+      }
+
       const rows = ent.hasCompanyId
         ? await db.select().from(ent.table).where(eq(ent.table.companyId, cid)).limit(limit)
         : await db.select().from(ent.table).limit(limit);
@@ -865,6 +1033,262 @@ router.post("/import/process", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Composite-entity commit: groups rows by `groupKey` (e.g. docNumber), inserts one
+// header row per group + N line rows per group transactionally. On conflict (existing
+// header with same business key for this company), replaces the lines and updates the
+// header. Validates that sum(debit) === sum(credit) per group when validateBalanced.
+async function commitComposite(args: {
+  ent: EntityDef;
+  rows: any[];
+  cid: number;
+  skipErrors: boolean;
+  log: Array<{ rowIndex: number; status: "inserted" | "updated" | "skipped" | "error"; id?: number; reason?: string }>;
+  counters: { inserted: number; updated: number; skipped: number; errors: number };
+}): Promise<{ log: typeof args.log; counters: typeof args.counters }> {
+  const { ent, rows, cid, skipErrors, log, counters } = args;
+  const comp = ent.composite!;
+  const groupKey = comp.groupKey;
+
+  // Group rows by groupKey (preserving original __rowIndex on each row).
+  type Group = { key: string; rows: any[] };
+  const groupsMap = new Map<string, Group>();
+  const orphan: any[] = []; // rows missing the groupKey
+  for (const r of rows) {
+    const v = r[groupKey];
+    if (v == null || String(v).trim() === "") { orphan.push(r); continue; }
+    const k = String(v).trim();
+    let g = groupsMap.get(k);
+    if (!g) { g = { key: k, rows: [] }; groupsMap.set(k, g); }
+    g.rows.push(r);
+  }
+  // Skip orphan rows up front (they fail validation in /process anyway).
+  for (const r of orphan) {
+    counters.skipped++;
+    log.push({ rowIndex: r.__rowIndex ?? -1, status: "skipped", reason: `حقل ${groupKey} مطلوب ولم يتم تعبئته` });
+  }
+
+  // Pre-load existing headers (by businessKey) so we know which groups upsert vs insert.
+  const existingByKey = new Map<string, number>();
+  if (ent.businessKeys.length > 0) {
+    const existing = await db.select().from(ent.table).where(eq(ent.table.companyId, cid));
+    for (const ex of existing) {
+      for (const k of ent.businessKeys) {
+        const v = (ex as any)[k];
+        if (v != null && String(v).trim() !== "") {
+          existingByKey.set(`${k}:${String(v).trim()}`, (ex as any).id);
+          break;
+        }
+      }
+    }
+  }
+
+  // Pre-load FK valid-id sets for the tenant (parity with non-composite path: prevents
+  // cross-tenant id smuggling via client-supplied *Id columns).
+  const fkValidIds: Record<string, Set<number>> = {};
+  for (const f of ent.fields) {
+    if (f.type !== "fk" || !f.fkRef) continue;
+    const refEnt = ENTITIES[f.fkRef];
+    if (!refEnt) continue;
+    const idRows = refEnt.hasCompanyId
+      ? await db.select({ id: refEnt.table.id }).from(refEnt.table).where(eq(refEnt.table.companyId, cid))
+      : await db.select({ id: refEnt.table.id }).from(refEnt.table);
+    fkValidIds[f.name.replace(/Code$/, "Id")] = new Set(idRows.map((r) => (r as any).id as number));
+  }
+
+  // The lines table column for "description" doesn't match the catalog's `lineDescription` field name,
+  // so we map it explicitly when building the insert payload.
+  const LINE_FIELD_TO_COL: Record<string, string> = { lineDescription: "description" };
+
+  // Domain-specific guard: for journal entries, refuse to create or modify entries
+  // whose entryType is locked (auto-generated by source documents). Pre-load existing
+  // entryTypes in one query so we can check both insert (head.entryType) and update
+  // (existing entry's entryType) paths in O(1) per group.
+  const isJournalEntries = ent.key === "journalEntries";
+  const existingEntryTypes = new Map<number, string | null>();
+  if (isJournalEntries) {
+    const existing = await db.select({ id: ent.table.id, entryType: (ent.table as any).entryType })
+      .from(ent.table)
+      .where(eq(ent.table.companyId, cid));
+    for (const r of existing) existingEntryTypes.set((r as any).id, (r as any).entryType ?? null);
+  }
+
+  // Outer transaction wraps the whole batch. Each group runs inside its own
+  // SAVEPOINT (Drizzle's nested `.transaction(...)` call) so a failure in one
+  // group cannot leave partial mutations behind in `skipErrors=true` mode.
+  await db.transaction(async (outerTx) => {
+    for (const g of groupsMap.values()) {
+      const rowIndices = g.rows.map((r) => r.__rowIndex ?? -1);
+      try {
+        await outerTx.transaction(async (tx) => {
+          // ── 1. Build header from the FIRST row of the group.
+          const head = g.rows[0];
+          const headerPayload: any = { companyId: cid };
+          for (const fname of comp.headerFieldNames) {
+            const f = ent.fields.find((ff) => ff.name === fname);
+            if (!f) continue;
+            if (f.type === "fk") {
+              const idCol = f.name.replace(/Code$/, "Id");
+              const v = head[idCol];
+              if (v == null) continue;
+              const validSet = fkValidIds[idCol];
+              if (validSet && !validSet.has(Number(v))) continue; // strip cross-tenant ids
+              headerPayload[idCol] = v;
+            } else {
+              const v = head[fname];
+              if (v == null) continue;
+              headerPayload[fname] = v;
+            }
+          }
+          // Required header fields check.
+          for (const fname of comp.headerFieldNames) {
+            const f = ent.fields.find((ff) => ff.name === fname);
+            if (!f?.required) continue;
+            const v = headerPayload[fname];
+            if (v == null || (typeof v === "string" && v.trim() === "")) {
+              throw new Error(`حقل مطلوب ناقص في رأس القيد: ${f.labelAr}`);
+            }
+          }
+
+          // Domain guard: block creating new entries with a locked entryType.
+          if (isJournalEntries && headerPayload.entryType && LOCKED_JE_TYPES.has(String(headerPayload.entryType))) {
+            throw new Error(
+              `لا يمكن إنشاء أو تعديل قيد من نوع "${headerPayload.entryType}" عبر مركز الاستيراد — هذه القيود تُولَّد تلقائياً من المستندات المصدر.`
+            );
+          }
+
+          // ── 2. Build lines.
+          const linesPayload: any[] = [];
+          let totalDebit = 0, totalCredit = 0;
+          for (const r of g.rows) {
+            const line: any = {};
+            for (const fname of comp.lineFieldNames) {
+              const f = ent.fields.find((ff) => ff.name === fname);
+              if (!f) continue;
+              const col = LINE_FIELD_TO_COL[fname] ?? fname;
+              if (f.type === "fk") {
+                const idCol = f.name.replace(/Code$/, "Id");
+                const v = r[idCol];
+                if (v == null) continue;
+                const validSet = fkValidIds[idCol];
+                if (validSet && !validSet.has(Number(v))) continue;
+                line[idCol] = v;
+              } else {
+                const v = r[fname];
+                if (v == null) continue;
+                line[col] = v;
+              }
+            }
+            // Required line field check (e.g. accountCode → accountId must resolve)
+            for (const fname of comp.lineFieldNames) {
+              const f = ent.fields.find((ff) => ff.name === fname);
+              if (!f?.required) continue;
+              if (f.type === "fk") {
+                const idCol = f.name.replace(/Code$/, "Id");
+                if (line[idCol] == null) {
+                  throw new Error(`حقل مطلوب ناقص في السطر: ${f.labelAr}`);
+                }
+              } else {
+                const col = LINE_FIELD_TO_COL[fname] ?? fname;
+                const v = line[col];
+                if (v == null || (typeof v === "string" && v.trim() === "")) {
+                  throw new Error(`حقل مطلوب ناقص في السطر: ${f.labelAr}`);
+                }
+              }
+            }
+            totalDebit  += Number(line.debit  ?? 0);
+            totalCredit += Number(line.credit ?? 0);
+            linesPayload.push(line);
+          }
+
+          if (linesPayload.length === 0) {
+            throw new Error(`لا توجد سطور للقيد ${g.key}`);
+          }
+          if (comp.validateBalanced) {
+            if (Math.abs(totalDebit - totalCredit) > 0.01) {
+              throw new Error(`القيد ${g.key} غير متوازن: مدين=${totalDebit.toFixed(2)} ≠ دائن=${totalCredit.toFixed(2)}`);
+            }
+          }
+
+          // Domain guard: ensure every account on a line is a leaf, postable,
+          // tenant-owned account (parity with routes/journalEntries.ts CREATE/UPDATE).
+          if (isJournalEntries) {
+            const accountIds = linesPayload.map((l) => l.accountId).filter((v) => v != null);
+            if (accountIds.length > 0) {
+              await ensureLeafAccounts(cid, accountIds);
+            }
+          }
+
+          // ── 3. Upsert header (by groupKey) and (re)insert lines.
+          const existingId = existingByKey.get(`${groupKey}:${g.key}`);
+          let headerId: number;
+          if (existingId != null) {
+            // Domain guard: locked existing entry can never be updated.
+            if (isJournalEntries) {
+              const t = existingEntryTypes.get(existingId);
+              if (t && LOCKED_JE_TYPES.has(t)) {
+                throw new Error(
+                  `القيد ${g.key} مولّد تلقائياً من مستند مصدر (${t}) ولا يمكن تعديله عبر الاستيراد.`
+                );
+              }
+            }
+            const upd = await tx.update(ent.table)
+              .set(headerPayload)
+              .where(and(eq(ent.table.id, existingId), eq(ent.table.companyId, cid)))
+              .returning({ id: ent.table.id });
+            if (upd.length === 0) throw new Error("القيد غير موجود ضمن نطاق الشركة");
+            headerId = (upd[0] as any).id;
+            // wipe old lines so they don't accumulate
+            await tx.delete(comp.linesTable).where(eq((comp.linesTable as any)[comp.lineFkCol], headerId));
+            for (const idx of rowIndices) {
+              counters.updated++;
+              log.push({ rowIndex: idx, status: "updated", id: headerId });
+            }
+          } else {
+            const ins = await tx.insert(ent.table).values(headerPayload).returning({ id: ent.table.id });
+            headerId = (ins[0] as any).id;
+            existingByKey.set(`${groupKey}:${g.key}`, headerId);
+            if (isJournalEntries) existingEntryTypes.set(headerId, headerPayload.entryType ?? null);
+            for (const idx of rowIndices) {
+              counters.inserted++;
+              log.push({ rowIndex: idx, status: "inserted", id: headerId });
+            }
+          }
+
+          // attach FK back-pointer + sortOrder, then bulk insert
+          const linesWithFk = linesPayload.map((l, i) => ({ ...l, [comp.lineFkCol]: headerId, sortOrder: i }));
+          await tx.insert(comp.linesTable).values(linesWithFk);
+        });
+      } catch (e: any) {
+        const msg = e?.message?.slice(0, 200) ?? "خطأ غير معروف";
+        if (skipErrors) {
+          // The savepoint rolls back automatically when the inner tx throws,
+          // so there is no partial state for this group. We just log + continue.
+          // Roll back any speculative bookkeeping we did before the throw:
+          if (existingByKey.get(`${groupKey}:${g.key}`) === undefined) {
+            // nothing to undo (insert path didn't get to set the map)
+          }
+          for (const idx of rowIndices) {
+            counters.skipped++;
+            log.push({ rowIndex: idx, status: "skipped", reason: msg });
+          }
+        } else {
+          for (const idx of rowIndices) {
+            counters.errors++;
+            log.push({ rowIndex: idx, status: "error", reason: msg });
+          }
+          const tagged: any = new Error(msg);
+          tagged.__strictTxFailure = true;
+          tagged.__counters = counters;
+          tagged.__log = log;
+          throw tagged;
+        }
+      }
+    }
+  });
+
+  return { log, counters };
+}
+
 // POST /import/commit — transactional upsert
 // body: { entity, rows: <processed rows from /process>, options: { skipErrors, useSystemNumbering } }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -882,6 +1306,35 @@ router.post("/import/commit", async (req, res) => {
     const ent = ENTITIES[entityKey];
     if (!ent) { res.status(400).json({ error: "نوع البيانات غير معروف" }); return; }
     const skipErrors = req.body?.options?.skipErrors !== false; // default true
+
+    // ── Composite entities have a totally different commit shape (group rows by
+    // groupKey, then insert header + lines transactionally). Branch out early.
+    if (ent.composite) {
+      await commitComposite({ ent, rows, cid, skipErrors, log, counters: { inserted: 0, updated: 0, skipped: 0, errors: 0 } })
+        .then((result) => {
+          res.json({
+            entity: ent.key,
+            summary: { ...result.counters, total: rows.length },
+            log: result.log,
+            committedAt: new Date().toISOString(),
+          });
+        })
+        .catch((e: any) => {
+          if (e?.__strictTxFailure) {
+            res.status(422).json({
+              entity: ent.key,
+              summary: { inserted: 0, updated: 0, skipped: 0, errors: e.__counters?.errors ?? 1, total: rows.length },
+              log: e.__log ?? log,
+              aborted: true,
+              reason: "strict_mode_tx_failed",
+              error: e?.message?.slice(0, 200) ?? "فشل التنفيذ ضمن الوضع الصارم",
+            });
+          } else {
+            res.status(500).json({ error: e?.message ?? "فشل التنفيذ" });
+          }
+        });
+      return;
+    }
 
     // Validate required fields server-side too. In strict mode (skipErrors=false),
     // any missing required field aborts the entire commit *before* opening a transaction.
