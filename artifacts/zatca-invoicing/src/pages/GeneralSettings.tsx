@@ -10,8 +10,10 @@ import {
   Settings2, Upload, Trash2, CheckCircle2, Image as ImageIcon,
   Hash, Building2, Loader2, Package, Boxes, Download, FileSpreadsheet,
   DatabaseBackup, DatabaseZap, Sparkles, FileJson, AlertTriangle,
-  Clock, Repeat, Trash, History, Play, Zap, Hand
+  Clock, Repeat, Trash, History, Play, Zap, Hand, Printer, Save
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 
@@ -346,6 +348,10 @@ export default function GeneralSettings() {
           <TabsTrigger value="backupImport" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <DatabaseZap className="h-4 w-4" />
             {t("pages.generalSettings.backupImport")}
+          </TabsTrigger>
+          <TabsTrigger value="printText" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Printer className="h-4 w-4" />
+            نص الطباعة
           </TabsTrigger>
         </TabsList>
 
@@ -830,8 +836,211 @@ export default function GeneralSettings() {
             )}
           </div>
         </TabsContent>
+
+        {/* ═══ TAB 7: Print Footer Text ═══════════════════════════════════════ */}
+        <TabsContent value="printText" className="mt-5 space-y-6">
+          <PrintFooterTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
       </Tabs>
 
     </div>
+  );
+}
+
+// ─── Sub-component: Print Footer customization tab ────────────────────────
+function PrintFooterTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const cid = user?.company?.id ?? user?.companyId;
+  const company = user?.company ?? {};
+
+  const DEFAULT_INVOICE = "شكراً لزيارتكم — نتمنى لكم يوماً سعيداً";
+  const DEFAULT_RETURN  = "تم استلام المرتجع — شكراً لتعاملكم";
+
+  const [invoiceFooter, setInvoiceFooter] = useState<string>(company.printFooterInvoice ?? DEFAULT_INVOICE);
+  const [returnFooter,  setReturnFooter]  = useState<string>(company.printFooterReturn  ?? DEFAULT_RETURN);
+  const [showTimestamp, setShowTimestamp] = useState<boolean>(company.printShowTimestamp !== false);
+  const [showZatca,     setShowZatca]     = useState<boolean>(company.printShowZatcaBrand !== false);
+
+  useEffect(() => {
+    setInvoiceFooter(company.printFooterInvoice ?? DEFAULT_INVOICE);
+    setReturnFooter(company.printFooterReturn ?? DEFAULT_RETURN);
+    setShowTimestamp(company.printShowTimestamp !== false);
+    setShowZatca(company.printShowZatcaBrand !== false);
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand]);
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          printFooterInvoice: invoiceFooter.trim(),
+          printFooterReturn:  returnFooter.trim(),
+          printShowTimestamp: showTimestamp,
+          printShowZatcaBrand: showZatca,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "تعذّر الحفظ");
+      return json;
+    },
+    onSuccess: (data) => {
+      if (setUser) {
+        setUser((u: any) => ({
+          ...u,
+          company: {
+            ...u.company,
+            printFooterInvoice:   data.printFooterInvoice,
+            printFooterReturn:    data.printFooterReturn,
+            printShowTimestamp:   data.printShowTimestamp,
+            printShowZatcaBrand:  data.printShowZatcaBrand,
+          },
+        }));
+      }
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: "تم حفظ نص الطباعة بنجاح" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  function resetToDefault() {
+    setInvoiceFooter(DEFAULT_INVOICE);
+    setReturnFooter(DEFAULT_RETURN);
+    setShowTimestamp(true);
+    setShowZatca(true);
+  }
+
+  const invoiceLen = invoiceFooter.length;
+  const returnLen  = returnFooter.length;
+  const overLimit  = invoiceLen > 200 || returnLen > 200;
+
+  return (
+    <>
+      <div className="rounded-xl border bg-card p-5 space-y-2">
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Printer className="h-4 w-4 text-muted-foreground" />
+          تخصيص نص تذييل الطباعة
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          يتحكم في الجزء السفلي من إيصالات الطباعة الحرارية (شكر العميل، الطابع الزمني، علامة ZATCA).
+          النصوص تظهر في نهاية الإيصال أسفل رمز QR.
+        </p>
+      </div>
+
+      <div className="rounded-xl border bg-card p-5 space-y-5">
+        {/* Invoice footer */}
+        <div className="space-y-2">
+          <Label htmlFor="invoice-footer" className="font-medium">
+            نص شكر العميل — فاتورة المبيعات
+          </Label>
+          <Input
+            id="invoice-footer"
+            value={invoiceFooter}
+            maxLength={220}
+            onChange={(e) => setInvoiceFooter(e.target.value)}
+            placeholder={DEFAULT_INVOICE}
+            dir="rtl"
+            className={cn(invoiceLen > 200 && "border-destructive")}
+          />
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">يظهر في تذييل فواتير المبيعات</span>
+            <span className={cn(invoiceLen > 200 ? "text-destructive font-medium" : "text-muted-foreground")}>
+              {invoiceLen} / 200
+            </span>
+          </div>
+        </div>
+
+        {/* Return footer */}
+        <div className="space-y-2">
+          <Label htmlFor="return-footer" className="font-medium">
+            نص شكر العميل — مرتجع المبيعات
+          </Label>
+          <Input
+            id="return-footer"
+            value={returnFooter}
+            maxLength={220}
+            onChange={(e) => setReturnFooter(e.target.value)}
+            placeholder={DEFAULT_RETURN}
+            dir="rtl"
+            className={cn(returnLen > 200 && "border-destructive")}
+          />
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">يظهر في تذييل إيصالات المرتجعات</span>
+            <span className={cn(returnLen > 200 ? "text-destructive font-medium" : "text-muted-foreground")}>
+              {returnLen} / 200
+            </span>
+          </div>
+        </div>
+
+        {/* Toggles */}
+        <div className="rounded-lg border bg-muted/30 p-4 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="font-medium text-sm flex items-center gap-2">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                إظهار تاريخ ووقت الطباعة
+              </div>
+              <p className="text-xs text-muted-foreground">عرض سطر "طُبع: ..." في أسفل الإيصال</p>
+            </div>
+            <Switch checked={showTimestamp} onCheckedChange={setShowTimestamp} />
+          </div>
+
+          <div className="border-t pt-4 flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="font-medium text-sm flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+                إظهار توقيع "ZATCA e-Invoicing"
+              </div>
+              <p className="text-xs text-muted-foreground">عرض علامة النظام كسطر إضافي في التذييل</p>
+            </div>
+            <Switch checked={showZatca} onCheckedChange={setShowZatca} />
+          </div>
+        </div>
+      </div>
+
+      {/* Live preview */}
+      <div className="rounded-xl border bg-card p-5 space-y-3">
+        <h3 className="font-medium text-sm flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          معاينة التذييل
+        </h3>
+        <div className="grid md:grid-cols-2 gap-3">
+          <div className="rounded-lg border bg-white p-4 text-center" dir="rtl" style={{ fontFamily: "'Courier New', monospace" }}>
+            <div className="text-xs text-muted-foreground mb-2 font-sans">📄 الفاتورة</div>
+            <div className="border-t-2 border-black pt-2 text-xs space-y-1 text-black">
+              <div className="font-semibold">{invoiceFooter || DEFAULT_INVOICE}</div>
+              {showTimestamp && <div className="text-[11px]">طُبع: {new Date().toLocaleString("ar-SA")}</div>}
+              {showZatca && <div className="text-[10px] opacity-70">ZATCA e-Invoicing</div>}
+            </div>
+          </div>
+          <div className="rounded-lg border bg-white p-4 text-center" dir="rtl" style={{ fontFamily: "'Courier New', monospace" }}>
+            <div className="text-xs text-muted-foreground mb-2 font-sans">↩️ المرتجع</div>
+            <div className="border-t-2 border-red-700 pt-2 text-xs space-y-1 text-black">
+              <div className="font-semibold">{returnFooter || DEFAULT_RETURN}</div>
+              {showTimestamp && <div className="text-[11px]">طُبع: {new Date().toLocaleString("ar-SA")}</div>}
+              {showZatca && <div className="text-[10px] opacity-70">ZATCA e-Invoicing</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <Button variant="outline" onClick={resetToDefault} disabled={saveMut.isPending}>
+          <Repeat className="h-4 w-4 ml-2" />
+          استعادة الافتراضي
+        </Button>
+        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || overLimit}>
+          {saveMut.isPending
+            ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />جاري الحفظ...</>
+            : <><Save className="h-4 w-4 ml-2" />حفظ</>}
+        </Button>
+      </div>
+    </>
   );
 }

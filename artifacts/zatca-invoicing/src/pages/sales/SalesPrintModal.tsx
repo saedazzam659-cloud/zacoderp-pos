@@ -471,11 +471,22 @@ function template5(d: PrintData): string {
   </body></html>`;
 }
 
+// Resolve customizable footer pieces from company settings (with safe defaults).
+function footerSettings(company: any, isReturn: boolean) {
+  const thanks = isReturn
+    ? (company?.printFooterReturn  ?? "تم استلام المرتجع — شكراً لتعاملكم")
+    : (company?.printFooterInvoice ?? "شكراً لزيارتكم — نتمنى لكم يوماً سعيداً");
+  const showTimestamp  = company?.printShowTimestamp  !== false;
+  const showZatcaBrand = company?.printShowZatcaBrand !== false;
+  return { thanks, showTimestamp, showZatcaBrand };
+}
+
 // ── Template 6: حراري كلاسيكي (80mm) ─────────────────────────────────────────
 function template6(d: PrintData): string {
   const { doc, lines, customer, company } = d;
   const isReturn = d.type === "return";
   const accent = isReturn ? "#b91c1c" : "#111";
+  const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
   const itemsRows = lines.map((l) => {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
     const sub = (Number(l.qty) || 0) * (Number(l.unitPrice) || 0) * (1 - disc / 100);
@@ -578,9 +589,9 @@ function template6(d: PrintData): string {
 
     <div class="sep-solid"></div>
     <div class="footer">
-      <div>${isReturn ? "شكراً لتعاملكم معنا — تم استلام المرتجع" : "شكراً لزيارتكم — نتمنى لكم يوماً سعيداً"}</div>
-      <div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA")}</div>
-      <div style="margin-top:3px;opacity:.7;">ZATCA e-Invoicing</div>
+      ${thanks ? `<div>${thanks}</div>` : ""}
+      ${showTimestamp ? `<div style="margin-top:3px;">طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showZatcaBrand ? `<div style="margin-top:3px;opacity:.7;">ZATCA e-Invoicing</div>` : ""}
     </div>
   </body></html>`;
 }
@@ -591,6 +602,7 @@ function template7(d: PrintData): string {
   const isReturn = d.type === "return";
   const accent = isReturn ? "#dc2626" : "#0f766e";
   const accentSoft = isReturn ? "#fee2e2" : "#ccfbf1";
+  const { thanks, showTimestamp, showZatcaBrand } = footerSettings(company, isReturn);
 
   const itemsRows = lines.map((l, i) => {
     const disc = Math.max(0, Math.min(100, Number(l.discount) || 0));
@@ -693,9 +705,9 @@ function template7(d: PrintData): string {
     </div>
 
     <div class="footer">
-      <div class="thanks">${isReturn ? "تم استلام المرتجع — شكراً لتعاملكم" : "شكراً لزيارتكم"}</div>
-      <div>طُبع: ${new Date().toLocaleString("ar-SA")}</div>
-      <div style="opacity:.85;margin-top:2px;">ZATCA e-Invoicing</div>
+      ${thanks ? `<div class="thanks">${thanks}</div>` : ""}
+      ${showTimestamp ? `<div>طُبع: ${new Date().toLocaleString("ar-SA")}</div>` : ""}
+      ${showZatcaBrand ? `<div style="opacity:.85;margin-top:2px;">ZATCA e-Invoicing</div>` : ""}
     </div>
   </body></html>`;
 }

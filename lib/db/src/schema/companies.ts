@@ -55,6 +55,11 @@ export const companiesTable = pgTable("companies", {
   posCardBankAccountId:      integer("pos_card_bank_account_id"),
   posAppleBankAccountId:     integer("pos_apple_bank_account_id"),
   posWalletBankAccountId:    integer("pos_wallet_bank_account_id"),
+  // ─── Print footer customization (thermal/A4 templates) ───────────────
+  printFooterInvoice:   text("print_footer_invoice").notNull().default("شكراً لزيارتكم — نتمنى لكم يوماً سعيداً"),
+  printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),
+  printShowTimestamp:   boolean("print_show_timestamp").notNull().default(true),
+  printShowZatcaBrand:  boolean("print_show_zatca_brand").notNull().default(true),
   // ─── Automatic backup settings ────────────────────────────────────────
   autoBackupEnabled:        boolean("auto_backup_enabled").notNull().default(true),
   autoBackupFrequencyHours: integer("auto_backup_frequency_hours").notNull().default(24),
