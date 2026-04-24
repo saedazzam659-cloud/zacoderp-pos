@@ -11,7 +11,7 @@ import {
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
-  Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox,
+  Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -81,6 +81,7 @@ const purchasingSubNav: NavDef[] = [
 ];
 const salesSubNav: NavDef[] = [
   { nameKey: "nav.customers",            href: "/customers",         icon: Users           },
+  { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck      },
   { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature   },
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag     },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw       },

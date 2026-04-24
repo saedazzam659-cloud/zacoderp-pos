@@ -8,6 +8,7 @@ import {
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
+  salesRepsTable,
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -69,6 +70,38 @@ async function getBankAccountAccountId(cid: number, bankAccountId: number | null
   const [ba] = await db.select().from(bankAccountsTable)
     .where(and(eq(bankAccountsTable.id, bankAccountId), eq(bankAccountsTable.companyId, cid)));
   return ba?.accountId ?? null;
+}
+
+/**
+ * Resolve the rep's commission% (snapshot) and compute commissionAmount = totalAmount × pct/100.
+ * Returns string "0" for the numeric fields (NEVER null — schema is NOT NULL with default "0").
+ * Returns salesRepId=null when no rep / inactive rep / wrong company; in that case both numerics
+ * are "0". For commissionType="collection" the snapshot pct is preserved but invoice-time
+ * commissionAmount is "0" (collection commission is computed at receipt time from receipts).
+ */
+async function resolveRepCommission(
+  cid: number,
+  salesRepId: number | string | null | undefined,
+  totalAmount: number | string | null | undefined,
+): Promise<{ salesRepId: number | null; commissionPct: string; commissionAmount: string }> {
+  const rid = salesRepId ? Number(salesRepId) : null;
+  if (!rid) return { salesRepId: null, commissionPct: "0", commissionAmount: "0" };
+  const [rep] = await db.select().from(salesRepsTable)
+    .where(and(eq(salesRepsTable.id, rid), eq(salesRepsTable.companyId, cid)));
+  // Drop attribution silently on missing/inactive rep — keeps numeric fields safe and
+  // prevents "ghost" commissions from disabled reps.
+  if (!rep || !rep.isActive) return { salesRepId: null, commissionPct: "0", commissionAmount: "0" };
+  const pct = Number(rep.commissionPct ?? 0);
+  if (rep.commissionType === "collection" || !pct) {
+    return { salesRepId: rep.id, commissionPct: String(pct), commissionAmount: "0" };
+  }
+  const total = Number(totalAmount ?? 0);
+  const commission = (total * pct) / 100;
+  return {
+    salesRepId: rep.id,
+    commissionPct: String(pct),
+    commissionAmount: commission.toFixed(2),
+  };
 }
 
 /** Map a list of warehouse IDs (used by an invoice) to their {accountId, allowNegative, name}. */
@@ -311,7 +344,15 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
-    const repInfo = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
+    // Only re-snapshot commission when the caller explicitly sent salesRepId
+    // (so existing forms that don't know about reps don't wipe historical data).
+    const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
+    const repPatch = hasRepKey
+      ? await (async () => {
+          const r = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
+          return { salesRepId: r.salesRepId, commissionPct: r.commissionPct, commissionAmount: r.commissionAmount };
+        })()
+      : {};
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
@@ -331,9 +372,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
-      salesRepId:         repInfo.salesRepId,
-      commissionPct:      repInfo.commissionPct,
-      commissionAmount:   repInfo.commissionAmount,
+      ...repPatch,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (lines !== undefined) {

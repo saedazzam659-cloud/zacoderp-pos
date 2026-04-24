@@ -77,6 +77,7 @@ import JournalEntries from "@/pages/accounting/JournalEntries";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
+import SalesReps from "@/pages/sales/SalesReps";
 // Accounting Reports
 import AccountStatement from "@/pages/accounting/reports/AccountStatement";
 import TrialBalance     from "@/pages/accounting/reports/TrialBalance";
@@ -334,6 +335,7 @@ function AppRoutes() {
             {/* Settings routes */}
             {!isSuperAdmin && <Route path="/settings/currencies" component={Currencies} />}
             {!isSuperAdmin && <Route path="/settings/accounting-mappings" component={AccountingMappings} />}
+            {!isSuperAdmin && <Route path="/sales/reps" component={SalesReps} />}
 
             {/* Shared routes */}
             <Route path="/settings" component={Settings} />

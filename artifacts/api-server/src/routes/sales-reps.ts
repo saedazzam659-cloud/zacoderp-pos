@@ -5,7 +5,7 @@ import {
   salesRepVisitsTable,
   customersTable,
   salesInvoicesTable,
-  receiptVouchersTable,
+  receiptVouchersTable, // used by delete guard so we don't orphan collection-commission history
 } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -13,15 +13,23 @@ import { ensureLeafAccounts } from "../lib/leafAccount.js";
 
 const router = Router();
 router.use(extractAuth);
+// Require an authenticated user for every sales-reps endpoint — these contain
+// PII (phone/email/address) and commission terms; never serve to anonymous callers.
+router.use((req, res, next) => {
+  if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+});
 
 function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.body?.companyId ?? req.query.companyId);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
   return cid;
 }
-function getCid(req: any): number | undefined {
+function requireCid(req: any, res: any): number | null {
   const raw = req.query.companyId ? Number(req.query.companyId) : undefined;
-  return resolveCompanyId(req, raw);
+  const cid = resolveCompanyId(req, raw);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
+  return cid;
 }
 
 async function nextRepCode(cid: number): Promise<string> {
@@ -38,8 +46,7 @@ async function nextRepCode(cid: number): Promise<string> {
 // ─── REPS LIST/CRUD ──────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
-    const cid = getCid(req);
-    if (!cid) { res.json([]); return; }
+    const cid = requireCid(req, res); if (!cid) return;
     const rows = await db.select().from(salesRepsTable)
       .where(eq(salesRepsTable.companyId, cid))
       .orderBy(desc(salesRepsTable.id));
@@ -49,8 +56,7 @@ router.get("/", async (req, res) => {
 
 router.get("/active", async (req, res) => {
   try {
-    const cid = getCid(req);
-    if (!cid) { res.json([]); return; }
+    const cid = requireCid(req, res); if (!cid) return;
     const rows = await db.select().from(salesRepsTable)
       .where(and(eq(salesRepsTable.companyId, cid), eq(salesRepsTable.isActive, true)))
       .orderBy(salesRepsTable.nameAr);
@@ -60,12 +66,10 @@ router.get("/active", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const cid = getCid(req);
+    const cid = requireCid(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [row] = cid
-      ? await db.select().from(salesRepsTable)
-          .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)))
-      : await db.select().from(salesRepsTable).where(eq(salesRepsTable.id, id));
+    const [row] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
     if (!row) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
     res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -149,17 +153,21 @@ router.delete("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
 
-    // Refuse delete when the rep is referenced from invoices or customers —
-    // the user should deactivate instead so historical commissions stay intact.
+    // Refuse delete when the rep is referenced from invoices, customers, or
+    // receipt vouchers — the user should deactivate instead so historical
+    // commission history (incl. collection-based commissions) stays intact.
     const [{ n: invN }] = await db.select({ n: sql<number>`count(*)::int` })
       .from(salesInvoicesTable)
       .where(and(eq(salesInvoicesTable.companyId, cid), eq(salesInvoicesTable.salesRepId, id)));
     const [{ n: custN }] = await db.select({ n: sql<number>`count(*)::int` })
       .from(customersTable)
       .where(and(eq(customersTable.companyId, cid), eq(customersTable.salesRepId, id)));
-    if (invN > 0 || custN > 0) {
+    const [{ n: rcvN }] = await db.select({ n: sql<number>`count(*)::int` })
+      .from(receiptVouchersTable)
+      .where(and(eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.salesRepId, id)));
+    if (invN > 0 || custN > 0 || rcvN > 0) {
       res.status(409).json({
-        error: `لا يمكن حذف المندوب — مرتبط بـ ${invN} فاتورة و ${custN} عميل. يمكنك تعطيله بدلاً من ذلك.`,
+        error: `لا يمكن حذف المندوب — مرتبط بـ ${invN} فاتورة و ${custN} عميل و ${rcvN} سند قبض. يمكنك تعطيله بدلاً من ذلك.`,
       });
       return;
     }
