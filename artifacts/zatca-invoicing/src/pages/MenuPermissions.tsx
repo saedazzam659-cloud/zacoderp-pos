@@ -11,7 +11,7 @@ import {
   Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +44,8 @@ const MENU_ITEMS: MenuItem[] = [
   { key: "accounts",           label: "الحسابات العامة",            icon: BookOpen,        section: "المحاسبة" },
   { key: "accounting_reports", label: "التقارير المحاسبية",         icon: PieChart,        section: "المحاسبة" },
 
+  { key: "hr_module",          label: "شؤون الموظفين",              icon: UserCog,         section: "شؤون الموظفين" },
+
   { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
 ];
 
@@ -57,6 +59,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "المشتريات":  { bg: "bg-orange-50",  text: "text-orange-700",  border: "border-orange-200",  ring: "from-orange-500/10" },
   "نقاط البيع": { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200",    ring: "from-teal-500/10" },
   "المحاسبة":   { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200",  ring: "from-indigo-500/10" },
+  "شؤون الموظفين": { bg: "bg-rose-50",   text: "text-rose-700",    border: "border-rose-200",    ring: "from-rose-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
 };
 

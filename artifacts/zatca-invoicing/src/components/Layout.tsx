@@ -1016,14 +1016,16 @@ function SidebarInner({
               />
             </div>
 
-            <div className="space-y-0.5">
-              <HrNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={hrOpen}
-                onToggle={onHrToggle}
-              />
-            </div>
+            {menuPerms.hr_module !== false && (
+              <div className="space-y-0.5">
+                <HrNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={hrOpen}
+                  onToggle={onHrToggle}
+                />
+              </div>
+            )}
 
             <div className="space-y-0.5">
               <ReportsNavGroup
