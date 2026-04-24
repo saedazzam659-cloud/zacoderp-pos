@@ -1679,6 +1679,9 @@ interface OverviewCompanyRow {
   // Aggregates
   snapshotsLast30d: number;
   totalSizeBytes30d: number;
+  // Total size across ALL stored snapshots for this company (spec requirement
+  // for the "size per company" column in the operations table).
+  totalSizeBytesAll: number;
   latest: OverviewLatest | null;
   // Health bucket. `disabled` = autoBackup off; otherwise green/amber/red
   // based on age vs frequency.
@@ -1848,6 +1851,7 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
         lastAutoBackupAt: lastIso,
         snapshotsLast30d: a.cnt,
         totalSizeBytes30d: a.total,
+        totalSizeBytesAll: sizeAll.get(c.id) ?? 0,
         latest,
         bucket,
         ageHours,
@@ -1861,212 +1865,26 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
   }
 });
 
-// POST /api/admin/backups/auto/settings/:companyId — admin-side proxy that
-// updates per-company backup settings without forcing the SuperAdmin to
-// switch tenants. Mirrors POST /api/backup/auto/settings.
-router.post("/backups/auto/settings/:companyId", requireSuperAdmin, async (req, res) => {
-  try {
-    const companyId = Number(req.params.companyId);
-    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
-    const [exists] = await db.select({ id: companiesTable.id }).from(companiesTable).where(eq(companiesTable.id, companyId));
-    if (!exists) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
-
-    const patch: Record<string, unknown> = {};
-    if (typeof req.body?.enabled === "boolean") patch.autoBackupEnabled = req.body.enabled;
-    if (Number.isFinite(Number(req.body?.frequencyHours))) {
-      patch.autoBackupFrequencyHours = Math.max(1, Math.min(168, Number(req.body.frequencyHours)));
-    }
-    if (Number.isFinite(Number(req.body?.retention))) {
-      patch.autoBackupRetention = Math.max(1, Math.min(30, Number(req.body.retention)));
-    }
-    if (Object.keys(patch).length === 0) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
-
-    await db.update(companiesTable).set(patch).where(eq(companiesTable.id, companyId));
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId,
-      module: "backups",
-      action: "edit",
-      entityType: "auto_backup_settings",
-      entityId: String(companyId),
-      metadata: { fields: Object.keys(patch) },
-    });
-    res.json({ ok: true, settings: patch });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
-    res.status(500).json({ error: msg });
-  }
+// ─────────────────────────────────────────────────────────────────────────
+// NOTE: Per-company backup operations (settings / run-now / delete / restore /
+// download / history list) are intentionally NOT duplicated here. The Backup
+// Operations Center calls the existing /api/backup/* endpoints with the
+// cross-tenant `?companyId=` (or body.companyId) override that
+// resolveCompanyId() already grants to superadmin role. Audit entries for
+// cross-tenant superadmin actions live alongside those endpoints in
+// backup.ts via isCrossTenantSuperadmin(). Only aggregate admin-only
+// surfaces (/overview, /run-all, /run-all/:jobId) belong here.
+// ─────────────────────────────────────────────────────────────────────────
+// Stub kept temporarily so older tabs hitting the deprecated path see a
+// clear 410 instead of a 404 with no explanation.
+router.all("/backups/auto/settings/:companyId", requireSuperAdmin, (_req, res) => {
+  res.status(410).json({ error: "نُقل هذا المسار إلى /api/backup/auto/settings (مع companyId في body)" });
 });
-
-// POST /api/admin/backups/run-now/:companyId — admin-triggered single snapshot
-router.post("/backups/run-now/:companyId", requireSuperAdmin, async (req, res) => {
-  try {
-    const companyId = Number(req.params.companyId);
-    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
-    const [exists] = await db.select({ id: companiesTable.id }).from(companiesTable).where(eq(companiesTable.id, companyId));
-    if (!exists) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
-
-    const id = await persistSnapshot(companyId, "manual");
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId,
-      module: "backups",
-      action: "create",
-      entityType: "auto_backup",
-      entityId: String(id),
-      metadata: { op: "run-now" },
-    });
-    res.json({ ok: true, id });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "فشل أخذ النسخة";
-    res.status(500).json({ error: msg });
-  }
+router.all("/backups/run-now/:companyId", requireSuperAdmin, (_req, res) => {
+  res.status(410).json({ error: "نُقل هذا المسار إلى /api/backup/auto/run-now (مع companyId في body)" });
 });
-
-// DELETE /api/admin/backups/auto/:id — admin-side delete (not company-scoped)
-router.delete("/backups/auto/:id", requireSuperAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-    const [row] = await db.select({ id: autoBackupsTable.id, companyId: autoBackupsTable.companyId })
-      .from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
-    if (!row) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
-    await db.delete(autoBackupsTable).where(eq(autoBackupsTable.id, id));
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId: row.companyId,
-      module: "backups",
-      action: "delete",
-      entityType: "auto_backup",
-      entityId: String(id),
-    });
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
-    res.status(500).json({ error: msg });
-  }
-});
-
-// POST /api/admin/backups/auto/:id/restore — admin-side restore (with safety net)
-// Body: { confirmVatNumber: string } — operator must type the VAT number of the
-// owning company to confirm. Before applying, we always take a fresh "manual"
-// pre-restore snapshot so any mistake is reversible.
-router.post("/backups/auto/:id/restore", requireSuperAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-    const [snap] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
-    if (!snap) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
-    const [comp] = await db.select({ id: companiesTable.id, vatNumber: companiesTable.vatNumber, nameAr: companiesTable.nameAr })
-      .from(companiesTable).where(eq(companiesTable.id, snap.companyId));
-    if (!comp) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
-
-    const provided = String(req.body?.confirmVatNumber ?? "").trim();
-    if (provided !== String(comp.vatNumber).trim()) {
-      res.status(400).json({ error: "الرقم الضريبي غير مطابق — لم يتم تنفيذ الاستعادة" });
-      return;
-    }
-
-    // Safety-net snapshot first — MANDATORY. If we can't take a pre-restore
-    // snapshot, abort: a failed restore must always be reversible.
-    let preRestoreId: number;
-    try {
-      preRestoreId = await persistSnapshot(comp.id, "manual");
-    } catch (snapErr: unknown) {
-      const m = snapErr instanceof Error ? snapErr.message : "unknown";
-      res.status(500).json({ error: `تعذّر إنشاء نسخة الأمان قبل الاستعادة — لم يتم تنفيذ أي تغيير. (${m})` });
-      return;
-    }
-
-    const out = await restoreFromSnapshotPayload(
-      comp.id,
-      snap.data as { data?: Record<string, unknown> } | null,
-    );
-
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId: comp.id,
-      module: "backups",
-      action: "edit",
-      entityType: "auto_backup_restore",
-      entityId: String(id),
-      metadata: { snapshotId: id, preRestoreId, report: out.report },
-    });
-    res.json({ ok: true, snapshotId: id, preRestoreId, report: out.report });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "فشل الاستعادة";
-    res.status(500).json({ error: msg });
-  }
-});
-
-// GET /api/admin/backups/auto/:id/download — download a snapshot's JSON
-router.get("/backups/auto/:id/download", requireSuperAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
-    const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
-    if (!row) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
-    // Sensitive read — full snapshot payload contains company data — audit it.
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId: row.companyId,
-      module: "backups",
-      action: "view",
-      entityType: "auto_backup_download",
-      entityId: String(id),
-    });
-    res.json(row.data);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
-    res.status(500).json({ error: msg });
-  }
-});
-
-// GET /api/admin/backups/auto/list/:companyId — snapshot history for one company
-router.get("/backups/auto/list/:companyId", requireSuperAdmin, async (req, res) => {
-  try {
-    const companyId = Number(req.params.companyId);
-    if (!Number.isFinite(companyId)) { res.status(400).json({ error: "معرّف شركة غير صالح" }); return; }
-    // Spec: cap history at the last 30 snapshots — older snapshots are still
-    // retained per the company's retention setting and visible via direct
-    // download by id, but the on-screen list never exceeds 30 rows.
-    const rows = await db.select({
-      id:        autoBackupsTable.id,
-      createdAt: autoBackupsTable.createdAt,
-      reason:    autoBackupsTable.reason,
-      sizeBytes: autoBackupsTable.sizeBytes,
-      counts:    autoBackupsTable.counts,
-    }).from(autoBackupsTable)
-      .where(eq(autoBackupsTable.companyId, companyId))
-      .orderBy(desc(autoBackupsTable.createdAt))
-      .limit(30);
-    // Lightweight audit — operator opened a company's backup history panel.
-    await writeAudit({
-      userId: req.adminUser?.id ?? null,
-      username: req.adminUser?.username ?? null,
-      role: "superadmin",
-      companyId,
-      module: "backups",
-      action: "view",
-      entityType: "auto_backup_list",
-      entityId: String(companyId),
-      metadata: { count: rows.length },
-    });
-    res.json({ snapshots: rows });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
-    res.status(500).json({ error: msg });
-  }
+router.all("/backups/auto/list/:companyId", requireSuperAdmin, (_req, res) => {
+  res.status(410).json({ error: "نُقل هذا المسار إلى /api/backup/auto/list?companyId=" });
 });
 
 // ─── Bulk run-all (background job with polling) ─────────────────────────

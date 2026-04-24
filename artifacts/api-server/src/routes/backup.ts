@@ -11,6 +11,17 @@ import {
 } from "@workspace/db";
 import { eq, and, sql, desc, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { writeAudit } from "../middleware/permissions.js";
+
+/**
+ * Helper: when a superadmin operates against a tenant from cross-tenant tools
+ * (e.g. the Backup Operations Center), we want the action recorded in the
+ * audit log even though tenant-side users would normally see this without
+ * audit. The check is cheap and safe to call from any backup write handler.
+ */
+function isCrossTenantSuperadmin(req: any): boolean {
+  return req.authUser?.role === "superadmin";
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -390,7 +401,10 @@ router.get("/auto/list", async (req, res) => {
       counts: autoBackupsTable.counts,
     }).from(autoBackupsTable)
       .where(eq(autoBackupsTable.companyId, companyId))
-      .orderBy(desc(autoBackupsTable.createdAt));
+      .orderBy(desc(autoBackupsTable.createdAt))
+      // Cap on-screen history to the last 30 snapshots (per Backup Operations
+      // Center spec). Older snapshots remain on disk subject to retention.
+      .limit(30);
 
     const [company] = await db.select({
       enabled: companiesTable.autoBackupEnabled,
@@ -398,6 +412,15 @@ router.get("/auto/list", async (req, res) => {
       retention: companiesTable.autoBackupRetention,
       lastAt: companiesTable.lastAutoBackupAt,
     }).from(companiesTable).where(eq(companiesTable.id, companyId));
+
+    if (isCrossTenantSuperadmin(req)) {
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "view",
+        success: true, message: `عرض سجل النسخ للشركة #${companyId}`,
+      });
+    }
 
     res.json({ settings: company ?? null, snapshots: rows });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -418,17 +441,51 @@ router.get("/auto/:id/download", async (req, res) => {
 /* ─── POST /auto/:id/restore ─── restore one stored snapshot ───────────────── */
 router.post("/auto/:id/restore", async (req, res) => {
   try {
-    const companyId = resolveCompanyId(req);
+    // Allow superadmin to pass companyId in the body for cross-tenant restore;
+    // tenant users always restore into their own tenant.
+    const companyId = resolveCompanyId(
+      req,
+      req.body?.companyId ? Number(req.body.companyId) : undefined,
+    );
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
     const id = Number(req.params.id);
     const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
     if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
     if (row.companyId !== companyId) { res.status(403).json({ error: "ممنوع" }); return; }
 
-    // Forward to the existing /restore logic by calling it internally.
-    req.body = { companyId, backup: row.data };
-    // @ts-ignore - reuse handler
-    (router as any).handle({ ...req, url: "/restore", method: "POST" }, res, () => {});
+    // VAT confirmation: if the caller provides confirmVatNumber it MUST match
+    // the company's stored VAT — used by the Backup Operations Center's inline
+    // typed-confirmation panel to prevent accidental cross-tenant restores.
+    if (typeof req.body?.confirmVatNumber === "string") {
+      const [c] = await db.select({ vatNumber: companiesTable.vatNumber })
+        .from(companiesTable).where(eq(companiesTable.id, companyId));
+      if (!c || String(c.vatNumber).trim() !== String(req.body.confirmVatNumber).trim()) {
+        res.status(400).json({ error: "الرقم الضريبي غير مطابق" });
+        return;
+      }
+    }
+
+    // Mandatory pre-restore safety snapshot — if it fails we abort with NO
+    // data changes so the operator never loses state silently.
+    try {
+      await persistSnapshot(companyId, "manual");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "تعذّر إنشاء نسخة الأمان";
+      res.status(500).json({ error: `فشل إنشاء نسخة الأمان قبل الاستعادة: ${msg}` });
+      return;
+    }
+
+    const out = await restoreFromSnapshotPayload(companyId, row.data);
+
+    if (isCrossTenantSuperadmin(req)) {
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "restore",
+        success: true, message: `استعادة نسخة #${id} للشركة #${companyId}`,
+      });
+    }
+    res.json(out);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

@@ -35,6 +35,7 @@ interface OverviewRow {
   lastAutoBackupAt: string | null;
   snapshotsLast30d: number;
   totalSizeBytes30d: number;
+  totalSizeBytesAll: number;
   latest: OverviewLatest | null;
   bucket: "green" | "amber" | "red" | "disabled";
   ageHours: number | null;
@@ -205,7 +206,9 @@ export default function BackupOperations() {
     queryKey: ["admin-backups-history", expandedRow],
     enabled: expandedRow != null,
     queryFn: async () => {
-      const res = await fetch(`${API}/api/admin/backups/auto/list/${expandedRow}`, { headers });
+      // Re-uses the existing /api/backup/auto/list endpoint with the cross-tenant
+      // ?companyId= override (allowed for superadmin via resolveCompanyId).
+      const res = await fetch(`${API}/api/backup/auto/list?companyId=${expandedRow}`, { headers });
       if (!res.ok) throw new Error("فشل تحميل السجل");
       return res.json();
     },
@@ -239,8 +242,10 @@ export default function BackupOperations() {
   // ── Mutations ───────────────────────────────────────────────────────
   const saveSettingsMutation = useMutation({
     mutationFn: async ({ companyId, body }: { companyId: number; body: { enabled?: boolean; frequencyHours?: number; retention?: number } }) => {
-      const res = await fetch(`${API}/api/admin/backups/auto/settings/${companyId}`, {
-        method: "POST", headers, body: JSON.stringify(body),
+      // Re-uses /api/backup/auto/settings; companyId travels in the body and
+      // resolveCompanyId() lets superadmin override the JWT tenant.
+      const res = await fetch(`${API}/api/backup/auto/settings`, {
+        method: "POST", headers, body: JSON.stringify({ ...body, companyId }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "فشل الحفظ");
@@ -255,8 +260,9 @@ export default function BackupOperations() {
 
   const runNowMutation = useMutation({
     mutationFn: async (companyId: number) => {
-      const res = await fetch(`${API}/api/admin/backups/run-now/${companyId}`, {
-        method: "POST", headers,
+      // Re-uses /api/backup/auto/run-now with cross-tenant companyId override.
+      const res = await fetch(`${API}/api/backup/auto/run-now`, {
+        method: "POST", headers, body: JSON.stringify({ companyId }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "فشل أخذ النسخة");
@@ -272,7 +278,9 @@ export default function BackupOperations() {
 
   const deleteSnapshotMutation = useMutation({
     mutationFn: async ({ snapshotId }: { snapshotId: number; companyId: number }) => {
-      const res = await fetch(`${API}/api/admin/backups/auto/${snapshotId}`, {
+      // Re-uses /api/backup/auto/:id; superadmin role bypasses tenant check
+      // inside the existing handler (resolveCompanyId returns undefined).
+      const res = await fetch(`${API}/api/backup/auto/${snapshotId}`, {
         method: "DELETE", headers,
       });
       const j = await res.json();
@@ -291,9 +299,12 @@ export default function BackupOperations() {
   // Restore mutation — server requires the operator to type the company's
   // VAT number; server also takes a pre-restore safety snapshot.
   const restoreSnapshotMutation = useMutation({
-    mutationFn: async ({ snapshotId, confirmVatNumber }: { snapshotId: number; companyId: number; confirmVatNumber: string }) => {
-      const res = await fetch(`${API}/api/admin/backups/auto/${snapshotId}/restore`, {
-        method: "POST", headers, body: JSON.stringify({ confirmVatNumber }),
+    mutationFn: async ({ snapshotId, companyId, confirmVatNumber }: { snapshotId: number; companyId: number; confirmVatNumber: string }) => {
+      // Re-uses /api/backup/auto/:id/restore. The body carries the cross-tenant
+      // companyId override AND the typed VAT confirmation; the server enforces
+      // both, plus a mandatory pre-restore safety snapshot.
+      const res = await fetch(`${API}/api/backup/auto/${snapshotId}/restore`, {
+        method: "POST", headers, body: JSON.stringify({ companyId, confirmVatNumber }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "فشل الاستعادة");
@@ -372,7 +383,9 @@ export default function BackupOperations() {
 
   const downloadSnapshot = async (snapshotId: number) => {
     try {
-      const res = await fetch(`${API}/api/admin/backups/auto/${snapshotId}/download`, { headers: { Authorization: `Bearer ${token}` } });
+      // Re-uses /api/backup/auto/:id/download — superadmin role bypasses the
+      // tenant ownership check inside the existing handler.
+      const res = await fetch(`${API}/api/backup/auto/${snapshotId}/download`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error("فشل التنزيل");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -569,7 +582,7 @@ export default function BackupOperations() {
           <span>الشركة</span>
           <span>الحالة</span>
           <span>آخر نسخة</span>
-          <span>الحجم (30 يوم)</span>
+          <span>الحجم الكلي</span>
           <span>التكرار</span>
           <span>الاحتفاظ</span>
           <span className="text-center w-8">—</span>
@@ -658,8 +671,10 @@ export default function BackupOperations() {
                   </div>
 
                   <div className="text-xs text-muted-foreground tabular-nums">
-                    {formatBytes(r.totalSizeBytes30d)}
-                    <div className="text-[10px] text-muted-foreground/70">{r.snapshotsLast30d} نسخة</div>
+                    {formatBytes(r.totalSizeBytesAll)}
+                    <div className="text-[10px] text-muted-foreground/70">
+                      {r.snapshotsLast30d} نسخة آخر 30 يوم • {formatBytes(r.totalSizeBytes30d)}
+                    </div>
                   </div>
 
                   <div className="text-xs text-muted-foreground">
