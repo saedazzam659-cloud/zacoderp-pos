@@ -37,6 +37,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "users",                label: "perms.modules.users",                group: G.dashboard,  actions: VC },
   { key: "currencies",           label: "perms.modules.currencies",           group: G.dashboard,  actions: VC },
   { key: "data_io",              label: "perms.modules.data_io",              group: G.dashboard,  actions: ["view", "create", "export"] },
+  { key: "sequences",            label: "perms.modules.sequences",            group: G.dashboard,  actions: VC },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
   { key: "sales_quotations",     label: "perms.modules.sales_quotations",     group: G.sales,      actions: ALL },

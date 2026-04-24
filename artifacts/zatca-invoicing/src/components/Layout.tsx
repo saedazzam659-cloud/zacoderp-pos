@@ -12,7 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
-  ScrollText, Database,
+  ScrollText, Database, ListOrdered,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -126,6 +126,9 @@ const dashboardSubNav: NavDef[] = [
   // accountingMappings: gate under "general_settings" since it's a chart-of-accounts wiring screen.
   { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked, permKey: "general_settings" },
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,   permKey: "data_io" },
+  // Sequence management is admin-only at the backend, so the link is hidden
+  // from non-admins regardless of permission grant (avoids 403/404 on click).
+  { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
   { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText,   permKey: "sales_invoices" },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
 ];

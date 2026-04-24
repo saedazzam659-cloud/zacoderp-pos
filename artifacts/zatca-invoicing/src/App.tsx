@@ -80,6 +80,7 @@ import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
 import DataImportExport from "@/pages/settings/DataImportExport";
+import Sequences from "@/pages/settings/Sequences";
 import SalesReps from "@/pages/sales/SalesReps";
 // Accounting Reports
 import AccountStatement from "@/pages/accounting/reports/AccountStatement";
@@ -343,6 +344,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
             {!isSuperAdmin && <PermRoute path="/settings/accounting-mappings" module="general_settings" component={AccountingMappings} />}
             {!isSuperAdmin && <PermRoute path="/settings/data-io"             module="data_io"          component={DataImportExport} />}
+            {!isSuperAdmin && user?.role === "admin" && <PermRoute path="/settings/sequences" module="sequences" component={Sequences} />}
             {!isSuperAdmin && <PermRoute path="/sales/reps"                   module="sales_reps"       component={SalesReps} />}
 
             {/* Shared routes */}

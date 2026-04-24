@@ -5,6 +5,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -70,9 +71,25 @@ router.post("/", async (req, res) => {
       }
     }
 
+    // If client didn't supply a docNumber, ask the central sequence engine.
+    // Returns null when no active sequence is configured for "journal_entry"
+    // — we keep the legacy "save with null docNumber" behavior in that case.
+    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
+    if (!resolvedDocNumber) {
+      try {
+        resolvedDocNumber = await nextSequenceNumber(cid, "journal_entry", {
+          userId:   (req as any).authUser?.id ?? null,
+          refTable: "journal_entries",
+        });
+      } catch (seqErr: any) {
+        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم القيد" });
+        return;
+      }
+    }
+
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId:    cid,
-      docNumber:    docNumber || null,
+      docNumber:    resolvedDocNumber,
       entryDate,
       currency:     currency || "SAR",
       exchangeRate: exchangeRate ?? "1",

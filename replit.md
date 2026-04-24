@@ -105,6 +105,16 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 
 ## Recent Features
 
+### Centralized Sequence Management (`/settings/sequences`)
+Single source of truth for all transaction document numbers (مسلسل الحركات). Admin-only module that issues monotonically increasing numbers per company per transaction type, with full audit log and capacity tracking.
+
+- **Schema:** `lib/db/src/schema/sequences.ts` — `sequencesTable` (companyId, code UNIQUE per company, prefix, startNumber, endNumber, currentNumber, padLength, isActive, transactionTypes jsonb string[]) + `sequenceLogsTable` (sequenceId, transactionType, generatedNumber, userId, refTable, refId, createdAt). `SEQUENCE_TX_TYPES` const lists all 11 supported types.
+- **Helper:** `artifacts/api-server/src/lib/sequences.ts` → `nextSequenceNumber(companyId, txType, ctx?)`. Uses `SELECT … FOR UPDATE` in its own short transaction (does NOT join caller's tx — gaps acceptable, prevents number reuse on rollback). Returns `null` if no active sequence configured (caller falls back to legacy null-docNumber behavior). Throws `SequenceCapacityExceededError` on exhaustion.
+- **API:** `artifacts/api-server/src/routes/sequences.ts` registered at `/api/sequences`, all admin-only via `requireAdminRole`. Endpoints: `GET /` (list with usage %), `GET /:id`, `GET /:id/logs`, `GET /transaction-types`, `POST /` (validates uniqueness of code + no conflicting active tx-type binding), `PATCH /:id`, `POST /:id/reset`, `DELETE /:id` (only if unused — currentNumber === startNumber).
+- **Wired into:** `journalEntries.ts` POST, `sales.ts` POST `/sales-invoices` (skips ZATCA-issued), `purchasing.ts` POST `/purchase-invoices`. All three only invoke the helper when client omits `docNumber` and gracefully fall back to legacy null when no active sequence exists — fully non-breaking rollout.
+- **Frontend:** `artifacts/zatca-invoicing/src/pages/settings/Sequences.tsx` — table with usage progress bar, CRUD dialog with multi-select transaction-type checkboxes, reset confirm, logs viewer (last 50). Permission `sequences` under G.dashboard, sidebar entry gated by `requireAdmin: true` + `user?.role === "admin"` defense-in-depth check on the route.
+- **Out-of-scope follow-ups:** POS receipts, stock issues/receipts/transfers, vouchers retrofit, AI capacity-alert features.
+
 ### AI-Powered Data Import/Export Center (`/settings/data-io`)
 Unified Settings module accessible to company admins (gated by `general_settings` permission). Supports lossless export and arbitrary file import for 8 entities: accounts, customers, suppliers, items, warehouses, branches, cashBoxes, bankAccounts.
 

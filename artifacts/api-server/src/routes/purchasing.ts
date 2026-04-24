@@ -15,6 +15,7 @@ import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -368,9 +369,26 @@ router.post("/purchase-invoices", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
+
+    // Pull the next number from the central sequence engine when the client
+    // didn't supply one. Falls back to null (legacy) if no active sequence
+    // is bound to "purchase_invoice".
+    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
+    if (!resolvedDocNumber) {
+      try {
+        resolvedDocNumber = await nextSequenceNumber(cid, "purchase_invoice", {
+          userId:   (req as any).authUser?.id ?? null,
+          refTable: "purchase_invoices",
+        });
+      } catch (seqErr: any) {
+        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
+        return;
+      }
+    }
+
     const [inv] = await db.insert(purchaseInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
+      docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,

@@ -16,6 +16,7 @@ import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 // ─── Journal entry helper (mirrors purchasing.ts) ────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -299,9 +300,26 @@ router.post("/sales-invoices", async (req, res) => {
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
     const repInfo = await resolveRepCommission(cid, salesRepId, totals.totalAmount);
+
+    // Auto-allocate from the central sequence engine when the client did not
+    // supply a docNumber. Fallback to legacy null when no active sequence is
+    // configured for "sales_invoice" (i.e. no central numbering yet).
+    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
+    if (!resolvedDocNumber) {
+      try {
+        resolvedDocNumber = await nextSequenceNumber(cid, "sales_invoice", {
+          userId:   req.authUser?.id ?? null,
+          refTable: "sales_invoices",
+        });
+      } catch (seqErr: any) {
+        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
+        return;
+      }
+    }
+
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, invoiceDate,
+      docNumber: resolvedDocNumber, invoiceDate,
       customerId: customerId ? Number(customerId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
