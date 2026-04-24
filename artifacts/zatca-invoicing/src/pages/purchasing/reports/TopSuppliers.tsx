@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { TrendingUp, Trophy } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -19,6 +21,7 @@ const EXPORT_COLS = [
 
 export default function TopSuppliers() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -27,10 +30,11 @@ export default function TopSuppliers() {
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
   const [topN, setTopN] = useState("10");
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["purchases-by-supplier", cid, from, to],
-    queryFn: () => purchaseAnalyticsApi.bySupplier(cid, from, to),
+    queryKey: ["purchases-by-supplier", cid, from, to, branchId],
+    queryFn: () => purchaseAnalyticsApi.bySupplier(cid, from, to, branchId),
   });
 
   const grandTotal = (rows as any[]).reduce((s, r) => s + r.netPurchases, 0);
@@ -71,7 +75,7 @@ export default function TopSuppliers() {
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         <div className="space-y-1.5">
           <Label>من تاريخ</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -79,6 +83,10 @@ export default function TopSuppliers() {
         <div className="space-y-1.5">
           <Label>إلى تاريخ</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5">
           <Label>عدد الموردين</Label>

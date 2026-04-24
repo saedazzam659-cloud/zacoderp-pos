@@ -1,5 +1,7 @@
 {
   "common": {
+    "branch": "الفرع",
+    "allBranches": "كل الفروع",
     "save": "حفظ",
     "cancel": "إلغاء",
     "delete": "حذف",

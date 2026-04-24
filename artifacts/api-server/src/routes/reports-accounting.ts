@@ -18,8 +18,15 @@ function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+function getBid(req: any): number | undefined {
+  const v = req.query.branchId;
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 // ─── helper: get account balances (aggregated from lines) ─────────────────────
-async function getAccountBalances(cid: number, fromDate?: string, toDate?: string) {
+async function getAccountBalances(cid: number, fromDate?: string, toDate?: string, branchId?: number) {
   // Get all accounts for company
   const accounts = await db.select().from(accountsTable)
     .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)))
@@ -27,6 +34,7 @@ async function getAccountBalances(cid: number, fromDate?: string, toDate?: strin
 
   // Build date filter for journal entries
   const entryFilters: any[] = [eq(journalEntriesTable.companyId, cid)];
+  if (branchId) entryFilters.push(eq(journalEntriesTable.branchId, branchId));
   if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
   if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
 
@@ -62,8 +70,9 @@ router.get("/trial-balance", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(cid, fromDate, toDate);
+    const rows = await getAccountBalances(cid, fromDate, toDate, bid);
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -73,8 +82,9 @@ router.get("/balance-sheet", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({}); return; }
+    const bid = getBid(req);
     const { asOfDate } = req.query as any;
-    const rows = await getAccountBalances(cid, undefined, asOfDate);
+    const rows = await getAccountBalances(cid, undefined, asOfDate, bid);
 
     const assets      = rows.filter(r => r.accountType === "asset");
     const liabilities = rows.filter(r => r.accountType === "liability");
@@ -98,8 +108,9 @@ router.get("/income-statement", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({}); return; }
+    const bid = getBid(req);
     const { fromDate, toDate } = req.query as any;
-    const rows = await getAccountBalances(cid, fromDate, toDate);
+    const rows = await getAccountBalances(cid, fromDate, toDate, bid);
 
     const revenues  = rows.filter(r => r.accountType === "revenue");
     const expenses  = rows.filter(r => r.accountType === "expense");
@@ -123,12 +134,14 @@ router.get("/account-statement", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { accountId, fromDate, toDate } = req.query as any;
     if (!accountId) { res.status(400).json({ error: "accountId مطلوب" }); return; }
 
     const entryFilters: any[] = [
       eq(journalEntriesTable.companyId, cid),
     ];
+    if (bid)      entryFilters.push(eq(journalEntriesTable.branchId, bid));
     if (fromDate) entryFilters.push(gte(journalEntriesTable.entryDate, fromDate));
     if (toDate)   entryFilters.push(lte(journalEntriesTable.entryDate, toDate));
 

@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { CalendarRange, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -21,6 +23,7 @@ const COLS = [
 
 export default function CashFlowReport() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -29,10 +32,11 @@ export default function CashFlowReport() {
   const [from,  setFrom]  = useState(firstDay);
   const [to,    setTo]    = useState(today);
   const [scope, setScope] = useState<"all" | "cash" | "bank">("all");
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ["daily-summary", cid, from, to, scope],
-    queryFn: () => cashAnalyticsApi.dailySummary(cid, from, to, scope),
+    queryKey: ["daily-summary", cid, from, to, scope, branchId],
+    queryFn: () => cashAnalyticsApi.dailySummary(cid, from, to, scope, branchId),
   });
 
   const totals = data.reduce((s, r) => ({
@@ -75,7 +79,7 @@ export default function CashFlowReport() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">معطيات التقرير</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>من تاريخ</Label>
             <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -83,6 +87,10 @@ export default function CashFlowReport() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
           <div className="space-y-1.5">
             <Label>النطاق</Label>

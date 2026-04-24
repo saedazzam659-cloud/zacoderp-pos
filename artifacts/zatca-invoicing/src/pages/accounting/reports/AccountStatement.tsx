@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
 import { FileText, Search, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,7 @@ export default function AccountStatement() {
   const [accountId, setAccountId] = useState("");
   const [fromDate, setFromDate]   = useState(firstOfMonth);
   const [toDate, setToDate]       = useState(today);
+  const [branchId, setBranchId]   = useState<number | undefined>(undefined);
   const [searched, setSearched]   = useState(false);
 
   const EXPORT_COLS = [
@@ -50,13 +52,14 @@ export default function AccountStatement() {
   });
 
   const { data: rows = [], isLoading, refetch } = useQuery<any[]>({
-    queryKey: ["account-statement", cid, accountId, fromDate, toDate],
+    queryKey: ["account-statement", cid, accountId, fromDate, toDate, branchId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cid)       params.set("companyId", String(cid));
       if (accountId) params.set("accountId", accountId);
       if (fromDate)  params.set("fromDate", fromDate);
       if (toDate)    params.set("toDate", toDate);
+      if (branchId)  params.set("branchId", String(branchId));
       const res = await fetch(`${API}/api/accounting-reports/account-statement?${params}`, { headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
       return res.json();
@@ -137,6 +140,10 @@ export default function AccountStatement() {
           <div className="space-y-1.5">
             <Label>{t("accountingReports.toDate")}</Label>
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+          </div>
+          <div className="space-y-1.5 lg:col-span-2">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
         </div>
         <div className="mt-4 flex justify-end">

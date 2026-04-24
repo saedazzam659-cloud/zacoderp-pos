@@ -22,6 +22,13 @@ function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+function getBid(req: any): number | undefined {
+  const v = req.query.branchId;
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /**
  * Purchase totals grouped by supplier (posted invoices and returns within a date range).
  * Includes total payments paid to each supplier in the same range.
@@ -30,9 +37,11 @@ router.get("/by-supplier", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
 
     const invConds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    if (bid)  invConds.push(eq(purchaseInvoicesTable.branchId, bid));
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
 
@@ -49,6 +58,7 @@ router.get("/by-supplier", async (req, res) => {
       .groupBy(purchaseInvoicesTable.supplierId);
 
     const retConds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted")];
+    if (bid)  retConds.push(eq(purchaseReturnsTable.branchId, bid));
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
 
@@ -66,6 +76,7 @@ router.get("/by-supplier", async (req, res) => {
       eq(paymentVouchersTable.status, "posted"),
       eq(paymentVouchersTable.entityType, "supplier"),
     ];
+    if (bid)  payConds.push(eq(paymentVouchersTable.branchId, bid));
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
     if (to)   payConds.push(lte(paymentVouchersTable.date, to));
     const payAgg = await db
@@ -138,8 +149,10 @@ router.get("/by-item", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    if (bid)  conds.push(eq(purchaseInvoicesTable.branchId, bid));
     if (from) conds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(purchaseInvoicesTable.invoiceDate, to));
 
@@ -177,8 +190,10 @@ router.get("/by-period", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to, groupBy } = req.query as Record<string, string>;
     const conds = [eq(purchaseInvoicesTable.companyId, cid), eq(purchaseInvoicesTable.status, "posted")];
+    if (bid)  conds.push(eq(purchaseInvoicesTable.branchId, bid));
     if (from) conds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   conds.push(lte(purchaseInvoicesTable.invoiceDate, to));
 
@@ -219,6 +234,7 @@ router.get("/supplier-statement", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({ opening: 0, lines: [] }); return; }
+    const bid = getBid(req);
     const { supplierId, from, to } = req.query as Record<string, string>;
     const sid = Number(supplierId);
     if (!supplierId || !Number.isFinite(sid)) { res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" }); return; }
@@ -233,6 +249,7 @@ router.get("/supplier-statement", async (req, res) => {
           eq(purchaseInvoicesTable.status, "posted"),
           eq(purchaseInvoicesTable.paymentType, "credit"),
           sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
+          ...(bid ? [eq(purchaseInvoicesTable.branchId, bid)] : []),
         ));
       const [ret] = await db.select({ s: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount}), 0)` })
         .from(purchaseReturnsTable)
@@ -242,6 +259,7 @@ router.get("/supplier-statement", async (req, res) => {
           eq(purchaseReturnsTable.status, "posted"),
           eq(purchaseReturnsTable.paymentType, "credit"),
           sql`${purchaseReturnsTable.returnDate} < ${date}`,
+          ...(bid ? [eq(purchaseReturnsTable.branchId, bid)] : []),
         ));
       const [pay] = await db.select({ s: sql<string>`coalesce(sum(${paymentVouchersTable.amount}), 0)` })
         .from(paymentVouchersTable)
@@ -251,6 +269,7 @@ router.get("/supplier-statement", async (req, res) => {
           eq(paymentVouchersTable.entityId, sid),
           eq(paymentVouchersTable.status, "posted"),
           sql`${paymentVouchersTable.date} < ${date}`,
+          ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
         ));
       return Number(inv.s) - Number(ret.s) - Number(pay.s);
     }
@@ -263,6 +282,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseInvoicesTable.status, "posted"),
       eq(purchaseInvoicesTable.paymentType, "credit"),
     ];
+    if (bid)  invConds.push(eq(purchaseInvoicesTable.branchId, bid));
     if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
     if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
     const invs = await db.select({
@@ -276,6 +296,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(purchaseReturnsTable.status, "posted"),
       eq(purchaseReturnsTable.paymentType, "credit"),
     ];
+    if (bid)  retConds.push(eq(purchaseReturnsTable.branchId, bid));
     if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
     if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
     const rets = await db.select({
@@ -289,6 +310,7 @@ router.get("/supplier-statement", async (req, res) => {
       eq(paymentVouchersTable.entityId, sid),
       eq(paymentVouchersTable.status, "posted"),
     ];
+    if (bid)  payConds.push(eq(paymentVouchersTable.branchId, bid));
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
     if (to)   payConds.push(lte(paymentVouchersTable.date, to));
     const pays = await db.select({
@@ -316,6 +338,7 @@ router.get("/aging", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
     const suppliers = await db.select().from(suppliersTable).where(eq(suppliersTable.companyId, cid));
@@ -332,6 +355,7 @@ router.get("/aging", async (req, res) => {
         eq(purchaseInvoicesTable.status, "posted"),
         eq(purchaseInvoicesTable.paymentType, "credit"),
         lte(purchaseInvoicesTable.invoiceDate, asOf),
+        ...(bid ? [eq(purchaseInvoicesTable.branchId, bid)] : []),
       ))
       .orderBy(asc(purchaseInvoicesTable.invoiceDate), asc(purchaseInvoicesTable.id));
 
@@ -346,6 +370,7 @@ router.get("/aging", async (req, res) => {
         eq(purchaseReturnsTable.status, "posted"),
         eq(purchaseReturnsTable.paymentType, "credit"),
         lte(purchaseReturnsTable.returnDate, asOf),
+        ...(bid ? [eq(purchaseReturnsTable.branchId, bid)] : []),
       ))
       .groupBy(purchaseReturnsTable.supplierId);
 
@@ -360,6 +385,7 @@ router.get("/aging", async (req, res) => {
         eq(paymentVouchersTable.entityType, "supplier"),
         eq(paymentVouchersTable.status, "posted"),
         lte(paymentVouchersTable.date, asOf),
+        ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
       ))
       .groupBy(paymentVouchersTable.entityId);
 
@@ -420,8 +446,10 @@ router.get("/returns-by-supplier", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to } = req.query as Record<string, string>;
     const conds = [eq(purchaseReturnsTable.companyId, cid), eq(purchaseReturnsTable.status, "posted")];
+    if (bid)  conds.push(eq(purchaseReturnsTable.branchId, bid));
     if (from) conds.push(gte(purchaseReturnsTable.returnDate, from));
     if (to)   conds.push(lte(purchaseReturnsTable.returnDate, to));
     const agg = await db

@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { ArrowUpCircle, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -22,6 +24,7 @@ const COLS = [
 
 export default function PaymentVouchersReport() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -31,13 +34,15 @@ export default function PaymentVouchersReport() {
   const [to,   setTo]   = useState(today);
   const [paymentType, setPaymentType] = useState<string>("all");
   const [entityType,  setEntityType]  = useState<string>("all");
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ["payment-vouchers-report", cid, from, to, paymentType, entityType],
+    queryKey: ["payment-vouchers-report", cid, from, to, paymentType, entityType, branchId],
     queryFn: () => cashAnalyticsApi.payments(cid, {
       from, to,
       paymentType: paymentType === "all" ? undefined : paymentType,
       entityType:  entityType  === "all" ? undefined : entityType,
+      branchId,
     }),
   });
 
@@ -73,7 +78,7 @@ export default function PaymentVouchersReport() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">الفلاتر</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="space-y-1.5">
             <Label>من تاريخ</Label>
             <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -81,6 +86,10 @@ export default function PaymentVouchersReport() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
           <div className="space-y-1.5">
             <Label>نوع الدفع</Label>

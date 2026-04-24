@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { Landmark, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -21,14 +23,16 @@ const COLS = [
 
 export default function BankBalances() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
   const [asOf, setAsOf] = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ["bank-balances", cid, asOf],
-    queryFn: () => cashAnalyticsApi.bankBalances(cid, asOf),
+    queryKey: ["bank-balances", cid, asOf, branchId],
+    queryFn: () => cashAnalyticsApi.bankBalances(cid, asOf, branchId),
   });
 
   const totals = data.reduce((s, r) => ({
@@ -68,6 +72,10 @@ export default function BankBalances() {
           <div className="space-y-1.5">
             <Label>بتاريخ</Label>
             <Input type="date" value={asOf} onChange={e => setAsOf(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
         </div>
       </div>

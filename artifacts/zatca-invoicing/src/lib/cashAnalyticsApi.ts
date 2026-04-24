@@ -81,18 +81,20 @@ export type TransferRow = {
 };
 
 export const cashAnalyticsApi = {
-  cashBalances:     (cid?: number, asOf?: string) => get<CashBoxBalanceRow[]>(`/cash-balances${qs({ companyId: cid, asOf })}`),
-  bankBalances:     (cid?: number, asOf?: string) => get<BankBalanceRow[]>(`/bank-balances${qs({ companyId: cid, asOf })}`),
-  cashBoxStatement: (cid: number | undefined, cashBoxId: number, from?: string, to?: string) =>
-    get<AccountStatement>(`/cash-box-statement${qs({ companyId: cid, cashBoxId, from, to })}`),
-  bankStatement:    (cid: number | undefined, bankAccountId: number, from?: string, to?: string) =>
-    get<AccountStatement>(`/bank-statement${qs({ companyId: cid, bankAccountId, from, to })}`),
-  dailySummary:     (cid?: number, from?: string, to?: string, scope: "all" | "cash" | "bank" = "all") =>
-    get<DailySummaryRow[]>(`/daily-summary${qs({ companyId: cid, from, to, scope })}`),
-  receipts:         (cid: number | undefined, p: { from?: string; to?: string; paymentType?: string; cashBoxId?: number; bankAccountId?: number; entityType?: string }) =>
+  cashBalances:     (cid?: number, asOf?: string, branchId?: number) =>
+    get<CashBoxBalanceRow[]>(`/cash-balances${qs({ companyId: cid, asOf, branchId })}`),
+  bankBalances:     (cid?: number, asOf?: string, branchId?: number) =>
+    get<BankBalanceRow[]>(`/bank-balances${qs({ companyId: cid, asOf, branchId })}`),
+  cashBoxStatement: (cid: number | undefined, cashBoxId: number, from?: string, to?: string, branchId?: number) =>
+    get<AccountStatement>(`/cash-box-statement${qs({ companyId: cid, cashBoxId, from, to, branchId })}`),
+  bankStatement:    (cid: number | undefined, bankAccountId: number, from?: string, to?: string, branchId?: number) =>
+    get<AccountStatement>(`/bank-statement${qs({ companyId: cid, bankAccountId, from, to, branchId })}`),
+  dailySummary:     (cid?: number, from?: string, to?: string, scope: "all" | "cash" | "bank" = "all", branchId?: number) =>
+    get<DailySummaryRow[]>(`/daily-summary${qs({ companyId: cid, from, to, scope, branchId })}`),
+  receipts:         (cid: number | undefined, p: { from?: string; to?: string; paymentType?: string; cashBoxId?: number; bankAccountId?: number; entityType?: string; branchId?: number }) =>
     get<VoucherRow[]>(`/receipts${qs({ companyId: cid, ...p })}`),
-  payments:         (cid: number | undefined, p: { from?: string; to?: string; paymentType?: string; cashBoxId?: number; bankAccountId?: number; entityType?: string }) =>
+  payments:         (cid: number | undefined, p: { from?: string; to?: string; paymentType?: string; cashBoxId?: number; bankAccountId?: number; entityType?: string; branchId?: number }) =>
     get<VoucherRow[]>(`/payments${qs({ companyId: cid, ...p })}`),
-  transfers:        (cid?: number, from?: string, to?: string, transferType?: string) =>
-    get<TransferRow[]>(`/transfers${qs({ companyId: cid, from, to, transferType })}`),
+  transfers:        (cid?: number, from?: string, to?: string, transferType?: string, branchId?: number) =>
+    get<TransferRow[]>(`/transfers${qs({ companyId: cid, from, to, transferType, branchId })}`),
 };

@@ -18,6 +18,8 @@ import {
   CheckCircle2, XCircle, Clock, FileBarChart, Download, Filter,
   TrendingUp, AlertCircle, Search,
 } from "lucide-react";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -41,6 +43,7 @@ const COLORS = { approved: "#10b981", rejected: "#ef4444", pending: "#f59e0b" };
 
 export default function ZatcaReport() {
   const { user, token } = useAuth();
+  const { t } = useTranslation();
   const [, navigate] = useLocation();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH = { Authorization: `Bearer ${token}` };
@@ -52,13 +55,18 @@ export default function ZatcaReport() {
   const [dateTo, setDateTo] = useState(today);
   const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "rejected" | "pending">("all");
   const [search, setSearch] = useState("");
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
-  const url = cid
-    ? `${API}/api/sales/sales-invoices-zatca-bridge?companyId=${cid}`
-    : `${API}/api/sales/sales-invoices-zatca-bridge`;
+  const url = (() => {
+    const params = new URLSearchParams();
+    if (cid) params.set("companyId", String(cid));
+    if (branchId) params.set("branchId", String(branchId));
+    const qs = params.toString();
+    return `${API}/api/sales/sales-invoices-zatca-bridge${qs ? `?${qs}` : ""}`;
+  })();
 
   const { data: rows = [], isLoading } = useQuery<Row[]>({
-    queryKey: ["zatca-report", cid],
+    queryKey: ["zatca-report", cid, branchId],
     queryFn: async () => {
       const r = await fetch(url, { headers: authH });
       if (!r.ok) return [];
@@ -215,7 +223,7 @@ export default function ZatcaReport() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
             <div>
               <Label className="text-xs">من تاريخ</Label>
               <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
@@ -223,6 +231,10 @@ export default function ZatcaReport() {
             <div>
               <Label className="text-xs">إلى تاريخ</Label>
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">{t("common.branch")}</Label>
+              <BranchFilter value={branchId} onChange={setBranchId} />
             </div>
             <div>
               <Label className="text-xs">الحالة</Label>

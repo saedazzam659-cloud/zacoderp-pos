@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { Package, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -21,6 +23,7 @@ const EXPORT_COLS = [
 
 export default function SalesByItem() {
   const { fmt, fmtQty } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -28,11 +31,12 @@ export default function SalesByItem() {
 
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["sales-by-item", cid, from, to],
-    queryFn: () => salesAnalyticsApi.byItem(cid, from, to),
+    queryKey: ["sales-by-item", cid, from, to, branchId],
+    queryFn: () => salesAnalyticsApi.byItem(cid, from, to, branchId),
   });
 
   const filtered = (rows as any[]).filter(r =>
@@ -91,6 +95,10 @@ export default function SalesByItem() {
         <div className="space-y-1.5">
           <Label>إلى تاريخ</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label>بحث</Label>

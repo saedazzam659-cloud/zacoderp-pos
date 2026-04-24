@@ -85,12 +85,16 @@ export type ReturnsByCustomerRow = {
 };
 
 export const salesAnalyticsApi = {
-  byCustomer:        (cid?: number, from?: string, to?: string) => get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to })}`),
-  byItem:            (cid?: number, from?: string, to?: string) => get<SalesByItemRow[]>(`/by-item${qs({ companyId: cid, from, to })}`),
-  byPeriod:          (cid?: number, from?: string, to?: string, groupBy: "day" | "month" = "day") =>
-    get<SalesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy })}`),
-  customerStatement: (cid: number | undefined, customerId: number, from?: string, to?: string) =>
-    get<CustomerStatement>(`/customer-statement${qs({ companyId: cid, customerId, from, to })}`),
-  aging:             (cid?: number, asOf?: string) => get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf })}`),
-  returnsByCustomer: (cid?: number, from?: string, to?: string) => get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to })}`),
+  byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId })}`),
+  byItem:            (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<SalesByItemRow[]>(`/by-item${qs({ companyId: cid, from, to, branchId })}`),
+  byPeriod:          (cid?: number, from?: string, to?: string, groupBy: "day" | "month" = "day", branchId?: number) =>
+    get<SalesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy, branchId })}`),
+  customerStatement: (cid: number | undefined, customerId: number, from?: string, to?: string, branchId?: number) =>
+    get<CustomerStatement>(`/customer-statement${qs({ companyId: cid, customerId, from, to, branchId })}`),
+  aging:             (cid?: number, asOf?: string, branchId?: number) =>
+    get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
+  returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId })}`),
 };

@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -35,14 +37,15 @@ const EXPORT_COLS = [
 
 export default function SupplierStatement() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, supplierId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, supplierId: "" });
+  const [filters, setFilters] = useState<{ from: string; to: string; supplierId: string; branchId?: number }>({ from: firstDay, to: today, supplierId: "", branchId: undefined });
+  const [applied, setApplied] = useState<{ from: string; to: string; supplierId: string; branchId?: number }>({ from: firstDay, to: today, supplierId: "", branchId: undefined });
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers", cid],
@@ -55,7 +58,7 @@ export default function SupplierStatement() {
   const { data, isLoading } = useQuery({
     queryKey: ["supplier-statement", cid, applied],
     enabled: !!applied.supplierId,
-    queryFn: () => purchaseAnalyticsApi.supplierStatement(cid, Number(applied.supplierId), applied.from, applied.to),
+    queryFn: () => purchaseAnalyticsApi.supplierStatement(cid, Number(applied.supplierId), applied.from, applied.to, applied.branchId),
   });
 
   const supplier = (suppliers as any[]).find(s => String(s.id) === applied.supplierId);
@@ -113,7 +116,7 @@ export default function SupplierStatement() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">معطيات كشف الحساب</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>المورد <span className="text-red-500">*</span></Label>
             <SearchCombobox
@@ -130,6 +133,10 @@ export default function SupplierStatement() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={filters.branchId} onChange={(v) => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
         <div className="flex justify-end mt-4">

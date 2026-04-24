@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
 import { TrendingUp, Search, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,15 +24,17 @@ export default function IncomeStatement() {
   const firstOfYear = today.slice(0, 4) + "-01-01";
   const [fromDate, setFromDate] = useState(firstOfYear);
   const [toDate, setToDate]     = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [searched, setSearched] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["income-statement", cid, fromDate, toDate],
+    queryKey: ["income-statement", cid, fromDate, toDate, branchId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (cid) params.set("companyId", String(cid));
       params.set("fromDate", fromDate);
       params.set("toDate", toDate);
+      if (branchId) params.set("branchId", String(branchId));
       const res = await fetch(`${API}/api/accounting-reports/income-statement?${params}`, { headers });
       return res.json();
     },
@@ -84,7 +87,7 @@ export default function IncomeStatement() {
 
       {/* Filters */}
       <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>{t("accountingReports.fromDate")}</Label>
             <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -92,6 +95,10 @@ export default function IncomeStatement() {
           <div className="space-y-1.5">
             <Label>{t("accountingReports.toDate")}</Label>
             <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
           <Button className="gap-2" onClick={() => { setSearched(true); refetch(); }} disabled={isLoading}>
             <Search className="h-4 w-4" />

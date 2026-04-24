@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -36,13 +38,14 @@ const COLS = [
 
 export default function CashBoxStatement() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, cashBoxId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, cashBoxId: "" });
+  const [filters, setFilters] = useState<{ from: string; to: string; cashBoxId: string; branchId?: number }>({ from: firstDay, to: today, cashBoxId: "", branchId: undefined });
+  const [applied, setApplied] = useState<{ from: string; to: string; cashBoxId: string; branchId?: number }>({ from: firstDay, to: today, cashBoxId: "", branchId: undefined });
 
   const { data: boxes = [] } = useQuery({
     queryKey: ["cash-boxes", cid],
@@ -55,7 +58,7 @@ export default function CashBoxStatement() {
   const { data, isLoading } = useQuery({
     queryKey: ["cash-box-statement", cid, applied],
     enabled: !!applied.cashBoxId,
-    queryFn: () => cashAnalyticsApi.cashBoxStatement(cid, Number(applied.cashBoxId), applied.from, applied.to),
+    queryFn: () => cashAnalyticsApi.cashBoxStatement(cid, Number(applied.cashBoxId), applied.from, applied.to, applied.branchId),
   });
 
   const box = (boxes as any[]).find(b => String(b.id) === applied.cashBoxId);
@@ -111,7 +114,7 @@ export default function CashBoxStatement() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">معطيات كشف الحساب</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>الخزينة <span className="text-red-500">*</span></Label>
             <SearchCombobox
@@ -128,6 +131,10 @@ export default function CashBoxStatement() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={filters.branchId} onChange={v => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
         <div className="flex justify-end mt-4">

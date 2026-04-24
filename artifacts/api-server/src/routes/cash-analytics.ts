@@ -19,6 +19,13 @@ function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
 
+function getBid(req: any): number | undefined {
+  const v = req.query.branchId;
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 const TRANSFER_TYPE_LABEL: Record<string, string> = {
   cash_to_cash: "خزينة → خزينة",
   cash_to_bank: "خزينة → بنك",
@@ -45,6 +52,7 @@ router.get("/cash-balances", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
     const boxes = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
@@ -59,6 +67,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "cash"),
         lte(receiptVouchersTable.date, asOf),
+        ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
       ))
       .groupBy(receiptVouchersTable.cashBoxId);
 
@@ -72,6 +81,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "cash"),
         lte(paymentVouchersTable.date, asOf),
+        ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
       ))
       .groupBy(paymentVouchersTable.cashBoxId);
 
@@ -84,6 +94,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
+        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.toCashBoxId);
 
@@ -96,6 +107,7 @@ router.get("/cash-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
+        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.fromCashBoxId);
 
@@ -126,6 +138,7 @@ router.get("/bank-balances", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const asOf = (req.query.asOf as string) || new Date().toISOString().slice(0, 10);
 
     const banks = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
@@ -140,6 +153,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(receiptVouchersTable.status, "posted"),
         eq(receiptVouchersTable.paymentType, "bank"),
         lte(receiptVouchersTable.date, asOf),
+        ...(bid ? [eq(receiptVouchersTable.branchId, bid)] : []),
       ))
       .groupBy(receiptVouchersTable.bankAccountId);
 
@@ -153,6 +167,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(paymentVouchersTable.status, "posted"),
         eq(paymentVouchersTable.paymentType, "bank"),
         lte(paymentVouchersTable.date, asOf),
+        ...(bid ? [eq(paymentVouchersTable.branchId, bid)] : []),
       ))
       .groupBy(paymentVouchersTable.bankAccountId);
 
@@ -165,6 +180,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
+        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.toBankId);
 
@@ -177,6 +193,7 @@ router.get("/bank-balances", async (req, res) => {
         eq(cashTransfersTable.companyId, cid),
         eq(cashTransfersTable.status, "posted"),
         lte(cashTransfersTable.date, asOf),
+        ...(bid ? [eq(cashTransfersTable.branchId, bid)] : []),
       ))
       .groupBy(cashTransfersTable.fromBankId);
 
@@ -216,8 +233,9 @@ async function buildAccountStatement(opts: {
   accountId: number;
   from?: string;
   to?: string;
+  bid?: number;
 }) {
-  const { cid, kind, accountId, from, to } = opts;
+  const { cid, kind, accountId, from, to, bid } = opts;
   const idCol = kind === "cash" ? receiptVouchersTable.cashBoxId : receiptVouchersTable.bankAccountId;
   const idCol2 = kind === "cash" ? paymentVouchersTable.cashBoxId : paymentVouchersTable.bankAccountId;
   const trToCol   = kind === "cash" ? cashTransfersTable.toCashBoxId   : cashTransfersTable.toBankId;
@@ -233,6 +251,7 @@ async function buildAccountStatement(opts: {
         eq(table.status, "posted"),
         eq(col, accountId),
         ...extraConds,
+        ...(bid ? [eq(table.branchId, bid)] : []),
         sql`${dateCol} < ${from}`,
       ));
     return Number(row.s);
@@ -253,6 +272,7 @@ async function buildAccountStatement(opts: {
     eq(receiptVouchersTable.paymentType, paymentType),
     eq(idCol, accountId),
   ];
+  if (bid)  recConds.push(eq(receiptVouchersTable.branchId, bid));
   if (from) recConds.push(gte(receiptVouchersTable.date, from));
   if (to)   recConds.push(lte(receiptVouchersTable.date, to));
   const receipts = await db.select({
@@ -268,6 +288,7 @@ async function buildAccountStatement(opts: {
     eq(paymentVouchersTable.paymentType, paymentType),
     eq(idCol2, accountId),
   ];
+  if (bid)  payConds.push(eq(paymentVouchersTable.branchId, bid));
   if (from) payConds.push(gte(paymentVouchersTable.date, from));
   if (to)   payConds.push(lte(paymentVouchersTable.date, to));
   const payments = await db.select({
@@ -282,6 +303,7 @@ async function buildAccountStatement(opts: {
     eq(cashTransfersTable.status, "posted"),
     eq(trToCol, accountId),
   ];
+  if (bid)  trInConds.push(eq(cashTransfersTable.branchId, bid));
   if (from) trInConds.push(gte(cashTransfersTable.date, from));
   if (to)   trInConds.push(lte(cashTransfersTable.date, to));
   const transfersIn = await db.select({
@@ -295,6 +317,7 @@ async function buildAccountStatement(opts: {
     eq(cashTransfersTable.status, "posted"),
     eq(trFromCol, accountId),
   ];
+  if (bid)  trOutConds.push(eq(cashTransfersTable.branchId, bid));
   if (from) trOutConds.push(gte(cashTransfersTable.date, from));
   if (to)   trOutConds.push(lte(cashTransfersTable.date, to));
   const transfersOut = await db.select({
@@ -333,10 +356,11 @@ router.get("/cash-box-statement", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({ opening: 0, lines: [] }); return; }
+    const bid = getBid(req);
     const { cashBoxId, from, to } = req.query as Record<string, string>;
     const id = Number(cashBoxId);
     if (!cashBoxId || !Number.isFinite(id)) { res.status(400).json({ error: "cashBoxId مطلوب" }); return; }
-    const data = await buildAccountStatement({ cid, kind: "cash", accountId: id, from, to });
+    const data = await buildAccountStatement({ cid, kind: "cash", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -345,10 +369,11 @@ router.get("/bank-statement", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json({ opening: 0, lines: [] }); return; }
+    const bid = getBid(req);
     const { bankAccountId, from, to } = req.query as Record<string, string>;
     const id = Number(bankAccountId);
     if (!bankAccountId || !Number.isFinite(id)) { res.status(400).json({ error: "bankAccountId مطلوب" }); return; }
-    const data = await buildAccountStatement({ cid, kind: "bank", accountId: id, from, to });
+    const data = await buildAccountStatement({ cid, kind: "bank", accountId: id, from, to, bid });
     res.json(data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -360,9 +385,11 @@ router.get("/daily-summary", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to, scope = "all" } = req.query as Record<string, string>;
 
     const recConds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
+    if (bid) recConds.push(eq(receiptVouchersTable.branchId, bid));
     if (scope === "cash") recConds.push(eq(receiptVouchersTable.paymentType, "cash"));
     else if (scope === "bank") recConds.push(eq(receiptVouchersTable.paymentType, "bank"));
     if (from) recConds.push(gte(receiptVouchersTable.date, from));
@@ -376,6 +403,7 @@ router.get("/daily-summary", async (req, res) => {
       .groupBy(receiptVouchersTable.date);
 
     const payConds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
+    if (bid) payConds.push(eq(paymentVouchersTable.branchId, bid));
     if (scope === "cash") payConds.push(eq(paymentVouchersTable.paymentType, "cash"));
     else if (scope === "bank") payConds.push(eq(paymentVouchersTable.paymentType, "bank"));
     if (from) payConds.push(gte(paymentVouchersTable.date, from));
@@ -417,8 +445,10 @@ router.get("/receipts", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
     const conds: any[] = [eq(receiptVouchersTable.companyId, cid), eq(receiptVouchersTable.status, "posted")];
+    if (bid)  conds.push(eq(receiptVouchersTable.branchId, bid));
     if (from) conds.push(gte(receiptVouchersTable.date, from));
     if (to)   conds.push(lte(receiptVouchersTable.date, to));
     if (paymentType === "cash" || paymentType === "bank") conds.push(eq(receiptVouchersTable.paymentType, paymentType));
@@ -444,8 +474,10 @@ router.get("/payments", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to, paymentType, cashBoxId, bankAccountId, entityType } = req.query as Record<string, string>;
     const conds: any[] = [eq(paymentVouchersTable.companyId, cid), eq(paymentVouchersTable.status, "posted")];
+    if (bid)  conds.push(eq(paymentVouchersTable.branchId, bid));
     if (from) conds.push(gte(paymentVouchersTable.date, from));
     if (to)   conds.push(lte(paymentVouchersTable.date, to));
     if (paymentType === "cash" || paymentType === "bank") conds.push(eq(paymentVouchersTable.paymentType, paymentType));
@@ -471,8 +503,10 @@ router.get("/transfers", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.json([]); return; }
+    const bid = getBid(req);
     const { from, to, transferType } = req.query as Record<string, string>;
     const conds: any[] = [eq(cashTransfersTable.companyId, cid), eq(cashTransfersTable.status, "posted")];
+    if (bid)  conds.push(eq(cashTransfersTable.branchId, bid));
     if (from) conds.push(gte(cashTransfersTable.date, from));
     if (to)   conds.push(lte(cashTransfersTable.date, to));
     if (transferType === "cash_to_cash" || transferType === "cash_to_bank" ||

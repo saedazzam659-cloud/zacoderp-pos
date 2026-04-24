@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
 import { Users, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
+import { useTranslation } from "react-i18next";
 
 const EXPORT_COLS = [
   { key: "customerNameAr", header: "العميل",         width: 30 },
@@ -22,6 +24,7 @@ const EXPORT_COLS = [
 
 export default function SalesByCustomer() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -29,11 +32,12 @@ export default function SalesByCustomer() {
 
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["sales-by-customer", cid, from, to],
-    queryFn: () => salesAnalyticsApi.byCustomer(cid, from, to),
+    queryKey: ["sales-by-customer", cid, from, to, branchId],
+    queryFn: () => salesAnalyticsApi.byCustomer(cid, from, to, branchId),
   });
 
   const filtered = (rows as any[]).filter(r => !search || r.customerNameAr?.includes(search));
@@ -103,7 +107,11 @@ export default function SalesByCustomer() {
           <Label>إلى تاريخ</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
-        <div className="space-y-1.5 sm:col-span-2">
+        <div className="space-y-1.5">
+          <Label>{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
+        </div>
+        <div className="space-y-1.5">
           <Label>بحث</Label>
           <div className="relative">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

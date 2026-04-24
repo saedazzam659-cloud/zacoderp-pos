@@ -85,12 +85,16 @@ export type ReturnsBySupplierRow = {
 };
 
 export const purchaseAnalyticsApi = {
-  bySupplier:        (cid?: number, from?: string, to?: string) => get<PurchasesBySupplierRow[]>(`/by-supplier${qs({ companyId: cid, from, to })}`),
-  byItem:            (cid?: number, from?: string, to?: string) => get<PurchasesByItemRow[]>(`/by-item${qs({ companyId: cid, from, to })}`),
-  byPeriod:          (cid?: number, from?: string, to?: string, groupBy: "day" | "month" = "day") =>
-    get<PurchasesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy })}`),
-  supplierStatement: (cid: number | undefined, supplierId: number, from?: string, to?: string) =>
-    get<SupplierStatement>(`/supplier-statement${qs({ companyId: cid, supplierId, from, to })}`),
-  aging:             (cid?: number, asOf?: string) => get<SupplierAgingRow[]>(`/aging${qs({ companyId: cid, asOf })}`),
-  returnsBySupplier: (cid?: number, from?: string, to?: string) => get<ReturnsBySupplierRow[]>(`/returns-by-supplier${qs({ companyId: cid, from, to })}`),
+  bySupplier:        (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<PurchasesBySupplierRow[]>(`/by-supplier${qs({ companyId: cid, from, to, branchId })}`),
+  byItem:            (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<PurchasesByItemRow[]>(`/by-item${qs({ companyId: cid, from, to, branchId })}`),
+  byPeriod:          (cid?: number, from?: string, to?: string, groupBy: "day" | "month" = "day", branchId?: number) =>
+    get<PurchasesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy, branchId })}`),
+  supplierStatement: (cid: number | undefined, supplierId: number, from?: string, to?: string, branchId?: number) =>
+    get<SupplierStatement>(`/supplier-statement${qs({ companyId: cid, supplierId, from, to, branchId })}`),
+  aging:             (cid?: number, asOf?: string, branchId?: number) =>
+    get<SupplierAgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
+  returnsBySupplier: (cid?: number, from?: string, to?: string, branchId?: number) =>
+    get<ReturnsBySupplierRow[]>(`/returns-by-supplier${qs({ companyId: cid, from, to, branchId })}`),
 };

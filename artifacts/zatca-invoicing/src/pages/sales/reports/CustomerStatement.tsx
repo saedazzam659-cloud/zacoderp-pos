@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { FileText, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -35,14 +37,15 @@ const EXPORT_COLS = [
 
 export default function CustomerStatement() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, customerId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, customerId: "" });
+  const [filters, setFilters] = useState<{ from: string; to: string; customerId: string; branchId?: number }>({ from: firstDay, to: today, customerId: "", branchId: undefined });
+  const [applied, setApplied] = useState<{ from: string; to: string; customerId: string; branchId?: number }>({ from: firstDay, to: today, customerId: "", branchId: undefined });
 
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", cid],
@@ -55,7 +58,7 @@ export default function CustomerStatement() {
   const { data, isLoading } = useQuery({
     queryKey: ["customer-statement", cid, applied],
     enabled: !!applied.customerId,
-    queryFn: () => salesAnalyticsApi.customerStatement(cid, Number(applied.customerId), applied.from, applied.to),
+    queryFn: () => salesAnalyticsApi.customerStatement(cid, Number(applied.customerId), applied.from, applied.to, applied.branchId),
   });
 
   const customer = (customers as any[]).find(c => String(c.id) === applied.customerId);
@@ -112,7 +115,7 @@ export default function CustomerStatement() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">معطيات كشف الحساب</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>العميل <span className="text-red-500">*</span></Label>
             <SearchCombobox
@@ -129,6 +132,10 @@ export default function CustomerStatement() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={filters.branchId} onChange={(v) => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
         <div className="flex justify-end mt-4">

@@ -1445,6 +1445,10 @@ router.post("/sales-invoices/:id/zatca-submit", async (req, res) => {
 router.get("/sales-invoices-zatca-bridge", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
+    const bidRaw = req.query.branchId;
+    const bid = (bidRaw === undefined || bidRaw === null || bidRaw === "")
+      ? undefined
+      : (Number.isFinite(Number(bidRaw)) && Number(bidRaw) > 0 ? Number(bidRaw) : undefined);
     const rows = await db.select({
       id:                   salesInvoicesTable.id,
       docNumber:            salesInvoicesTable.docNumber,
@@ -1468,7 +1472,10 @@ router.get("/sales-invoices-zatca-bridge", async (req, res) => {
         eq(salesInvoicesTable.customerId, customersTable.id),
         eq(customersTable.companyId, cid),
       ))
-      .where(eq(salesInvoicesTable.companyId, cid))
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        ...(bid ? [eq(salesInvoicesTable.branchId, bid)] : []),
+      ))
       .orderBy(desc(salesInvoicesTable.invoiceDate), desc(salesInvoicesTable.id));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

@@ -1,5 +1,7 @@
 {
   "common": {
+    "branch": "Branch",
+    "allBranches": "All Branches",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",

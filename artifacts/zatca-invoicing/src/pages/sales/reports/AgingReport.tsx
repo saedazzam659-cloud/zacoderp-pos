@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -22,15 +24,17 @@ const EXPORT_COLS = [
 
 export default function AgingReport() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
   const [asOf, setAsOf] = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["aging", cid, asOf],
-    queryFn: () => salesAnalyticsApi.aging(cid, asOf),
+    queryKey: ["aging", cid, asOf, branchId],
+    queryFn: () => salesAnalyticsApi.aging(cid, asOf, branchId),
   });
 
   const filtered = (rows as any[]).filter(r =>
@@ -92,10 +96,14 @@ export default function AgingReport() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
           <Label>بتاريخ</Label>
           <Input type="date" value={asOf} onChange={e => setAsOf(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label>بحث</Label>

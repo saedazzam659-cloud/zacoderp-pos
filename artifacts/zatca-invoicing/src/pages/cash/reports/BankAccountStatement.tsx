@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { Banknote, Search, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -36,13 +38,14 @@ const COLS = [
 
 export default function BankAccountStatement() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
 
-  const [filters, setFilters] = useState({ from: firstDay, to: today, bankAccountId: "" });
-  const [applied, setApplied] = useState({ from: firstDay, to: today, bankAccountId: "" });
+  const [filters, setFilters] = useState<{ from: string; to: string; bankAccountId: string; branchId?: number }>({ from: firstDay, to: today, bankAccountId: "", branchId: undefined });
+  const [applied, setApplied] = useState<{ from: string; to: string; bankAccountId: string; branchId?: number }>({ from: firstDay, to: today, bankAccountId: "", branchId: undefined });
 
   const { data: banks = [] } = useQuery({
     queryKey: ["bank-accounts", cid],
@@ -55,7 +58,7 @@ export default function BankAccountStatement() {
   const { data, isLoading } = useQuery({
     queryKey: ["bank-statement", cid, applied],
     enabled: !!applied.bankAccountId,
-    queryFn: () => cashAnalyticsApi.bankStatement(cid, Number(applied.bankAccountId), applied.from, applied.to),
+    queryFn: () => cashAnalyticsApi.bankStatement(cid, Number(applied.bankAccountId), applied.from, applied.to, applied.branchId),
   });
 
   const bank = (banks as any[]).find(b => String(b.id) === applied.bankAccountId);
@@ -111,7 +114,7 @@ export default function BankAccountStatement() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-semibold">معطيات كشف الحساب</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
             <Label>الحساب البنكي <span className="text-red-500">*</span></Label>
             <SearchCombobox
@@ -128,6 +131,10 @@ export default function BankAccountStatement() {
           <div className="space-y-1.5">
             <Label>إلى تاريخ</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("common.branch")}</Label>
+            <BranchFilter value={filters.branchId} onChange={v => setFilters(p => ({ ...p, branchId: v }))} />
           </div>
         </div>
         <div className="flex justify-end mt-4">

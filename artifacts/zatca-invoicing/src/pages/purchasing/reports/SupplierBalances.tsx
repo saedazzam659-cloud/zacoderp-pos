@@ -5,6 +5,9 @@ import { purchaseAnalyticsApi } from "@/lib/purchaseAnalyticsApi";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
+import { Label } from "@/components/ui/label";
 import { Wallet, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { cn } from "@/lib/utils";
@@ -25,10 +28,12 @@ const EXPORT_COLS = [
 // We derive supplier balance from aging totals (positive = we still owe them).
 export default function SupplierBalances() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "credit" | "debit">("all");
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -40,8 +45,8 @@ export default function SupplierBalances() {
     },
   });
   const { data: aging = [], isLoading } = useQuery({
-    queryKey: ["supplier-aging-balances", cid, today],
-    queryFn: () => purchaseAnalyticsApi.aging(cid, today),
+    queryKey: ["supplier-aging-balances", cid, today, branchId],
+    queryFn: () => purchaseAnalyticsApi.aging(cid, today, branchId),
   });
 
   const balBySupplier: Record<number, number> = {};
@@ -101,10 +106,14 @@ export default function SupplierBalances() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="relative sm:col-span-2">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pr-9" placeholder="بحث بالاسم أو الهاتف..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <select className="border rounded-md px-3 py-2 text-sm bg-card" value={filter} onChange={e => setFilter(e.target.value as any)}>
           <option value="all">كل الموردين</option>

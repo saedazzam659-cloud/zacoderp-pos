@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
+import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { RotateCcw, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
@@ -18,6 +20,7 @@ const EXPORT_COLS = [
 
 export default function PurchaseReturnsReport() {
   const { fmt } = useFmt();
+  const { t } = useTranslation();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -25,11 +28,12 @@ export default function PurchaseReturnsReport() {
 
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(today);
+  const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["returns-by-supplier", cid, from, to],
-    queryFn: () => purchaseAnalyticsApi.returnsBySupplier(cid, from, to),
+    queryKey: ["returns-by-supplier", cid, from, to, branchId],
+    queryFn: () => purchaseAnalyticsApi.returnsBySupplier(cid, from, to, branchId),
   });
 
   const filtered = (rows as any[]).filter(r => !search || r.supplierNameAr?.includes(search));
@@ -77,7 +81,7 @@ export default function PurchaseReturnsReport() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
           <Label>من تاريخ</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
@@ -85,6 +89,10 @@ export default function PurchaseReturnsReport() {
         <div className="space-y-1.5">
           <Label>إلى تاريخ</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t("common.branch")}</Label>
+          <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5">
           <Label>بحث</Label>
