@@ -325,13 +325,34 @@ export async function restoreFromSnapshotPayload(
 }
 
 router.post("/restore", async (req, res) => {
+  let companyId: number | undefined;
   try {
-    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
     const out = await restoreFromSnapshotPayload(companyId, req.body?.backup);
+    // Audit successful restore (module="backups") so all backup write paths
+    // share a uniform accountability trail.
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "restore",
+      success: true,
+      message: `استعادة ملف نسخة احتياطية للشركة #${companyId}`,
+    });
     res.json(out);
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+  } catch (e: any) {
+    if (companyId) {
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "restore",
+        success: false,
+        message: `فشل استعادة ملف نسخة احتياطية للشركة #${companyId}: ${e?.message ?? "خطأ"}`,
+      });
+    }
+    res.status(400).json({ error: e.message });
+  }
 });
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -466,26 +487,38 @@ router.post("/auto/:id/restore", async (req, res) => {
     }
 
     // Mandatory pre-restore safety snapshot — if it fails we abort with NO
-    // data changes so the operator never loses state silently.
+    // data changes so the operator never loses state silently. We also keep
+    // the resulting preRestoreId so the response contract matches what the
+    // Backup Operations Center expects (used to build a recovery toast link).
+    let preRestoreId: number | null = null;
     try {
-      await persistSnapshot(companyId, "manual");
+      preRestoreId = await persistSnapshot(companyId, "manual");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "تعذّر إنشاء نسخة الأمان";
+      // Audit the failed write attempt so the operator is accountable.
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "restore",
+        success: false, message: `فشل إنشاء نسخة الأمان قبل الاستعادة #${id}: ${msg}`,
+      });
       res.status(500).json({ error: `فشل إنشاء نسخة الأمان قبل الاستعادة: ${msg}` });
       return;
     }
 
     const out = await restoreFromSnapshotPayload(companyId, row.data);
 
-    if (isCrossTenantSuperadmin(req)) {
-      await writeAudit({
-        userId: req.authUser?.id ?? null,
-        username: req.authUser?.username ?? null,
-        companyId, module: "backups", action: "restore",
-        success: true, message: `استعادة نسخة #${id} للشركة #${companyId}`,
-      });
-    }
-    res.json(out);
+    // ALL successful writes are audited under module="backups", regardless of
+    // whether the caller is the tenant or a cross-tenant superadmin — this is
+    // the contract the Backup Operations Center relies on.
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "restore",
+      success: true,
+      message: `استعادة نسخة #${id} للشركة #${companyId} (نسخة أمان #${preRestoreId})`,
+    });
+    res.json({ ...out, snapshotId: id, preRestoreId });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -498,6 +531,12 @@ router.delete("/auto/:id", async (req, res) => {
     if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
     if (companyId && row.companyId !== companyId) { res.status(403).json({ error: "ممنوع" }); return; }
     await db.delete(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId: row.companyId, module: "backups", action: "delete",
+      success: true, message: `حذف نسخة #${id} للشركة #${row.companyId}`,
+    });
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -521,6 +560,13 @@ router.post("/auto/settings", async (req, res) => {
     if (!Object.keys(patch).length) { res.status(400).json({ error: "لا توجد تغييرات" }); return; }
 
     await db.update(companiesTable).set(patch).where(eq(companiesTable.id, companyId));
+    await writeAudit({
+      userId: req.authUser?.id ?? null,
+      username: req.authUser?.username ?? null,
+      companyId, module: "backups", action: "edit",
+      success: true,
+      message: `تعديل إعدادات النسخ للشركة #${companyId}: ${Object.keys(patch).join(", ")}`,
+    });
     res.json({ ok: true, settings: patch });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -530,8 +576,25 @@ router.post("/auto/run-now", async (req, res) => {
   try {
     const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
     if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
-    const id = await persistSnapshot(companyId, "manual");
-    res.json({ ok: true, id });
+    try {
+      const id = await persistSnapshot(companyId, "manual");
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "create",
+        success: true, message: `أخذ نسخة يدوية #${id} للشركة #${companyId}`,
+      });
+      res.json({ ok: true, id });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "فشل أخذ النسخة";
+      await writeAudit({
+        userId: req.authUser?.id ?? null,
+        username: req.authUser?.username ?? null,
+        companyId, module: "backups", action: "create",
+        success: false, message: `فشل أخذ نسخة يدوية للشركة #${companyId}: ${msg}`,
+      });
+      throw e;
+    }
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
