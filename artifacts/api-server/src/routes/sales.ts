@@ -247,12 +247,15 @@ router.post("/sales-invoices", async (req, res) => {
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId } = req.body;
+            posSessionId, salesRepId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    // Snapshot the rep's commission % at save time so historical invoices keep
+    // their commission even if the rep's % changes later.
+    const repInfo = await resolveRepCommission(cid, salesRepId, totals.totalAmount);
     const [inv] = await db.insert(salesInvoicesTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
@@ -274,6 +277,9 @@ router.post("/sales-invoices", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      salesRepId:         repInfo.salesRepId,
+      commissionPct:      repInfo.commissionPct,
+      commissionAmount:   repInfo.commissionAmount,
     }).returning();
     // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
     if (posSessionId) {
@@ -305,6 +311,7 @@ router.put("/sales-invoices/:id", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+    const repInfo = await resolveRepCommission(cid, (req.body as any).salesRepId, totals.totalAmount);
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
       docNumber: docNumber || null, invoiceDate,
@@ -324,6 +331,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      salesRepId:         repInfo.salesRepId,
+      commissionPct:      repInfo.commissionPct,
+      commissionAmount:   repInfo.commissionAmount,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (lines !== undefined) {

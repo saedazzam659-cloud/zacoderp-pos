@@ -39,6 +39,7 @@ import notificationsRouter from "./notifications";
 import supportMessagesRouter from "./support-messages";
 import accountingMappingsRouter from "./accounting-mappings";
 import backupRouter from "./backup";
+import salesRepsRouter from "./sales-reps";
 
 const router: IRouter = Router();
 
@@ -80,6 +81,7 @@ router.use("/notifications", notificationsRouter);
 router.use("/support-messages", supportMessagesRouter);
 router.use("/accounting-mappings", accountingMappingsRouter);
 router.use("/backup", backupRouter);
+router.use("/sales-reps", salesRepsRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

@@ -20,6 +20,7 @@ export const customersTable = pgTable("customers", {
   postalCode: text("postal_code"),
   country:   text("country").default("SA"),
   accountId: integer("account_id"),
+  salesRepId: integer("sales_rep_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -71,6 +71,7 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   description:   text("description"),
   notes:         text("notes"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
+  salesRepId:    integer("sales_rep_id"),
   journalEntryId: integer("journal_entry_id"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
 });

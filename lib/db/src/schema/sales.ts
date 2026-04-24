@@ -46,6 +46,11 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   zatcaAiSuggestion:     text("zatca_ai_suggestion"),
   posSessionId:   integer("pos_session_id"),
   createdById:    integer("created_by_id"),
+  // Sales rep + commission snapshot (commissionPct copied from rep at save time
+  // so historical invoices keep their original % even if the rep's % changes)
+  salesRepId:        integer("sales_rep_id"),
+  commissionPct:     numeric("commission_pct",     { precision: 6,  scale: 3 }).notNull().default("0"),
+  commissionAmount:  numeric("commission_amount",  { precision: 15, scale: 2 }).notNull().default("0"),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });
