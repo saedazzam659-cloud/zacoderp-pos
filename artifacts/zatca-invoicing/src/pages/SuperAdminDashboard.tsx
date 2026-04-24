@@ -118,20 +118,15 @@ export default function SuperAdminDashboard() {
   const { token } = useAuth();
   const headers = { Authorization: `Bearer ${token}` };
 
+  // Single consolidated query — every figure on this page is computed
+  // server-side in /api/admin/dashboard. Pending-request preview lives in
+  // the System Health card (with a direct link), so no second query is
+  // needed.
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["admin-dashboard"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/admin/dashboard`, { headers });
       if (!res.ok) throw new Error("فشل تحميل بيانات اللوحة");
-      return res.json();
-    },
-    refetchInterval: 30000,
-  });
-
-  const { data: recentRequests = [] } = useQuery<any[]>({
-    queryKey: ["admin-requests-pending"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/api/admin/requests?status=pending`, { headers });
       return res.json();
     },
     refetchInterval: 30000,
@@ -371,48 +366,71 @@ export default function SuperAdminDashboard() {
         </Card>
       </div>
 
-      {/* ─── Quick links to all SuperAdmin areas ──────────────────────── */}
+      {/* ─── Quick links to every SuperAdmin area ─────────────────────── */}
+      {/* Includes the four Control-Center pillars (Backups / Security /     */}
+      {/* Reports / Maintenance) — those that are not yet built carry a      */}
+      {/* "قريباً" badge but still appear so navigation is discoverable.    */}
       <div>
         <CategoryHeader icon={LineChartIcon} label="روابط سريعة" color="text-foreground" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[
+            // ── Existing screens ──────────────────────────────────────
             { title: "طلبات التسجيل", desc: (c?.pending ?? 0) > 0 ? `${c?.pending} طلب بانتظار المراجعة` : "لا توجد طلبات معلقة",
-              href: "/admin/requests", icon: Clock, bg: "bg-amber-100", color: "text-amber-700",
-              variant: (c?.pending ?? 0) > 0 ? "default" as const : "outline" as const },
-            { title: "إضافة شركة جديدة", desc: "أضف شركة مباشرة بدون انتظار موافقة",
-              href: "/companies/new", icon: Plus, bg: "bg-primary/10", color: "text-primary", variant: "outline" as const },
-            { title: "إدارة الاشتراكات والباقات", desc: "تعديل باقات الشركات والأسعار",
-              href: "/admin/subscriptions", icon: Package, bg: "bg-violet-100", color: "text-violet-700", variant: "outline" as const },
+              href: "/admin/requests", icon: Clock, bg: "bg-amber-100", color: "text-amber-700" },
+            { title: "إدارة الاشتراكات والباقات", desc: `${s?.active ?? 0} اشتراك نشط${(s?.expiring ?? 0) > 0 ? ` • ${s?.expiring} ينتهي قريباً` : ""}`,
+              href: "/admin/subscriptions", icon: Package, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "التراخيص", desc: "إصدار وإدارة تراخيص الشركات",
-              href: "/admin/licenses", icon: KeyRound, bg: "bg-blue-100", color: "text-blue-700", variant: "outline" as const },
+              href: "/admin/licenses", icon: KeyRound, bg: "bg-blue-100", color: "text-blue-700" },
+            // ── Control-Center pillars ────────────────────────────────
+            { title: "مركز النسخ الاحتياطي", desc: `${b?.last7d ?? 0} نسخة آخر 7 أيام${(b?.missingCount ?? 0) > 0 ? ` • ${b?.missingCount} شركة متأخرة` : ""}`,
+              href: "/admin/backups", icon: HardDrive, bg: "bg-emerald-100", color: "text-emerald-700", soon: true },
+            { title: "مركز الأمان", desc: `${a?.logins24h ?? 0} دخول • ${a?.denied7d ?? 0} رفض (7 أيام)`,
+              href: "/admin/security", icon: ShieldCheck, bg: "bg-rose-100", color: "text-rose-700", soon: true },
+            { title: "تقارير عابرة للشركات", desc: "أداء وتشغيل وباقات",
+              href: "/admin/reports", icon: FileBarChart, bg: "bg-indigo-100", color: "text-indigo-700", soon: true },
+            { title: "صندوق أدوات الصيانة", desc: "قيود ومراجع ومسلسلات وأدوات سلامة البيانات",
+              href: "/admin/ai-fix", icon: Wrench, bg: "bg-slate-100", color: "text-slate-700" },
+            // ── Other admin tools ─────────────────────────────────────
             { title: "سجل التدقيق", desc: `${a?.eventsToday ?? 0} حدث اليوم`,
-              href: "/admin/audit-log", icon: ScrollText, bg: "bg-slate-100", color: "text-slate-700", variant: "outline" as const },
+              href: "/admin/audit-log", icon: ScrollText, bg: "bg-slate-100", color: "text-slate-700" },
             { title: "صندوق الدعم الفني", desc: "رسائل وردت من الشركات",
-              href: "/admin/support", icon: Inbox, bg: "bg-cyan-100", color: "text-cyan-700", variant: "outline" as const },
+              href: "/admin/support", icon: Inbox, bg: "bg-cyan-100", color: "text-cyan-700" },
             { title: "تنظيف حركات المخزون اليتيمة", desc: "حذف حركات المخزون لفواتير محذوفة",
-              href: "/admin/orphan-stock", icon: AlertTriangle, bg: "bg-amber-100", color: "text-amber-700", variant: "outline" as const },
+              href: "/admin/orphan-stock", icon: AlertTriangle, bg: "bg-amber-100", color: "text-amber-700" },
             { title: "أدوات إصلاح الشركة الذكية", desc: "تشخيص ومعالجة مشاكل البيانات",
-              href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700", variant: "outline" as const },
+              href: "/admin/ai-fix", icon: Sparkles, bg: "bg-violet-100", color: "text-violet-700" },
             { title: "صلاحيات القوائم", desc: "إظهار وإخفاء أقسام لكل شركة",
-              href: "/admin/menu-permissions", icon: Wrench, bg: "bg-slate-100", color: "text-slate-700", variant: "outline" as const },
-          ].map(qa => (
-            <Link key={qa.href} href={qa.href}>
-              <Card className="border-dashed border-2 hover:border-primary/50 transition-colors cursor-pointer h-full">
+              href: "/admin/menu-permissions", icon: BarChart3, bg: "bg-slate-100", color: "text-slate-700" },
+          ].map((qa: any, i) => {
+            const inner = (
+              <Card className={`border-dashed border-2 transition-colors h-full ${
+                qa.soon ? "opacity-90 hover:border-amber-300" : "hover:border-primary/50 cursor-pointer"
+              }`}>
                 <CardContent className="pt-4 pb-3 px-4">
                   <div className="flex items-center gap-3">
                     <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${qa.bg}`}>
                       <qa.icon className={`h-4.5 w-4.5 ${qa.color}`} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-sm text-foreground truncate">{qa.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-sm text-foreground truncate">{qa.title}</p>
+                        {qa.soon && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 shrink-0">
+                            قريباً
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{qa.desc}</p>
                     </div>
-                    <ArrowLeft className="h-4 w-4 text-muted-foreground shrink-0" />
+                    {!qa.soon && <ArrowLeft className="h-4 w-4 text-muted-foreground shrink-0" />}
                   </div>
                 </CardContent>
               </Card>
-            </Link>
-          ))}
+            );
+            return qa.soon
+              ? <div key={`${qa.href}-${i}`}>{inner}</div>
+              : <Link key={`${qa.href}-${i}`} href={qa.href}>{inner}</Link>;
+          })}
         </div>
       </div>
 
