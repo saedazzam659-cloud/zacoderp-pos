@@ -31,13 +31,14 @@ export default function PlanUsageReport() {
   const [search, setSearch] = useState("");
   const [onlyOver, setOnlyOver] = useState(false);
 
-  // Backend filters by name when ?search is set so CSV export matches the
-  // visible table. The "over limit" toggle is a UI-only refinement.
+  // All filters (search + onlyOver) are sent to the backend so CSV export
+  // and the visible table stay in sync.
   const queryString = useMemo(() => {
     const qs = new URLSearchParams(periodToQuery(period));
     if (search.trim()) qs.set("search", search.trim());
+    if (onlyOver) qs.set("onlyOver", "true");
     return qs.toString();
-  }, [period.preset, period.from, period.to, search]);
+  }, [period.preset, period.from, period.to, search, onlyOver]);
 
   const { data, isLoading, error } = useQuery<UsageResp>({
     queryKey: ["report-plan-usage", queryString],
@@ -50,10 +51,7 @@ export default function PlanUsageReport() {
     },
   });
 
-  const filtered = useMemo(
-    () => (data?.rows ?? []).filter(r => !onlyOver || r.overLimit),
-    [data, onlyOver],
-  );
+  const filtered = data?.rows ?? [];
 
   return (
     <div className="space-y-4" dir="rtl">

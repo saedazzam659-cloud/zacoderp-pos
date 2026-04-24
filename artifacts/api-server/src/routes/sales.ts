@@ -927,10 +927,14 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
         }
       }
     }
+    // Sales-return mappings fall back to sales-invoice mappings when the company
+    // hasn't configured a separate set for returns (a return naturally reverses
+    // the same accounts that the original sale used).
     const mapSr = await loadMappings(cid, "sales_return");
-    const salesAccId    = pickAccount(ret.salesAccountId,    mapSr("sales_return", "revenue"));
-    const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs"));
-    const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output"));
+    const mapSi = await loadMappings(cid, "sales_invoice");
+    const salesAccId    = pickAccount(ret.salesAccountId,    mapSr("sales_return", "revenue")    ?? mapSi("sales_invoice", "revenue"));
+    const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs")       ?? mapSi("sales_invoice", "cogs"));
+    const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output") ?? mapSi("sales_invoice", "vat_output"));
     if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
     if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
     // Inventory account derived from warehouse — verify each used warehouse has one
@@ -989,7 +993,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
           }),
         // Credits (reversed)
         { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
-        { accountId: ret.cogsAccountId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
+        { accountId: cogsAccId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
       ],
     });
 
