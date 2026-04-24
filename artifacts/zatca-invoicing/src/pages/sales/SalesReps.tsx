@@ -14,8 +14,11 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
-  Phone, Mail, MapPin, Percent, Target, Users,
+  Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -67,6 +70,29 @@ export default function SalesReps() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [deleteRep, setDeleteRep] = useState<Rep | null>(null);
+  const [aiRep, setAiRep] = useState<Rep | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  async function runAiAnalysis(rep: Rep) {
+    setAiRep(rep);
+    setAiAnalysis("");
+    setAiLoading(true);
+    try {
+      const r = await fetch(`${API}/api/sales-reps/${rep.id}/ai-analysis?companyId=${cid}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error ?? "فشل التحليل");
+      setAiAnalysis(j.analysis ?? "");
+    } catch (e: any) {
+      toast({ title: "تعذّر التحليل", description: String(e?.message ?? e), variant: "destructive" });
+      setAiRep(null);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   const { data: reps = [], isLoading } = useQuery<Rep[]>({
     queryKey: ["sales-reps", cid],
@@ -463,6 +489,16 @@ export default function SalesReps() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        className="h-8 w-8 text-violet-600 hover:text-violet-700"
+                        onClick={() => runAiAnalysis(r)}
+                        title="تحليل الأداء بالذكاء الاصطناعي"
+                        data-testid={`btn-ai-${r.id}`}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         className="h-8 w-8"
                         onClick={() => openEdit(r)}
                         data-testid={`btn-edit-${r.id}`}
@@ -510,6 +546,37 @@ export default function SalesReps() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!aiRep} onOpenChange={(o) => { if (!o) { setAiRep(null); setAiAnalysis(""); } }}>
+        <DialogContent dir="rtl" className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-violet-600" />
+              تحليل أداء المندوب: {aiRep?.nameAr}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-2">
+            {aiLoading ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin mb-3 text-violet-600" />
+                <p className="text-sm">جارٍ تحليل بيانات آخر 90 يوماً…</p>
+                <p className="text-xs mt-1">قد يستغرق الأمر بضع ثوان.</p>
+              </div>
+            ) : aiAnalysis ? (
+              <div
+                className="prose prose-sm max-w-none whitespace-pre-wrap leading-relaxed text-foreground"
+                data-testid="ai-analysis-content"
+              >
+                {aiAnalysis}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-6 text-center">
+                لا يوجد محتوى للعرض.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

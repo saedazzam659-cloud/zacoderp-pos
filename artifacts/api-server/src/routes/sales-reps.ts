@@ -7,9 +7,10 @@ import {
   salesInvoicesTable,
   receiptVouchersTable, // used by delete guard so we don't orphan collection-commission history
 } from "@workspace/db";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 const router = Router();
 router.use(extractAuth);
@@ -318,6 +319,164 @@ router.get("/reports/sales", async (req, res) => {
     });
     res.json(out);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── AI PERFORMANCE ANALYSIS ─────────────────────────────────────────────────
+// POST /api/sales-reps/:id/ai-analysis?companyId=X
+// Aggregates last-90-days facts about the rep and asks Claude for an Arabic
+// performance review with concrete recommendations. Returns markdown text.
+router.post("/:id/ai-analysis", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+
+    const [rep] = await db.select().from(salesRepsTable)
+      .where(and(eq(salesRepsTable.id, id), eq(salesRepsTable.companyId, cid)));
+    if (!rep) { res.status(404).json({ error: "المندوب غير موجود" }); return; }
+
+    // Window: last 90 days (date strings YYYY-MM-DD).
+    const today = new Date();
+    const since = new Date(today.getTime() - 90 * 86400_000).toISOString().slice(0, 10);
+    const monthStart = `${today.toISOString().slice(0, 7)}-01`;
+
+    // Posted invoices for this rep in the window.
+    const invs = await db.select({
+      id:               salesInvoicesTable.id,
+      invoiceDate:      salesInvoicesTable.invoiceDate,
+      customerId:       salesInvoicesTable.customerId,
+      totalAmount:      salesInvoicesTable.totalAmount,
+      commissionAmount: salesInvoicesTable.commissionAmount,
+      status:           salesInvoicesTable.status,
+    })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.salesRepId, id),
+        eq(salesInvoicesTable.status, "posted"),
+        sql`${salesInvoicesTable.invoiceDate} >= ${since}`,
+      ));
+
+    let totalSales = 0, totalCommission = 0, mtdSales = 0;
+    const byCustomer = new Map<number, number>();
+    for (const inv of invs) {
+      const t = Number(inv.totalAmount ?? 0);
+      totalSales += t;
+      totalCommission += Number(inv.commissionAmount ?? 0);
+      if (inv.invoiceDate >= monthStart) mtdSales += t;
+      if (inv.customerId != null) {
+        byCustomer.set(inv.customerId, (byCustomer.get(inv.customerId) ?? 0) + t);
+      }
+    }
+
+    // Top 5 customers by sales value.
+    const topCustIds = [...byCustomer.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([cidc]) => cidc);
+    const custRows = topCustIds.length
+      ? await db.select({ id: customersTable.id, nameAr: customersTable.nameAr })
+          .from(customersTable)
+          .where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, topCustIds)))
+      : [];
+    const topCustomers = topCustIds.map(cidc => ({
+      name:  custRows.find(c => c.id === cidc)?.nameAr ?? `#${cidc}`,
+      total: byCustomer.get(cidc) ?? 0,
+    }));
+
+    // Linked customers count (book size).
+    const [{ n: bookSize }] = await db.select({ n: sql<number>`count(*)::int` })
+      .from(customersTable)
+      .where(and(eq(customersTable.companyId, cid), eq(customersTable.salesRepId, id)));
+
+    // Recent visits (last 30 days, up to 30 entries).
+    const since30 = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
+    const visits = await db.select()
+      .from(salesRepVisitsTable)
+      .where(and(
+        eq(salesRepVisitsTable.companyId, cid),
+        eq(salesRepVisitsTable.salesRepId, id),
+        sql`${salesRepVisitsTable.visitDate} >= ${since30}`,
+      ))
+      .orderBy(desc(salesRepVisitsTable.visitDate))
+      .limit(30);
+    const visitsByOutcome = visits.reduce((acc, v) => {
+      acc[v.outcome] = (acc[v.outcome] ?? 0) + 1; return acc;
+    }, {} as Record<string, number>);
+
+    const target = Number(rep.monthlyTarget ?? 0);
+    const targetPct = target > 0 ? Math.round((mtdSales / target) * 100) : null;
+
+    const facts = {
+      rep: {
+        name:           rep.nameAr,
+        code:           rep.code,
+        region:         rep.region,
+        commissionPct:  Number(rep.commissionPct),
+        commissionType: rep.commissionType,
+        monthlyTarget:  target,
+        isActive:       rep.isActive,
+      },
+      window: { since, today: today.toISOString().slice(0, 10), monthStart },
+      sales: {
+        invoiceCount90d:     invs.length,
+        totalSales90d:       Number(totalSales.toFixed(2)),
+        totalCommission90d:  Number(totalCommission.toFixed(2)),
+        monthToDateSales:    Number(mtdSales.toFixed(2)),
+        monthlyTarget:       target,
+        targetAchievedPct:   targetPct,
+        avgInvoiceValue:     invs.length ? Number((totalSales / invs.length).toFixed(2)) : 0,
+      },
+      bookSize,
+      topCustomers,
+      visits30d: {
+        total:     visits.length,
+        byOutcome: visitsByOutcome,
+      },
+    };
+
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيّأة على الخادم." });
+      return;
+    }
+
+    const client = new Anthropic({
+      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+    });
+
+    const prompt = `أنت محلل مبيعات خبير في شركة سعودية تستخدم نظام محاسبة عربي.
+حلّل أداء مندوب المبيعات التالي بناءً على البيانات الموضوعية فقط، واكتب الردّ بالعربية الفصحى الواضحة وبتنسيق Markdown.
+
+البيانات (JSON):
+\`\`\`json
+${JSON.stringify(facts, null, 2)}
+\`\`\`
+
+اكتب الردّ في الأقسام التالية فقط:
+1. **ملخص الأداء** — فقرة قصيرة (سطرين-ثلاثة) تذكر المبيعات والعمولة وتحقيق الهدف.
+2. **نقاط القوة** — قائمة 2-4 نقاط مرتكزة على البيانات.
+3. **نقاط للتحسين** — قائمة 2-4 نقاط محددة (مثلاً اعتماد على عميل واحد، نقص زيارات، تحقيق هدف منخفض).
+4. **توصيات عملية** — قائمة 3-5 إجراءات قابلة للتنفيذ خلال 30 يوماً.
+
+قواعد:
+- لا تخترع أرقاماً غير موجودة في البيانات.
+- إذا كانت البيانات شحيحة (صفر فواتير أو صفر زيارات) صرّح بذلك واقترح خطوات لجمع بيانات.
+- استخدم القيم بالريال السعودي (ر.س).`;
+
+    const message = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8192,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const block = message.content[0];
+    const analysis = block && block.type === "text" ? block.text : "";
+
+    res.json({ analysis, facts });
+  } catch (e: any) {
+    console.error("[sales-reps ai-analysis]", e);
+    res.status(500).json({ error: e?.message ?? "فشل تحليل الأداء" });
+  }
 });
 
 export default router;
