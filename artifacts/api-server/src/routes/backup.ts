@@ -199,30 +199,32 @@ ${JSON.stringify(samples, null, 2).slice(0, 3500)}
  *   • Accounts are inserted root-first by breadth so self-ref parentId can be
  *     remapped from the same table's in-progress id-map.
  * ─────────────────────────────────────────────────────────────────────────── */
-router.post("/restore", async (req, res) => {
-  try {
-    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
-    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+/**
+ * Reusable restore worker — extracted so SuperAdmin admin routes can re-use
+ * the same idempotent restore logic without HTTP-forwarding into this
+ * tenant-scoped router.
+ */
+export async function restoreFromSnapshotPayload(
+  companyId: number,
+  payload: { data?: Record<string, unknown> } | null | undefined,
+): Promise<{
+  ok: true;
+  companyId: number;
+  report: Record<string, { received: number; inserted: number; matched: number; failed: number }>;
+}> {
+  if (!payload || typeof payload !== "object" || !payload.data) {
+    throw new Error("ملف نسخة احتياطية غير صالح");
+  }
+  const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
+  const idMap: Record<string, Map<number, number>> = {};
 
-    const payload = req.body?.backup;
-    if (!payload || typeof payload !== "object" || !payload.data) {
-      res.status(400).json({ error: "ملف نسخة احتياطية غير صالح" });
-      return;
-    }
-
-    const report: Record<string, { received: number; inserted: number; matched: number; failed: number }> = {};
-    // idMap[tableKey][oldId] = newOrExistingId
-    const idMap: Record<string, Map<number, number>> = {};
-
-    await db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
       for (const t of TABLES) {
         idMap[t.key] = new Map();
-        const rows: any[] = Array.isArray(payload.data[t.key]) ? payload.data[t.key] : [];
+        const rows: any[] = Array.isArray((payload.data as any)[t.key]) ? (payload.data as any)[t.key] : [];
         report[t.key] = { received: rows.length, inserted: 0, matched: 0, failed: 0 };
         if (!rows.length) continue;
 
-        // Preload existing rows (indexed by every possible business key) for this tenant.
-        // Each row may be reachable by any of its natural keys (code, nameAr, vatNumber, …).
         const existingByKey = new Map<string, number>();
         if (t.businessKeys.length) {
           const existing = t.hasCompanyId
@@ -238,7 +240,6 @@ router.post("/restore", async (req, res) => {
           }
         }
 
-        // For accounts, process parents before children so self-ref remap works.
         const ordered = t.selfRef
           ? sortByParentDepth(rows, "id", t.selfRef)
           : rows;
@@ -247,7 +248,6 @@ router.post("/restore", async (req, res) => {
           const oldId = raw.id;
           const bkComposite = makeBusinessKey(raw, t.businessKeys);
 
-          // 1) Dedup by business key (idempotent).
           if (bkComposite && existingByKey.has(bkComposite)) {
             const existingId = existingByKey.get(bkComposite)!;
             if (oldId != null) idMap[t.key].set(oldId, existingId);
@@ -255,12 +255,9 @@ router.post("/restore", async (req, res) => {
             continue;
           }
 
-          // 2) Strip id/timestamps; force companyId to the current tenant.
           const { id: _i, createdAt: _c, updatedAt: _u, ...rest } = raw;
           if (t.hasCompanyId) rest.companyId = companyId;
 
-          // 3) Remap foreign keys (null if unresolved, rather than inserting a
-          //    stale id from the source company).
           for (const fk of t.fks) {
             const oldFk = rest[fk.col];
             if (oldFk == null) continue;
@@ -268,7 +265,6 @@ router.post("/restore", async (req, res) => {
             rest[fk.col] = mapped ?? null;
           }
 
-          // 4) Self-reference (accounts.parentId).
           if (t.selfRef) {
             const oldSelf = rest[t.selfRef];
             if (oldSelf != null) {
@@ -277,15 +273,20 @@ router.post("/restore", async (req, res) => {
             }
           }
 
-          // 5) Insert one row in a SAVEPOINT so a FK / check error doesn't
-          //    poison the outer transaction.
           try {
             const inserted = await tx.transaction(async (inner) => {
               return await inner.insert(t.table).values(rest).returning();
             });
             const newId = (inserted as any[])[0]?.id;
             if (newId != null && oldId != null) idMap[t.key].set(oldId, newId);
-            if (bkVal != null && bkVal !== "") existingByKey.set(String(bkVal), newId);
+            // Re-index the just-inserted row by every business key so
+            // subsequent rows in the same payload can dedup against it.
+            for (const k of t.businessKeys) {
+              const v = (rest as any)[k];
+              if (v != null && String(v).trim() !== "") {
+                existingByKey.set(`${k}:${String(v).trim()}`, newId);
+              }
+            }
             report[t.key].inserted++;
           } catch {
             report[t.key].failed++;
@@ -294,8 +295,17 @@ router.post("/restore", async (req, res) => {
       }
     });
 
-    res.json({ ok: true, companyId, report });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  return { ok: true, companyId, report };
+}
+
+router.post("/restore", async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+
+    const out = await restoreFromSnapshotPayload(companyId, req.body?.backup);
+    res.json(out);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
 /* ═════════════════════════════════════════════════════════════════════════

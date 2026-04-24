@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   HardDrive, Search, RefreshCw, CheckCircle2, AlertTriangle, XCircle,
   ChevronDown, ChevronUp, PlayCircle, Download, Trash2, Settings as SettingsIcon,
-  Database, Activity, Zap, Calendar, Clock,
+  Database, Activity, Zap, Calendar, Clock, RotateCcw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -42,6 +42,8 @@ interface OverviewRow {
 interface OverviewKpis {
   total: number; green: number; amber: number; red: number; disabled: number;
   snapshots30d: number; totalSize30d: number; totalSizeAll: number; missing: number;
+  // Spec-required tiles
+  totalBackupsAll: number; backedUpLast7d: number; missingOver7d: number;
 }
 interface OverviewResponse {
   kpis: OverviewKpis;
@@ -161,14 +163,23 @@ export default function BackupOperations() {
 
   const [search, setSearch]           = useState("");
   const [tab, setTab]                 = useState<BucketTab>("all");
+  // Date-range filter on the latest snapshot. Inclusive bounds; either may be empty.
+  const [dateFrom, setDateFrom]       = useState("");
+  const [dateTo,   setDateTo]         = useState("");
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   // Per-row settings draft (so user edits are local until "save")
   const [settingsDraft, setSettingsDraft] = useState<Record<number, {
     enabled: boolean; frequencyHours: number; retention: number;
   }>>({});
-  // Bulk run job tracking
+  // Per-snapshot restore confirmation state — tracks which snapshot is in the
+  // "type the VAT number" confirmation step, plus the typed value.
+  const [restoreFor, setRestoreFor]   = useState<{ snapshotId: number; companyId: number } | null>(null);
+  const [restoreVat, setRestoreVat]   = useState("");
+  // Per-snapshot delete confirmation — inline (no browser confirm popup).
+  const [deleteFor, setDeleteFor]     = useState<{ snapshotId: number; companyId: number } | null>(null);
+  // Bulk run job tracking — default scope = all active companies (per spec).
   const [bulkJobId, setBulkJobId] = useState<string | null>(null);
-  const [bulkScope, setBulkScope] = useState<"enabled" | "all">("enabled");
+  const [bulkScope, setBulkScope] = useState<"enabled" | "all">("all");
 
   // ── Overview query ───────────────────────────────────────────────────
   const { data, isLoading, refetch } = useQuery<OverviewResponse>({
@@ -264,6 +275,29 @@ export default function BackupOperations() {
     },
     onSuccess: (_, vars) => {
       toast({ title: "✓ تم حذف النسخة" });
+      setDeleteFor(null);
+      qc.invalidateQueries({ queryKey: ["admin-backups-overview"] });
+      qc.invalidateQueries({ queryKey: ["admin-backups-history", vars.companyId] });
+    },
+    onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // Restore mutation — server requires the operator to type the company's
+  // VAT number; server also takes a pre-restore safety snapshot.
+  const restoreSnapshotMutation = useMutation({
+    mutationFn: async ({ snapshotId, confirmVatNumber }: { snapshotId: number; companyId: number; confirmVatNumber: string }) => {
+      const res = await fetch(`${API}/api/admin/backups/auto/${snapshotId}/restore`, {
+        method: "POST", headers, body: JSON.stringify({ confirmVatNumber }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? "فشل الاستعادة");
+      return j;
+    },
+    onSuccess: (j: { preRestoreId: number | null; report: Record<string, { inserted: number; matched: number; failed: number }> }, vars) => {
+      const totalIns = Object.values(j.report ?? {}).reduce((s, r) => s + (r.inserted ?? 0), 0);
+      toast({ title: `✓ تمت الاستعادة (إدراج ${totalIns}${j.preRestoreId ? ` • نسخة أمان #${j.preRestoreId}` : ""})` });
+      setRestoreFor(null);
+      setRestoreVat("");
       qc.invalidateQueries({ queryKey: ["admin-backups-overview"] });
       qc.invalidateQueries({ queryKey: ["admin-backups-history", vars.companyId] });
     },
@@ -293,12 +327,27 @@ export default function BackupOperations() {
   });
 
   // ── Filtering ───────────────────────────────────────────────────────
-  const filtered = useMemo(() => rows.filter(r => {
-    const q = search.trim();
-    const matchSearch = q === "" || r.nameAr.includes(q) || r.vatNumber.includes(q);
-    const matchTab    = tab === "all" || r.bucket === tab;
-    return matchSearch && matchTab;
-  }), [rows, search, tab]);
+  const filtered = useMemo(() => {
+    const fromMs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+    const toMs   = dateTo   ? new Date(dateTo   + "T23:59:59").getTime() : null;
+    return rows.filter(r => {
+      const q = search.trim();
+      const matchSearch = q === "" || r.nameAr.includes(q) || r.vatNumber.includes(q);
+      const matchTab    = tab === "all" || r.bucket === tab;
+      // Date-range applies to the latest backup timestamp. Companies with no
+      // backup at all are excluded once a from/to is set.
+      let matchDate = true;
+      if (fromMs != null || toMs != null) {
+        const t = r.lastAutoBackupAt ? new Date(r.lastAutoBackupAt).getTime() : null;
+        if (t == null) matchDate = false;
+        else {
+          if (fromMs != null && t < fromMs) matchDate = false;
+          if (toMs   != null && t > toMs)   matchDate = false;
+        }
+      }
+      return matchSearch && matchTab && matchDate;
+    });
+  }, [rows, search, tab, dateFrom, dateTo]);
 
   // Get-or-init draft for a company row
   const getDraft = (r: OverviewRow) => settingsDraft[r.id] ?? {
@@ -356,23 +405,24 @@ export default function BackupOperations() {
         </div>
       </div>
 
-      {/* ─── KPI tiles ───────────────────────────────────────────────── */}
+      {/* ─── KPI tiles (spec contract: 4 required + 1 context tile) ─── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <KpiCard label="إجمالي الشركات" value={k?.total ?? "—"}
+        <KpiCard label="إجمالي النسخ" value={k?.totalBackupsAll ?? "—"}
+          sub={k ? `${k.snapshots30d} منها آخر 30 يوم` : undefined}
           icon={Database} iconBg="bg-primary/10" iconColor="text-primary" />
-        <KpiCard label="نشطة" value={k?.green ?? "—"}
-          sub="ضمن الجدولة المعتمدة"
+        <KpiCard label="شركات نُسخت آخر 7 أيام" value={k?.backedUpLast7d ?? "—"}
+          sub={k ? `من إجمالي ${k.total} شركة` : undefined}
           icon={CheckCircle2} iconBg="bg-green-100" iconColor="text-green-600" />
-        <KpiCard label="متأخّرة" value={(k?.amber ?? 0) + (k?.red ?? 0)}
-          sub={`${k?.red ?? 0} مفقودة • ${k?.amber ?? 0} متأخّر بسيط`}
+        <KpiCard label="شركات متأخّرة (>7 أيام أو مفقودة)" value={k?.missingOver7d ?? "—"}
+          sub={k ? `${k.missing} لم تُنسخ مطلقاً` : undefined}
           icon={AlertTriangle} iconBg="bg-amber-100" iconColor="text-amber-600"
-          border={(k?.red ?? 0) > 0 ? "border-red-300" : undefined} />
-        <KpiCard label="نسخ آخر 30 يوم" value={k?.snapshots30d ?? "—"}
-          sub={k ? formatBytes(k.totalSize30d) : undefined}
-          icon={Activity} iconBg="bg-blue-100" iconColor="text-blue-600" />
+          border={(k?.missingOver7d ?? 0) > 0 ? "border-red-300" : undefined} />
         <KpiCard label="إجمالي الحجم المخزّن" value={k ? formatBytes(k.totalSizeAll) : "—"}
           sub="كل النسخ المحفوظة"
           icon={HardDrive} iconBg="bg-violet-100" iconColor="text-violet-600" />
+        <KpiCard label="إجمالي الشركات" value={k?.total ?? "—"}
+          sub={k ? `${k.green} نشطة • ${k.amber} متأخّر بسيط • ${k.red} حرجة • ${k.disabled} معطّلة` : undefined}
+          icon={Activity} iconBg="bg-blue-100" iconColor="text-blue-600" />
       </div>
 
       {/* ─── Bulk run-all card ──────────────────────────────────────── */}
@@ -453,8 +503,8 @@ export default function BackupOperations() {
         )}
       </div>
 
-      {/* ─── Filters ─────────────────────────────────────────────────── */}
-      <div className="flex gap-3 flex-col sm:flex-row">
+      {/* ─── Filters: search + bucket tabs + date range ─────────────── */}
+      <div className="flex gap-3 flex-col lg:flex-row lg:items-end">
         <div className="relative flex-1">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -462,6 +512,7 @@ export default function BackupOperations() {
             onChange={e => setSearch(e.target.value)}
             placeholder="ابحث باسم الشركة أو الرقم الضريبي..."
             className="pr-10 h-9 text-sm"
+            data-testid="backup-search"
           />
         </div>
         <div className="flex rounded-lg border overflow-hidden bg-background text-sm">
@@ -474,11 +525,32 @@ export default function BackupOperations() {
                 i > 0 && "border-r",
                 tab === t.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/60",
               )}
+              data-testid={`backup-tab-${t.key}`}
             >
               {t.label}
               {t.key !== "all" && k && <span className="text-[10px] opacity-70 mr-1">({k[t.key]})</span>}
             </button>
           ))}
+        </div>
+        <div className="flex items-end gap-2">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">من تاريخ</Label>
+            <Input type="date" className="h-9 text-xs w-[150px]"
+              value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              data-testid="backup-date-from" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">إلى تاريخ</Label>
+            <Input type="date" className="h-9 text-xs w-[150px]"
+              value={dateTo} onChange={e => setDateTo(e.target.value)}
+              data-testid="backup-date-to" />
+          </div>
+          {(dateFrom || dateTo) && (
+            <Button variant="ghost" size="sm" className="h-9 text-xs"
+              onClick={() => { setDateFrom(""); setDateTo(""); }}>
+              مسح التواريخ
+            </Button>
+          )}
         </div>
       </div>
 
@@ -620,38 +692,140 @@ export default function BackupOperations() {
                           <p className="text-xs text-muted-foreground py-3 text-center">لا توجد نسخ محفوظة بعد.</p>
                         )}
                         {historyData && historyData.snapshots.length > 0 && (
-                          <div className="max-h-64 overflow-y-auto -mx-1 divide-y">
-                            {historyData.snapshots.map(s => (
-                              <div key={s.id} className="px-1 py-1.5 flex items-center gap-2 text-xs">
-                                <span className={cn(
-                                  "text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0",
-                                  s.reason === "manual" ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-700",
-                                )}>
-                                  {s.reason === "manual" ? "يدوي" : "تلقائي"}
-                                </span>
-                                <span className="flex-1 truncate">{formatDate(s.createdAt)}</span>
-                                <span className="text-muted-foreground shrink-0 tabular-nums">{formatBytes(s.sizeBytes)}</span>
-                                <button
-                                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-primary"
-                                  title="تنزيل"
-                                  onClick={() => downloadSnapshot(s.id)}
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-red-50 text-red-600"
-                                  title="حذف"
-                                  disabled={deleteSnapshotMutation.isPending}
-                                  onClick={() => {
-                                    if (confirm(`هل تريد حذف هذه النسخة (${formatDate(s.createdAt)})؟`)) {
-                                      deleteSnapshotMutation.mutate({ snapshotId: s.id, companyId: r.id });
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
+                          <div className="max-h-72 overflow-y-auto -mx-1 divide-y">
+                            {historyData.snapshots.map(s => {
+                              const isRestoreOpen = restoreFor?.snapshotId === s.id;
+                              return (
+                                <div key={s.id} className="px-1 py-1.5 text-xs">
+                                  <div className="flex items-center gap-2">
+                                    <span className={cn(
+                                      "text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0",
+                                      s.reason === "manual" ? "bg-blue-100 text-blue-700" : "bg-zinc-100 text-zinc-700",
+                                    )}>
+                                      {s.reason === "manual" ? "يدوي" : "تلقائي"}
+                                    </span>
+                                    <span className="flex-1 truncate">{formatDate(s.createdAt)}</span>
+                                    <span className="text-muted-foreground shrink-0 tabular-nums">{formatBytes(s.sizeBytes)}</span>
+                                    <button
+                                      className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-primary"
+                                      title="تنزيل"
+                                      onClick={() => downloadSnapshot(s.id)}
+                                      data-testid={`snapshot-download-${s.id}`}
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      className={cn(
+                                        "h-6 w-6 flex items-center justify-center rounded transition-colors",
+                                        isRestoreOpen
+                                          ? "bg-amber-100 text-amber-800"
+                                          : "hover:bg-amber-50 text-amber-700",
+                                      )}
+                                      title="استعادة"
+                                      onClick={() => {
+                                        if (isRestoreOpen) {
+                                          setRestoreFor(null);
+                                          setRestoreVat("");
+                                        } else {
+                                          setRestoreFor({ snapshotId: s.id, companyId: r.id });
+                                          setRestoreVat("");
+                                        }
+                                      }}
+                                      data-testid={`snapshot-restore-${s.id}`}
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      className={cn(
+                                        "h-6 w-6 flex items-center justify-center rounded transition-colors",
+                                        deleteFor?.snapshotId === s.id
+                                          ? "bg-red-100 text-red-700"
+                                          : "hover:bg-red-50 text-red-600",
+                                      )}
+                                      title="حذف"
+                                      disabled={deleteSnapshotMutation.isPending}
+                                      onClick={() => {
+                                        if (deleteFor?.snapshotId === s.id) setDeleteFor(null);
+                                        else setDeleteFor({ snapshotId: s.id, companyId: r.id });
+                                      }}
+                                      data-testid={`snapshot-delete-${s.id}`}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+
+                                  {/* Inline delete confirmation — no browser
+                                      confirm() popup, no Dialog component. */}
+                                  {deleteFor?.snapshotId === s.id && (
+                                    <div className="mt-2 mr-6 ml-2 p-2.5 rounded-md bg-red-50 border border-red-300 flex items-center gap-2">
+                                      <AlertTriangle className="h-3.5 w-3.5 text-red-700 shrink-0" />
+                                      <span className="text-[11px] text-red-900 flex-1">
+                                        حذف نسخة بتاريخ <strong>{formatDate(s.createdAt)}</strong> — لا يمكن التراجع.
+                                      </span>
+                                      <Button
+                                        size="sm" variant="ghost" className="h-7 text-xs"
+                                        onClick={() => setDeleteFor(null)}
+                                      >
+                                        إلغاء
+                                      </Button>
+                                      <Button
+                                        size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700"
+                                        disabled={deleteSnapshotMutation.isPending}
+                                        onClick={() => deleteSnapshotMutation.mutate({ snapshotId: s.id, companyId: r.id })}
+                                        data-testid={`snapshot-delete-confirm-${s.id}`}
+                                      >
+                                        {deleteSnapshotMutation.isPending ? "جارٍ الحذف..." : "تأكيد الحذف"}
+                                      </Button>
+                                    </div>
+                                  )}
+
+                                  {/* Inline restore confirmation panel — replaces the
+                                      need for a Dialog. Operator must type the company's
+                                      VAT number; server also verifies and takes a
+                                      pre-restore safety snapshot before applying. */}
+                                  {isRestoreOpen && (
+                                    <div className="mt-2 mr-6 ml-2 p-2.5 rounded-md bg-amber-50 border border-amber-300 space-y-2">
+                                      <p className="text-[11px] text-amber-900 leading-relaxed">
+                                        <AlertTriangle className="inline h-3.5 w-3.5 -mt-0.5 ml-1" />
+                                        <strong>تحذير:</strong> الاستعادة غير قابلة للتراجع. سيتم دمج بيانات هذه النسخة مع البيانات الحالية للشركة (الإدراج فقط، لن يتم حذف). سيُؤخذ نسخة أمان فورية قبل التنفيذ. للمتابعة، اكتب الرقم الضريبي للشركة:{" "}
+                                        <span className="font-mono bg-white px-1 rounded border" data-testid="restore-expected-vat">{r.vatNumber}</span>
+                                      </p>
+                                      <div className="flex items-center gap-2">
+                                        <Input
+                                          className="h-7 text-xs font-mono flex-1"
+                                          placeholder="الرقم الضريبي..."
+                                          value={restoreVat}
+                                          onChange={e => setRestoreVat(e.target.value)}
+                                          autoFocus
+                                          data-testid="restore-vat-input"
+                                        />
+                                        <Button
+                                          size="sm" variant="ghost" className="h-7 text-xs"
+                                          onClick={() => { setRestoreFor(null); setRestoreVat(""); }}
+                                        >
+                                          إلغاء
+                                        </Button>
+                                        <Button
+                                          size="sm" className="h-7 text-xs bg-amber-700 hover:bg-amber-800"
+                                          disabled={
+                                            restoreSnapshotMutation.isPending ||
+                                            restoreVat.trim() !== String(r.vatNumber).trim()
+                                          }
+                                          onClick={() => restoreSnapshotMutation.mutate({
+                                            snapshotId: s.id,
+                                            companyId: r.id,
+                                            confirmVatNumber: restoreVat.trim(),
+                                          })}
+                                          data-testid="restore-confirm-button"
+                                        >
+                                          {restoreSnapshotMutation.isPending ? "جارٍ الاستعادة..." : "تأكيد الاستعادة"}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

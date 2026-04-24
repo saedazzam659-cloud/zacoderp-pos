@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
-import { persistSnapshot } from "./backup.js";
+import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 
 const router = Router();
@@ -1688,15 +1688,20 @@ interface OverviewCompanyRow {
 
 function backupBucket(
   enabled: boolean,
-  frequencyHours: number,
+  _frequencyHours: number,
   lastAtISO: string | null,
 ): { bucket: OverviewCompanyRow["bucket"]; ageHours: number | null } {
+  // Fixed-threshold bucket logic per task spec:
+  //   <24h        → green
+  //   1–7 days    → amber
+  //   >7 days     → red
+  //   never       → red (highlight as missing)
+  //   off toggle  → disabled
   if (!enabled) return { bucket: "disabled", ageHours: lastAtISO ? hoursSince(lastAtISO) : null };
   if (!lastAtISO) return { bucket: "red", ageHours: null };
   const age = hoursSince(lastAtISO);
-  // Healthy: within 1.5x frequency. Overdue: 1.5x–3x. Critical: >3x or never.
-  if (age <= frequencyHours * 1.5) return { bucket: "green", ageHours: age };
-  if (age <= frequencyHours * 3)   return { bucket: "amber", ageHours: age };
+  if (age < 24)        return { bucket: "green", ageHours: age };
+  if (age <= 24 * 7)   return { bucket: "amber", ageHours: age };
   return { bucket: "red", ageHours: age };
 }
 function hoursSince(iso: string): number {
@@ -1722,8 +1727,12 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
 
     if (companies.length === 0) {
       res.json({
-        kpis: { total: 0, green: 0, amber: 0, red: 0, disabled: 0,
-                snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0 },
+        kpis: {
+          total: 0, green: 0, amber: 0, red: 0, disabled: 0,
+          snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0,
+          // Spec-required tiles (7-day window):
+          totalBackupsAll: 0, backedUpLast7d: 0, missingOver7d: 0,
+        },
         rows: [],
         generatedAt: new Date().toISOString(),
       });
@@ -1787,10 +1796,21 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
       });
     }
 
-    // 5. Build rows + KPIs.
+    // 5. Total snapshot count across the system (one cheap COUNT(*)).
+    const [totalCntRow] = await db.select({ c: count() }).from(autoBackupsTable);
+    const totalBackupsAll = Number(totalCntRow?.c ?? 0);
+
+    // 6. Build rows + KPIs.
     const rows: OverviewCompanyRow[] = [];
-    const kpis = { total: companies.length, green: 0, amber: 0, red: 0, disabled: 0,
-                   snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0 };
+    const kpis = {
+      total: companies.length, green: 0, amber: 0, red: 0, disabled: 0,
+      snapshots30d: 0, totalSize30d: 0, totalSizeAll: 0, missing: 0,
+      // Spec-required tiles:
+      totalBackupsAll,
+      backedUpLast7d: 0,   // companies whose latest snapshot is within last 7 days
+      missingOver7d: 0,    // companies with no snapshot OR last snapshot >7 days ago
+    };
+    const sevenDaysAgoMs = Date.now() - 7 * 24 * 3_600_000;
 
     for (const c of companies) {
       const lastIso = c.lastAutoBackupAt ? new Date(c.lastAutoBackupAt).toISOString() : null;
@@ -1805,6 +1825,11 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
       kpis.totalSize30d  += a.total;
       kpis.totalSizeAll  += sizeAll.get(c.id) ?? 0;
       if (!latest) kpis.missing++;
+
+      // 7-day tile aggregates — independent of the bucket logic above.
+      const lastMs = lastIso ? new Date(lastIso).getTime() : null;
+      if (lastMs != null && lastMs >= sevenDaysAgoMs) kpis.backedUpLast7d++;
+      else                                            kpis.missingOver7d++;
 
       rows.push({
         id: c.id,
@@ -1922,6 +1947,60 @@ router.delete("/backups/auto/:id", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// POST /api/admin/backups/auto/:id/restore — admin-side restore (with safety net)
+// Body: { confirmVatNumber: string } — operator must type the VAT number of the
+// owning company to confirm. Before applying, we always take a fresh "manual"
+// pre-restore snapshot so any mistake is reversible.
+router.post("/backups/auto/:id/restore", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const [snap] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
+    if (!snap) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
+    const [comp] = await db.select({ id: companiesTable.id, vatNumber: companiesTable.vatNumber, nameAr: companiesTable.nameAr })
+      .from(companiesTable).where(eq(companiesTable.id, snap.companyId));
+    if (!comp) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }
+
+    const provided = String(req.body?.confirmVatNumber ?? "").trim();
+    if (provided !== String(comp.vatNumber).trim()) {
+      res.status(400).json({ error: "الرقم الضريبي غير مطابق — لم يتم تنفيذ الاستعادة" });
+      return;
+    }
+
+    // Safety-net snapshot first — MANDATORY. If we can't take a pre-restore
+    // snapshot, abort: a failed restore must always be reversible.
+    let preRestoreId: number;
+    try {
+      preRestoreId = await persistSnapshot(comp.id, "manual");
+    } catch (snapErr: unknown) {
+      const m = snapErr instanceof Error ? snapErr.message : "unknown";
+      res.status(500).json({ error: `تعذّر إنشاء نسخة الأمان قبل الاستعادة — لم يتم تنفيذ أي تغيير. (${m})` });
+      return;
+    }
+
+    const out = await restoreFromSnapshotPayload(
+      comp.id,
+      snap.data as { data?: Record<string, unknown> } | null,
+    );
+
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: comp.id,
+      module: "backups",
+      action: "edit",
+      entityType: "auto_backup_restore",
+      entityId: String(id),
+      metadata: { snapshotId: id, preRestoreId, report: out.report },
+    });
+    res.json({ ok: true, snapshotId: id, preRestoreId, report: out.report });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "فشل الاستعادة";
+    res.status(500).json({ error: msg });
+  }
+});
+
 // GET /api/admin/backups/auto/:id/download — download a snapshot's JSON
 router.get("/backups/auto/:id/download", requireSuperAdmin, async (req, res) => {
   try {
@@ -1929,6 +2008,17 @@ router.get("/backups/auto/:id/download", requireSuperAdmin, async (req, res) => 
     if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
     const [row] = await db.select().from(autoBackupsTable).where(eq(autoBackupsTable.id, id));
     if (!row) { res.status(404).json({ error: "النسخة غير موجودة" }); return; }
+    // Sensitive read — full snapshot payload contains company data — audit it.
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId: row.companyId,
+      module: "backups",
+      action: "view",
+      entityType: "auto_backup_download",
+      entityId: String(id),
+    });
     res.json(row.data);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
@@ -1950,6 +2040,18 @@ router.get("/backups/auto/list/:companyId", requireSuperAdmin, async (req, res) 
     }).from(autoBackupsTable)
       .where(eq(autoBackupsTable.companyId, companyId))
       .orderBy(desc(autoBackupsTable.createdAt));
+    // Lightweight audit — operator opened a company's backup history panel.
+    await writeAudit({
+      userId: req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role: "superadmin",
+      companyId,
+      module: "backups",
+      action: "view",
+      entityType: "auto_backup_list",
+      entityId: String(companyId),
+      metadata: { count: rows.length },
+    });
     res.json({ snapshots: rows });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "خطأ غير متوقع";
@@ -2035,8 +2137,10 @@ async function runBulkJob(job: BulkRunJob, adminUser: { id: number; username: st
 router.post("/backups/run-all", requireSuperAdmin, async (req, res) => {
   try {
     gcBulkJobs();
-    const scope = req.body?.scope === "all" ? "all" : "enabled";
-    // "Enabled" = autoBackupEnabled AND status=active. "all" = every active company.
+    // Default scope per task spec is "all" (every active company). The
+    // "enabled" scope is an opt-in narrower run for operators who only
+    // want the auto-backup-enabled subset.
+    const scope = req.body?.scope === "enabled" ? "enabled" : "all";
     const where = scope === "enabled"
       ? and(eq(companiesTable.status, "active"), eq(companiesTable.autoBackupEnabled, true))
       : eq(companiesTable.status, "active");
