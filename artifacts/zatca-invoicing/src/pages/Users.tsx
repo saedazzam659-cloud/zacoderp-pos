@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useSearch, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
@@ -75,6 +76,14 @@ export default function Users() {
   const [form, setForm] = useState(emptyForm());
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
+  // Deep-link support: when arriving from Security Center via /users?selected=:id,
+  // auto-open that user's edit panel as soon as the user list loads. Tracked with
+  // a ref so it only fires once per query-string visit (avoids reopening if the
+  // admin manually closes the editor).
+  const search$ = useSearch();
+  const [, setLocation] = useLocation();
+  const handledSelectedRef = useRef<string | null>(null);
+
   const url   = cid ? `${API}/api/users?companyId=${cid}` : `${API}/api/users`;
   const burl  = cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`;
 
@@ -119,6 +128,27 @@ export default function Users() {
       document.getElementById("user-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 50);
   };
+
+  // Consume ?selected=:id from the URL once users finish loading and auto-open
+  // the edit panel for that user. Strips the param from the URL afterwards so
+  // the editor doesn't keep reopening on every re-render.
+  useEffect(() => {
+    if (isLoading) return;
+    const params = new URLSearchParams(search$);
+    const sel = params.get("selected");
+    if (!sel) return;
+    if (handledSelectedRef.current === sel) return;
+    const targetId = Number(sel);
+    if (!Number.isFinite(targetId)) return;
+    const u = users.find(x => x.id === targetId);
+    if (!u) return;
+    handledSelectedRef.current = sel;
+    openEdit(u);
+    params.delete("selected");
+    const qs = params.toString();
+    setLocation(qs ? `/users?${qs}` : "/users", { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, isLoading, search$]);
 
   const openEdit = (u: UserRow) => {
     setEditingId(u.id);
