@@ -411,11 +411,17 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
     const totalCompanies = Object.values(byStatus).reduce((a, b) => a + b, 0);
 
     // ─── Subscriptions roll-up across plans ─────────────────────────────
-    // Semantics: byPlan.count and revenue are now scoped to TRULY active rows
-    // (is_active=TRUE AND end_date is empty/non-date OR end_date >= today),
-    // so the headline `active`, the plan-distribution chart, and the revenue
-    // total all share the same definition. `expiring` and `expired` count
-    // is_active=TRUE rows by their date status separately.
+    // Lifecycle assumption: `is_active` is the *administrative* flag (set by
+    // the operator). `end_date` is the contractual expiry. The two are NOT
+    // automatically synced — a subscription may be admin-active yet
+    // contractually expired, in which case the operator should deactivate
+    // it. We therefore expose both views:
+    //   • active  — is_active=TRUE AND (end_date empty/non-date OR >= today)
+    //   • expired — is_active=TRUE AND end_date::date < today
+    //               (rows that need operator action)
+    //   • expiring — is_active=TRUE AND end_date in [today, +30 days]
+    // byPlan.count and byPlan.revenue mirror the `active` definition so the
+    // distribution chart and revenue figure reconcile with the headline KPI.
     let totalActiveSubs = 0, totalExpiring = 0, totalExpired = 0, totalRevenue = 0;
     const planDistribution: { plan: string; count: number; revenue: number }[] = [];
     for (const row of subsByPlan.rows ?? []) {
