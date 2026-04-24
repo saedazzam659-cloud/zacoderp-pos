@@ -18,6 +18,8 @@ export interface ComboboxItem {
   group?: string;
   badge?: string;
   badgeClass?: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 interface SearchComboboxProps {
@@ -94,8 +96,11 @@ export function SearchCombobox({
   }, [items, search]);
 
   React.useEffect(() => {
-    setHighlight(0);
-  }, [search, open]);
+    // Snap highlight onto the first enabled row whenever the filter changes
+    // or the popover opens, so Enter/click never lands on a disabled item.
+    const firstEnabled = filteredItems.findIndex(it => !it.disabled);
+    setHighlight(firstEnabled === -1 ? 0 : firstEnabled);
+  }, [search, open, filteredItems]);
 
   const groups = React.useMemo(() => {
     if (!grouped) return null;
@@ -111,11 +116,22 @@ export function SearchCombobox({
   const flatList = filteredItems;
 
   const handleSelect = (val: string) => {
+    const it = items.find(i => i.value === val);
+    if (it?.disabled) return;
     onValueChange(val);
     setOpen(false);
     setSearch("");
     // Keep focus on the combobox input so the next Enter press bubbles to
     // the parent form navigator and advances to the following field.
+  };
+
+  const moveHighlight = (dir: 1 | -1) => {
+    if (flatList.length === 0) return;
+    let i = highlight;
+    for (let step = 0; step < flatList.length; step++) {
+      i = (i + dir + flatList.length) % flatList.length;
+      if (!flatList[i]?.disabled) { setHighlight(i); return; }
+    }
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -131,11 +147,11 @@ export function SearchCombobox({
       e.preventDefault();
       if (!open) setOpen(true);
       setHasNavigated(true);
-      setHighlight(h => Math.min(h + 1, Math.max(0, flatList.length - 1)));
+      moveHighlight(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHasNavigated(true);
-      setHighlight(h => Math.max(0, h - 1));
+      moveHighlight(-1);
     } else if (e.key === "Enter") {
       // Only consume Enter as a selection when the user has actually
       // engaged with the list (typed a query or arrowed). Otherwise let
@@ -257,15 +273,20 @@ export function SearchCombobox({
                 {groupItems.map(item => {
                   const idx = renderedIdx++;
                   const isHi = idx === highlight;
+                  const dis = !!item.disabled;
                   return (
                     <div
                       key={item.value}
                       data-idx={idx}
-                      onMouseDown={e => { e.preventDefault(); handleSelect(item.value); }}
-                      onMouseEnter={() => setHighlight(idx)}
+                      title={dis ? (item.disabledReason ?? "غير قابل للاختيار") : undefined}
+                      onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
+                      onMouseEnter={() => { if (!dis) setHighlight(idx); }}
+                      aria-disabled={dis}
                       className={cn(
-                        "px-2 py-2 cursor-pointer text-sm rounded-sm mx-1",
-                        isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60"
+                        "px-2 py-2 text-sm rounded-sm mx-1",
+                        dis
+                          ? "opacity-50 cursor-not-allowed select-none"
+                          : "cursor-pointer " + (isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60")
                       )}
                     >
                       {renderItem
@@ -279,15 +300,20 @@ export function SearchCombobox({
           ) : (
             flatList.map((item, idx) => {
               const isHi = idx === highlight;
+              const dis = !!item.disabled;
               return (
                 <div
                   key={item.value}
                   data-idx={idx}
-                  onMouseDown={e => { e.preventDefault(); handleSelect(item.value); }}
-                  onMouseEnter={() => setHighlight(idx)}
+                  title={dis ? (item.disabledReason ?? "غير قابل للاختيار") : undefined}
+                  onMouseDown={e => { e.preventDefault(); if (!dis) handleSelect(item.value); }}
+                  onMouseEnter={() => { if (!dis) setHighlight(idx); }}
+                  aria-disabled={dis}
                   className={cn(
-                    "px-2 py-2 cursor-pointer text-sm rounded-sm mx-1",
-                    isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60"
+                    "px-2 py-2 text-sm rounded-sm mx-1",
+                    dis
+                      ? "opacity-50 cursor-not-allowed select-none"
+                      : "cursor-pointer " + (isHi ? "bg-accent text-accent-foreground" : "hover:bg-muted/60")
                   )}
                 >
                   {renderItem

@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { accountingMappingsTable, accountsTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { ensureLeafAccounts } from "../lib/leafAccount.js";
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_invoice:      ["inventory", "vat_input", "payable", "discount"],
@@ -88,6 +89,12 @@ router.put("/bulk", async (req, res) => {
           res.status(400).json({ error: `الحساب ${id} غير صالح للشركة` });
           return;
         }
+      }
+      try {
+        await ensureLeafAccounts(companyId, Array.from(accountIdsToCheck));
+      } catch (err: any) {
+        res.status(400).json({ error: err?.message ?? "حساب رئيسي غير مسموح" });
+        return;
       }
     }
 

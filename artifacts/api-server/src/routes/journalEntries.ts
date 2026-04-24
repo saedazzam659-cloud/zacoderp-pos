@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { ensureLeafAccounts } from "../lib/leafAccount.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -56,6 +57,15 @@ router.post("/", async (req, res) => {
     const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
 
     if (!entryDate) { res.status(400).json({ error: "التاريخ مطلوب" }); return; }
+
+    if (Array.isArray(lines) && lines.length > 0) {
+      try {
+        await ensureLeafAccounts(cid, lines.map((l: any) => l?.accountId));
+      } catch (err: any) {
+        res.status(400).json({ error: err?.message ?? "حساب رئيسي غير مسموح" });
+        return;
+      }
+    }
 
     const [entry] = await db.insert(journalEntriesTable).values({
       companyId:    cid,
@@ -125,6 +135,17 @@ router.put("/:id", async (req, res) => {
     }
 
     const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+
+    // Validate accounts BEFORE mutating the entry header so a bad
+    // account doesn't leave the journal half-updated.
+    if (Array.isArray(lines) && lines.length > 0) {
+      try {
+        await ensureLeafAccounts(cid, lines.map((l: any) => l?.accountId));
+      } catch (err: any) {
+        res.status(400).json({ error: err?.message ?? "حساب رئيسي غير مسموح" });
+        return;
+      }
+    }
 
     const [entry] = await db.update(journalEntriesTable).set({
       docNumber:    docNumber || null,

@@ -64,19 +64,39 @@ export function AccountCombobox({
     ? accounts.filter((a: any) => filterTypes.includes(a.accountType))
     : accounts;
 
+  // Build set of parent IDs (any account that is referenced as parent
+  // by another account) — these are header/group accounts and must not
+  // be selectable in transactions. Compute against the full accounts
+  // list so filtering by accountType doesn't change the result.
+  const parentIds = new Set<number>();
+  for (const a of accounts as any[]) {
+    if (a?.parentId != null) parentIds.add(Number(a.parentId));
+  }
+
   const items: ComboboxItem[] = [
     ...(allowEmpty ? [{ value: "", label: emptyLabel }] : []),
     ...filtered
       .filter((a: any) => a.isActive)
-      .map((a: any) => ({
-        value:      String(a.id),
-        code:       a.code,
-        label:      a.nameAr,
-        labelEn:    a.nameEn ?? undefined,
-        group:      grouped ? (TYPE_LABELS[a.accountType] ?? a.accountType) : undefined,
-        badge:      TYPE_LABELS[a.accountType],
-        badgeClass: TYPE_BADGE_CLASS[a.accountType],
-      })),
+      .map((a: any) => {
+        const isParent  = parentIds.has(Number(a.id));
+        const nonPost   = a.isPosting === false;
+        const disabled  = isParent || nonPost;
+        return {
+          value:          String(a.id),
+          code:           a.code,
+          label:          a.nameAr,
+          labelEn:        a.nameEn ?? undefined,
+          group:          grouped ? (TYPE_LABELS[a.accountType] ?? a.accountType) : undefined,
+          badge:          disabled ? "رئيسي" : TYPE_LABELS[a.accountType],
+          badgeClass:     disabled
+            ? "bg-amber-50 text-amber-700 border-amber-200"
+            : TYPE_BADGE_CLASS[a.accountType],
+          disabled,
+          disabledReason: disabled
+            ? "لا يمكن اختيار حساب رئيسي، يرجى اختيار حساب فرعي"
+            : undefined,
+        };
+      }),
   ];
 
   return (
