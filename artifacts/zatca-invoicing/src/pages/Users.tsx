@@ -441,7 +441,7 @@ export default function Users() {
                           <tbody>
                             {mods.map(m => (
                               <tr key={m.key} className="border-b last:border-b-0 hover:bg-muted/30">
-                                <td className="p-2">{m.label}</td>
+                                <td className="p-2">{t(m.label)}</td>
                                 {(["view", "create", "edit", "delete", "post", "export"] as Action[]).map(a => {
                                   const supported = m.actions.includes(a);
                                   const checked = !!form.permissions[m.key]?.[a];
