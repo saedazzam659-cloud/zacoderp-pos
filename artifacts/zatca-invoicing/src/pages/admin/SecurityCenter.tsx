@@ -106,6 +106,25 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
   });
   const rows = data?.rows ?? [];
 
+  // Helper: optimistically remove the targeted user(s) from the cached sessions
+  // list so the row disappears immediately; rolls back if the mutation fails;
+  // always invalidates on settle to reconcile with the server. SessionRow keys
+  // each row by `userId` (not `id`) — see the interface at the top of this file.
+  type SessionsCache = { rows: SessionRow[]; total: number };
+  const removeFromCache = async (userIds: number[]) => {
+    await qc.cancelQueries({ queryKey: ["security-sessions"] });
+    const previous = qc.getQueryData<SessionsCache>(["security-sessions"]);
+    if (previous) {
+      const set = new Set(userIds);
+      const removed = previous.rows.filter(r => set.has(r.userId)).length;
+      qc.setQueryData<SessionsCache>(["security-sessions"], {
+        rows: previous.rows.filter(r => !set.has(r.userId)),
+        total: Math.max(0, previous.total - removed),
+      });
+    }
+    return previous;
+  };
+
   const endOne = useMutation({
     mutationFn: async (userId: number) => {
       const r = await fetch(`${API}/api/admin/security/sessions/${userId}/end`, {
@@ -114,12 +133,16 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
+    onMutate: (userId: number) => removeFromCache([userId]).then(previous => ({ previous })),
+    onError: (e: any, _vars, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
+      toast({ title: "تعذر إنهاء الجلسة", description: e?.message, variant: "destructive" });
+    },
     onSuccess: () => {
       toast({ title: "✓ تم إنهاء الجلسة" });
       setConfirmEnd(null);
-      qc.invalidateQueries({ queryKey: ["security-sessions"] });
     },
-    onError: (e: any) => toast({ title: "تعذر إنهاء الجلسة", description: e?.message, variant: "destructive" }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["security-sessions"] }),
   });
 
   const endBulk = useMutation({
@@ -131,13 +154,17 @@ function ActiveSessionsTab({ token }: { token: string | null }) {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
+    onMutate: (userIds: number[]) => removeFromCache(userIds).then(previous => ({ previous })),
+    onError: (e: any, _vars, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData(["security-sessions"], ctx.previous);
+      toast({ title: "تعذر إنهاء الجلسات", description: e?.message, variant: "destructive" });
+    },
     onSuccess: (out: any) => {
       toast({ title: `✓ تم إنهاء ${out.ended} جلسة` });
       setConfirmEnd(null);
       setSelected(new Set());
-      qc.invalidateQueries({ queryKey: ["security-sessions"] });
     },
-    onError: (e: any) => toast({ title: "تعذر إنهاء الجلسات", description: e?.message, variant: "destructive" }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["security-sessions"] }),
   });
 
   const toggle = (id: number) => {
