@@ -41,6 +41,7 @@ function presetRange(preset: Exclude<PeriodPreset, "custom">): { from: string; t
 
 const PERIOD_STORAGE_PREFIX = "report-period:";
 const SEARCH_STORAGE_PREFIX = "report-search:";
+const BOOL_STORAGE_PREFIX = "report-bool:";
 
 // Read previously persisted period from localStorage. Returns null when no
 // valid record exists; the hook then falls back to its `initial` argument.
@@ -132,6 +133,32 @@ export function useStoredSearch(storageKey?: string) {
   }, [storageKey, search]);
 
   return [search, setSearch] as const;
+}
+
+// Persisted boolean toggle (e.g. "only over-limit", "only inactive").
+// Mirrors useStoredSearch so reports can remember switch positions with the
+// same per-report storageKey used by usePeriodState/useStoredSearch.
+export function useStoredBoolean(storageKey?: string, initial = false) {
+  const [value, setValue] = useState<boolean>(() => {
+    if (!storageKey || typeof window === "undefined") return initial;
+    try {
+      const raw = window.localStorage.getItem(`${BOOL_STORAGE_PREFIX}${storageKey}`);
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      return initial;
+    } catch {
+      return initial;
+    }
+  });
+
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`${BOOL_STORAGE_PREFIX}${storageKey}`, value ? "true" : "false");
+    } catch { /* ignore storage failures */ }
+  }, [storageKey, value]);
+
+  return [value, setValue] as const;
 }
 
 // Build the query-string fragment all report endpoints understand. When the

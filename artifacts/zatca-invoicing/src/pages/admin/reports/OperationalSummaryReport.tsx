@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Download, Loader2, Search, Activity, AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
-import { useStoredSearch } from "./shared/PeriodSelector";
+import { useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
 
 interface OpsRow {
   companyId: number; companyName: string; companyStatus: string;
@@ -27,7 +27,7 @@ export default function OperationalSummaryReport() {
   // Persist search across visits. No period selector here, but the same
   // localStorage convention keeps reset behavior consistent with other reports.
   const [search, setSearch] = useStoredSearch("operational-summary");
-  const [onlyInactive, setOnlyInactive] = useState(false);
+  const [onlyInactive, setOnlyInactive] = useStoredBoolean("operational-summary:onlyInactive");
 
   // The KPIs on this report use fixed reporting windows per spec
   // (audit/denied = trailing 7 days, inactivity = trailing 30 days),

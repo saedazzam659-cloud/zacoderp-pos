@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Download, Loader2, Search, Gauge, AlertTriangle, RotateCcw } from "lucide-react";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
+import { PeriodSelector, periodToQuery, usePeriodState, useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
 import { downloadCsv } from "./shared/downloadCsv";
 
 interface UsageMetric { actual: number; max: number }
@@ -30,7 +30,7 @@ export default function PlanUsageReport() {
   // Persist filters per report so the admin returns to the same view.
   const period = usePeriodState("this_month", "plan-usage");
   const [search, setSearch] = useStoredSearch("plan-usage");
-  const [onlyOver, setOnlyOver] = useState(false);
+  const [onlyOver, setOnlyOver] = useStoredBoolean("plan-usage:onlyOver");
 
   // All filters (search + onlyOver) are sent to the backend so CSV export
   // and the visible table stay in sync.
