@@ -44,7 +44,26 @@ const newRecoveryCode = () => {
   return raw.slice(0, 4) + "-" + raw.slice(4, 8);
 };
 
+// Build the public base URL used inside security emails (recovery /
+// device-approval links). Host headers can be forged, so we trust
+// configured values first and only fall back to the request when the
+// trusted sources are unavailable.
+//
+// Priority:
+//   1. process.env.PUBLIC_BASE_URL          (operator-pinned, highest trust)
+//   2. process.env.REPLIT_DEV_DOMAIN        (Replit-injected, trusted)
+//   3. process.env.REPLIT_DOMAINS           (Replit-injected, comma-separated)
+//   4. x-forwarded-host / host              (request-derived, lowest trust)
 function publicBaseUrlFromReq(req: any): string {
+  const fixed = (process.env.PUBLIC_BASE_URL ?? "").trim();
+  if (fixed) return fixed.replace(/\/+$/, "");
+
+  const replitDev = (process.env.REPLIT_DEV_DOMAIN ?? "").trim();
+  if (replitDev) return `https://${replitDev}`;
+
+  const replitDomains = (process.env.REPLIT_DOMAINS ?? "").split(",")[0]?.trim();
+  if (replitDomains) return `https://${replitDomains}`;
+
   const proto = (req.headers["x-forwarded-proto"]?.toString() || "https").split(",")[0].trim();
   const host = (req.headers["x-forwarded-host"]?.toString() || req.headers.host?.toString() || "");
   return host ? `${proto}://${host}` : "";
@@ -355,8 +374,24 @@ router.post("/verify-otp", saOtpLimit, async (req, res) => {
     return;
   }
 
-  await db.update(superAdminOtpCodesTable).set({ consumedAt: new Date() })
-    .where(eq(superAdminOtpCodesTable.id, otp.id));
+  // Atomic claim: only the first concurrent verifier wins. Two requests that
+  // both pass the read-time checks above could otherwise each mint a session
+  // from a single OTP — guard with a conditional update on consumed_at.
+  const claim = await db.update(superAdminOtpCodesTable)
+    .set({ consumedAt: new Date() })
+    .where(and(
+      eq(superAdminOtpCodesTable.id, otp.id),
+      isNull(superAdminOtpCodesTable.consumedAt),
+    ))
+    .returning({ id: superAdminOtpCodesTable.id });
+  if (claim.length === 0) {
+    await recordAttempt({
+      userId: otp.userId, username: null, ip, userAgent: ua, deviceFingerprint: fp,
+      success: false, outcome: "race_lost", failureReason: "otp_already_consumed",
+    });
+    res.status(409).json({ error: "تم استخدام هذا الرمز للتو من جلسة أخرى. أعد المحاولة." });
+    return;
+  }
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, otp.userId));
   if (!user || !user.isActive || user.role !== "superadmin") {
