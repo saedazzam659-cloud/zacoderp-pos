@@ -1,0 +1,137 @@
+// COUNTRY REGISTRATION HANDLER
+// DEFAULT: SAUDI ARABIA
+// GULF COUNTRIES + MULTI LANGUAGE
+// =====================================
+
+const countries = [
+  {
+    code:"SA",
+    name_ar:"السعودية",
+    name_en:"Saudi Arabia",
+    policy_ar:"الالتزام بأنظمة الزكاة والضرائب ZATCA",
+    policy_en:"Compliance with ZATCA tax system",
+    currency:"SAR"
+  },
+  {
+    code:"AE",
+    name_ar:"الإمارات",
+    name_en:"United Arab Emirates",
+    policy_ar:"الالتزام بضريبة الشركات واللوائح التجارية",
+    policy_en:"Corporate tax and business regulations compliance",
+    currency:"AED"
+  },
+  {
+    code:"KW",
+    name_ar:"الكويت",
+    name_en:"Kuwait",
+    policy_ar:"الالتزام بالقوانين التجارية المحلية",
+    policy_en:"Compliance with local commercial laws",
+    currency:"KWD"
+  },
+  {
+    code:"QA",
+    name_ar:"قطر",
+    name_en:"Qatar",
+    policy_ar:"الالتزام بلوائح وزارة التجارة والصناعة",
+    policy_en:"Ministry of Commerce regulations compliance",
+    currency:"QAR"
+  },
+  {
+    code:"BH",
+    name_ar:"البحرين",
+    name_en:"Bahrain",
+    policy_ar:"الالتزام بضريبة القيمة المضافة والأنظمة التجارية",
+    policy_en:"VAT and commercial regulations compliance",
+    currency:"BHD"
+  },
+  {
+    code:"OM",
+    name_ar:"عمان",
+    name_en:"Oman",
+    policy_ar:"الالتزام بالقوانين التجارية والضريبية العمانية",
+    policy_en:"Omani tax and commercial law compliance",
+    currency:"OMR"
+  },
+  {
+    code:"EG",
+    name_ar:"مصر",
+    name_en:"Egypt",
+    policy_ar:"الالتزام بضريبة القيمة المضافة والقوانين المصرية",
+    policy_en:"VAT and Egyptian tax compliance",
+    currency:"EGP"
+  },
+  {
+    code:"GLOBAL",
+    name_ar:"دول أخرى",
+    name_en:"Other Countries",
+    policy_ar:"سياسات عامة حسب الدولة",
+    policy_en:"General policies depending on country",
+    currency:"USD"
+  }
+];
+
+// ===============================
+// جلب السياسة (افتراضي السعودية)
+// ===============================
+function getCountryPolicy(countryCode, lang = "ar") {
+
+  if(!countryCode){
+    countryCode = "SA";
+  }
+
+  const country = countries.find(c => c.code === countryCode);
+
+  if(!country){
+    return lang === "en" ? countries[0].policy_en : countries[0].policy_ar;
+  }
+
+  return lang === "en" ? country.policy_en : country.policy_ar;
+}
+
+// ===============================
+// عند تغيير الدولة
+// ===============================
+function onCountryChange(countryCode, lang = "ar") {
+
+  const country = countries.find(c => c.code === countryCode) || countries[0];
+
+  setRegistrationPolicy(
+    lang === "en" ? country.policy_en : country.policy_ar
+  );
+
+  updateCompanyForm({
+    country: country.code,
+    currency: country.currency
+  });
+}
+
+// ===============================
+// التحقق من التسجيل
+// ===============================
+function validateRegistration(acceptPolicy){
+
+  if(!acceptPolicy){
+    throw "يجب الموافقة على سياسة الدولة / You must accept the country policy";
+  }
+
+  return true;
+}
+
+// ===============================
+// التهيئة الافتراضية
+// ===============================
+function initRegistration(lang = "ar"){
+
+  const defaultCountry = "SA";
+
+  const country = countries.find(c => c.code === defaultCountry);
+
+  setRegistrationPolicy(
+    lang === "en" ? country.policy_en : country.policy_ar
+  );
+
+  updateCompanyForm({
+    country: defaultCountry,
+    currency: "SAR"
+  });
+}
