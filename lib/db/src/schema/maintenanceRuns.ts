@@ -85,6 +85,20 @@ export const maintenanceEmailRunsTable = pgTable("maintenance_email_runs", {
   // Populated only when status indicates a problem (e.g. "failed",
   // "no_transport") — null for successful or successfully-suppressed runs.
   error:         text("error"),
+  // Short, machine-readable explanation of *why* the dispatch landed on this
+  // status — populated for every outcome, not just failures. Lets SuperAdmins
+  // distinguish "skipped because cooldown is still ticking" from "skipped
+  // because the snooze flag is on" without parsing free-form error strings.
+  // Values mirror the EmailDispatchOutcome.message tokens emitted by the
+  // scheduler (e.g. "digest_sent", "cooldown_active_24h_signature_unchanged",
+  // "no_superadmin_email_configured").
+  reason:        text("reason"),
+  // SHA-1 of the critical (companyId, toolKey, count) set considered for
+  // dispatch on this attempt. Stored alongside the outcome so SuperAdmins
+  // can confirm "is the cooldown still anchored on the same critical set?"
+  // and verify when the digest will fire next (signature changes always
+  // bypass the cooldown). Empty string for sweeps with no critical findings.
+  criticalSignature: text("critical_signature"),
 }, (t) => ({
   byRanAt: index("maintenance_email_runs_ran_at_idx").on(t.ranAt),
 }));

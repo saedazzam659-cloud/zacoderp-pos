@@ -15,6 +15,7 @@ import {
   ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
   getRecentToolErrors, TOOL_ERROR_WINDOW_DAYS,
   runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
+  clearCriticalDigestCooldown,
 } from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
@@ -4487,6 +4488,10 @@ function outcomeMessageAr(o: { status: string; message: string }): string {
 // AI Company Fix screen so SuperAdmins can answer "did the email actually go
 // out yesterday?" without trawling server logs. Default limit is 20 to match
 // the report-digest history panel; clamp upper-bound to keep payloads small.
+//
+// `reason` and `criticalSignature` were added so SuperAdmins can distinguish
+// "skipped because cooldown" from "skipped because snoozed" and verify which
+// critical fingerprint the dispatcher acted on for each attempt.
 router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => {
   try {
     const limit = clampInt(req.query.limit, 1, 100, 20);
@@ -4495,17 +4500,45 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
       .limit(limit);
     res.json({
       items: rows.map((r) => ({
-        id:            r.id,
-        ranAt:         r.ranAt.toISOString(),
-        trigger:       r.trigger,
-        status:        r.status,
-        recipients:    r.recipients,
-        criticalCount: r.criticalCount,
-        error:         r.error,
+        id:                r.id,
+        ranAt:             r.ranAt.toISOString(),
+        trigger:           r.trigger,
+        status:            r.status,
+        recipients:        r.recipients,
+        criticalCount:     r.criticalCount,
+        error:             r.error,
+        reason:            r.reason,
+        criticalSignature: r.criticalSignature,
       })),
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب سجل تنبيهات البريد" });
+  }
+});
+
+// POST /maintenance/schedule/clear-cooldown — wipe the schedule row's
+// successful-send anchor + critical signature so the very next sweep (or
+// run-now) fires the digest regardless of the configured cadence. Used by
+// SuperAdmins who want to force-send after they've fixed an alert config or
+// just need confirmation that recipients are wired up. Logged to both the
+// audit log AND the maintenance email-runs history (via the helper itself).
+router.post("/maintenance/schedule/clear-cooldown", requireSuperAdmin, async (req, res) => {
+  try {
+    const snapshot = await clearCriticalDigestCooldown();
+    await writeAudit({
+      userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+      role: "superadmin", companyId: null, module: "maintenance",
+      action: "clear_email_cooldown",
+      method: req.method, path: req.originalUrl,
+      entityType: "maintenance_schedule", entityId: null,
+      metadata: {
+        previousLastSuccessfulEmailAt: snapshot.previousLastSuccessfulEmailAt,
+        previousSignature: snapshot.previousSignature,
+      },
+    });
+    res.json({ ok: true, snapshot });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل مسح فترة التهدئة" });
   }
 });
 

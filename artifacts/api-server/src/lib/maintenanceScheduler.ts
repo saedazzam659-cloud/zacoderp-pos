@@ -263,7 +263,10 @@ export async function dispatchCriticalDigest(
   const muted = cfg.alertsMutedUntil && new Date(cfg.alertsMutedUntil).getTime() > Date.now();
   // Real (non-test) sends respect the snooze. Test sends bypass it intentionally.
   if (muted && !isTest) {
-    return recordEmailOutcome({ status: "snoozed", message: "alerts_snoozed", recipients: 0, rows: 0 }, { trigger });
+    return recordEmailOutcome(
+      { status: "snoozed", message: "alerts_snoozed", recipients: 0, rows: 0 },
+      { trigger, criticalSignature: "" },
+    );
   }
 
   // Cap rows so a stuck tenant can't generate a multi-megabyte email, but make
@@ -287,7 +290,10 @@ export async function dispatchCriticalDigest(
       runAt: new Date(),
     }];
   } else if (visibleAlerts.length === 0) {
-    return recordEmailOutcome({ status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 }, { trigger });
+    return recordEmailOutcome(
+      { status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 },
+      { trigger, criticalSignature: "" },
+    );
   } else {
     rows = visibleAlerts.map((a) => ({
       companyId: a.companyId,
@@ -312,14 +318,16 @@ export async function dispatchCriticalDigest(
       lastEmailCriticalSignature: cfg.lastEmailCriticalSignature,
     }, signature);
     if (skip) {
-      // Note: we deliberately do NOT update lastEmailCriticalSignature here —
-      // we want subsequent ticks to keep comparing against the last *sent*
-      // signature, not against the most recently-skipped one.
+      // Note: we deliberately do NOT advance the schedule row's
+      // lastEmailCriticalSignature here — subsequent ticks must keep
+      // comparing against the last *sent* signature, not the most
+      // recently-skipped one. The audit row still records `signature` so
+      // SuperAdmins can see exactly which critical set was suppressed.
       return recordEmailOutcome({
         status: "rate_limited",
-        message: `cooldown_active_${cfg.emailMinIntervalHours ?? 24}h`,
+        message: `cooldown_active_${cfg.emailMinIntervalHours ?? 24}h_signature_unchanged`,
         recipients: 0, rows: rows.length,
-      }, { trigger });
+      }, { trigger, criticalSignature: signature });
     }
   }
 
@@ -329,14 +337,14 @@ export async function dispatchCriticalDigest(
       status: "no_recipients",
       message: "no_superadmin_email_configured",
       recipients: 0, rows: rows.length,
-    }, { trigger });
+    }, { trigger, criticalSignature: signature });
   }
   if (!emailConfigured()) {
     return recordEmailOutcome({
       status: "no_transport",
       message: "email_transport_unconfigured",
       recipients: recipients.length, rows: rows.length,
-    }, { trigger });
+    }, { trigger, criticalSignature: signature });
   }
 
   // Tools that errored within the recency window — surfaced alongside the
@@ -375,29 +383,37 @@ export async function dispatchCriticalDigest(
       status: "failed",
       message: sendRes.reason ?? "send_failed",
       recipients: recipients.length, rows: rows.length,
-    }, { trigger });
+    }, { trigger, criticalSignature: signature });
   }
-  // Persist the signature ONLY for real successful sends. Test sends keep the
-  // existing signature so they don't accidentally arm the cooldown against
-  // the next real dispatch (admins click "Send test email" precisely when
-  // they've already received — or want to receive — the real one).
+  // Real "ok" sends advance both the cooldown anchor (lastSuccessfulEmailAt)
+  // and the schedule row's lastEmailCriticalSignature so the next sweep can
+  // compare against the just-delivered set. Test sends keep the existing
+  // schedule-row anchor/signature so they don't accidentally arm (or rearm)
+  // the cooldown against the next real dispatch — but the audit row STILL
+  // records the test signature so SuperAdmins can see what they sent.
   return recordEmailOutcome(
     {
       status: "ok",
       message: isTest ? "test_sent" : "digest_sent",
       recipients: recipients.length, rows: rows.length,
     },
-    // Real "ok" sends advance both the cooldown anchor and the signature.
-    // Test sends keep the existing anchor/signature so they don't accidentally
-    // arm (or rearm) the cooldown against the next real dispatch.
-    isTest ? { trigger } : { criticalSignature: signature, advanceCooldownAnchor: true, trigger },
+    isTest
+      ? { trigger, criticalSignature: signature }
+      : { trigger, criticalSignature: signature, advanceCooldownAnchor: true },
   );
 }
 
 async function recordEmailOutcome(
   o: EmailDispatchOutcome,
   extras: {
+    // Signature of the critical set considered for THIS attempt. Always
+    // captured into the audit row so SuperAdmins can see exactly which
+    // critical fingerprint was suppressed / sent / failed. Independent of
+    // whether the cooldown anchor advances (see `advanceCooldownAnchor`).
     criticalSignature?: string;
+    // Only true on real successful sends. When set we ALSO advance the
+    // schedule row's `lastSuccessfulEmailAt` and `lastEmailCriticalSignature`
+    // so the next sweep's cooldown decision anchors on this delivery.
     advanceCooldownAnchor?: boolean;
     trigger?: "scheduled" | "manual" | "test";
   } = {},
@@ -419,11 +435,16 @@ async function recordEmailOutcome(
       lastEmailCriticalCount: o.rows,
       updatedAt: new Date(),
     };
-    if (extras.criticalSignature !== undefined) {
-      patch.lastEmailCriticalSignature = extras.criticalSignature;
-    }
+    // Advance the schedule-row signature ONLY when this is a real successful
+    // send — never on suppressions / failures / tests. Otherwise the
+    // signature on the schedule row would shift on every tick and the
+    // cooldown decision (which compares the current signature to this one)
+    // would always evaluate as "different" and bypass the cooldown.
     if (extras.advanceCooldownAnchor) {
       patch.lastSuccessfulEmailAt = new Date();
+      if (extras.criticalSignature !== undefined) {
+        patch.lastEmailCriticalSignature = extras.criticalSignature;
+      }
     }
     await db.update(maintenanceScheduleTable).set(patch)
       .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
@@ -434,18 +455,69 @@ async function recordEmailOutcome(
   // explain "why didn't I get the email last week?" without having to dig in
   // server logs. Failure to insert here is logged but never propagated, so a
   // history-table outage cannot block the actual send/UI update path.
+  // `reason` always carries the machine-readable EmailDispatchOutcome.message
+  // (e.g. "digest_sent", "cooldown_active_24h_signature_unchanged") so the UI
+  // can explain *why* a sweep was skipped without parsing free-form errors.
+  // `criticalSignature` captures the SHA-1 considered for THIS attempt so
+  // SuperAdmins can verify the cooldown is anchored on the expected set.
   try {
     await db.insert(maintenanceEmailRunsTable).values({
-      trigger:       extras.trigger ?? "scheduled",
-      status:        o.status,
-      recipients:    o.recipients,
-      criticalCount: o.rows,
-      error:         successful ? null : o.message,
+      trigger:           extras.trigger ?? "scheduled",
+      status:            o.status,
+      recipients:        o.recipients,
+      criticalCount:     o.rows,
+      error:             successful ? null : o.message,
+      reason:            o.message,
+      criticalSignature: extras.criticalSignature ?? null,
     });
   } catch (err) {
     logger.error({ err }, "maintenance-scheduler: failed to append email-run history");
   }
   return o;
+}
+
+// ─── Manual cooldown reset ───────────────────────────────────────────────────
+// Called from the "Clear cooldown" SuperAdmin action when an operator wants
+// the next scheduled sweep (or manual run-now) to fire the digest immediately,
+// bypassing the configured cadence. Wipes the schedule row's signature anchor
+// AND its successful-send timestamp so `shouldSkipForRateLimit` short-circuits
+// to "no prior successful send → never skips" on the next tick.
+//
+// Returning the snapshot (timestamps it cleared, plus the prior signature)
+// lets the caller log it for the audit trail without a second SELECT.
+export interface CooldownClearSnapshot {
+  clearedAt: Date;
+  previousLastSuccessfulEmailAt: Date | null;
+  previousSignature: string | null;
+}
+export async function clearCriticalDigestCooldown(): Promise<CooldownClearSnapshot> {
+  const cfg = await ensureMaintenanceScheduleRow();
+  const snapshot: CooldownClearSnapshot = {
+    clearedAt: new Date(),
+    previousLastSuccessfulEmailAt: cfg.lastSuccessfulEmailAt,
+    previousSignature: cfg.lastEmailCriticalSignature,
+  };
+  await db.update(maintenanceScheduleTable).set({
+    lastSuccessfulEmailAt: null,
+    lastEmailCriticalSignature: null,
+    updatedAt: new Date(),
+  }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+  // Drop a marker row in the audit history so SuperAdmins can see who/when
+  // forced the bypass. Best-effort — never throw, mirroring recordEmailOutcome.
+  try {
+    await db.insert(maintenanceEmailRunsTable).values({
+      trigger:           "manual",
+      status:            "skipped",
+      recipients:        0,
+      criticalCount:     0,
+      error:             null,
+      reason:            "cooldown_cleared",
+      criticalSignature: snapshot.previousSignature,
+    });
+  } catch (err) {
+    logger.error({ err }, "maintenance-scheduler: failed to log cooldown clear");
+  }
+  return snapshot;
 }
 
 // ─── Latest-result query (used by the UI badges + dashboard banner) ──────────

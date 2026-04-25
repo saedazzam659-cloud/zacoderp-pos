@@ -49,11 +49,35 @@ function emailStatusLabelAr(status: string | null): string {
     case "no_critical":    return "لا توجد نتائج حرجة";
     case "no_recipients":  return "لا يوجد مستلمون";
     case "no_transport":   return "البريد غير مهيأ";
-    case "skipped":
+    case "skipped":        return "متخطّاة";
     case "snoozed":        return "متخطّاة (مكتومة)";
     case "rate_limited":   return "متخطّاة (ضمن فترة التهدئة)";
     case "failed":         return "فشل الإرسال";
     default:               return status ?? "—";
+  }
+}
+
+// Friendly Arabic translation of the machine-readable `reason` token written
+// alongside each email-runs row by recordEmailOutcome. Lets SuperAdmins read
+// the audit trail without parsing tokens like
+// "cooldown_active_24h_signature_unchanged".
+function emailReasonLabelAr(reason: string | null): string {
+  if (!reason) return "—";
+  // Cooldown reasons embed the configured hours, e.g. cooldown_active_24h_signature_unchanged.
+  const cooldownMatch = reason.match(/^cooldown_active_(\d+)h_signature_unchanged$/);
+  if (cooldownMatch) {
+    return `ضمن فترة التهدئة (${cooldownMatch[1]} ساعة) — القائمة الحرجة لم تتغيّر`;
+  }
+  switch (reason) {
+    case "digest_sent":                   return "أُرسل التنبيه";
+    case "test_sent":                     return "بريد تجريبي أُرسل";
+    case "no_critical_findings":          return "لا توجد نتائج حرجة";
+    case "no_superadmin_email_configured":return "لا يوجد سوبر أدمن لديه بريد مفعّل";
+    case "email_transport_unconfigured":  return "إعدادات البريد غير مهيأة (SMTP/Outlook)";
+    case "alerts_snoozed":                return "التنبيهات مكتومة حالياً";
+    case "send_failed":                   return "تعذّر الإرسال";
+    case "cooldown_cleared":              return "تم مسح فترة التهدئة يدوياً";
+    default:                              return reason;
   }
 }
 
@@ -715,6 +739,9 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   // success, failure, and suppression so SuperAdmins can audit deliveries
   // without trawling server logs. Refreshed alongside the schedule card after
   // any send attempt (test, manual run-now, scheduled sweep).
+  // `reason` + `criticalSignature` were added so SuperAdmins can tell *why*
+  // a sweep was skipped (cooldown vs snooze vs no recipients) and verify
+  // which critical fingerprint the dispatcher was acting on.
   const emailHistoryQ = useQuery({
     queryKey: ["maintenance-email-history"],
     queryFn: async () => {
@@ -729,10 +756,34 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           recipients: number;
           criticalCount: number;
           error: string | null;
+          reason: string | null;
+          criticalSignature: string | null;
         }>;
       }>;
     },
     refetchOnWindowFocus: false,
+  });
+  // Wipe the cooldown anchor so the next sweep fires immediately regardless of
+  // the configured cadence. Refreshes the schedule card + history so the
+  // bypass marker row shows up in the audit table.
+  const clearCooldownMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/schedule/clear-cooldown`, {
+        method: "POST", headers, body: "{}",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "فشل مسح فترة التهدئة");
+      return data as { ok: boolean };
+    },
+    onSuccess: () => {
+      toast({
+        title: "تم مسح فترة التهدئة",
+        description: "سيُرسَل التنبيه التالي فوراً عند ظهور نتائج حرجة.",
+      });
+      qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-email-history"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   // Latest scheduled-scan result per tool — drives the small badge in each card.
@@ -985,6 +1036,25 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                   {testEmailMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
                   إرسال بريد تجريبي
                 </Button>
+                {/* Force the very next sweep to send by clearing the cooldown
+                    anchor + signature. Useful when an admin has fixed an alert
+                    config and wants to confirm delivery before the next
+                    cadence window opens. Disabled when the cadence is set to
+                    fire-every-sweep (0h) — there is no cooldown to clear in
+                    that mode. The server still no-ops gracefully if the
+                    cooldown isn't armed yet. */}
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => clearCooldownMut.mutate()}
+                  disabled={clearCooldownMut.isPending || (s.emailMinIntervalHours ?? 24) === 0}
+                  title={(s.emailMinIntervalHours ?? 24) === 0
+                    ? "التهدئة معطّلة (0 ساعة) — كل فحص يُرسل تنبيهاً مباشرةً"
+                    : "يلغي فترة التهدئة فيُرسَل التنبيه التالي مباشرةً عند ظهور نتائج حرجة"}
+                >
+                  {clearCooldownMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  إلغاء التهدئة
+                </Button>
               </div>
               {s.lastEmailError && s.lastEmailStatus !== "ok" && s.lastEmailStatus !== "no_critical" && (
                 <p className="text-[11px] text-red-700 mt-1">تفاصيل الخطأ: {s.lastEmailError}</p>
@@ -1016,9 +1086,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                       <th className="px-2 py-1 text-right">الوقت</th>
                       <th className="px-2 py-1 text-right">المصدر</th>
                       <th className="px-2 py-1 text-right">الحالة</th>
+                      <th className="px-2 py-1 text-right">السبب</th>
                       <th className="px-2 py-1 text-right">المستلمون</th>
                       <th className="px-2 py-1 text-right">صفوف حرجة</th>
-                      <th className="px-2 py-1 text-right">تفاصيل</th>
+                      <th className="px-2 py-1 text-right">بصمة القائمة الحرجة</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-violet-100">
@@ -1033,6 +1104,14 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                         row.status === "no_critical" ? "text-emerald-700" :
                         row.status === "skipped" || row.status === "snoozed" || row.status === "rate_limited" ? "text-amber-800" :
                         "text-red-700 font-medium";
+                      // Short signature preview — full SHA-1 lives in the title
+                      // tooltip so SuperAdmins can copy/paste the whole string
+                      // without overflowing the table column.
+                      const sigPreview = row.criticalSignature
+                        ? (row.criticalSignature.length > 0
+                            ? `${row.criticalSignature.slice(0, 8)}…`
+                            : "—")
+                        : "—";
                       return (
                         <tr key={row.id}>
                           <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
@@ -1040,10 +1119,24 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                           </td>
                           <td className="px-2 py-1">{triggerLabel}</td>
                           <td className={`px-2 py-1 ${statusClass}`}>{emailStatusLabelAr(row.status)}</td>
+                          <td
+                            className="px-2 py-1 text-muted-foreground"
+                            title={row.error ? `${row.reason ?? ""} — ${row.error}` : (row.reason ?? "")}
+                          >
+                            {emailReasonLabelAr(row.reason)}
+                            {row.error && row.error !== row.reason && (
+                              <span className="text-red-700 block text-[10px] font-mono" title={row.error}>
+                                {row.error.length > 60 ? `${row.error.slice(0, 60)}…` : row.error}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-2 py-1 font-mono">{row.recipients}</td>
                           <td className="px-2 py-1 font-mono">{row.criticalCount}</td>
-                          <td className="px-2 py-1 text-muted-foreground" title={row.error ?? ""}>
-                            {row.error ? <span className="text-red-700">{row.error}</span> : "—"}
+                          <td
+                            className="px-2 py-1 font-mono text-[10px] text-muted-foreground"
+                            title={row.criticalSignature ?? ""}
+                          >
+                            {sigPreview}
                           </td>
                         </tr>
                       );
