@@ -27,11 +27,18 @@ export function emailConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: string | Buffer;
+  contentType?: string;
+}
+
 export interface SendOpts {
-  to: string;
+  to: string | string[];
   subject: string;
   html: string;
   text?: string;
+  attachments?: EmailAttachment[];
 }
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
@@ -43,10 +50,15 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
   try {
     await transporter.sendMail({
       from: getFrom(),
-      to: opts.to,
+      to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text,
+      attachments: opts.attachments?.map(a => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType ?? "text/csv; charset=utf-8",
+      })),
     });
     return { ok: true };
   } catch (err: any) {
@@ -133,6 +145,31 @@ export async function sendDeviceApprovalRequest(
     <p><a href="${link}" style="display:inline-block; background:#10b981; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">مراجعة الطلب</a></p>
     <p style="font-size:12px; color:#94a3b8;">صالح لمدة 15 دقيقة. إذا لم تطلب هذا، تجاهل الرسالة وسيُمنع الجهاز تلقائيًا.</p>`;
   return sendEmail({ to, subject: "طلب اعتماد جهاز جديد", html: wrapHtml("جهاز جديد ينتظر الاعتماد", body) });
+}
+
+export async function sendReportsDigest(opts: {
+  to: string[];
+  frequency: "weekly" | "monthly";
+  attachments: EmailAttachment[];
+  reportLabels: string[];
+}) {
+  const freqLabel = opts.frequency === "monthly" ? "الشهري" : "الأسبوعي";
+  const list = opts.reportLabels.map(l => `<li>${l}</li>`).join("");
+  const body = `
+    <p>هذا تقريرك ${freqLabel} الموجز للنظام.</p>
+    <p>تجد المرفقات بصيغة CSV قابلة للفتح مباشرة في Excel:</p>
+    <ul style="padding-inline-start:18px; line-height:1.8;">${list}</ul>
+    <p style="color:#64748b; font-size:13px;">تاريخ الإرسال: ${new Date().toLocaleString("ar-SA")}</p>
+    <p style="color:#64748b; font-size:12px;">يمكنك تعديل قائمة التقارير، التكرار، والمستلمين من صفحة التقارير في لوحة المشرف العام.</p>`;
+  const subject = opts.frequency === "monthly"
+    ? "تقرير المشرف العام الشهري"
+    : "تقرير المشرف العام الأسبوعي";
+  return sendEmail({
+    to: opts.to,
+    subject,
+    html: wrapHtml(subject, body),
+    attachments: opts.attachments,
+  });
 }
 
 export async function sendRecoveryLink(to: string, token: string, publicBaseUrl: string, ip: string | null) {

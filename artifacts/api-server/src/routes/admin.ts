@@ -1,6 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable } from "@workspace/db";
+import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
+import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
+import { emailConfigured } from "../lib/email.js";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -3195,6 +3198,165 @@ router.get("/reports/revenue-by-plan", requireSuperAdmin, async (req, res) => {
     res.json({ period, rows, total });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر جلب تقرير الإيرادات حسب الباقة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  REPORT EMAIL SCHEDULE  (Task #14)
+// ───────────────────────────────────────────────────────────────────────────
+//  Lets the SuperAdmin opt-in to a recurring digest of cross-company reports
+//  delivered as CSV attachments. The actual sending is driven by a 15-minute
+//  scheduler tick (lib/reportScheduler.ts); these endpoints just expose the
+//  config + history + a manual "send now" trigger.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FREQUENCIES = ["weekly", "monthly"] as const;
+type Frequency = typeof FREQUENCIES[number];
+const isFrequency = (v: unknown): v is Frequency =>
+  typeof v === "string" && (FREQUENCIES as readonly string[]).includes(v);
+
+// Permissive RFC-ish email check — we don't need full RFC 5322, just enough
+// to reject obvious typos before nodemailer rejects the entire batch.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function serialiseSchedule(row: typeof reportEmailSchedulesTable.$inferSelect) {
+  return {
+    enabled: row.enabled,
+    reports: Array.isArray(row.reports) ? row.reports : [],
+    frequency: row.frequency,
+    recipients: Array.isArray(row.recipients) ? row.recipients : [],
+    lastSentAt: row.lastSentAt ? row.lastSentAt.toISOString() : null,
+    lastStatus: row.lastStatus,
+    lastError: row.lastError,
+    lastReports: Array.isArray(row.lastReports) ? row.lastReports : [],
+    lastRecipients: row.lastRecipients,
+  };
+}
+
+// GET /api/admin/reports/email-schedule — returns config + recent history.
+router.get("/reports/email-schedule", requireSuperAdmin, async (_req, res) => {
+  try {
+    const cfg = await ensureScheduleRow();
+    const runs = await db.select().from(reportEmailScheduleRunsTable)
+      .orderBy(desc(reportEmailScheduleRunsTable.ranAt))
+      .limit(20);
+    res.json({
+      schedule: serialiseSchedule(cfg),
+      availableReports: AVAILABLE_REPORTS.map(r => ({ key: r.key, label: r.labelAr })),
+      smtpConfigured: emailConfigured(),
+      history: runs.map(r => ({
+        id: r.id,
+        ranAt: r.ranAt.toISOString(),
+        trigger: r.trigger,
+        status: r.status,
+        reports: Array.isArray(r.reports) ? r.reports : [],
+        recipients: r.recipients,
+        message: r.message,
+      })),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب إعدادات الجدولة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// PUT /api/admin/reports/email-schedule — updates config (enable/disable +
+// list of reports + frequency + recipients). Validates inputs before saving
+// so a bad payload can't poison the scheduler tick.
+router.put("/reports/email-schedule", requireSuperAdmin, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const enabled = body.enabled === true;
+
+    const reportsRaw = Array.isArray(body.reports) ? body.reports : [];
+    const reports: string[] = [];
+    for (const r of reportsRaw) {
+      if (typeof r !== "string") { res.status(400).json({ error: "قائمة التقارير غير صالحة" }); return; }
+      if (!REPORT_KEYS.includes(r)) { res.status(400).json({ error: `تقرير غير معروف: ${r}` }); return; }
+      if (!reports.includes(r)) reports.push(r);
+    }
+
+    if (!isFrequency(body.frequency)) {
+      res.status(400).json({ error: "تكرار الإرسال يجب أن يكون أسبوعيًا أو شهريًا" });
+      return;
+    }
+    const frequency = body.frequency;
+
+    const recipientsRaw = Array.isArray(body.recipients) ? body.recipients : [];
+    const recipients: string[] = [];
+    for (const e of recipientsRaw) {
+      if (typeof e !== "string") { res.status(400).json({ error: "قائمة المستلمين غير صالحة" }); return; }
+      const trimmed = e.trim().toLowerCase();
+      if (!trimmed) continue;
+      if (!EMAIL_RE.test(trimmed)) { res.status(400).json({ error: `بريد غير صالح: ${e}` }); return; }
+      if (!recipients.includes(trimmed)) recipients.push(trimmed);
+    }
+
+    if (enabled && reports.length === 0) {
+      res.status(400).json({ error: "اختر تقريرًا واحدًا على الأقل قبل التفعيل" });
+      return;
+    }
+    if (enabled && recipients.length === 0) {
+      res.status(400).json({ error: "أضف بريدًا واحدًا على الأقل قبل التفعيل" });
+      return;
+    }
+
+    await ensureScheduleRow();
+    await db.update(reportEmailSchedulesTable).set({
+      enabled, reports, frequency, recipients,
+      updatedAt: new Date(),
+    }).where(eq(reportEmailSchedulesTable.id, REPORT_SCHEDULE_ID));
+
+    await writeAudit({
+      userId:    req.adminUser?.id ?? null,
+      username:  req.adminUser?.username ?? null,
+      role:      "superadmin",
+      companyId: null,
+      module: "reports", action: "edit",
+      entityType: "report_email_schedule",
+      entityId:   String(REPORT_SCHEDULE_ID),
+      metadata: {
+        enabled, frequency,
+        reports, recipientsCount: recipients.length,
+      },
+    });
+
+    const cfg = await ensureScheduleRow();
+    res.json({ schedule: serialiseSchedule(cfg) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حفظ إعدادات الجدولة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/reports/email-schedule/run-now — manual trigger. Bypasses
+// the "is it due?" check so the SuperAdmin can verify SMTP/recipients
+// without waiting for the next interval. Still respects "no reports / no
+// recipients" guards inside runReportDigest().
+router.post("/reports/email-schedule/run-now", requireSuperAdmin, async (req, res) => {
+  try {
+    const outcome = await runReportDigest("manual");
+    await writeAudit({
+      userId:    req.adminUser?.id ?? null,
+      username:  req.adminUser?.username ?? null,
+      role:      "superadmin",
+      companyId: null,
+      module: "reports", action: "export",
+      entityType: "report_email_schedule",
+      entityId:   String(REPORT_SCHEDULE_ID),
+      metadata: {
+        trigger: "manual",
+        status: outcome.status,
+        message: outcome.message,
+        reports: outcome.reports,
+        recipients: outcome.recipients,
+      },
+    });
+    res.json({ ok: outcome.status === "ok", outcome });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إرسال التقرير";
     res.status(500).json({ error: msg });
   }
 });

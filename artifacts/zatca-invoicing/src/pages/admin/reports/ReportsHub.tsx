@@ -5,6 +5,7 @@ import {
   Loader2, Building2, Wallet,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import EmailScheduleSection from "./EmailScheduleSection";
 
 interface SummaryResp {
   period: { from: string; to: string };
@@ -141,6 +142,8 @@ export default function ReportsHub() {
           </Link>
         ))}
       </div>
+
+      <EmailScheduleSection />
     </div>
   );
 }

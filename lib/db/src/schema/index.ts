@@ -25,3 +25,4 @@ export * from "./auditLog";
 export * from "./sequences";
 export * from "./systemSettings";
 export * from "./superAdminSecurity";
+export * from "./reportEmailSchedules";

@@ -170,4 +170,6 @@ app.listen(port, (err) => {
   import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});
   // Auto-suspend expired subscriptions (only when superadmin enables the flag).
   startAutoSuspendScheduler();
+  // Weekly/monthly digest of cross-company reports for the SuperAdmin (opt-in).
+  import("./lib/reportScheduler.js").then(m => m.startReportDigestScheduler?.()).catch(() => {});
 });
