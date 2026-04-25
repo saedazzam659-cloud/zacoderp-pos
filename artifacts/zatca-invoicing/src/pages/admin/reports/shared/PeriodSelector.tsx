@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 
@@ -13,6 +13,11 @@ export type PeriodPreset =
   | "this_quarter" | "last_quarter"
   | "this_year" | "last_year"
   | "custom";
+
+const VALID_PRESETS: PeriodPreset[] = [
+  "this_month", "last_month", "this_quarter", "last_quarter",
+  "this_year", "last_year", "custom",
+];
 
 function isoDate(d: Date): string { return d.toISOString().slice(0, 10); }
 function utcDate(y: number, m: number, d: number): Date { return new Date(Date.UTC(y, m, d)); }
@@ -34,11 +39,51 @@ function presetRange(preset: Exclude<PeriodPreset, "custom">): { from: string; t
   }
 }
 
-export function usePeriodState(initial: PeriodPreset = "this_month") {
-  const [preset, setPreset] = useState<PeriodPreset>(initial);
+const PERIOD_STORAGE_PREFIX = "report-period:";
+const SEARCH_STORAGE_PREFIX = "report-search:";
+
+// Read previously persisted period from localStorage. Returns null when no
+// valid record exists; the hook then falls back to its `initial` argument.
+// Validation is strict so a corrupted entry can never crash the report page.
+function readStoredPeriod(storageKey: string | undefined): { preset: PeriodPreset; from: string; to: string } | null {
+  if (!storageKey || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(`${PERIOD_STORAGE_PREFIX}${storageKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!VALID_PRESETS.includes(parsed.preset)) return null;
+    if (typeof parsed.from !== "string" || typeof parsed.to !== "string") return null;
+    return { preset: parsed.preset, from: parsed.from, to: parsed.to };
+  } catch {
+    return null;
+  }
+}
+
+export function usePeriodState(initial: PeriodPreset = "this_month", storageKey?: string) {
+  // Resolve initial values once. We read localStorage lazily inside useState's
+  // initializer so we never write a stale value back during the first render.
+  // The stored record is parsed exactly once via a shared initializer ref so
+  // the three useState calls below don't each re-parse JSON on mount.
   const initialRange = useMemo(() => presetRange(initial === "custom" ? "this_month" : initial), [initial]);
-  const [from, setFrom] = useState(initialRange.from);
-  const [to, setTo]     = useState(initialRange.to);
+  const initRef = useRef<{ preset: PeriodPreset; from: string; to: string } | null | undefined>(undefined);
+  if (initRef.current === undefined) initRef.current = readStoredPeriod(storageKey);
+  const stored = initRef.current;
+  const [preset, setPreset] = useState<PeriodPreset>(() => stored?.preset ?? initial);
+  const [from, setFrom] = useState(() => stored?.from ?? initialRange.from);
+  const [to, setTo]     = useState(() => stored?.to ?? initialRange.to);
+
+  // Persist on any change. Wrapped in try/catch because Safari private mode
+  // and storage-quota errors must never break the report.
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        `${PERIOD_STORAGE_PREFIX}${storageKey}`,
+        JSON.stringify({ preset, from, to }),
+      );
+    } catch { /* ignore storage failures */ }
+  }, [storageKey, preset, from, to]);
 
   function setPresetSafe(p: PeriodPreset) {
     setPreset(p);
@@ -49,10 +94,45 @@ export function usePeriodState(initial: PeriodPreset = "this_month") {
     }
   }
 
-  return { preset, setPreset: setPresetSafe, from, setFrom, to, setTo };
+  // Restore the report's default window. Used by the "إعادة الضبط" button.
+  function reset() {
+    const fallback = initial === "custom" ? "this_month" : initial;
+    const r = presetRange(fallback);
+    setPreset(initial);
+    setFrom(r.from);
+    setTo(r.to);
+  }
+
+  return { preset, setPreset: setPresetSafe, from, setFrom, to, setTo, reset };
 }
 
 export type PeriodState = ReturnType<typeof usePeriodState>;
+
+// Persisted free-text search input. Mirrors usePeriodState's storage strategy
+// so a single storageKey per report is enough to remember the whole filter.
+export function useStoredSearch(storageKey?: string) {
+  const [search, setSearch] = useState<string>(() => {
+    if (!storageKey || typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(`${SEARCH_STORAGE_PREFIX}${storageKey}`) ?? "";
+    } catch {
+      return "";
+    }
+  });
+
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") return;
+    try {
+      if (search) {
+        window.localStorage.setItem(`${SEARCH_STORAGE_PREFIX}${storageKey}`, search);
+      } else {
+        window.localStorage.removeItem(`${SEARCH_STORAGE_PREFIX}${storageKey}`);
+      }
+    } catch { /* ignore storage failures */ }
+  }, [storageKey, search]);
+
+  return [search, setSearch] as const;
+}
 
 // Build the query-string fragment all report endpoints understand. When the
 // user picks a preset we send `period=<preset>` and let the server compute

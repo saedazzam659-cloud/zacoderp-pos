@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Download, Loader2, Search, BarChart3, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowRight, Download, Loader2, Search, BarChart3, TrendingUp, TrendingDown, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAuth } from "@/contexts/AuthContext";
-import { PeriodSelector, periodToQuery, usePeriodState } from "./shared/PeriodSelector";
+import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
 import { downloadCsv } from "./shared/downloadCsv";
 
 interface PerfRow {
@@ -26,8 +26,10 @@ type SortKey = "revenue" | "invoiceCount" | "avgInvoice" | "growthPct";
 
 export default function CompanyPerformanceReport() {
   const { token } = useAuth();
-  const period = usePeriodState();
-  const [search, setSearch] = useState("");
+  // storageKey persists this report's period+search in localStorage so the
+  // admin returns to the same window after navigating away (e.g. month-end close).
+  const period = usePeriodState("this_month", "company-performance");
+  const [search, setSearch] = useStoredSearch("company-performance");
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -104,6 +106,14 @@ export default function CompanyPerformanceReport() {
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="اسم الشركة..." className="pr-9" />
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { period.reset(); setSearch(""); }}
+          title="إعادة الفترة الافتراضية ومسح البحث"
+        >
+          <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
+        </Button>
       </div>
 
       {error && <div className="text-rose-700 bg-rose-50 border border-rose-200 rounded p-3 text-sm">{(error as Error).message}</div>}

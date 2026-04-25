@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Download, Loader2, Search, Gauge, AlertTriangle } from "lucide-react";
+import { ArrowRight, Download, Loader2, Search, Gauge, AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-import { PeriodSelector, periodToQuery, usePeriodState } from "./shared/PeriodSelector";
+import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
 import { downloadCsv } from "./shared/downloadCsv";
 
 interface UsageMetric { actual: number; max: number }
@@ -27,8 +27,9 @@ const fmtInt = new Intl.NumberFormat("ar-SA");
 
 export default function PlanUsageReport() {
   const { token } = useAuth();
-  const period = usePeriodState();
-  const [search, setSearch] = useState("");
+  // Persist filters per report so the admin returns to the same view.
+  const period = usePeriodState("this_month", "plan-usage");
+  const [search, setSearch] = useStoredSearch("plan-usage");
   const [onlyOver, setOnlyOver] = useState(false);
 
   // All filters (search + onlyOver) are sent to the backend so CSV export
@@ -89,6 +90,14 @@ export default function PlanUsageReport() {
           <input type="checkbox" checked={onlyOver} onChange={e => setOnlyOver(e.target.checked)} />
           المتجاوزة فقط
         </label>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { period.reset(); setSearch(""); setOnlyOver(false); }}
+          title="إعادة الفترة الافتراضية ومسح البحث"
+        >
+          <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
+        </Button>
       </div>
 
       {error && <div className="text-rose-700 bg-rose-50 border border-rose-200 rounded p-3 text-sm">{(error as Error).message}</div>}

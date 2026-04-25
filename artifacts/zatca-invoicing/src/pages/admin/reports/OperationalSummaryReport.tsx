@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Download, Loader2, Search, Activity, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowRight, Download, Loader2, Search, Activity, AlertTriangle, CheckCircle2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
+import { useStoredSearch } from "./shared/PeriodSelector";
 
 interface OpsRow {
   companyId: number; companyName: string; companyStatus: string;
@@ -23,7 +24,9 @@ const fmtInt = new Intl.NumberFormat("ar-SA");
 
 export default function OperationalSummaryReport() {
   const { token } = useAuth();
-  const [search, setSearch] = useState("");
+  // Persist search across visits. No period selector here, but the same
+  // localStorage convention keeps reset behavior consistent with other reports.
+  const [search, setSearch] = useStoredSearch("operational-summary");
   const [onlyInactive, setOnlyInactive] = useState(false);
 
   // The KPIs on this report use fixed reporting windows per spec
@@ -84,6 +87,14 @@ export default function OperationalSummaryReport() {
           <input type="checkbox" checked={onlyInactive} onChange={e => setOnlyInactive(e.target.checked)} />
           الراكدة فقط (أكثر من 30 يوم بدون نشاط)
         </label>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { setSearch(""); setOnlyInactive(false); }}
+          title="مسح البحث"
+        >
+          <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
+        </Button>
         <p className="text-xs text-muted-foreground basis-full">
           أحداث التدقيق والمحاولات المرفوضة تُحسب للأيام السبعة الأخيرة. الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً.
         </p>

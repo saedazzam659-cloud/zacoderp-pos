@@ -1,14 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Download, Loader2, PieChart as PieIcon, Search } from "lucide-react";
+import { ArrowRight, Download, Loader2, PieChart as PieIcon, Search, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
-import { PeriodSelector, periodToQuery, usePeriodState } from "./shared/PeriodSelector";
+import { PeriodSelector, periodToQuery, usePeriodState, useStoredSearch } from "./shared/PeriodSelector";
 
 interface PlanRow {
   plan: string; billingCycle: string;
@@ -29,8 +29,9 @@ const CYCLE_LABEL: Record<string, string> = { monthly: "شهري", yearly: "سن
 
 export default function RevenueByPlanReport() {
   const { token } = useAuth();
-  const period = usePeriodState();
-  const [search, setSearch] = useState("");
+  // Persist filters per report so the admin returns to the same view.
+  const period = usePeriodState("this_month", "revenue-by-plan");
+  const [search, setSearch] = useStoredSearch("revenue-by-plan");
 
   const queryString = useMemo(() => {
     const qs = new URLSearchParams(periodToQuery(period));
@@ -87,6 +88,14 @@ export default function RevenueByPlanReport() {
             <Input value={search} onChange={e => setSearch(e.target.value)} className="pr-8" placeholder="اسم الشركة..." />
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { period.reset(); setSearch(""); }}
+          title="إعادة الفترة الافتراضية ومسح البحث"
+        >
+          <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
+        </Button>
       </div>
 
       {error && <div className="text-rose-700 bg-rose-50 border border-rose-200 rounded p-3 text-sm">{(error as Error).message}</div>}
