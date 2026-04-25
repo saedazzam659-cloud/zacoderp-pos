@@ -84,6 +84,13 @@ interface VATData {
     exempt:        { base: number; vat: number };
     total:         { base: number; vat: number };
   };
+  // Per-side returns surfaced as positive deductions; already netted into
+  // outputTax / inputTax above. Optional for backwards compatibility with
+  // older API responses.
+  returns?: {
+    sales:     { base: number; vat: number; count: number };
+    purchases: { base: number; vat: number; count: number };
+  };
   netVat: number;
   discountTotal: number;
   invoiceBreakdown: { standardTypeCount: number; simplifiedTypeCount: number; totalCount: number };
@@ -318,7 +325,9 @@ export default function VATDeclaration() {
               <p className="text-2xl font-bold tabular-nums text-blue-700 dark:text-blue-400">
                 {fmtNum(data.inputTax.total.vat)}
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">غير متتبعة حاليًا</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                وعاء: {fmtNum(data.inputTax.total.base)} ر.س
+              </p>
             </div>
 
             {/* Net VAT */}
@@ -428,10 +437,10 @@ export default function VATDeclaration() {
           </div>
 
           {/* ── NOTE ──────────────────────────────────────────────────────────── */}
-          <div className="flex items-start gap-2.5 px-5 py-3 bg-amber-50/80 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-800/40 no-print">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
-            <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-              <strong>ملاحظة:</strong> النظام الحالي لا يتتبع فواتير المشتريات. يرجى إدخال قيم ضريبة المدخلات يدويًا عند تقديم الإقرار الرسمي لدى هيئة الزكاة والضريبة والجمارك.
+          <div className="flex items-start gap-2.5 px-5 py-3 bg-blue-50/80 dark:bg-blue-950/20 border-t border-blue-200/60 dark:border-blue-800/40 no-print">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
+            <p className="text-xs text-blue-700 dark:text-blue-400 leading-relaxed">
+              <strong>مصادر الإقرار:</strong> يجمع النظام تلقائيًا ضريبة المخرجات من فواتير ومرتجعات المبيعات المُرحَّلة، وضريبة المدخلات من فواتير ومرتجعات المشتريات المُرحَّلة. لا تُحتسب المسودات أو الفواتير الملغاة.
             </p>
           </div>
 
