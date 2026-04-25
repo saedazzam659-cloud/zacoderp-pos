@@ -24,6 +24,10 @@ export const usersTable = pgTable("users", {
   // belonging to the branches linked through `user_branches`. Admin and
   // superadmin roles always bypass this restriction.
   viewAllBranches: boolean("view_all_branches").notNull().default(true),
+  // Per-SuperAdmin opt-out for the maintenance-critical email digest.
+  // Defaults to true so existing recipients keep getting alerts; only meaningful
+  // for users with role='superadmin' (other roles are never on the digest list).
+  notifyMaintenanceEmail: boolean("notify_maintenance_email").notNull().default(true),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
   lastLoginAt: timestamp("last_login_at"),

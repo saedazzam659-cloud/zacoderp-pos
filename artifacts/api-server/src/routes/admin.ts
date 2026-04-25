@@ -4193,7 +4193,7 @@ router.get("/maintenance/schedule", requireSuperAdmin, async (_req, res) => {
   }
 });
 
-// PUT /maintenance/schedule — body: { enabled, hourOfDay, minuteOfHour }.
+// PUT /maintenance/schedule — body: { enabled, hourOfDay, minuteOfHour, emailMinIntervalHours }.
 router.put("/maintenance/schedule", requireSuperAdmin, async (req, res) => {
   try {
     await ensureMaintenanceScheduleRow();
@@ -4206,6 +4206,12 @@ router.put("/maintenance/schedule", requireSuperAdmin, async (req, res) => {
     if (req.body?.minuteOfHour != null) {
       const m = clampInt(req.body.minuteOfHour, 0, 59, 0);
       patch.minuteOfHour = m;
+    }
+    // Cooldown between successive critical-digest emails. 0 disables rate
+    // limiting (legacy "fire on every sweep" behaviour). Cap at 720h (~30
+    // days) so a typo can't accidentally mute alerts forever.
+    if (req.body?.emailMinIntervalHours != null) {
+      patch.emailMinIntervalHours = clampInt(req.body.emailMinIntervalHours, 0, 720, 24);
     }
     await db.update(maintenanceScheduleTable).set(patch)
       .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));

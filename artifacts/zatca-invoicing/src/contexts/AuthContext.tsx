@@ -21,6 +21,12 @@ export interface AuthUser {
   viewAllBranches?: boolean;
   /** Branches this user is explicitly linked to (used when viewAllBranches=false). */
   branchIds?: number[];
+  /**
+   * Per-SuperAdmin opt-in for the maintenance critical-digest email.
+   * Defaults to true on the server when the column is null. Only meaningful
+   * for users with role='superadmin'; other roles are never on the recipient list.
+   */
+  notifyMaintenanceEmail?: boolean;
   company?: any;
   subscription?: any;
 }

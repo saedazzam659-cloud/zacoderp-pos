@@ -268,9 +268,53 @@ router.get("/me", async (req, res) => {
     nameEn: (user as any).nameEn ?? null,
     permissions: (user as any).permissions ?? {},
     viewAllBranches: (user as any).viewAllBranches ?? true,
+    // Per-SuperAdmin opt-out for the maintenance critical-digest email.
+    // Surfaced here so the Settings page can render the toggle without an
+    // extra round-trip. Defaults to true when null/undefined for safety.
+    notifyMaintenanceEmail: (user as any).notifyMaintenanceEmail ?? true,
     branchIds: branchLinks.map(l => l.branchId),
     company,
     subscription,
+  });
+});
+
+// PUT /api/auth/me/notifications — toggle the SuperAdmin maintenance-digest
+// opt-out without requiring a password re-confirmation. This is a low-stakes
+// preference (no security or financial impact), so the active session token
+// is sufficient. Currently scoped to one flag — extend the body shape if more
+// notification preferences land later.
+router.put("/me/notifications", async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const token = auth.slice(7);
+  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  if (!user) {
+    const resolved = await resolveBearerToken(token);
+    if (resolved) {
+      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+      if (full) user = full;
+    }
+  }
+  if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
+
+  const { notifyMaintenanceEmail } = req.body ?? {};
+  if (typeof notifyMaintenanceEmail !== "boolean") {
+    res.status(400).json({ error: "notifyMaintenanceEmail يجب أن يكون قيمة منطقية" }); return;
+  }
+  // Only SuperAdmins are ever on the digest list, so the toggle is a no-op
+  // (but harmless) for other roles. We still accept it without a 403 so the
+  // future shape — multiple notification preferences — can include flags
+  // that *do* apply to non-SuperAdmins.
+  const [updated] = await db.update(usersTable)
+    .set({ notifyMaintenanceEmail, updatedAt: new Date() })
+    .where(eq(usersTable.id, user.id))
+    .returning();
+  res.json({
+    ok: true,
+    notifyMaintenanceEmail: (updated as any).notifyMaintenanceEmail ?? notifyMaintenanceEmail,
+    message: notifyMaintenanceEmail
+      ? "تم تفعيل تنبيهات صيانة النظام"
+      : "تم إيقاف تنبيهات صيانة النظام",
   });
 });
 

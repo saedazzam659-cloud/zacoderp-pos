@@ -1,6 +1,7 @@
 import { db } from "@workspace/db";
 import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, usersTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { logger } from "./logger.js";
 import { runAllChecks, MAINTENANCE_TOOL_KEYS, type ToolRunOutcome } from "./maintenanceChecks.js";
 import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow } from "./email.js";
@@ -172,10 +173,54 @@ export async function runMaintenanceSweep(
 // last-email status so the UI card can render it. Also reused by the
 // "Send test email" button in the AI Company Fix screen.
 export interface EmailDispatchOutcome {
-  status: "ok" | "skipped" | "failed" | "no_recipients" | "no_transport" | "snoozed" | "no_critical";
+  status: "ok" | "skipped" | "failed" | "no_recipients" | "no_transport" | "snoozed" | "no_critical" | "rate_limited";
   message: string;
   recipients: number;
   rows: number;
+}
+
+// Stable hash of the current critical set, used to bypass the cooldown when
+// a new critical (or a count change on an existing one) appears. Sorted so the
+// hash is order-independent. Extracted (and exported) so the unit tests can
+// pin the rate-limit decision deterministically.
+export function computeCriticalSignature(
+  rows: ReadonlyArray<{ companyId: number; toolKey: string; count: number }>,
+): string {
+  if (rows.length === 0) return "";
+  const sorted = [...rows].sort((a, b) =>
+    a.companyId - b.companyId || a.toolKey.localeCompare(b.toolKey)
+  );
+  const payload = sorted.map((r) => `${r.companyId}:${r.toolKey}:${r.count}`).join("|");
+  return createHash("sha1").update(payload).digest("hex");
+}
+
+// Pure decision function: should this scheduled dispatch be skipped due to the
+// configured per-digest cooldown? Returns true only when (a) cadence is on,
+// (b) we have a previous *successful* send to anchor the window on, (c) we're
+// still inside the cooldown window measured from that successful send, AND
+// (d) the current critical set is byte-identical to the last one delivered.
+// If any of those are false, the cooldown does not apply. Test sends always
+// bypass this check at the call site.
+//
+// IMPORTANT: this anchors on `lastSuccessfulEmailAt` (NOT `lastEmailAt`). A
+// suppressed tick records `rate_limited` to `lastEmailAt`/`lastEmailStatus`
+// for UI display, but those fields must NOT shift the cooldown window — that
+// would reset the timer on every tick and let the next sweep send too early.
+export function shouldSkipForRateLimit(
+  now: Date,
+  cfg: {
+    emailMinIntervalHours: number;
+    lastSuccessfulEmailAt: Date | null;
+    lastEmailCriticalSignature: string | null;
+  },
+  signature: string,
+): boolean {
+  if (!Number.isFinite(cfg.emailMinIntervalHours) || cfg.emailMinIntervalHours <= 0) return false;
+  if (!cfg.lastSuccessfulEmailAt) return false;
+  const elapsedMs = now.getTime() - new Date(cfg.lastSuccessfulEmailAt).getTime();
+  const intervalMs = cfg.emailMinIntervalHours * 60 * 60_000;
+  if (elapsedMs >= intervalMs) return false;
+  return cfg.lastEmailCriticalSignature === signature;
 }
 
 // Resolves a usable absolute base URL for deep-links inside the digest. The
@@ -191,9 +236,16 @@ function resolvePublicBaseUrl(explicit?: string): string {
 }
 
 async function getSuperAdminRecipients(): Promise<string[]> {
+  // notifyMaintenanceEmail = false is an explicit per-SuperAdmin opt-out
+  // (set from their account settings). Users who flip it off are silently
+  // excluded from the recipient list — same effect as having no email on file.
   const rows = await db.select({ email: usersTable.email })
     .from(usersTable)
-    .where(and(eq(usersTable.role, "superadmin"), eq(usersTable.isActive, true)));
+    .where(and(
+      eq(usersTable.role, "superadmin"),
+      eq(usersTable.isActive, true),
+      eq(usersTable.notifyMaintenanceEmail, true),
+    ));
   // De-dupe + drop blanks; SuperAdmins without a configured email simply opt out.
   return Array.from(new Set(rows.map((r) => (r.email ?? "").trim()).filter((e) => e.length > 0)));
 }
@@ -241,6 +293,30 @@ export async function dispatchCriticalDigest(
     }));
   }
 
+  // Cooldown / rate-limit gate. Skipped for test sends (admins explicitly want
+  // to verify delivery) and when the test placeholder row is in play. Real
+  // dispatches with an unchanged critical set inside the configured window are
+  // suppressed and surfaced in the UI as "rate_limited" so operators see *why*
+  // the email didn't go out.
+  const signature = computeCriticalSignature(visibleAlerts);
+  if (!opts.isTest) {
+    const skip = shouldSkipForRateLimit(new Date(), {
+      emailMinIntervalHours: cfg.emailMinIntervalHours ?? 24,
+      lastSuccessfulEmailAt: cfg.lastSuccessfulEmailAt,
+      lastEmailCriticalSignature: cfg.lastEmailCriticalSignature,
+    }, signature);
+    if (skip) {
+      // Note: we deliberately do NOT update lastEmailCriticalSignature here —
+      // we want subsequent ticks to keep comparing against the last *sent*
+      // signature, not against the most recently-skipped one.
+      return recordEmailOutcome({
+        status: "rate_limited",
+        message: `cooldown_active_${cfg.emailMinIntervalHours ?? 24}h`,
+        recipients: 0, rows: rows.length,
+      });
+    }
+  }
+
   const recipients = await getSuperAdminRecipients();
   if (recipients.length === 0) {
     return recordEmailOutcome({
@@ -271,26 +347,52 @@ export async function dispatchCriticalDigest(
       recipients: recipients.length, rows: rows.length,
     });
   }
-  return recordEmailOutcome({
-    status: "ok",
-    message: opts.isTest ? "test_sent" : "digest_sent",
-    recipients: recipients.length, rows: rows.length,
-  });
+  // Persist the signature ONLY for real successful sends. Test sends keep the
+  // existing signature so they don't accidentally arm the cooldown against
+  // the next real dispatch (admins click "Send test email" precisely when
+  // they've already received — or want to receive — the real one).
+  return recordEmailOutcome(
+    {
+      status: "ok",
+      message: opts.isTest ? "test_sent" : "digest_sent",
+      recipients: recipients.length, rows: rows.length,
+    },
+    // Real "ok" sends advance both the cooldown anchor and the signature.
+    // Test sends keep the existing anchor/signature so they don't accidentally
+    // arm (or rearm) the cooldown against the next real dispatch.
+    opts.isTest ? {} : { criticalSignature: signature, advanceCooldownAnchor: true },
+  );
 }
 
-async function recordEmailOutcome(o: EmailDispatchOutcome): Promise<EmailDispatchOutcome> {
+async function recordEmailOutcome(
+  o: EmailDispatchOutcome,
+  extras: { criticalSignature?: string; advanceCooldownAnchor?: boolean } = {},
+): Promise<EmailDispatchOutcome> {
   // Always stamp lastEmailAt so the UI shows the most recent attempt regardless
   // of outcome — operators need to know "we tried and SMTP rejected" just as
   // much as "we sent successfully". Errors land in lastEmailError for display.
+  // `rate_limited` is a successful suppression (not a failure), so we don't
+  // populate lastEmailError for it either. The cooldown anchor
+  // (lastSuccessfulEmailAt) is only advanced via `extras.advanceCooldownAnchor`
+  // so suppressed/failed/test attempts cannot reset the rate-limit window.
+  const successful = o.status === "ok" || o.status === "no_critical" || o.status === "rate_limited";
   try {
-    await db.update(maintenanceScheduleTable).set({
+    const patch: Record<string, any> = {
       lastEmailAt: new Date(),
       lastEmailStatus: o.status,
-      lastEmailError: o.status === "ok" || o.status === "no_critical" ? null : o.message,
+      lastEmailError: successful ? null : o.message,
       lastEmailRecipients: o.recipients,
       lastEmailCriticalCount: o.rows,
       updatedAt: new Date(),
-    }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+    };
+    if (extras.criticalSignature !== undefined) {
+      patch.lastEmailCriticalSignature = extras.criticalSignature;
+    }
+    if (extras.advanceCooldownAnchor) {
+      patch.lastSuccessfulEmailAt = new Date();
+    }
+    await db.update(maintenanceScheduleTable).set(patch)
+      .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
   } catch (err) {
     logger.error({ err }, "maintenance-scheduler: failed to record email outcome");
   }

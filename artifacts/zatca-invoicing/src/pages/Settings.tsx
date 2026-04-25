@@ -4,10 +4,11 @@ import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import {
   User, Lock, Eye, EyeOff, CheckCircle2, Shield,
-  Building2, Package, BadgeCheck
+  Building2, Package, BadgeCheck, Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +62,30 @@ export default function Settings() {
       if (variables.newUsername) {
         setUsernameForm(f => ({ ...f, currentPassword: "" }));
       }
+    },
+    onError: (err: any) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  // SuperAdmin opt-out for the maintenance critical-digest email. The flag is
+  // stored on the users row (notifyMaintenanceEmail) and surfaced via /api/auth/me.
+  // The toggle hits a dedicated lightweight endpoint that doesn't require a
+  // password re-confirmation — it's a low-stakes notification preference.
+  const notifyMaintenanceEmail = (user as any)?.notifyMaintenanceEmail ?? true;
+  const notificationsMutation = useMutation({
+    mutationFn: async (next: boolean) => {
+      const res = await fetch(`${API}/api/auth/me/notifications`, {
+        method: "PUT", headers,
+        body: JSON.stringify({ notifyMaintenanceEmail: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "تعذّر تحديث تفضيلات التنبيه");
+      return data as { ok: boolean; notifyMaintenanceEmail: boolean; message: string };
+    },
+    // Update the cached user immediately so the switch reflects the new state
+    // without waiting for a /me round-trip.
+    onSuccess: (data) => {
+      toast({ title: "✓ " + data.message });
+      if (setUser) setUser((u: any) => (u ? { ...u, notifyMaintenanceEmail: data.notifyMaintenanceEmail } : u));
     },
     onError: (err: any) => toast({ title: err.message, variant: "destructive" }),
   });
@@ -167,6 +192,35 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* SuperAdmin notification preferences — opt-out for the maintenance
+          critical-digest email. Hidden for non-SuperAdmin users since the
+          digest only ever targets the SuperAdmin role. */}
+      {isSuperAdmin && (
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <h2 className="font-semibold text-base flex items-center gap-2">
+            <Bell className="h-4 w-4 text-muted-foreground" />
+            تفضيلات التنبيهات
+          </h2>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="notify-maint-email" className="text-sm font-medium">
+                تنبيهات بريد صيانة النظام
+              </Label>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                عند التفعيل، تصلك رسالة موجزة عبر البريد الإلكتروني بعد كل فحص يومي يكتشف نتائج حرجة لأي شركة.
+                يمكنك إيقاف هذا الإيميل لحسابك دون التأثير على بقية المشرفين العامين.
+              </p>
+            </div>
+            <Switch
+              id="notify-maint-email"
+              checked={notifyMaintenanceEmail}
+              disabled={notificationsMutation.isPending}
+              onCheckedChange={(v) => notificationsMutation.mutate(v)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Change username */}
       <div className="rounded-xl border bg-card p-5 space-y-5">

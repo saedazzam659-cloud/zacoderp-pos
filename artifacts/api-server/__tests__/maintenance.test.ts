@@ -81,7 +81,12 @@ import {
   checkOldAuditLogs,
   checkOldMaintenanceRuns,
 } from "../src/lib/maintenanceChecks.ts";
-import { isDailyDue, MAINTENANCE_SCHEDULE_ID } from "../src/lib/maintenanceScheduler.ts";
+import {
+  isDailyDue,
+  MAINTENANCE_SCHEDULE_ID,
+  computeCriticalSignature,
+  shouldSkipForRateLimit,
+} from "../src/lib/maintenanceScheduler.ts";
 
 // ─── Test scoping ───────────────────────────────────────────────────────────
 const TEST_TAG = `tt_maint_${randomBytes(4).toString("hex")}`;
@@ -273,12 +278,15 @@ async function cleanup(): Promise<void> {
         lastRunCompanies:        savedScheduleRow.lastRunCompanies,
         lastRunCriticalCount:    savedScheduleRow.lastRunCriticalCount,
         lastError:               savedScheduleRow.lastError,
-        lastEmailAt:             savedScheduleRow.lastEmailAt,
-        lastEmailStatus:         savedScheduleRow.lastEmailStatus,
-        lastEmailError:          savedScheduleRow.lastEmailError,
-        lastEmailRecipients:     savedScheduleRow.lastEmailRecipients,
-        lastEmailCriticalCount:  savedScheduleRow.lastEmailCriticalCount,
-        updatedAt:               savedScheduleRow.updatedAt,
+        lastEmailAt:                savedScheduleRow.lastEmailAt,
+        lastEmailStatus:            savedScheduleRow.lastEmailStatus,
+        lastEmailError:             savedScheduleRow.lastEmailError,
+        lastEmailRecipients:        savedScheduleRow.lastEmailRecipients,
+        lastEmailCriticalCount:     savedScheduleRow.lastEmailCriticalCount,
+        emailMinIntervalHours:      savedScheduleRow.emailMinIntervalHours,
+        lastSuccessfulEmailAt:      savedScheduleRow.lastSuccessfulEmailAt,
+        lastEmailCriticalSignature: savedScheduleRow.lastEmailCriticalSignature,
+        updatedAt:                  savedScheduleRow.updatedAt,
       }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
     }
   } catch { /* best-effort */ }
@@ -442,6 +450,156 @@ test("isDailyDue: respects custom hourOfDay/minuteOfHour", () => {
   assert.equal(
     isDailyDue(notDue, { enabled: true, hourOfDay: 15, minuteOfHour: 30, lastRunAt: null }),
     false,
+  );
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Email digest: critical-set signature + cooldown decision
+// ════════════════════════════════════════════════════════════════════════════
+// The cadence guard introduced for the digest cooldown is decomposed into
+// (a) a stable signature of the current critical set and (b) a pure decision
+// function that decides whether a real send should be skipped. Both are pinned
+// here so a regression in either silently re-introduces the alert-fatigue bug
+// the cadence was added to solve.
+
+test("computeCriticalSignature: empty set → empty string", () => {
+  assert.equal(computeCriticalSignature([]), "");
+});
+
+test("computeCriticalSignature: order-independent for the same triples", () => {
+  const a = computeCriticalSignature([
+    { companyId: 7, toolKey: "broken-refs", count: 2 },
+    { companyId: 3, toolKey: "journal-pending", count: 5 },
+  ]);
+  const b = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5 },
+    { companyId: 7, toolKey: "broken-refs", count: 2 },
+  ]);
+  assert.equal(a, b);
+  assert.notEqual(a, "");
+});
+
+test("computeCriticalSignature: changes when count changes", () => {
+  const before = computeCriticalSignature([{ companyId: 3, toolKey: "journal-pending", count: 5 }]);
+  const after  = computeCriticalSignature([{ companyId: 3, toolKey: "journal-pending", count: 6 }]);
+  assert.notEqual(before, after);
+});
+
+test("computeCriticalSignature: changes when a new (company, tool) appears", () => {
+  const before = computeCriticalSignature([{ companyId: 3, toolKey: "journal-pending", count: 5 }]);
+  const after  = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5 },
+    { companyId: 4, toolKey: "broken-refs",     count: 1 },
+  ]);
+  assert.notEqual(before, after);
+});
+
+test("shouldSkipForRateLimit: cadence=0 → never skips (legacy fire-every-sweep)", () => {
+  const now = new Date();
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 0,
+      lastSuccessfulEmailAt: new Date(now.getTime() - 60_000),
+      lastEmailCriticalSignature: "abc",
+    }, "abc"),
+    false,
+  );
+});
+
+test("shouldSkipForRateLimit: cooldown elapsed → never skips", () => {
+  const now = new Date();
+  // 25h after the last *successful* send, cadence=24h → window expired.
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 24,
+      lastSuccessfulEmailAt: new Date(now.getTime() - 25 * 60 * 60_000),
+      lastEmailCriticalSignature: "abc",
+    }, "abc"),
+    false,
+  );
+});
+
+test("shouldSkipForRateLimit: within cooldown + identical signature → skips", () => {
+  const now = new Date();
+  // 1h after the last successful send, cadence=24h, same critical set →
+  // suppress to cut alert noise.
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 24,
+      lastSuccessfulEmailAt: new Date(now.getTime() - 60 * 60_000),
+      lastEmailCriticalSignature: "abc",
+    }, "abc"),
+    true,
+  );
+});
+
+test("shouldSkipForRateLimit: within cooldown + different signature → never skips", () => {
+  // The whole point of the signature: a *new* critical finding always reaches
+  // SuperAdmins promptly even if the cooldown clock hasn't elapsed yet.
+  const now = new Date();
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 24,
+      lastSuccessfulEmailAt: new Date(now.getTime() - 60 * 60_000),
+      lastEmailCriticalSignature: "abc",
+    }, "xyz"),
+    false,
+  );
+});
+
+test("shouldSkipForRateLimit: no prior successful send → never skips (first dispatch always fires)", () => {
+  const now = new Date();
+  // A failed/never-sent state has lastSuccessfulEmailAt=null even if there
+  // were earlier failed *attempts* — the next sweep must fire immediately.
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 24,
+      lastSuccessfulEmailAt: null,
+      lastEmailCriticalSignature: null,
+    }, "abc"),
+    false,
+  );
+});
+
+test("shouldSkipForRateLimit: suppression persists across many ticks until window expires", () => {
+  // Regression guard for the "rate-limited tick resets the cooldown" bug:
+  // every tick inside the window with an unchanged signature must keep
+  // returning true, regardless of how many times we've already skipped.
+  // Previously this logic anchored on lastEmailAt + lastEmailStatus, which
+  // got overwritten by each suppressed tick and let the next sweep send too
+  // early. Anchoring on lastSuccessfulEmailAt fixes that.
+  const successAt = new Date(Date.UTC(2026, 0, 15, 0, 0, 0));
+  const cfg = {
+    emailMinIntervalHours: 48,
+    lastSuccessfulEmailAt: successAt,
+    lastEmailCriticalSignature: "abc",
+  };
+  // 5 minutes, 1 hour, 24h, 47h59m after the send — all within the 48h window.
+  for (const offsetMs of [5 * 60_000, 60 * 60_000, 24 * 60 * 60_000, (48 * 60 - 1) * 60_000]) {
+    const now = new Date(successAt.getTime() + offsetMs);
+    assert.equal(
+      shouldSkipForRateLimit(now, cfg, "abc"),
+      true,
+      `cadence must still suppress at +${offsetMs / 60_000} minutes`,
+    );
+  }
+  // And the moment we cross the window, the next dispatch goes out.
+  const past = new Date(successAt.getTime() + 48 * 60 * 60_000 + 1_000);
+  assert.equal(shouldSkipForRateLimit(past, cfg, "abc"), false);
+});
+
+test("shouldSkipForRateLimit: multi-day cadence honours the configured interval (not a 24h floor)", () => {
+  // Operators can set the cadence to e.g. 72h ("send at most every 3 days").
+  // 25h after the last send must still be inside the cooldown.
+  const successAt = new Date(Date.UTC(2026, 0, 15, 0, 0, 0));
+  const now       = new Date(successAt.getTime() + 25 * 60 * 60_000);
+  assert.equal(
+    shouldSkipForRateLimit(now, {
+      emailMinIntervalHours: 72,
+      lastSuccessfulEmailAt: successAt,
+      lastEmailCriticalSignature: "abc",
+    }, "abc"),
+    true,
   );
 });
 

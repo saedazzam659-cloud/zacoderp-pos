@@ -43,10 +43,23 @@ export const maintenanceScheduleTable = pgTable("maintenance_schedule", {
   // critical findings (and alerts aren't snoozed). The UI surfaces these so
   // operators can verify that SuperAdmins were actually notified.
   lastEmailAt:             timestamp("last_email_at", { withTimezone: true }),
-  lastEmailStatus:         text("last_email_status"),  // "ok" | "failed" | "skipped" | "no_recipients" | "no_transport"
+  lastEmailStatus:         text("last_email_status"),  // "ok" | "failed" | "skipped" | "snoozed" | "rate_limited" | "no_recipients" | "no_transport" | "no_critical"
   lastEmailError:          text("last_email_error"),
   lastEmailRecipients:     integer("last_email_recipients").notNull().default(0),
   lastEmailCriticalCount:  integer("last_email_critical_count").notNull().default(0),
+  // Cooldown: minimum hours between successive *real* digest sends when the
+  // critical set hasn't changed. 0 disables rate limiting (every sweep with
+  // criticals fires an email — original pre-cadence behaviour).
+  emailMinIntervalHours:   integer("email_min_interval_hours").notNull().default(24),
+  // Timestamp of the most recent *successful* digest delivery. Distinct from
+  // lastEmailAt (which tracks the last *attempt*, including rate-limited
+  // suppressions) so the cooldown decision always anchors on the last real
+  // send and isn't reset by suppressed ticks.
+  lastSuccessfulEmailAt:   timestamp("last_successful_email_at", { withTimezone: true }),
+  // Stable hash of the last successfully-sent critical set (companyId+tool+count).
+  // The cooldown above is bypassed when the current set differs from this,
+  // so a *new* critical finding always reaches SuperAdmins promptly.
+  lastEmailCriticalSignature: text("last_email_critical_signature"),
   updatedAt:    timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

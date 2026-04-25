@@ -50,6 +50,7 @@ function emailStatusLabelAr(status: string | null): string {
     case "no_transport":   return "البريد غير مهيأ";
     case "skipped":
     case "snoozed":        return "متخطّاة (مكتومة)";
+    case "rate_limited":   return "متخطّاة (ضمن فترة التهدئة)";
     case "failed":         return "فشل الإرسال";
     default:               return status ?? "—";
   }
@@ -609,12 +610,13 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
         lastEmailAt: string | null; lastEmailStatus: string | null;
         lastEmailError: string | null; lastEmailRecipients: number;
         lastEmailCriticalCount: number;
+        emailMinIntervalHours: number;
       } }>;
     },
     refetchOnWindowFocus: false,
   });
   const updateScheduleMut = useMutation({
-    mutationFn: async (patch: Partial<{ enabled: boolean; hourOfDay: number; minuteOfHour: number }>) => {
+    mutationFn: async (patch: Partial<{ enabled: boolean; hourOfDay: number; minuteOfHour: number; emailMinIntervalHours: number }>) => {
       const r = await fetch(`${API}/api/admin/maintenance/schedule`, {
         method: "PUT", headers, body: JSON.stringify(patch),
       });
@@ -831,7 +833,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                     <span className={
                       s.lastEmailStatus === "ok" ? "text-emerald-700 font-medium" :
                       s.lastEmailStatus === "no_critical" ? "text-emerald-700" :
-                      s.lastEmailStatus === "skipped" || s.lastEmailStatus === "snoozed" ? "text-amber-800" :
+                      s.lastEmailStatus === "skipped" || s.lastEmailStatus === "snoozed" || s.lastEmailStatus === "rate_limited" ? "text-amber-800" :
                       "text-red-700 font-medium"
                     }>
                       {emailStatusLabelAr(s.lastEmailStatus)}
@@ -843,6 +845,43 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                 ) : (
                   <span className="text-[11px] text-muted-foreground">لم يُرسَل بعد</span>
                 )}
+                {/* Cadence — minimum hours between successive critical-digest emails
+                    when the underlying critical set is unchanged. 0 = always send.
+                    Committed onBlur so each keystroke doesn't fire a PUT, and
+                    capped client-side at 720h to mirror the server bound. */}
+                <div className="flex items-center gap-1.5 ml-1">
+                  <Label htmlFor="maint-email-interval" className="text-[11px] whitespace-nowrap text-muted-foreground">
+                    تهدئة التنبيهات (ساعات)
+                  </Label>
+                  {/* Keyed by the persisted value so the input remounts whenever
+                      the server returns a clamped/changed cadence (e.g. user
+                      enters 1000, server clamps to 720). Without the key the
+                      uncontrolled defaultValue would never re-sync and the
+                      field would keep showing the stale entry. */}
+                  <input
+                    key={s.emailMinIntervalHours ?? 24}
+                    id="maint-email-interval"
+                    type="number"
+                    min={0}
+                    max={720}
+                    step={1}
+                    defaultValue={s.emailMinIntervalHours ?? 24}
+                    disabled={updateScheduleMut.isPending}
+                    className="h-7 w-20 text-xs border rounded px-2 bg-background text-center"
+                    title="الحد الأدنى من الساعات بين الرسائل عندما لا تتغير القائمة الحرجة. صفر = إرسال بعد كل فحص."
+                    onBlur={(e) => {
+                      const raw = Number(e.target.value);
+                      const next = Number.isFinite(raw) ? Math.max(0, Math.min(720, Math.trunc(raw))) : (s.emailMinIntervalHours ?? 24);
+                      if (next !== (s.emailMinIntervalHours ?? 24)) {
+                        updateScheduleMut.mutate({ emailMinIntervalHours: next });
+                      } else if (raw !== next) {
+                        // Snap the displayed value back to the clamped one so
+                        // the user sees what was actually persisted.
+                        e.target.value = String(next);
+                      }
+                    }}
+                  />
+                </div>
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs gap-1 mr-auto"
