@@ -108,6 +108,12 @@ export default function PaymentVouchers() {
     return { drLabel, crLabel, amount: amt };
   }
 
+  // Honour the company-level "auto-post on save" toggle. When the tenant
+  // chose manual posting (autoPostingEnabled === false) the voucher is
+  // saved as a draft and the user must explicitly click "اعتماد"; when
+  // automatic, we chain the /post call right after the create succeeds —
+  // same contract sales/purchase invoices use.
+  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async () => {
       const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
@@ -118,15 +124,35 @@ export default function PaymentVouchers() {
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
       const j = await res.json();
-      if (j?.id && (j.status ?? "draft") === "draft") {
+      if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
+        // The voucher itself is already in the DB; treat a post failure
+        // as "saved as draft, posting failed" instead of throwing — that
+        // way the panel still closes and the user doesn't accidentally
+        // re-submit and create a duplicate voucher.
         const pr = await fetch(`${API}/api/payment-vouchers/${j.id}/post`, { method: "POST", headers: h });
         const pj = await pr.json().catch(() => ({}));
-        if (!pr.ok) throw new Error(t(`${NS}.savedFailedPost`, { err: pj.error || pr.statusText }));
-        return pj;
+        if (!pr.ok) return { ...j, _posted: false, _postError: pj?.error || pr.statusText };
+        return { ...pj, _posted: true };
       }
-      return j;
+      return { ...j, _posted: false };
     },
-    onSuccess: () => { try { if (acctId) localStorage.setItem(ACCT_KEY, acctId); } catch {} toast({ title: editing ? t(`${NS}.saved_update`) : t(`${NS}.saved_create`) }); qc.invalidateQueries({ queryKey: ["payment-vouchers"] }); setPanel(false); },
+    onSuccess: (data: any) => {
+      try { if (acctId) localStorage.setItem(ACCT_KEY, acctId); } catch {}
+      qc.invalidateQueries({ queryKey: ["payment-vouchers"] });
+      setPanel(false);
+      if (data?._postError) {
+        toast({
+          variant: "destructive",
+          title: t(`${NS}.savedButPostFailed`, "تم الحفظ كمسودة — لكن فشل الترحيل"),
+          description: data._postError,
+        });
+      } else {
+        toast({
+          title: editing ? t(`${NS}.saved_update`) : t(`${NS}.saved_create`),
+          description: data?._posted === false ? t(`${NS}.savedDraftHint`, "تم الحفظ كمسودة — الترحيل يدوي") : undefined,
+        });
+      }
+    },
     onError: (e: any) => toast({ title: t(`${NS}.err_save`), description: parseError(e), variant: "destructive" }),
   });
 

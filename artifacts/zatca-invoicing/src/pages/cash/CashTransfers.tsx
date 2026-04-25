@@ -49,15 +49,46 @@ export default function CashTransfers() {
   function openAdd()  { setEditing(null); setForm({ ...EMPTY, date: today() }); setPanel(true); }
   function openEdit(r: any) { setEditing(r); setForm({ date: r.date, transferType: r.transferType || "cash_to_bank", fromCashBoxId: r.fromCashBoxId ? String(r.fromCashBoxId) : "", fromBankId: r.fromBankId ? String(r.fromBankId) : "", toCashBoxId: r.toCashBoxId ? String(r.toCashBoxId) : "", toBankId: r.toBankId ? String(r.toBankId) : "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", description: r.description ?? "", notes: r.notes ?? "" }); setPanel(true); }
 
+  // Honour the company-level "auto-post on save" toggle: when automatic,
+  // chain the /post call right after a successful save so the transfer's
+  // journal entry is created without an extra click; when manual, leave
+  // it as a draft for the user to post explicitly later.
+  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async () => {
       const body = { ...form, companyId: cid, fromCashBoxId: form.fromCashBoxId ? parseInt(form.fromCashBoxId) : null, fromBankId: form.fromBankId ? parseInt(form.fromBankId) : null, toCashBoxId: form.toCashBoxId ? parseInt(form.toCashBoxId) : null, toBankId: form.toBankId ? parseInt(form.toBankId) : null };
       const url = editing ? `${API}/api/cash-transfers/${editing.id}` : `${API}/api/cash-transfers`;
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const j = await res.json();
+      if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
+        // The transfer itself is already in the DB; treat a post failure
+        // as "saved as draft, posting failed" instead of throwing — that
+        // way the panel still closes and the user doesn't accidentally
+        // re-submit and create a duplicate transfer.
+        const pr = await fetch(`${API}/api/cash-transfers/${j.id}/post`, { method: "POST", headers: h });
+        const pj = await pr.json().catch(() => ({}));
+        if (!pr.ok) return { ...j, _posted: false, _postError: pj?.error || pr.statusText };
+        return { ...pj, _posted: true };
+      }
+      return { ...j, _posted: false };
     },
-    onSuccess: () => { toast({ title: editing ? t("cashTransfers.saved_update") : t("cashTransfers.saved_create") }); qc.invalidateQueries({ queryKey: ["cash-transfers"] }); setPanel(false); },
+    onSuccess: (data: any) => {
+      qc.invalidateQueries({ queryKey: ["cash-transfers"] });
+      setPanel(false);
+      if (data?._postError) {
+        toast({
+          variant: "destructive",
+          title: t("cashTransfers.savedButPostFailed", "تم الحفظ كمسودة — لكن فشل الترحيل"),
+          description: data._postError,
+        });
+      } else {
+        toast({
+          title: editing ? t("cashTransfers.saved_update") : t("cashTransfers.saved_create"),
+          description: data?._posted === false ? t("cashTransfers.savedDraftHint", "تم الحفظ كمسودة — الترحيل يدوي") : undefined,
+        });
+      }
+    },
     onError: (e: any) => toast({ title: t("cashTransfers.err_save"), description: parseError(e), variant: "destructive" }),
   });
 

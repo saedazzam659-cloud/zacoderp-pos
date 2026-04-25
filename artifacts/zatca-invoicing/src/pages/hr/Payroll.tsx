@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,6 +22,13 @@ const MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","
 export default function Payroll() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+  // Honour the company-level "auto-post on save" toggle: when automatic,
+  // chain the payroll post call right after a successful create so the
+  // run is approved (loan installments deducted + journal entry created)
+  // without an extra click. When manual, the run stays as a draft until
+  // the user clicks "اعتماد".
+  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const now = new Date();
   const [tab, setTab] = useState("runs");
   const [year, setYear] = useState(now.getFullYear());
@@ -47,11 +55,35 @@ export default function Payroll() {
   });
 
   const createMut = useMutation({
-    mutationFn: (data: any) => employeesApi.createPayroll(data),
-    onSuccess: () => {
+    mutationFn: async (data: any) => {
+      const created = await employeesApi.createPayroll(data);
+      // When the tenant is on automatic posting, chain the post call so
+      // the run is approved + journalised right away (mirrors the way
+      // sales/purchase invoices behave on save).
+      if (autoPostingEnabled && created?.id && (created.status ?? "draft") === "draft") {
+        try {
+          await employeesApi.postPayroll(created.id);
+          return { ...created, _posted: true };
+        } catch (e: any) {
+          // The run was created OK; surface the post failure so the user
+          // can fix the cause and click "اعتماد" later, but don't lose the
+          // run.
+          return { ...created, _posted: false, _postError: parseError(e) };
+        }
+      }
+      return { ...created, _posted: false };
+    },
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["payroll-runs"] });
+      qc.invalidateQueries({ queryKey: ["loans"] });
       setPreview(null); setTab("runs");
-      toast({ title: "تم إنشاء المسير", description: "حالته: مسودة. يمكنك اعتماده الآن." });
+      if (data?._posted) {
+        toast({ title: "تم إنشاء المسير واعتماده", description: "تم خصم أقساط السلف وإنشاء القيد المحاسبي." });
+      } else if (data?._postError) {
+        toast({ variant: "destructive", title: "تم إنشاء المسير لكن فشل الاعتماد", description: data._postError });
+      } else {
+        toast({ title: "تم إنشاء المسير", description: "حالته: مسودة. الترحيل يدوي — اضغط (اعتماد) عند الجاهزية." });
+      }
     },
     onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
   });
