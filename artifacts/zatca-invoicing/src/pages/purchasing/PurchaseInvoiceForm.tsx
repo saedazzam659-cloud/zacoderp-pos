@@ -619,15 +619,22 @@ export default function PurchaseInvoiceForm() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">رقم الفاتورة</Label>
-                  <Input
-                    ref={docNumberRef}
-                    className={cn("h-9 text-sm", isNew && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
-                    placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
-                    value={docNumber}
-                    onChange={e => { if (!(isNew && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
-                    readOnly={isNew && seqPeek.hasSequence}
-                    title={isNew && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
-                  />
+                  {(() => {
+                    const lockOnEdit = !isNew;
+                    const lockOnSeq  = isNew && seqPeek.hasSequence;
+                    const locked     = lockOnEdit || lockOnSeq;
+                    return (
+                      <Input
+                        ref={docNumberRef}
+                        className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
+                        placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                        value={docNumber}
+                        onChange={e => { if (!locked) setDocNumber(e.target.value); }}
+                        readOnly={locked}
+                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                      />
+                    );
+                  })()}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">التاريخ *</Label>

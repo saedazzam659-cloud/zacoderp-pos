@@ -436,7 +436,8 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    // docNumber is intentionally not destructured — immutable on edit.
+    const { supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
             totalAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
@@ -444,9 +445,10 @@ router.put("/purchase-invoices/:id", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند الدفع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند الدفع بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند الدفع الآجل" }); return; }
+    // docNumber is intentionally omitted — once assigned, it is immutable.
     const [inv] = await db.update(purchaseInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
+      supplierInvoiceNumber: supplierInvoiceNumber || null, invoiceDate,
       supplierId: supplierId ? Number(supplierId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -828,7 +830,8 @@ router.put("/purchase-returns/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
+    // docNumber is intentionally not destructured — immutable on edit.
+    const { supplierInvoiceNumber, returnDate, supplierId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId,
             currencyCode, exchangeRate, totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             inventoryAccountId, taxAccountId, discountAccountId } = req.body;
     const [existing] = await db.select().from(purchaseReturnsTable)
@@ -839,9 +842,10 @@ router.put("/purchase-returns/:id", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
+    // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(purchaseReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || existing.docNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
+      supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,

@@ -154,7 +154,8 @@ router.put("/:id", async (req, res) => {
       return;
     }
 
-    const { docNumber, entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
+    // docNumber is intentionally not destructured — immutable on edit.
+    const { entryDate, currency, exchangeRate, description, entryType, branchId, lines } = req.body;
 
     // Validate accounts BEFORE mutating the entry header so a bad
     // account doesn't leave the journal half-updated.
@@ -167,8 +168,8 @@ router.put("/:id", async (req, res) => {
       }
     }
 
+    // docNumber is intentionally omitted — once assigned, it is immutable.
     const [entry] = await db.update(journalEntriesTable).set({
-      docNumber:    docNumber || null,
       entryDate:    entryDate || undefined,
       currency:     currency || "SAR",
       exchangeRate: exchangeRate ?? "1",

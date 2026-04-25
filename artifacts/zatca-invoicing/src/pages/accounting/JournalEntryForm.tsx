@@ -588,14 +588,21 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
               <div className="grid grid-cols-3 gap-4 mb-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">رقم المستند</Label>
-                  <Input
-                    value={docNumber}
-                    onChange={e => { if (!(isNew && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
-                    placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
-                    className={cn("h-9 text-sm", isNew && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
-                    readOnly={isNew && seqPeek.hasSequence}
-                    title={isNew && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
-                  />
+                  {(() => {
+                    const lockOnEdit = !isNew;
+                    const lockOnSeq  = isNew && seqPeek.hasSequence;
+                    const locked     = lockOnEdit || lockOnSeq;
+                    return (
+                      <Input
+                        value={docNumber}
+                        onChange={e => { if (!locked) setDocNumber(e.target.value); }}
+                        placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                        className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
+                        readOnly={locked}
+                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                      />
+                    );
+                  })()}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">

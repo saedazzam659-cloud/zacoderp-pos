@@ -634,11 +634,11 @@ export default function SalesReturns() {
                 ref={docNumberRef}
                 placeholder={seqPeek.loading ? "…" : t("common.auto")}
                 dir="ltr"
-                className={cn("text-left", editingId == null && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                className={cn("text-left", (editingId != null || seqPeek.hasSequence) && "bg-muted/40 cursor-not-allowed")}
                 value={form.docNumber}
-                onChange={e => { if (editingId != null || !seqPeek.hasSequence) setForm((p: any) => ({ ...p, docNumber: e.target.value })); }}
-                readOnly={editingId == null && seqPeek.hasSequence}
-                title={editingId == null && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                onChange={e => { if (editingId == null && !seqPeek.hasSequence) setForm((p: any) => ({ ...p, docNumber: e.target.value })); }}
+                readOnly={editingId != null || seqPeek.hasSequence}
+                title={editingId != null ? "الرقم محفوظ — لا يمكن تعديله" : (seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>

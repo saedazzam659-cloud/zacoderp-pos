@@ -367,7 +367,9 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    // docNumber is intentionally not destructured here — it is immutable on
+    // edit (see the .set() below).
+    const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     const pType = paymentType || "credit";
@@ -383,9 +385,13 @@ router.put("/sales-invoices/:id", async (req, res) => {
           return { salesRepId: r.salesRepId, commissionPct: r.commissionPct, commissionAmount: r.commissionAmount };
         })()
       : {};
+    // Note: docNumber is intentionally omitted from the update set — once a
+    // sales invoice number is assigned (by the central sequence engine or by
+    // the user on creation) it is immutable, both for ZATCA audit compliance
+    // and to keep the sequence log consistent.
     const [inv] = await db.update(salesInvoicesTable).set({
       branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, invoiceDate,
+      invoiceDate,
       customerId: customerId ? Number(customerId) : null,
       paymentType: pType,
       cashBoxId: pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
@@ -816,7 +822,8 @@ router.put("/sales-returns/:id", async (req, res) => {
     if (!existing) { res.status(404).json({ error: "المرتجع غير موجود" }); return; }
     if (existing.status !== "draft") { res.status(400).json({ error: "لا يمكن تعديل مرتجع مُرحَّل. قم بفك الترحيل أولاً." }); return; }
 
-    const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
+    // docNumber is intentionally not destructured — immutable on edit.
+    const { returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
@@ -827,9 +834,10 @@ router.put("/sales-returns/:id", async (req, res) => {
     const discR2  = Math.max(0, Math.min(grossR2, Number(discountAmount) || 0));
     const totalR2 = grossR2 - discR2;
 
+    // docNumber is intentionally omitted — once assigned, it is immutable.
     const [ret] = await db.update(salesReturnsTable).set({
       branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, returnDate,
+      returnDate,
       customerId: customerId ? Number(customerId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,

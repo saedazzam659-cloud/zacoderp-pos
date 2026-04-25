@@ -718,16 +718,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
-                  <Input
-                    ref={docNumberRef}
-                    className={cn("h-9 text-sm", isInvoice && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
-                    placeholder={isInvoice && seqPeek.loading ? "…" : t("common.auto")}
-                    dir="ltr"
-                    value={docNumber}
-                    onChange={e => { if (!(isInvoice && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
-                    readOnly={isInvoice && seqPeek.hasSequence}
-                    title={isInvoice && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
-                  />
+                  {(() => {
+                    const lockOnEdit = !!editId;
+                    const lockOnSeq  = isInvoice && seqPeek.hasSequence;
+                    const locked     = lockOnEdit || lockOnSeq;
+                    return (
+                      <Input
+                        ref={docNumberRef}
+                        className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
+                        placeholder={isInvoice && seqPeek.loading ? "…" : t("common.auto")}
+                        dir="ltr"
+                        value={docNumber}
+                        onChange={e => { if (!locked) setDocNumber(e.target.value); }}
+                        readOnly={locked}
+                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                      />
+                    );
+                  })()}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.date")}</Label>
