@@ -159,78 +159,96 @@ export default function Login() {
     return () => { stopped = true; clearInterval(id); };
   }, [step, approval, t]);
 
+  // ── Perform the SuperAdmin login proper ────────────────────────────────
+  // Extracted so it can be called both directly (when the form is already in
+  // SA mode) and chained automatically right after the universal /auth/login
+  // call returns 409 + useSuperAdminFlow — so the user only needs one click.
+  const performSuperAdminLogin = async (): Promise<void> => {
+    const r = await fetch(`${API_BASE}/api/auth/superadmin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: username.trim(),
+        password,
+        turnstileToken: turnstileToken || undefined,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+
+    if (r.status === 403 && j.blocked) {
+      setStep("blocked");
+      setError(j.error || t("auth.sa.blocked", "تم حظر المحاولة لأسباب أمنية."));
+      return;
+    }
+    if (!r.ok) {
+      setError(j.error || t("auth.loginError", "فشل تسجيل الدخول"));
+      resetTurnstile();
+      return;
+    }
+    if (j.requiresDeviceApproval) {
+      setApproval({ approvalToken: j.approvalToken, expiresInSec: j.expiresInSec ?? 900 });
+      setApprovalStatus("pending");
+      setStep("device-approval");
+      return;
+    }
+    if (j.requiresOtp) {
+      setOtp({
+        challengeToken: j.challengeToken,
+        hint: j.hint,
+        otpExpiresInSec: j.otpExpiresInSec ?? 60,
+        riskLevel: j.riskLevel,
+        newDevice: j.newDevice,
+      });
+      setOtpRemaining(j.otpExpiresInSec ?? 60);
+      setOtpCode("");
+      setStep("otp");
+      return;
+    }
+    // Edge-case: server returned a full session immediately
+    if (j.token && j.user) {
+      setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
+      setLocation("/");
+    }
+  };
+
   // ── Submit credentials ─────────────────────────────────────────────────
   const submitCreds = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(""); setInfo("");
     setLoading(true);
     try {
+      // If we're already in SA mode (e.g. user clicked "أنا سوبر أدمن" first,
+      // or Turnstile required them to retry), go straight to SA login.
+      if (isSuperAdminFlow) {
+        await performSuperAdminLogin();
+        return;
+      }
+
       // Try the universal login endpoint first.
-      if (!isSuperAdminFlow) {
-        try {
-          await login(username.trim(), password);
-          setLocation("/");
-          return;
-        } catch (err: any) {
-          // 409 + useSuperAdminFlow signals: this account requires the SA flow.
-          const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
-          if (!isSAHint) {
-            setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
-            return;
-          }
-          setIsSuperAdminFlow(true);
-          setInfo(t("auth.sa.detected", "هذا حساب سوبر أدمن — أكمل خطوات التحقق الإضافية."));
-          setLoading(false);
-          // Wait for Turnstile (if configured) and second click — return now.
+      try {
+        await login(username.trim(), password);
+        setLocation("/");
+        return;
+      } catch (err: any) {
+        // 409 + useSuperAdminFlow signals: this account requires the SA flow.
+        const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
+        if (!isSAHint) {
+          setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
           return;
         }
-      }
+        // Switch the UI into SA mode for any future actions.
+        setIsSuperAdminFlow(true);
 
-      // SA login proper.
-      const r = await fetch(`${API_BASE}/api/auth/superadmin/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: username.trim(),
-          password,
-          turnstileToken: turnstileToken || undefined,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
+        // If Turnstile is required but not yet solved, stop here and let the
+        // user solve the captcha — they'll click login again.
+        if (TURNSTILE_SITE_KEY && !turnstileToken) {
+          setInfo(t("auth.sa.detected", "هذا حساب سوبر أدمن — أكمل التحقق ثم اضغط دخول."));
+          return;
+        }
 
-      if (r.status === 403 && j.blocked) {
-        setStep("blocked");
-        setError(j.error || t("auth.sa.blocked", "تم حظر المحاولة لأسباب أمنية."));
-        return;
-      }
-      if (!r.ok) {
-        setError(j.error || t("auth.loginError", "فشل تسجيل الدخول"));
-        resetTurnstile();
-        return;
-      }
-      if (j.requiresDeviceApproval) {
-        setApproval({ approvalToken: j.approvalToken, expiresInSec: j.expiresInSec ?? 900 });
-        setApprovalStatus("pending");
-        setStep("device-approval");
-        return;
-      }
-      if (j.requiresOtp) {
-        setOtp({
-          challengeToken: j.challengeToken,
-          hint: j.hint,
-          otpExpiresInSec: j.otpExpiresInSec ?? 60,
-          riskLevel: j.riskLevel,
-          newDevice: j.newDevice,
-        });
-        setOtpRemaining(j.otpExpiresInSec ?? 60);
-        setOtpCode("");
-        setStep("otp");
-        return;
-      }
-      // Edge-case: server returned a full session immediately
-      if (j.token && j.user) {
-        setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
-        setLocation("/");
+        // Otherwise chain straight into the SA login so the user only had to
+        // click once.
+        await performSuperAdminLogin();
       }
     } catch (err: any) {
       setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
