@@ -73,6 +73,52 @@ function num(v: any): string | null {
   const n = Number(v);
   return Number.isFinite(n) ? String(n) : null;
 }
+// Same as `num` but for integers (max-uses, buy/get qty, …).
+function intOrNull(v: any): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+// Coerce truthy / "true" / 1 → boolean; falsy / undefined → false.
+function bool(v: any): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") return v === "true" || v === "1";
+  return !!v;
+}
+// Trim + uppercase the coupon so "abc" and "ABC" can never both exist for
+// the same tenant — keeps the partial unique index honest.
+function couponNorm(v: any): string | null {
+  const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+  return s ? s : null;
+}
+// White-list the discountType / applyTo values so a malicious client can't
+// inject a random enum string and bypass logic that switches on it.
+const DISCOUNT_TYPES = new Set(["line_pricing", "percentage_total", "fixed_total", "buy_x_get_y"]);
+const APPLY_TO_VALS  = new Set(["all", "pos", "invoice"]);
+
+// Translate a Drizzle/postgres-js error into a friendly Arabic 409 message
+// when it's a unique-constraint violation we know about, or null otherwise.
+//
+// Drizzle wraps the original PostgresError so the meaningful fields
+// (`code`, `constraint_name`) live on `e.cause` — we look at both layers
+// because some integration paths surface them on `e` directly.  Falling back
+// to a substring scan over the message keeps us robust if either lib changes
+// the wrapping shape in a future minor release.
+function classifyDuplicate(e: any): string | null {
+  const code  = e?.code ?? e?.cause?.code;
+  const cname = e?.constraint_name ?? e?.cause?.constraint_name ?? e?.constraint ?? e?.cause?.constraint;
+  const blob  = `${e?.message ?? ""}\n${e?.cause?.message ?? ""}\n${e?.detail ?? ""}\n${e?.cause?.detail ?? ""}`;
+  const isDup = code === "23505" || /duplicate key/i.test(blob);
+  if (!isDup) return null;
+  if (cname === "offers_company_coupon_idx" || /offers_company_coupon_idx/.test(blob)) {
+    return "رمز الكوبون مستخدم في عرض آخر";
+  }
+  if (cname === "offers_company_number_idx" || /offers_company_number_idx/.test(blob)) {
+    return "رقم العرض مستخدم مسبقاً";
+  }
+  // Generic dup we don't recognize — still return a helpful message.
+  return "قيمة مكررة — تأكد من رقم العرض ورمز الكوبون";
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LIST + READ
@@ -97,9 +143,13 @@ router.get("/active", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const today = new Date().toISOString().slice(0, 10);
+    // Both ends of the validity window are gated — a future-dated offer is
+    // hidden until its startDate, and a past-dated one disappears after its
+    // expiryDate.  Either side may be NULL → "open".
     const rows = await db.select().from(offersTable).where(and(
       eq(offersTable.companyId, cid),
       eq(offersTable.status, "active"),
+      sql`(${offersTable.startDate}  IS NULL OR ${offersTable.startDate}  <= ${today})`,
       sql`(${offersTable.expiryDate} IS NULL OR ${offersTable.expiryDate} >= ${today})`,
     )).orderBy(desc(offersTable.priority), desc(offersTable.id));
     res.json(rows);
@@ -144,7 +194,81 @@ function validatePayload(b: any): string | null {
     return "اختر مندوبًا واحدًا على الأقل";
   const p = Number(b.priority);
   if (!Number.isFinite(p) || p < 1 || p > 10) return "الأولوية يجب أن تكون رقمًا من 1 إلى 10";
+
+  // ── New ERP-grade fields ────────────────────────────────────────────────
+  // Validity range — allow either side to be open, but if both are set the
+  // start must come on or before the end.  Strings compare lexicographically
+  // because both are ISO yyyy-mm-dd dates.
+  const start = (typeof b.startDate === "string"  && b.startDate.trim())  || null;
+  const end   = (typeof b.expiryDate === "string" && b.expiryDate.trim()) || null;
+  if (start && end && start > end) return "تاريخ البداية يجب أن يكون قبل تاريخ الانتهاء";
+
+  // Discount type — default to legacy "line_pricing" so a caller that omits it
+  // keeps today's behaviour.  Reject anything outside the white-list.
+  const dt = b.discountType ?? "line_pricing";
+  if (!DISCOUNT_TYPES.has(dt)) return "نوع الخصم غير صالح";
+
+  // Per-type required fields.
+  if (dt === "percentage_total") {
+    const v = Number(b.discountValue);
+    if (!Number.isFinite(v) || v <= 0 || v > 100) return "نسبة الخصم يجب أن تكون من 0 إلى 100";
+  }
+  if (dt === "fixed_total") {
+    const v = Number(b.discountValue);
+    if (!Number.isFinite(v) || v <= 0) return "قيمة الخصم يجب أن تكون أكبر من صفر";
+  }
+  if (dt === "buy_x_get_y") {
+    const bq = Number(b.buyQty);
+    const gq = Number(b.getQty);
+    const gp = Number(b.getDiscountPercent);
+    if (!Number.isFinite(bq) || bq < 1) return "كمية الشراء (Buy X) يجب أن تكون 1 على الأقل";
+    if (!Number.isFinite(gq) || gq < 1) return "كمية المجانية (Get Y) يجب أن تكون 1 على الأقل";
+    if (!Number.isFinite(gp) || gp <= 0 || gp > 100) return "نسبة الخصم على الكمية المجانية يجب أن تكون من 0 إلى 100";
+  }
+
+  // Eligibility constraints — non-negative, integer where applicable.
+  if (b.minPurchaseAmount !== undefined && b.minPurchaseAmount !== null && b.minPurchaseAmount !== "") {
+    const m = Number(b.minPurchaseAmount);
+    if (!Number.isFinite(m) || m < 0) return "الحد الأدنى للشراء غير صالح";
+  }
+  for (const k of ["maxUses", "maxUsesPerCustomer"] as const) {
+    const v = b[k];
+    if (v !== undefined && v !== null && v !== "") {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return "حد الاستخدام يجب أن يكون رقمًا صحيحًا موجبًا";
+    }
+  }
+
+  // Channel — default to "all" if missing.
+  if (b.applyTo !== undefined && !APPLY_TO_VALS.has(b.applyTo)) return "قناة التطبيق غير صالحة";
+
+  // Coupon code length sanity (defence-in-depth — also enforced by DB type).
+  if (typeof b.couponCode === "string" && b.couponCode.trim().length > 50) {
+    return "رمز الكوبون طويل جدًا (الحد الأقصى 50 حرفًا)";
+  }
   return null;
+}
+
+// Pull the new ERP-grade columns out of a request body into the shape Drizzle
+// expects.  Centralised so the POST and PUT handlers stay symmetrical and
+// nobody forgets to persist a new field.
+function buildExtras(b: any) {
+  return {
+    startDate:          b.startDate || null,
+    discountType:       (DISCOUNT_TYPES.has(b.discountType) ? b.discountType : "line_pricing") as
+                          "line_pricing" | "percentage_total" | "fixed_total" | "buy_x_get_y",
+    discountValue:      num(b.discountValue),
+    buyQty:             intOrNull(b.buyQty),
+    getQty:             intOrNull(b.getQty),
+    getDiscountPercent: num(b.getDiscountPercent),
+    minPurchaseAmount:  num(b.minPurchaseAmount) ?? "0",
+    couponCode:         couponNorm(b.couponCode),
+    maxUses:            intOrNull(b.maxUses),
+    maxUsesPerCustomer: intOrNull(b.maxUsesPerCustomer),
+    stackable:          bool(b.stackable),
+    applyTo:            (APPLY_TO_VALS.has(b.applyTo) ? b.applyTo : "all") as "all" | "pos" | "invoice",
+    notes:              (typeof b.notes === "string" && b.notes.trim()) ? b.notes.trim() : null,
+  };
 }
 
 // Confirm every referenced child row belongs to the same tenant — prevents a
@@ -188,6 +312,7 @@ router.post("/", async (req, res) => {
 
     const status = b.status === "active" ? "active" : "draft";
     const offerNumber = String(b.offerNumber ?? "").trim() || await nextOfferNumber(cid);
+    const extras = buildExtras(b);
 
     // Wrap everything in one transaction so a failure on the junctions rolls
     // back the master row too.
@@ -203,6 +328,7 @@ router.post("/", async (req, res) => {
         status,
         priority:      Number(b.priority),
         expiryDate:    b.expiryDate || null,
+        ...extras,
       }).returning();
 
       if (b.customerScope === "specific" && Array.isArray(b.customers) && b.customers.length) {
@@ -231,12 +357,8 @@ router.post("/", async (req, res) => {
 
     res.status(201).json(created);
   } catch (e: any) {
-    // The unique index on (companyId, offerNumber) raises 23505 if a caller
-    // races with another admin issuing the same number — surface as a 409.
-    if (String(e?.message).includes("duplicate") || e?.code === "23505") {
-      res.status(409).json({ error: "رقم العرض مستخدم مسبقاً" });
-      return;
-    }
+    const r = classifyDuplicate(e);
+    if (r) { res.status(409).json({ error: r }); return; }
     res.status(500).json({ error: e.message });
   }
 });
@@ -267,6 +389,7 @@ router.put("/:id", async (req, res) => {
     if (ownErr) { res.status(400).json({ error: ownErr }); return; }
 
     const status = b.status === "active" ? "active" : (b.status === "expired" ? "expired" : "draft");
+    const extras = buildExtras(b);
 
     const ok = await db.transaction(async (tx) => {
       // Conditional update: ONLY when status isn't 'active'. If a concurrent
@@ -280,6 +403,7 @@ router.put("/:id", async (req, res) => {
         status,
         priority:      Number(b.priority),
         expiryDate:    b.expiryDate || null,
+        ...extras,
         updatedAt:     new Date(),
       }).where(and(
         eq(offersTable.id, id),
@@ -323,7 +447,14 @@ router.put("/:id", async (req, res) => {
       return;
     }
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    // Same duplicate-key handling as the POST handler — without this, an
+    // attempt to rename a coupon to one already used by another draft offer
+    // surfaces as an unhelpful 500.
+    const r = classifyDuplicate(e);
+    if (r) { res.status(409).json({ error: r }); return; }
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -414,9 +545,12 @@ router.post("/match", async (req, res) => {
     if (itemsIn.length === 0) { res.json({ matches: {} }); return; }
 
     const today = new Date().toISOString().slice(0, 10);
+    // Mirror /active — both ends of the validity window are honoured so the
+    // matcher never fires a future-dated promo before its start.
     const offers = await db.select().from(offersTable).where(and(
       eq(offersTable.companyId, cid),
       eq(offersTable.status, "active"),
+      sql`(${offersTable.startDate}  IS NULL OR ${offersTable.startDate}  <= ${today})`,
       sql`(${offersTable.expiryDate} IS NULL OR ${offersTable.expiryDate} >= ${today})`,
     )).orderBy(desc(offersTable.priority));
 

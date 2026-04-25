@@ -28,6 +28,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return ct.includes("application/json") ? r.json() : (undefined as any);
 }
 
+// Header-level discount mechanics. `line_pricing` is the legacy mode where
+// the per-item rules in `offer_items` drive the discount; the others are
+// header promos familiar from Odoo / Zoho / SAP B1.
+export type OfferDiscountType = "line_pricing" | "percentage_total" | "fixed_total" | "buy_x_get_y";
+export type OfferApplyTo      = "all" | "pos" | "invoice";
+
+// Common slice of fields the API returns for both list rows and the detail
+// endpoint — kept as one type to avoid drift.
 export interface OfferRow {
   id: number;
   offerNumber: string;
@@ -38,7 +46,25 @@ export interface OfferRow {
   salesRepScope: "all" | "specific";
   status: "draft" | "active" | "expired";
   priority: number;
+  startDate: string | null;
   expiryDate: string | null;
+
+  // ── ERP-grade fields ───────────────────────────────────────────────────
+  discountType: OfferDiscountType;
+  discountValue: string | null;
+  buyQty: number | null;
+  getQty: number | null;
+  getDiscountPercent: string | null;
+
+  minPurchaseAmount: string;
+  couponCode: string | null;
+  maxUses: number | null;
+  maxUsesPerCustomer: number | null;
+  timesUsed: number;
+  stackable: boolean;
+  applyTo: OfferApplyTo;
+  notes: string | null;
+
   createdAt: string;
 }
 
@@ -58,7 +84,23 @@ export interface OfferPayload {
   salesRepScope: "all" | "specific";
   status: "draft" | "active";
   priority: number;
+  startDate?: string | null;
   expiryDate?: string | null;
+
+  // ── ERP-grade fields (all optional → server picks safe defaults) ───────
+  discountType?: OfferDiscountType;
+  discountValue?: string | number | null;
+  buyQty?: number | null;
+  getQty?: number | null;
+  getDiscountPercent?: string | number | null;
+  minPurchaseAmount?: string | number | null;
+  couponCode?: string | null;
+  maxUses?: number | null;
+  maxUsesPerCustomer?: number | null;
+  stackable?: boolean;
+  applyTo?: OfferApplyTo;
+  notes?: string | null;
+
   customers?: number[];
   items?: { itemId: number; price?: string | number | null; discount?: string | number | null; qty?: string | number | null }[];
   salesReps?: number[];

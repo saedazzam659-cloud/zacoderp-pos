@@ -23,7 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Pencil, Trash2, Tag, Play, Square, BadgeCheck, Calendar } from "lucide-react";
+import { Plus, Pencil, Trash2, Tag, Play, Square, BadgeCheck, Calendar, Ticket, Percent } from "lucide-react";
 import { offersApi, type OfferRow } from "@/lib/offersApi";
 import { parseError } from "@/lib/parseError";
 
@@ -131,9 +131,12 @@ export default function Offers() {
                 <tr>
                   <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.number", "رقم العرض")}</th>
                   <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.name", "الاسم")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.discountType", "نوع الخصم")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.coupon", "الكوبون")}</th>
                   <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.scopes", "النطاقات")}</th>
                   <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.priority", "الأولوية")}</th>
-                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.expiry", "تاريخ الانتهاء")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.validity", "الصلاحية")}</th>
+                  <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.usage", "الاستخدام")}</th>
                   <th className="text-start px-3 py-2.5 font-medium">{t("offers.col.status", "الحالة")}</th>
                   <th className="text-end px-3 py-2.5 font-medium">{t("offers.col.actions", "الإجراءات")}</th>
                 </tr>
@@ -163,7 +166,7 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
   const { t } = useTranslation();
   // Format dates with the system locale rather than hard-coding ar-SA so the
   // English UI gets a Latin date and the Arabic UI gets Arabic-Indic digits.
-  const expiry = o.expiryDate ? new Date(o.expiryDate).toLocaleDateString() : "—";
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString() : "—";
   const isActive = o.status === "active";
   const isExpired = o.status === "expired";
 
@@ -182,10 +185,26 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
     isExpired  ? <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">{t("offers.statusVal.expired", "منتهي")}</span> :
                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">{t("offers.statusVal.draft", "مسوّدة")}</span>;
 
+  // Compact, descriptive label for the discount column — pairs the type's
+  // short name with the headline value so admins can scan the table without
+  // opening every offer.
+  let discountLabel = t(`offers.discountTypeVal.${o.discountType}.short`, o.discountType);
+  if (o.discountType === "percentage_total" && o.discountValue) discountLabel = `${o.discountValue}% ${t("offers.discountInline.off", "خصم")}`;
+  if (o.discountType === "fixed_total"      && o.discountValue) discountLabel = `${o.discountValue} ${t("offers.discountInline.fixed", "خصم ثابت")}`;
+  if (o.discountType === "buy_x_get_y"      && o.buyQty && o.getQty) discountLabel = `Buy ${o.buyQty} Get ${o.getQty}`;
+
   return (
     <tr className="border-t border-border hover:bg-muted/20">
       <td className="px-3 py-2 font-mono text-xs">{o.offerNumber}</td>
       <td className="px-3 py-2">{o.nameAr ?? "—"}</td>
+      <td className="px-3 py-2 text-xs">
+        <span className="inline-flex items-center gap-1"><Percent className="h-3 w-3 text-muted-foreground" /> {discountLabel}</span>
+      </td>
+      <td className="px-3 py-2 text-xs">
+        {o.couponCode
+          ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary font-mono"><Ticket className="h-3 w-3" /> {o.couponCode}</span>
+          : <span className="text-muted-foreground">—</span>}
+      </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {scopeBadge(t("offers.scopeShort.customers", "عملاء"),  o.customerScope)}
@@ -194,8 +213,13 @@ function Row({ o, onActivate, onExpire, onEdit, onDelete }: {
         </div>
       </td>
       <td className="px-3 py-2">{o.priority}</td>
+      <td className="px-3 py-2 text-xs whitespace-nowrap">
+        <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-muted-foreground" /> {fmt(o.startDate)} → {fmt(o.expiryDate)}</span>
+      </td>
       <td className="px-3 py-2 text-xs">
-        <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-muted-foreground" /> {expiry}</span>
+        <span className="font-mono">
+          {o.timesUsed}{o.maxUses ? <span className="text-muted-foreground"> / {o.maxUses}</span> : <span className="text-muted-foreground"> / ∞</span>}
+        </span>
       </td>
       <td className="px-3 py-2">{statusBadge}</td>
       <td className="px-3 py-2">
