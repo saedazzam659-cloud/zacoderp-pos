@@ -4053,6 +4053,41 @@ router.post("/maintenance/old-maintenance-runs/fix", requireSuperAdmin, async (r
 router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   const limit = clampInt(req.query.limit, 1, 200, 50);
+  // Optional filters — applied identically to both JSON and CSV branches so
+  // the downloaded file always matches what the admin saw on screen.
+  //   ?from=YYYY-MM-DD       (inclusive, lower bound on createdAt)
+  //   ?to=YYYY-MM-DD         (inclusive, treated as end-of-day)
+  //   ?action=fix|export_csv (audit_log.action equals)
+  //   ?entityType=...        (audit_log.entity_type equals)
+  // Empty filters preserve the original behaviour (latest 50 on screen, full
+  // history in CSV).
+  const fromRaw = typeof req.query.from === "string" ? req.query.from.trim() : "";
+  const toRaw   = typeof req.query.to   === "string" ? req.query.to.trim()   : "";
+  if (fromRaw && !isValidISODate(fromRaw)) {
+    res.status(400).json({ error: "from يجب أن يكون بصيغة YYYY-MM-DD" }); return;
+  }
+  if (toRaw && !isValidISODate(toRaw)) {
+    res.status(400).json({ error: "to يجب أن يكون بصيغة YYYY-MM-DD" }); return;
+  }
+  // `to` is inclusive of the whole calendar day → use the start of the next
+  // day with `lt` so events recorded at 23:59 still match.
+  const fromDate = fromRaw ? new Date(`${fromRaw}T00:00:00.000Z`) : null;
+  const toDate   = toRaw
+    ? new Date(new Date(`${toRaw}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)
+    : null;
+  const actionFilter     = typeof req.query.action     === "string" ? req.query.action.trim().slice(0, 64)     : "";
+  const entityTypeFilter = typeof req.query.entityType === "string" ? req.query.entityType.trim().slice(0, 64) : "";
+
+  const conds: SQL[] = [
+    eq(auditLogTable.companyId, g.companyId),
+    eq(auditLogTable.module, "maintenance"),
+  ];
+  if (fromDate) conds.push(gte(auditLogTable.createdAt, fromDate));
+  if (toDate)   conds.push(lt(auditLogTable.createdAt, toDate));
+  if (actionFilter)     conds.push(eq(auditLogTable.action,     actionFilter));
+  if (entityTypeFilter) conds.push(eq(auditLogTable.entityType, entityTypeFilter));
+  const where = and(...conds);
+
   try {
     if (wantsCsv(req)) {
       const rows = await db.select({
@@ -4061,10 +4096,7 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
         metadata: auditLogTable.metadata, createdAt: auditLogTable.createdAt,
       })
         .from(auditLogTable)
-        .where(and(
-          eq(auditLogTable.companyId, g.companyId),
-          eq(auditLogTable.module, "maintenance"),
-        ))
+        .where(where)
         .orderBy(desc(auditLogTable.createdAt));
       const headers = ["التاريخ", "المستخدم", "الفئة", "الإجراء", "التفاصيل"];
       const csvRows = rows.map((r) => [
@@ -4076,6 +4108,10 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       ]);
       await logMaint(req, g.companyId, "export_csv", "maintenance_history", {
         count: rows.length, format: "csv",
+        filters: {
+          from: fromRaw || null, to: toRaw || null,
+          action: actionFilter || null, entityType: entityTypeFilter || null,
+        },
       });
       sendCsv(res, `maintenance-history-${g.companyId}-${Date.now()}.csv`, headers, csvRows);
       return;
@@ -4086,10 +4122,7 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       metadata: auditLogTable.metadata, createdAt: auditLogTable.createdAt,
     })
       .from(auditLogTable)
-      .where(and(
-        eq(auditLogTable.companyId, g.companyId),
-        eq(auditLogTable.module, "maintenance"),
-      ))
+      .where(where)
       .orderBy(desc(auditLogTable.createdAt))
       .limit(limit);
     res.json({ count: rows.length, items: rows });

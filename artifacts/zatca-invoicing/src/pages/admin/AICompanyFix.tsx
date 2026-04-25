@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -549,11 +550,36 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyTick, setHistoryTick] = useState(0);   // bump after fixes
+  // Optional filters for the history table + CSV export. Empty string = no
+  // filter, which preserves the original behaviour (latest 50 on screen / full
+  // history in the CSV).
+  const [historyFrom, setHistoryFrom]             = useState<string>("");
+  const [historyTo, setHistoryTo]                 = useState<string>("");
+  const [historyAction, setHistoryAction]         = useState<string>("");
+  const [historyEntityType, setHistoryEntityType] = useState<string>("");
+
+  // Builds the shared `?from=&to=&action=&entityType=` suffix used by BOTH
+  // the JSON view (`historyQ`) and the CSV download (`historyCsvMut`) so the
+  // file always matches what's on screen.
+  const historyFilterParams = (): string => {
+    const parts: string[] = [];
+    if (historyFrom)       parts.push(`from=${encodeURIComponent(historyFrom)}`);
+    if (historyTo)         parts.push(`to=${encodeURIComponent(historyTo)}`);
+    if (historyAction)     parts.push(`action=${encodeURIComponent(historyAction)}`);
+    if (historyEntityType) parts.push(`entityType=${encodeURIComponent(historyEntityType)}`);
+    return parts.length ? `&${parts.join("&")}` : "";
+  };
 
   const historyQ = useQuery({
-    queryKey: ["maintenance-history", companyId, historyTick],
+    queryKey: [
+      "maintenance-history", companyId, historyTick,
+      historyFrom, historyTo, historyAction, historyEntityType,
+    ],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/maintenance/history?companyId=${companyId}&limit=50`, { headers });
+      const r = await fetch(
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&limit=50${historyFilterParams()}`,
+        { headers },
+      );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب السجل");
       return r.json() as Promise<{ count: number; items: any[] }>;
     },
@@ -563,12 +589,14 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
 
   // CSV export — calls the same history endpoint with `?format=csv` so admins
   // get the FULL audit-logged history (not just the on-screen 50 rows). The
-  // server writes a maintenance audit-log row for the export itself.
+  // same on-screen filters are forwarded so the file always matches what the
+  // admin saw. The server writes a maintenance audit-log row for the export
+  // itself.
   const historyCsvMut = useMutation({
     mutationFn: async () => {
       if (!companyId) throw new Error("اختر الشركة أولاً");
       const r = await fetch(
-        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv`,
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv${historyFilterParams()}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!r.ok) {
@@ -1746,36 +1774,122 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
 
         {/* History panel — last 50 maintenance actions for the selected company */}
         <div className="border rounded">
-          <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-medium bg-muted/40 hover:bg-muted/60 rounded-t">
-            <button
-              type="button"
-              onClick={() => setHistoryOpen(o => !o)}
-              disabled={!companyId}
-              className="flex items-center gap-2 flex-1 min-w-0 py-1 text-right disabled:opacity-50"
-            >
-              <span className="flex items-center gap-2"><History className="h-4 w-4" /> سجل الإصلاحات</span>
-            </button>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button
-                size="sm" variant="ghost" className="h-7 text-xs gap-1"
-                onClick={() => historyCsvMut.mutate()}
-                disabled={!companyId || historyCsvMut.isPending}
-                title="تنزيل سجل الإصلاحات الكامل كملف CSV"
-              >
-                {historyCsvMut.isPending
-                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                  : <Download className="h-3 w-3" />}
-                تصدير CSV
-              </Button>
+          <div className="bg-muted/40 hover:bg-muted/60 rounded-t">
+            <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-medium">
               <button
                 type="button"
                 onClick={() => setHistoryOpen(o => !o)}
                 disabled={!companyId}
-                className="p-1 disabled:opacity-50"
-                aria-label={historyOpen ? "طي السجل" : "فتح السجل"}
+                className="flex items-center gap-2 flex-1 min-w-0 py-1 text-right disabled:opacity-50"
               >
-                {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                <span className="flex items-center gap-2"><History className="h-4 w-4" /> سجل الإصلاحات</span>
               </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                  onClick={() => historyCsvMut.mutate()}
+                  disabled={!companyId || historyCsvMut.isPending}
+                  title="تنزيل سجل الإصلاحات الكامل كملف CSV (يحترم الفلاتر أدناه)"
+                >
+                  {historyCsvMut.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Download className="h-3 w-3" />}
+                  تصدير CSV
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(o => !o)}
+                  disabled={!companyId}
+                  className="p-1 disabled:opacity-50"
+                  aria-label={historyOpen ? "طي السجل" : "فتح السجل"}
+                >
+                  {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            {/* Lightweight filters — apply to BOTH the on-screen table and the
+                CSV export. Empty inputs preserve original behaviour. */}
+            <div className="px-3 pb-2 pt-0.5 flex flex-wrap items-end gap-2 text-[11px]">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">من تاريخ</label>
+                <Input
+                  type="date" value={historyFrom}
+                  onChange={(e) => setHistoryFrom(e.target.value)}
+                  disabled={!companyId}
+                  className="h-7 w-[130px] text-xs"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">إلى تاريخ</label>
+                <Input
+                  type="date" value={historyTo}
+                  onChange={(e) => setHistoryTo(e.target.value)}
+                  disabled={!companyId}
+                  className="h-7 w-[130px] text-xs"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">الإجراء</label>
+                <Select
+                  value={historyAction || "__all"}
+                  onValueChange={(v) => setHistoryAction(v === "__all" ? "" : v)}
+                  disabled={!companyId}
+                >
+                  <SelectTrigger className="h-7 w-[140px] text-xs">
+                    <SelectValue placeholder="كل الإجراءات" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">كل الإجراءات</SelectItem>
+                    <SelectItem value="fix">إصلاح (fix)</SelectItem>
+                    <SelectItem value="export_csv">تصدير CSV</SelectItem>
+                    <SelectItem value="run_now_one">تشغيل لشركة</SelectItem>
+                    <SelectItem value="run_now_all">تشغيل للكل</SelectItem>
+                    <SelectItem value="edit_schedule">تعديل الجدولة</SelectItem>
+                    <SelectItem value="send_test_email">بريد تجريبي</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">الفئة</label>
+                <Select
+                  value={historyEntityType || "__all"}
+                  onValueChange={(v) => setHistoryEntityType(v === "__all" ? "" : v)}
+                  disabled={!companyId}
+                >
+                  <SelectTrigger className="h-7 w-[180px] text-xs">
+                    <SelectValue placeholder="كل الفئات" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">كل الفئات</SelectItem>
+                    <SelectItem value="journal_pending">قيود معلّقة</SelectItem>
+                    <SelectItem value="broken_refs">مراجع مكسورة</SelectItem>
+                    <SelectItem value="unlinked_accounts">حسابات غير مربوطة</SelectItem>
+                    <SelectItem value="sequence_gaps">فجوات التسلسل</SelectItem>
+                    <SelectItem value="dormant_users">مستخدمون خاملون</SelectItem>
+                    <SelectItem value="negative_stock">رصيد سالب</SelectItem>
+                    <SelectItem value="stock_balance_drift">انحراف رصيد المخزون</SelectItem>
+                    <SelectItem value="unbalanced_entries">قيود غير متوازنة</SelectItem>
+                    <SelectItem value="old_audit_logs">سجلات تدقيق قديمة</SelectItem>
+                    <SelectItem value="old_maintenance_runs">عمليات صيانة قديمة</SelectItem>
+                    <SelectItem value="maintenance_history">سجل الصيانة</SelectItem>
+                    <SelectItem value="maintenance_schedule">جدولة الصيانة</SelectItem>
+                    <SelectItem value="maintenance_runs">تشغيل الصيانة</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(historyFrom || historyTo || historyAction || historyEntityType) && (
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 text-[11px] px-2"
+                  onClick={() => {
+                    setHistoryFrom(""); setHistoryTo("");
+                    setHistoryAction(""); setHistoryEntityType("");
+                  }}
+                  title="مسح كل الفلاتر"
+                >
+                  مسح الفلاتر
+                </Button>
+              )}
             </div>
           </div>
           {historyOpen && (
