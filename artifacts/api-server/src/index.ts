@@ -84,6 +84,20 @@ async function seedSuperAdmin() {
       });
       logger.info("Superadmin created successfully");
     }
+
+    if (process.env.BOOTSTRAP_SA_RESET === "1" || process.env.BOOTSTRAP_SA_RESET === "true") {
+      const newPassword = process.env.BOOTSTRAP_SA_PASSWORD;
+      const newEmail = process.env.BOOTSTRAP_SA_EMAIL;
+      if (!newPassword) {
+        logger.warn("[BOOTSTRAP_SA_RESET] enabled but BOOTSTRAP_SA_PASSWORD missing; skipping.");
+      } else {
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        const updates: Record<string, unknown> = { passwordHash, updatedAt: new Date() };
+        if (newEmail) updates.email = newEmail;
+        await db.update(usersTable).set(updates).where(eq(usersTable.role, "superadmin"));
+        logger.warn({ emailUpdated: !!newEmail }, "[BOOTSTRAP_SA_RESET] SuperAdmin password reset (and email if provided). REMOVE BOOTSTRAP_SA_RESET env var now.");
+      }
+    }
   } catch (err) {
     logger.error({ err }, "Failed to seed superadmin");
   }
