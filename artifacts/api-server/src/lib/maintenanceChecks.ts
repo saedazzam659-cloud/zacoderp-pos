@@ -412,6 +412,47 @@ export async function checkOldMaintenanceRuns(
   };
 }
 
+// 12. سجلات بريد الصيانة القديمة — count of maintenance_email_runs older than
+// `days`. The table is append-only and global (no company_id) — every sweep
+// adds a row plus extra rows for manual/test sends, so without a retention
+// window the audit panel slows down and storage grows forever. Default 90
+// days mirrors the old-maintenance-runs window so SuperAdmins keep roughly a
+// quarter of digest history on hand. The companyId arg is accepted to match
+// the per-tool check signature (callers always pass it) but the table is
+// global, so it does not narrow the SELECT.
+export async function checkOldMaintenanceEmailRuns(
+  _companyId: number, days = 90, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const exec = await db.execute<any>(sql`
+    SELECT COUNT(*)::int AS n,
+           MIN(ran_at)               AS "oldest",
+           MAX(ran_at)               AS "newest"
+      FROM maintenance_email_runs
+     WHERE ran_at < NOW() - (${days}::int || ' days')::interval
+  `);
+  const row = ((exec as any).rows ?? [{}])[0] ?? {};
+  const n = Number(row.n ?? 0);
+  const previewLimit = opts.unlimited ? sql`LIMIT 5000` : sql`LIMIT 50`;
+  let items: any[] = [];
+  if (n > 0) {
+    const exec2 = await db.execute<any>(sql`
+      SELECT id, ran_at AS "ranAt", trigger, status, recipients,
+             critical_count AS "criticalCount", error, reason,
+             critical_signature AS "criticalSignature"
+        FROM maintenance_email_runs
+       WHERE ran_at < NOW() - (${days}::int || ' days')::interval
+       ORDER BY ran_at ASC
+       ${previewLimit}
+    `);
+    items = (exec2 as any).rows ?? [];
+  }
+  return {
+    count: n,
+    items,
+    extras: { days, oldest: row.oldest ?? null, newest: row.newest ?? null },
+  };
+}
+
 // ─── Aggregator used by the scheduler + the run-now endpoint ─────────────────
 export interface ToolRunOutcome {
   toolKey: MaintenanceToolKey;

@@ -64,6 +64,7 @@ import {
   auditLogTable,
   maintenanceRunsTable,
   maintenanceScheduleTable,
+  maintenanceEmailRunsTable,
 } from "@workspace/db";
 
 import app from "../src/app.ts";
@@ -80,6 +81,7 @@ import {
   checkUnbalancedEntries,
   checkOldAuditLogs,
   checkOldMaintenanceRuns,
+  checkOldMaintenanceEmailRuns,
 } from "../src/lib/maintenanceChecks.ts";
 import {
   isDailyDue,
@@ -140,6 +142,7 @@ const insertedJournalEntryIds:   number[] = [];
 const insertedSequenceIds:       number[] = [];
 const insertedAuditLogIds:       number[] = [];
 const insertedMaintenanceRunIds: number[] = [];
+const insertedMaintenanceEmailRunIds: number[] = [];
 
 // Snapshot of the global maintenance_schedule row so the "all companies"
 // sweep test doesn't permanently change live config.
@@ -535,6 +538,10 @@ async function cleanup(): Promise<void> {
   if (insertedMaintenanceRunIds.length) {
     await db.delete(maintenanceRunsTable).where(inArray(maintenanceRunsTable.id, insertedMaintenanceRunIds));
   }
+  if (insertedMaintenanceEmailRunIds.length) {
+    await db.delete(maintenanceEmailRunsTable)
+      .where(inArray(maintenanceEmailRunsTable.id, insertedMaintenanceEmailRunIds));
+  }
   // Also wipe any maintenance_runs the manual sweep created for our seeded
   // companies — runMaintenanceSweep / per-company run-now insert their own
   // rows that we never touched at insert time.
@@ -911,6 +918,10 @@ test("happy path: every check returns count=0 on a freshly-seeded company", asyn
   for (const [k, v] of Object.entries(all)) {
     assert.equal(v.count, 0, `${k} must be 0 on a clean company, got ${v.count}`);
   }
+  // 12 (old-maintenance-email-runs) is global, not company-scoped — any rows
+  // written by other suites or live traffic make the bare count meaningless on
+  // a per-company assertion. We instead pin it via the dedicated test below
+  // which inserts its own row and asserts the prune covers it.
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1290,6 +1301,48 @@ test("checkOldMaintenanceRuns: counts maintenance_runs older than the threshold"
   assert.ok(r.items!.some((it: { id: number }) => it.id === mr.id),
     "items must include the old maintenance_runs row");
   assert.ok(isObject(r.extras) && r.extras!.days === 90);
+});
+
+// 12. old-maintenance-email-runs: a maintenance_email_runs row > 90 days old.
+// The table is global (no company_id), so this asserts the check picks up our
+// seed regardless of which companyId we pass — the arg is ignored by design.
+test("checkOldMaintenanceEmailRuns: counts maintenance_email_runs older than the threshold", async () => {
+  const oldRanAt = new Date(Date.now() - 120 * 86_400_000);
+  const [er] = await db.insert(maintenanceEmailRunsTable).values({
+    ranAt:             oldRanAt,
+    trigger:           "scheduled",
+    status:            "ok",
+    recipients:        2,
+    criticalCount:     3,
+    error:             null,
+    reason:            "digest_sent",
+    criticalSignature: "test_old_email_run_sig",
+  }).returning({ id: maintenanceEmailRunsTable.id });
+  insertedMaintenanceEmailRunIds.push(er.id);
+
+  const r = await checkOldMaintenanceEmailRuns(dirtyCompanyId, 90);
+  assert.ok(r.count >= 1, `expected count >= 1, got ${r.count}`);
+  assert.ok(r.items!.some((it: { id: number }) => it.id === er.id),
+    "items must include the old maintenance_email_runs row");
+  assert.ok(isObject(r.extras) && r.extras!.days === 90);
+
+  // Recent rows (well within the retention window) must NOT be counted —
+  // proves the SQL cutoff is anchored on `ran_at`, not just "all rows".
+  const [recent] = await db.insert(maintenanceEmailRunsTable).values({
+    ranAt:             new Date(),
+    trigger:           "test",
+    status:            "ok",
+    recipients:        1,
+    criticalCount:     0,
+    error:             null,
+    reason:            "digest_sent",
+    criticalSignature: "test_recent_email_run_sig",
+  }).returning({ id: maintenanceEmailRunsTable.id });
+  insertedMaintenanceEmailRunIds.push(recent.id);
+
+  const r2 = await checkOldMaintenanceEmailRuns(dirtyCompanyId, 90);
+  assert.ok(!r2.items!.some((it: { id: number }) => it.id === recent.id),
+    "items must NOT include the in-window (recent) maintenance_email_runs row");
 });
 
 // ════════════════════════════════════════════════════════════════════════════

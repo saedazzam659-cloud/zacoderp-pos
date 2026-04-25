@@ -1867,6 +1867,69 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
               );
             }}
           />
+
+          {/* سجل بريد الصيانة القديم — fix deletes. The maintenance_email_runs
+              table is global (no company_id), so the count shown here is the
+              same regardless of the selected company; we still render the card
+              under each company so the audit-log entry for the prune is
+              attributed to the SuperAdmin who ran it. No latestScan/trend
+              because this tool isn't part of the per-company sweep. */}
+          <MaintenanceTool
+            toolKey="old-maintenance-email-runs"
+            label="سجل بريد الصيانة القديم"
+            description="محاولات إرسال تنبيهات الصيانة (maintenance_email_runs) أقدم من 90 يوماً — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
+            icon={Trash2}
+            checkEndpoint="maintenance/old-maintenance-email-runs"
+            fixEndpoint="maintenance/old-maintenance-email-runs/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            destructive
+            latestScan={null}
+            trend={undefined}
+            confirmTitle="حذف سجل بريد الصيانة القديم"
+            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال أقدم من 90 يوماً نهائياً (سجل عام لكل الشركات). متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground px-1">
+                    أقدم محاولة: {data.oldest ? String(data.oldest).slice(0, 16).replace("T", " ") : "—"} ·
+                    أحدث ضمن النطاق: {data.newest ? String(data.newest).slice(0, 16).replace("T", " ") : "—"}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-1 text-right">#</th>
+                          <th className="px-2 py-1 text-right">المصدر</th>
+                          <th className="px-2 py-1 text-right">الحالة</th>
+                          <th className="px-2 py-1 text-right">المستلمون</th>
+                          <th className="px-2 py-1 text-right">عدد الحرجة</th>
+                          <th className="px-2 py-1 text-right">السبب</th>
+                          <th className="px-2 py-1 text-right">التاريخ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {items.slice(0, 30).map((it: any) => (
+                          <tr key={it.id}>
+                            <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                            <td className="px-2 py-1">{it.trigger}</td>
+                            <td className="px-2 py-1">{it.status}</td>
+                            <td className="px-2 py-1 font-mono">{it.recipients ?? 0}</td>
+                            <td className="px-2 py-1 font-mono">{it.criticalCount ?? 0}</td>
+                            <td className="px-2 py-1 font-mono text-[10px] truncate max-w-[180px]" title={it.reason ?? ""}>{it.reason || "—"}</td>
+                            <td className="px-2 py-1">{String(it.ranAt ?? "").slice(0, 16).replace("T", " ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                  </div>
+                </div>
+              );
+            }}
+          />
         </div>
 
         {/* History panel — last 50 maintenance actions for the selected company */}
@@ -1968,6 +2031,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                     <SelectItem value="unbalanced_entries">قيود غير متوازنة</SelectItem>
                     <SelectItem value="old_audit_logs">سجلات تدقيق قديمة</SelectItem>
                     <SelectItem value="old_maintenance_runs">عمليات صيانة قديمة</SelectItem>
+                    <SelectItem value="old_maintenance_email_runs">سجل بريد الصيانة القديم</SelectItem>
                     <SelectItem value="maintenance_history">سجل الصيانة</SelectItem>
                     <SelectItem value="maintenance_schedule">جدولة الصيانة</SelectItem>
                     <SelectItem value="maintenance_runs">تشغيل الصيانة</SelectItem>
