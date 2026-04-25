@@ -35,6 +35,9 @@ export type SequenceRow = {
   padLength: number;
   isActive: boolean;
   transactionTypes: string[];
+  // Optional whitelist of branch IDs allowed to use this sequence. An empty
+  // array means "all branches" (preserves the original behavior).
+  branchIds: number[];
   createdAt: string;
   updatedAt: string;
   // Computed by backend:

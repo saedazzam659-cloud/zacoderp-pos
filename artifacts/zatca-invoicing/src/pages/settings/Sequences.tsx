@@ -1,11 +1,12 @@
 // Centralized Sequence Management screen (مسلسل الحركات).
 // Admins-only. CRUD on sequences + reset action + quick logs viewer.
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { sequencesApi, type SequenceRow, type SequenceLogRow } from "@/lib/sequencesApi";
+import { branchesApi } from "@/lib/branchesApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,13 +14,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X } from "lucide-react";
+import { Plus, Pencil, Trash2, RefreshCcw, ListOrdered, History, AlertTriangle, X, ChevronsUpDown, Search } from "lucide-react";
 
 const EMPTY_FORM = {
   code: "",
@@ -32,7 +34,137 @@ const EMPTY_FORM = {
   padLength: 4,
   isActive: true,
   transactionTypes: [] as string[],
+  branchIds: [] as number[],
 };
+
+// ─── Searchable multi-select for branches ──────────────────────────────────
+// Inline component (kept in this file because it's only used here) — uses
+// the project's existing Popover primitive plus a plain text input for
+// filtering. Empty selection means "all branches", matching the backend
+// contract; we surface that explicitly in the trigger label.
+type BranchOption = { id: number; nameAr: string; nameEn?: string | null; code?: string };
+
+function BranchMultiSelect({
+  options, value, onChange, t, allLabel, searchPlaceholder, emptyText, summaryFn,
+}: {
+  options: BranchOption[];
+  value: number[];
+  onChange: (next: number[]) => void;
+  t: (k: string) => string;
+  allLabel: string;
+  searchPlaceholder: string;
+  emptyText: string;
+  summaryFn: (n: number) => string;
+}) {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Cheap fuzzy: substring match on Arabic / English / code, case-insensitive.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(b =>
+      b.nameAr?.toLowerCase().includes(q) ||
+      b.nameEn?.toLowerCase().includes(q) ||
+      b.code?.toLowerCase().includes(q)
+    );
+  }, [options, query]);
+
+  const selected = new Set(value);
+  const triggerLabel = value.length === 0
+    ? allLabel
+    : value.length <= 2
+      ? options.filter(o => selected.has(o.id)).map(o => o.nameAr).join(" • ")
+      : summaryFn(value.length);
+
+  function toggle(id: number) {
+    if (selected.has(id)) onChange(value.filter(v => v !== id));
+    else onChange([...value, id]);
+  }
+  function clearAll() { onChange([]); }
+  function selectAll() { onChange(options.map(o => o.id)); }
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setTimeout(() => inputRef.current?.focus(), 50); }}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button" variant="outline"
+          className="w-full justify-between font-normal"
+          data-testid="trigger-branch-multiselect"
+        >
+          <span className="truncate text-start flex-1">{triggerLabel}</span>
+          <ChevronsUpDown className="w-4 h-4 opacity-50 ms-2 flex-shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="p-0 w-[--radix-popover-trigger-width] min-w-[260px]"
+        align="start"
+      >
+        <div className="flex items-center gap-2 border-b px-2 py-1.5">
+          <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={searchPlaceholder}
+            className="flex-1 bg-transparent text-sm outline-none py-1"
+            data-testid="input-branch-search"
+          />
+          {query && (
+            <button
+              type="button" onClick={() => setQuery("")}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="clear"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-2 border-b px-2 py-1 text-xs">
+          <button
+            type="button" onClick={selectAll}
+            className="text-primary hover:underline disabled:opacity-50"
+            disabled={options.length === 0 || value.length === options.length}
+            data-testid="button-branch-select-all"
+          >
+            {t("sequences.branchSelectAll")}
+          </button>
+          <button
+            type="button" onClick={clearAll}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+            disabled={value.length === 0}
+            data-testid="button-branch-clear"
+          >
+            {t("sequences.branchClear")}
+          </button>
+        </div>
+        <div className="max-h-60 overflow-auto py-1">
+          {filtered.length === 0 ? (
+            <p className="text-center text-xs text-muted-foreground py-4">{emptyText}</p>
+          ) : (
+            filtered.map(b => {
+              const checked = selected.has(b.id);
+              return (
+                <label
+                  key={b.id}
+                  className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-muted/40"
+                  data-testid={`option-branch-${b.id}`}
+                >
+                  <Checkbox checked={checked} onCheckedChange={() => toggle(b.id)} />
+                  <span className="flex-1 truncate">
+                    {b.nameAr}
+                    {b.code ? <span className="text-muted-foreground ms-2 font-mono text-xs">{b.code}</span> : null}
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 // Pretty-format a transaction type key for display. Falls back to the raw
 // snake_case key if no i18n translation exists yet.
@@ -72,6 +204,15 @@ export default function Sequences() {
     queryKey: ["sequence-tx-types"],
     queryFn:  () => sequencesApi.transactionTypes(),
     enabled:  !!user,
+  });
+
+  // Branches list for the multi-select. Scoped to the caller's company so
+  // SuperAdmin (no cid) sees an empty list — that's intentional, since the
+  // sequence-to-branch link is a tenant-level concept.
+  const { data: branches = [] } = useQuery<BranchOption[]>({
+    queryKey: ["branches-for-sequence", cid],
+    queryFn:  () => branchesApi.getBranches(cid),
+    enabled:  !!user && !!cid,
   });
 
   const { data: logs = [] } = useQuery<SequenceLogRow[]>({
@@ -133,6 +274,9 @@ export default function Sequences() {
       padLength:        r.padLength,
       isActive:         r.isActive,
       transactionTypes: Array.isArray(r.transactionTypes) ? r.transactionTypes : [],
+      // Coerce in case the column round-trips strings (older rows or when
+      // jsonb is read back unparsed). The backend stores numeric ids.
+      branchIds:        Array.isArray(r.branchIds) ? r.branchIds.map(Number) : [],
     });
     setEditingId(r.id);
     setEditingRow(r);
@@ -377,6 +521,25 @@ export default function Sequences() {
                   <div className="font-mono text-base font-semibold mt-1" data-testid="text-preview">{previewNumber}</div>
                 </div>
               </div>
+
+              {/* Branch picker — searchable multi-select. Empty = all branches.
+                  Hidden for SuperAdmin (no cid → branch list isn't loaded). */}
+              {!!cid && (
+                <div>
+                  <Label className="block mb-2">{t("sequences.boundBranches")}</Label>
+                  <BranchMultiSelect
+                    options={branches}
+                    value={form.branchIds}
+                    onChange={(next) => setForm(f => ({ ...f, branchIds: next }))}
+                    t={t}
+                    allLabel={t("sequences.boundBranchesAll")}
+                    searchPlaceholder={t("sequences.branchSearch")}
+                    emptyText={t("sequences.branchesEmpty")}
+                    summaryFn={(n) => t("sequences.branchesSelected").replace("{count}", String(n))}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">{t("sequences.boundBranchesHelp")}</p>
+                </div>
+              )}
 
               <div>
                 <Label className="block mb-2">{t("sequences.boundScreens")} *</Label>

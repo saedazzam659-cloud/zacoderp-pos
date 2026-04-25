@@ -124,6 +124,10 @@ function validatePayload(body: any): string | null {
   const cur   = body?.currentNumber == null ? start : Number(body.currentNumber);
   const pad   = Number(body?.padLength ?? 4);
   const types = Array.isArray(body?.transactionTypes) ? body.transactionTypes : [];
+  // branchIds is optional; an empty array (or omitted) means "all branches".
+  // When provided, every entry must be a positive integer (branches.id is
+  // serial starting at 1, so 0 / negatives are rejected).
+  const branchIds = Array.isArray(body?.branchIds) ? body.branchIds : [];
 
   if (!code)   return "الكود مطلوب";
   if (!nameAr) return "الاسم العربي مطلوب";
@@ -136,6 +140,10 @@ function validatePayload(body: any): string | null {
     return "يجب اختيار شاشة واحدة على الأقل";
   for (const t of types) {
     if (!TX_SET.has(String(t))) return `نوع حركة غير معروف: ${t}`;
+  }
+  for (const b of branchIds) {
+    const n = Number(b);
+    if (!Number.isInteger(n) || n <= 0) return "قائمة الفروع غير صالحة";
   }
   // Disallow embedded prefix length pushing the formatted string beyond a
   // sane bound. Keeps DB indexes / printouts predictable.
@@ -266,6 +274,11 @@ router.post("/", audit("sequences", "create"), async (req, res) => {
         padLength:        Number(req.body.padLength ?? 4),
         isActive,
         transactionTypes: req.body.transactionTypes,
+        // Normalize: dedupe + coerce to int. validatePayload already
+        // rejected non-positive entries.
+        branchIds: Array.isArray(req.body.branchIds)
+          ? Array.from(new Set(req.body.branchIds.map((x: any) => Number(x))))
+          : [],
       }).returning();
       return { status: 201, body: withUsage(row) };
     });
@@ -305,6 +318,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       existing.padLength     = existing.pad_length     ?? existing.padLength;
       existing.isActive      = existing.is_active      ?? existing.isActive;
       existing.transactionTypes = existing.transaction_types ?? existing.transactionTypes;
+      existing.branchIds     = existing.branch_ids     ?? existing.branchIds ?? [];
       existing.nameAr        = existing.name_ar        ?? existing.nameAr;
       existing.nameEn        = existing.name_en        ?? existing.nameEn;
 
@@ -319,6 +333,7 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        req.body.padLength        ?? existing.padLength,
         isActive:         req.body.isActive         ?? existing.isActive,
         transactionTypes: req.body.transactionTypes ?? existing.transactionTypes,
+        branchIds:        req.body.branchIds        ?? existing.branchIds,
       };
       const err = validatePayload(merged);
       if (err) return { status: 400, body: { error: err } };
@@ -397,6 +412,11 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         padLength:        Number(merged.padLength),
         isActive:         !!merged.isActive,
         transactionTypes: merged.transactionTypes,
+        // Same dedupe-and-coerce normalization as CREATE keeps the column
+        // shape stable regardless of which path wrote it.
+        branchIds: Array.isArray(merged.branchIds)
+          ? Array.from(new Set((merged.branchIds as any[]).map((x) => Number(x))))
+          : [],
         updatedAt:        new Date(),
       }).where(and(eq(sequencesTable.id, id), eq(sequencesTable.companyId, cid))).returning();
       return { status: 200, body: withUsage(row) };

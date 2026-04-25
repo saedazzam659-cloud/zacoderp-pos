@@ -46,6 +46,13 @@ export const sequencesTable = pgTable("sequences", {
   // Transaction types this sequence feeds. Stored as a JSON array of strings
   // matching SEQUENCE_TX_TYPES so the column stays portable across versions.
   transactionTypes: jsonb("transaction_types").notNull().default([]),
+  // Optional whitelist of branch IDs allowed to use this sequence. Empty
+  // array (the default) means "all branches" — preserves the prior behavior
+  // for every existing tenant. When non-empty, only the listed branches may
+  // issue from this sequence; other branches fall back to whatever sequence
+  // resolution they would normally pick (or to a free-typed number when no
+  // sequence applies). Stored as a JSON array of integers (branches.id).
+  branchIds:        jsonb("branch_ids").notNull().default([]),
   createdAt:        timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:        timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
