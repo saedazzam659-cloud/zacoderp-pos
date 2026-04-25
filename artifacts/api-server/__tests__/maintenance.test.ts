@@ -1126,6 +1126,139 @@ test("POST /maintenance/run-now: all-companies mode includes the seeded companie
     `all-companies sweep must have inserted manual rows for the clean company, got ${cleanScheduled.length}`);
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// GET /api/admin/maintenance/runs — sparkline drill-down endpoint
+// ════════════════════════════════════════════════════════════════════════════
+// Returns the underlying maintenance_runs rows that produced a single
+// (tool, KSA-day) bar in the trend chart. Verified here so a regression
+// (e.g. broken auth gate, broken day filter, leaking other tenants) is
+// caught before the SuperAdmin click-through stops working.
+interface RunsResponse {
+  companyId: number;
+  toolKey: string;
+  day: string;
+  items: Array<{
+    id: number;
+    runAt: string;
+    trigger: "scheduled" | "manual";
+    status: "ok" | "warn" | "critical" | "error";
+    count: number;
+    durationMs: number;
+    error: string | null;
+    details: unknown;
+  }>;
+}
+
+test("GET /maintenance/runs: 401 without bearer token", async () => {
+  const r = await api(`/api/admin/maintenance/runs?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2026-04-25`, "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/runs: 403 for non-superadmin", async () => {
+  const r = await api(`/api/admin/maintenance/runs?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2026-04-25`, "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/runs: 400 on missing/invalid arguments", async () => {
+  const cases = [
+    `?companyId=&toolKey=journal-pending&day=2026-04-25`,                 // empty companyId
+    `?companyId=abc&toolKey=journal-pending&day=2026-04-25`,              // non-numeric companyId
+    `?companyId=${dirtyCompanyId}&toolKey=&day=2026-04-25`,               // empty toolKey
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=`,          // empty day
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2026-4-25`, // wrong day format
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=garbage`,   // wrong day format
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2026-13-01`, // impossible month
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2026-02-30`, // impossible day
+    `?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=2025-02-29`, // non-leap-year Feb 29
+  ];
+  for (const qs of cases) {
+    const r = await api(`/api/admin/maintenance/runs${qs}`, "GET", { token: saToken });
+    assert.equal(r.status, 400, `expected 400 for ${qs}, got ${r.status}`);
+  }
+});
+
+test("GET /maintenance/runs: returns rows for the requested (tool, day) only", async () => {
+  // The earlier per-company run-now test inserted manual rows for every tool
+  // dated "today" in KSA. Pick a tool that ran and assert we see at least
+  // one row for today, ordered DESC, and capped at 50.
+  const todayKsa = (() => {
+    const exec = db.execute<{ d: string }>(sql`
+      SELECT to_char((now() AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') AS d
+    `);
+    return exec;
+  })();
+  const todayRow = (await todayKsa as unknown as { rows: Array<{ d: string }> }).rows[0];
+  const today = todayRow.d;
+
+  const r = await api<RunsResponse>(
+    `/api/admin/maintenance/runs?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=${today}`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 300)}`);
+  assert.equal(r.body.companyId, dirtyCompanyId);
+  assert.equal(r.body.toolKey, "journal-pending");
+  assert.equal(r.body.day, today);
+  assert.ok(Array.isArray(r.body.items), "items must be an array");
+  assert.ok(r.body.items.length >= 1, `expected at least one run for today, got ${r.body.items.length}`);
+  assert.ok(r.body.items.length <= 50, `expected at most 50 rows, got ${r.body.items.length}`);
+
+  // Every row must match the requested tool and the (KSA) day.
+  for (const it of r.body.items) {
+    assert.ok(typeof it.id === "number");
+    assert.ok(["scheduled", "manual"].includes(it.trigger), `unexpected trigger ${it.trigger}`);
+    assert.ok(["ok", "warn", "critical", "error"].includes(it.status), `unexpected status ${it.status}`);
+    // run_at, when interpreted in KSA, must fall on the requested day.
+    const ksa = new Date(it.runAt).toLocaleString("en-CA", { timeZone: "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" });
+    // toLocaleString returns "YYYY-MM-DD" for en-CA when only date parts are requested.
+    assert.equal(ksa, today, `row ${it.id} runAt=${it.runAt} not on KSA day ${today}`);
+  }
+
+  // Ordered by run_at DESC.
+  for (let i = 1; i < r.body.items.length; i++) {
+    assert.ok(
+      new Date(r.body.items[i - 1].runAt).getTime() >= new Date(r.body.items[i].runAt).getTime(),
+      "items must be sorted by runAt DESC",
+    );
+  }
+});
+
+test("GET /maintenance/runs: empty array on a day that had no runs", async () => {
+  // 1990-01-01 is well before any test row exists.
+  const r = await api<RunsResponse>(
+    `/api/admin/maintenance/runs?companyId=${dirtyCompanyId}&toolKey=journal-pending&day=1990-01-01`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.items, []);
+});
+
+test("GET /maintenance/runs: never leaks rows from another tenant", async () => {
+  // Same (toolKey, day) as the success test above, but query as the *clean*
+  // company. We seeded that company too, so there must be its OWN rows but
+  // none from the dirty tenant. Rather than diff IDs (brittle), assert that
+  // every returned row belongs to the requested tenant by re-querying the DB.
+  const todayRow = (await db.execute<{ d: string }>(sql`
+    SELECT to_char((now() AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') AS d
+  `) as unknown as { rows: Array<{ d: string }> }).rows[0];
+  const today = todayRow.d;
+
+  const r = await api<RunsResponse>(
+    `/api/admin/maintenance/runs?companyId=${cleanCompanyId}&toolKey=journal-pending&day=${today}`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  for (const it of r.body.items) {
+    const [row] = await db.select({ companyId: maintenanceRunsTable.companyId })
+      .from(maintenanceRunsTable)
+      .where(eq(maintenanceRunsTable.id, it.id));
+    assert.equal(row?.companyId, cleanCompanyId,
+      `row ${it.id} bled in from companyId=${row?.companyId}`);
+  }
+});
+
 // Pin the contract that statusForCount agrees with the runs table: every row
 // inserted for the clean company by the sweep above should be status='ok'
 // because the company has no findings.

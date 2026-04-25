@@ -4183,6 +4183,84 @@ router.get("/maintenance/trend", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// GET /maintenance/runs?companyId=&toolKey=&day=YYYY-MM-DD — drill-down for a
+// single (tool, KSA-day) bar in the trend sparkline. Returns up to 50 of the
+// underlying `maintenance_runs` rows (most-recent first) so SuperAdmins can
+// see *which* runs (scheduled vs manual, what counts, what the JSON details
+// looked like) made up that day without trawling the table by hand.
+//
+// Read-only and audit-free — same pattern as `/maintenance/trend`. The view
+// is consulted opportunistically whenever a SuperAdmin clicks a bar, so
+// recording it would just spam the audit log.
+router.get("/maintenance/runs", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = Number(req.query.companyId);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      res.status(400).json({ error: "companyId غير صحيح" }); return;
+    }
+    const toolKey = String(req.query.toolKey ?? "").trim();
+    if (!toolKey) {
+      res.status(400).json({ error: "toolKey مطلوب" }); return;
+    }
+    const day = String(req.query.day ?? "").trim();
+    // Strict YYYY-MM-DD shape *and* a real calendar date — without the second
+    // check, "2026-13-40" passes the regex but blows up on the SQL cast and
+    // surfaces as a 500. Round-tripping through `Date.UTC` rejects months
+    // outside 1-12 and days the month doesn't have (incl. Feb 29 of non-leap
+    // years) by producing a different YYYY-MM-DD string.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      res.status(400).json({ error: "day يجب أن يكون بصيغة YYYY-MM-DD" }); return;
+    }
+    {
+      const [y, m, d] = day.split("-").map(Number);
+      const utc = new Date(Date.UTC(y, m - 1, d));
+      const round =
+        `${utc.getUTCFullYear().toString().padStart(4, "0")}-` +
+        `${(utc.getUTCMonth() + 1).toString().padStart(2, "0")}-` +
+        `${utc.getUTCDate().toString().padStart(2, "0")}`;
+      if (round !== day) {
+        res.status(400).json({ error: "day ليس تاريخاً صحيحاً" }); return;
+      }
+    }
+    // Compare each run's KSA calendar day to the requested string. We anchor
+    // the bound check at run_at >= day-1d (UTC) so the index on run_at can
+    // narrow the scan before the timezone conversion runs on each row.
+    const exec = await db.execute<any>(sql`
+      SELECT id,
+             run_at      AS "runAt",
+             trigger     AS "trigger",
+             status      AS "status",
+             count       AS "count",
+             duration_ms AS "durationMs",
+             error       AS "error",
+             details     AS "details"
+        FROM maintenance_runs
+       WHERE company_id = ${companyId}
+         AND tool_key   = ${toolKey}
+         AND run_at >= (${day}::date - interval '1 day')
+         AND run_at <  (${day}::date + interval '2 days')
+         AND to_char((run_at AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') = ${day}
+       ORDER BY run_at DESC
+       LIMIT 50
+    `);
+    res.json({
+      companyId, toolKey, day,
+      items: ((exec as any).rows ?? []).map((r: any) => ({
+        id:         r.id,
+        runAt:      r.runAt instanceof Date ? r.runAt.toISOString() : r.runAt,
+        trigger:    r.trigger,
+        status:     r.status,
+        count:      r.count,
+        durationMs: r.durationMs,
+        error:      r.error,
+        details:    r.details,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب تفاصيل اليوم" });
+  }
+});
+
 // GET /maintenance/schedule — single-row config + last-tick snapshot.
 router.get("/maintenance/schedule", requireSuperAdmin, async (_req, res) => {
   try {

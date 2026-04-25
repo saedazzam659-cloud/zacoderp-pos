@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -94,6 +94,40 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
   const [open, setOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Array<string | number>>([]);
   const [pendingAction, setPendingAction] = useState<null | { key: string; body: any; destructive?: boolean; title?: string; desc?: string }>(null);
+  // Sparkline drill-down: which (KSA-day) bar is currently expanded. Null
+  // when no day is selected. Clicking the same day again collapses it.
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  // Reset the drill-down when the company changes — a day from one tenant
+  // is meaningless for another.
+  useEffect(() => { setSelectedDay(null); }, [companyId]);
+
+  // Per-day run list, fetched on demand. Disabled until a bar is clicked so
+  // the request only fires when the panel is actually visible.
+  const dayRunsQ = useQuery({
+    queryKey: ["maintenance-tool-runs", toolKey, companyId, selectedDay],
+    queryFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/runs?companyId=${companyId}&toolKey=${encodeURIComponent(toolKey)}&day=${selectedDay}`,
+        { headers },
+      );
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب تفاصيل اليوم");
+      return r.json() as Promise<{
+        companyId: number; toolKey: string; day: string;
+        items: Array<{
+          id: number;
+          runAt: string;
+          trigger: "scheduled" | "manual";
+          status: "ok" | "warn" | "critical" | "error";
+          count: number;
+          durationMs: number;
+          error: string | null;
+          details: any;
+        }>;
+      }>;
+    },
+    enabled: !!companyId && !!selectedDay,
+    refetchOnWindowFocus: false,
+  });
 
   const queryKey = ["maintenance-tool", toolKey, companyId];
   const checkQ = useQuery({
@@ -262,7 +296,22 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
           );
         })()}
         {trend && (
-          <Sparkline days={trend.days} points={trend.points} />
+          <Sparkline
+            days={trend.days}
+            points={trend.points}
+            selectedDay={selectedDay}
+            onSelectDay={(day) => setSelectedDay((cur) => (cur === day ? null : day))}
+          />
+        )}
+        {selectedDay && (
+          <DayRunsPanel
+            day={selectedDay}
+            isFetching={dayRunsQ.isFetching}
+            isError={dayRunsQ.isError}
+            errorMessage={(dayRunsQ.error as any)?.message}
+            items={dayRunsQ.data?.items ?? []}
+            onClose={() => setSelectedDay(null)}
+          />
         )}
         {checkQ.isError && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-1.5">
@@ -362,11 +411,17 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
 // stable when results are sparse. Bar height encodes the issue count
 // (log-scaled so a single 500-row outlier doesn't flatten the rest), color
 // encodes the worst status of the day. Hover shows the exact day + count.
+//
+// When `onSelectDay` is supplied, days that actually had a run become
+// clickable buttons so SuperAdmins can drill into the underlying runs for
+// that day. The currently-selected bar is outlined.
 function Sparkline(props: {
   days: number;
   points: Array<{ day: string; count: number; status: "ok" | "warn" | "critical" | "error" }>;
+  selectedDay?: string | null;
+  onSelectDay?: (day: string) => void;
 }) {
-  const { days, points } = props;
+  const { days, points, selectedDay, onSelectDay } = props;
   // Build the full day window (oldest → newest) so missing days appear as
   // empty slots. We work in Asia/Riyadh-style YYYY-MM-DD strings.
   const today = new Date();
@@ -400,14 +455,167 @@ function Sparkline(props: {
         const lbl = p
           ? `${day} — ${p.status === "ok" ? "سليم" : p.count}`
           : `${day} — لا فحص`;
+        // Bars without data are inert placeholders; bars with data become
+        // clickable when the parent supplied an `onSelectDay` handler.
+        const interactive = !!p && !!onSelectDay;
+        const isSelected = !!p && selectedDay === day;
+        const wrapperBase = "flex-1 min-w-[3px] bg-muted/40 rounded-sm overflow-hidden flex items-end";
+        const wrapperCls = isSelected
+          ? `${wrapperBase} ring-2 ring-violet-500 ring-offset-1 ring-offset-background`
+          : wrapperBase;
+        if (interactive) {
+          return (
+            <button key={day} type="button"
+                    className={`${wrapperCls} cursor-pointer hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-violet-500`}
+                    title={`${lbl} — اضغط لعرض التشغيلات`}
+                    aria-pressed={isSelected}
+                    aria-label={`${lbl} — عرض تفاصيل التشغيلات`}
+                    onClick={() => onSelectDay?.(day)}>
+              <div className={`w-full rounded-sm ${cls}`} style={{ height: h }} />
+            </button>
+          );
+        }
         return (
-          <div key={day}
-               className="flex-1 min-w-[3px] bg-muted/40 rounded-sm overflow-hidden flex items-end"
-               title={lbl}>
+          <div key={day} className={wrapperCls} title={lbl}>
             <div className={`w-full rounded-sm ${cls}`} style={{ height: h }} />
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─── DayRunsPanel ────────────────────────────────────────────────────────────
+// Inline drill-down panel: shows up to 50 maintenance_runs rows for the
+// (tool, KSA-day) bar the operator just clicked. Mirrors the existing
+// "details" panel pattern (border-t separator, compact rows, RTL-friendly).
+function DayRunsPanel(props: {
+  day: string;
+  isFetching: boolean;
+  isError: boolean;
+  errorMessage?: string;
+  items: Array<{
+    id: number;
+    runAt: string;
+    trigger: "scheduled" | "manual";
+    status: "ok" | "warn" | "critical" | "error";
+    count: number;
+    durationMs: number;
+    error: string | null;
+    details: any;
+  }>;
+  onClose: () => void;
+}) {
+  const { day, isFetching, isError, errorMessage, items, onClose } = props;
+  const STATUS_BADGE: Record<string, string> = {
+    ok:       "bg-emerald-100 text-emerald-800 border border-emerald-200",
+    warn:     "bg-amber-100   text-amber-900   border border-amber-200",
+    critical: "bg-red-100     text-red-800     border border-red-200",
+    error:    "bg-rose-100    text-rose-800    border border-rose-200",
+  };
+  const STATUS_LBL: Record<string, string> = {
+    ok: "سليم", warn: "تحذير", critical: "حرج", error: "خطأ",
+  };
+  const TRIGGER_LBL: Record<string, string> = {
+    scheduled: "تلقائي", manual: "يدوي",
+  };
+  return (
+    <div className="mt-2 border-t pt-2 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium text-violet-900">
+          تشغيلات يوم {day} {items.length > 0 && (
+            <span className="text-muted-foreground font-normal">({items.length})</span>
+          )}
+        </p>
+        <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={onClose}>
+          إغلاق
+        </Button>
+      </div>
+      {isFetching && (
+        <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          جارٍ التحميل...
+        </p>
+      )}
+      {isError && !isFetching && (
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-1.5">
+          {errorMessage || "فشل جلب تفاصيل اليوم"}
+        </p>
+      )}
+      {!isFetching && !isError && items.length === 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          لا توجد تشغيلات مسجّلة لهذا اليوم.
+        </p>
+      )}
+      {!isFetching && !isError && items.length > 0 && (
+        <div className="overflow-x-auto rounded border border-violet-100">
+          <table className="w-full text-[11px]">
+            <thead className="bg-violet-50/60 text-violet-900">
+              <tr>
+                <th className="text-right px-2 py-1 font-medium whitespace-nowrap">الوقت</th>
+                <th className="text-right px-2 py-1 font-medium whitespace-nowrap">المُشغِّل</th>
+                <th className="text-right px-2 py-1 font-medium whitespace-nowrap">الحالة</th>
+                <th className="text-right px-2 py-1 font-medium whitespace-nowrap">العدد</th>
+                <th className="text-right px-2 py-1 font-medium whitespace-nowrap">المدة</th>
+                <th className="text-right px-2 py-1 font-medium">تفاصيل</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => {
+                const time = (() => {
+                  try {
+                    return new Date(row.runAt).toLocaleTimeString("ar-SA", {
+                      hour: "2-digit", minute: "2-digit", second: "2-digit",
+                      timeZone: "Asia/Riyadh",
+                    });
+                  } catch { return row.runAt; }
+                })();
+                // Error and details can coexist (a check that partially failed
+                // may surface both an error message *and* the partial findings
+                // in `details`). Render them stacked so operators don't lose
+                // half the context.
+                const detailsJson = row.details != null
+                  ? (() => { try { return JSON.stringify(row.details); } catch { return String(row.details); } })()
+                  : "";
+                const hasError = !!row.error;
+                const hasDetails = detailsJson.length > 0;
+                return (
+                  <tr key={row.id} className="border-t border-violet-100 align-top">
+                    <td className="px-2 py-1 whitespace-nowrap font-mono">{time}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{TRIGGER_LBL[row.trigger] ?? row.trigger}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${STATUS_BADGE[row.status] ?? ""}`}>
+                        {STATUS_LBL[row.status] ?? row.status}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap tabular-nums">{row.count}</td>
+                    <td className="px-2 py-1 whitespace-nowrap tabular-nums text-muted-foreground">
+                      {row.durationMs} مث
+                    </td>
+                    <td className="px-2 py-1 space-y-1">
+                      {hasError && (
+                        <code className="block max-w-[28rem] truncate font-mono text-[10px] text-rose-700"
+                              title={row.error!}>
+                          {row.error}
+                        </code>
+                      )}
+                      {hasDetails && (
+                        <code className="block max-w-[28rem] truncate font-mono text-[10px] text-muted-foreground"
+                              title={detailsJson}>
+                          {detailsJson}
+                        </code>
+                      )}
+                      {!hasError && !hasDetails && (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
