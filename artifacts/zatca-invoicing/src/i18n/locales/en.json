@@ -1619,6 +1619,7 @@
     "subtitle": "Financial chart of accounts — link accounts with items, customers, suppliers, and warehouses",
     "newAccount": "New Account",
     "editAccount": "Edit Account",
+    "copyAccount": "Copy Account",
     "addAccount": "Add New Account",
     "formSubtitle": "Define the account, set its type and place in the accounting tree",
     "accountCode": "Account Code",

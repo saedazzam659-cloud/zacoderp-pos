@@ -13,7 +13,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
-import { Plus, Pencil, Trash2, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -158,6 +158,23 @@ export default function ChartOfAccounts() {
   function handleEdit(a: any) {
     setForm({ ...a, parentId: a.parentId ? String(a.parentId) : "", reportDirection: a.reportDirection ?? "" });
     setEditId(a.id);
+    setShowForm(true);
+  }
+
+  function handleCopy(a: any) {
+    setForm({
+      code:            "",
+      nameAr:          a.nameAr ?? "",
+      nameEn:          a.nameEn ?? "",
+      accountType:     a.accountType ?? "asset",
+      reportDirection: a.reportDirection ?? "",
+      parentId:        a.parentId ? String(a.parentId) : "",
+      level:           a.level ?? 1,
+      isPosting:       a.isPosting ?? true,
+      isActive:        a.isActive ?? true,
+      notes:           a.notes ?? "",
+    });
+    setEditId(null);
     setShowForm(true);
   }
 
@@ -387,9 +404,15 @@ export default function ChartOfAccounts() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(a)} title={t("chartOfAccounts.editAccount")}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleCopy(a)} title={t("chartOfAccounts.copyAccount")}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}>
+                            onClick={() => { if (confirm(t("chartOfAccounts.confirmDelete"))) deleteMut.mutate(a.id); }}
+                            title={t("common.delete")}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
