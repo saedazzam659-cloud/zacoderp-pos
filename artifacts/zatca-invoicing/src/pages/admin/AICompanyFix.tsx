@@ -406,7 +406,10 @@ export default function AICompanyFix() {
       </Card>
 
       {/* Deterministic maintenance toolbox — sits above the AI scanner. */}
-      <MaintenanceSection companyId={companyId ? Number(companyId) : null} />
+      <MaintenanceSection
+        companyId={companyId ? Number(companyId) : null}
+        onSelectCompany={(id) => setCompanyId(String(id))}
+      />
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">فحص بالذكاء الاصطناعي</CardTitle></CardHeader>
@@ -535,7 +538,10 @@ export default function AICompanyFix() {
 // card runs an independent backend probe and lets the operator inspect /
 // remediate inline (no popup modals). All fix actions are audit-logged with
 // `module='maintenance'` and replayed in the history panel below.
-function MaintenanceSection({ companyId }: { companyId: number | null }) {
+function MaintenanceSection({ companyId, onSelectCompany }: {
+  companyId: number | null;
+  onSelectCompany: (id: number) => void;
+}) {
   const { token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -624,6 +630,8 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
       qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
       qc.invalidateQueries({ queryKey: ["maintenance-latest"] });
       qc.invalidateQueries({ queryKey: ["maintenance-tool"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-trend"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-trend-fleet"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -640,6 +648,54 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
     refetchOnWindowFocus: false,
   });
   const latestByTool = new Map((latestQ.data?.items ?? []).map(i => [i.toolKey, i]));
+
+  // 14-day trend per tool — drives the sparkline beneath each card's "آخر فحص".
+  // Shares the same `companyId` filter so a fleet operator sees the trend for
+  // whichever tenant they're inspecting. Re-runs after a manual sweep flips
+  // the latest results so the sparkline updates immediately.
+  const TREND_DAYS = 14;
+  const trendQ = useQuery({
+    queryKey: ["maintenance-trend", companyId, TREND_DAYS],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/trend?companyId=${companyId}&days=${TREND_DAYS}`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الاتجاه");
+      return r.json() as Promise<{
+        days: number;
+        items: Array<{ toolKey: string; day: string; count: number; status: "ok"|"warn"|"critical"|"error" }>;
+      }>;
+    },
+    enabled: !!companyId,
+    refetchOnWindowFocus: false,
+  });
+  // Group trend points by toolKey so the card just receives its own slice.
+  const trendByTool = (() => {
+    const m = new Map<string, Array<{ day: string; count: number; status: "ok"|"warn"|"critical"|"error" }>>();
+    for (const r of trendQ.data?.items ?? []) {
+      if (!m.has(r.toolKey)) m.set(r.toolKey, []);
+      m.get(r.toolKey)!.push({ day: r.day, count: r.count, status: r.status });
+    }
+    return m;
+  })();
+  const trendForTool = (toolKey: string) => ({
+    days: TREND_DAYS,
+    points: trendByTool.get(toolKey) ?? [],
+  });
+
+  // Fleet view — top 5 active companies with the most critical findings in
+  // the same window. Always available to SuperAdmins regardless of which
+  // company is currently selected, so they can spot recurring offenders.
+  const fleetQ = useQuery({
+    queryKey: ["maintenance-trend-fleet", TREND_DAYS],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/trend?days=${TREND_DAYS}`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب لوحة الأسطول");
+      return r.json() as Promise<{
+        days: number;
+        fleet: Array<{ companyId: number; companyName: string; criticalCount: number; criticalRuns: number; toolCount: number; lastRunAt: string | null }>;
+      }>;
+    },
+    refetchOnWindowFocus: false,
+  });
 
   const onFixed = () => setHistoryTick((t) => t + 1);
 
@@ -769,6 +825,58 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
           );
         })()}
 
+        {/* ── Fleet view: top 5 companies with most critical findings ───── */}
+        {fleetQ.data && fleetQ.data.fleet.length > 0 && (
+          <div className="border border-red-200 rounded p-3 bg-red-50/40">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="h-4 w-4 text-red-700" />
+              <span className="text-sm font-medium text-red-900">
+                أكثر الشركات نتائج حرجة آخر {fleetQ.data.days} يوماً
+              </span>
+              <span className="text-[11px] text-muted-foreground mr-auto">
+                اضغط على اسم الشركة لاختيارها
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-red-100/60 text-red-900">
+                  <tr>
+                    <th className="px-2 py-1 text-right">#</th>
+                    <th className="px-2 py-1 text-right">الشركة</th>
+                    <th className="px-2 py-1 text-right">إجمالي الحرج</th>
+                    <th className="px-2 py-1 text-right">أيام × أدوات</th>
+                    <th className="px-2 py-1 text-right">عدد الأدوات</th>
+                    <th className="px-2 py-1 text-right">آخر نتيجة حرجة</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-red-100">
+                  {fleetQ.data.fleet.map((c, i) => (
+                    <tr key={c.companyId} className={c.companyId === companyId ? "bg-red-100/40" : ""}>
+                      <td className="px-2 py-1 text-muted-foreground tabular-nums">{i + 1}</td>
+                      <td className="px-2 py-1">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline font-medium"
+                          onClick={() => onSelectCompany(c.companyId)}
+                          title={`اختيار ${c.companyName} (#${c.companyId})`}
+                        >
+                          {c.companyName || `#${c.companyId}`}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-red-700">{c.criticalCount}</td>
+                      <td className="px-2 py-1 font-mono">{c.criticalRuns}</td>
+                      <td className="px-2 py-1 font-mono">{c.toolCount}</td>
+                      <td className="px-2 py-1 text-muted-foreground">
+                        {c.lastRunAt ? new Date(c.lastRunAt).toLocaleString("ar-SA") : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {!companyId && (
           <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded p-2">
             اختر شركة من الأعلى لبدء الفحص.
@@ -787,6 +895,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("journal-pending") ?? null}
+            trend={trendForTool("journal-pending")}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids, action: "post" })}
             confirmTitle="ترحيل القيود المختارة"
             confirmDescription={(n) => `سيتم ترحيل ${n} قيد محاسبي (المتوازن منها فقط). متابعة؟`}
@@ -848,6 +957,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("broken-refs") ?? null}
+            trend={trendForTool("broken-refs")}
             buildFixBody={(cid, ids) => {
               // Selected ids may be plain numeric ids of items; we need to
               // re-attach `kind`. The render-prop passes composite "kind:id"
@@ -912,6 +1022,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             checkEndpoint="maintenance/unlinked-accounts"
             companyId={companyId}
             latestScan={latestByTool.get("unlinked-accounts") ?? null}
+            trend={trendForTool("unlinked-accounts")}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -949,6 +1060,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             checkEndpoint="maintenance/sequence-gaps"
             companyId={companyId}
             latestScan={latestByTool.get("sequence-gaps") ?? null}
+            trend={trendForTool("sequence-gaps")}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -985,6 +1097,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("dormant-users") ?? null}
+            trend={trendForTool("dormant-users")}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids })}
             confirmTitle="تعطيل المستخدمين المختارين"
             confirmDescription={(n) => `سيتم تعطيل ${n} مستخدم وإلغاء جلساتهم. يمكن إعادة تفعيلهم لاحقاً من إدارة المستخدمين. متابعة؟`}
@@ -1036,6 +1149,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             checkEndpoint="orphan-stock"
             companyId={companyId}
             latestScan={latestByTool.get("orphan-stock") ?? null}
+            trend={trendForTool("orphan-stock")}
             externalCta={{ label: "فتح صفحة التنظيف", href: "/admin/orphan-stock" }}
           />
         </div>
@@ -1057,6 +1171,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("negative-stock") ?? null}
+            trend={trendForTool("negative-stock")}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -1100,6 +1215,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("stock-balance-drift") ?? null}
+            trend={trendForTool("stock-balance-drift")}
             confirmTitle="إعادة حساب الأرصدة"
             confirmDescription={(n) => `سيتم تحديث ${n} رصيد مخزون من واقع الحركات. متابعة؟`}
             buildFixBody={(cid, ids) => {
@@ -1178,6 +1294,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             onFixed={onFixed}
             latestScan={latestByTool.get("unbalanced-entries") ?? null}
+            trend={trendForTool("unbalanced-entries")}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -1234,6 +1351,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             onFixed={onFixed}
             destructive
             latestScan={latestByTool.get("old-audit-logs") ?? null}
+            trend={trendForTool("old-audit-logs")}
             confirmTitle="حذف سجلات التدقيق القديمة"
             confirmDescription={(n) => `سيتم حذف ${n} سجل تدقيق أقدم من 365 يوماً نهائياً. متابعة؟`}
             buildFixBody={(cid) => ({ companyId: cid, days: 365 })}
@@ -1287,6 +1405,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             onFixed={onFixed}
             destructive
             latestScan={latestByTool.get("old-maintenance-runs") ?? null}
+            trend={trendForTool("old-maintenance-runs")}
             confirmTitle="حذف سجلات تشغيل الصيانة القديمة"
             confirmDescription={(n) => `سيتم حذف ${n} نتيجة فحص أقدم من 90 يوماً نهائياً. متابعة؟`}
             buildFixBody={(cid) => ({ companyId: cid, days: 90 })}

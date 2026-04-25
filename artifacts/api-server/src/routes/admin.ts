@@ -4062,6 +4062,97 @@ router.get("/maintenance/latest", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// GET /maintenance/trend?companyId=&days=14 — small time-series view that
+// powers the per-tool sparkline on each maintenance card and the cross-tenant
+// "fleet" panel that flags companies hammered by recurring critical findings.
+//
+// Behaviour:
+//   • When `companyId` is supplied → returns one row per (toolKey, day) for the
+//     last `days` calendar days (Asia/Riyadh) with the *worst* status of the
+//     day and the latest `count`. The UI groups these into per-tool sparklines.
+//   • When `companyId` is omitted → returns the top 5 active companies with
+//     the most critical findings inside the same window so SuperAdmins can
+//     spot recurring offenders without picking each tenant manually.
+//
+// Both branches are read-only; nothing is written to the audit log because the
+// view is consulted whenever the maintenance page is opened.
+router.get("/maintenance/trend", requireSuperAdmin, async (req, res) => {
+  try {
+    const days = clampInt(req.query.days, 1, 90, 14);
+    const companyIdRaw = req.query.companyId;
+    const hasCompany = companyIdRaw != null && String(companyIdRaw) !== "";
+    if (hasCompany) {
+      const companyId = Number(companyIdRaw);
+      if (!Number.isInteger(companyId) || companyId <= 0) {
+        res.status(400).json({ error: "companyId غير صحيح" });
+        return;
+      }
+      // For each (tool, KSA-day) pick the *latest* run as the day's badge so
+      // a manual fix that flipped status from critical→ok in the afternoon
+      // shows green. DISTINCT ON returns the row matching the ORDER BY
+      // tiebreak (most-recent run_at), giving us the day's final state.
+      const exec = await db.execute<any>(sql`
+        WITH per_run AS (
+          SELECT tool_key,
+                 to_char((run_at AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') AS day_str,
+                 count, status, run_at
+            FROM maintenance_runs
+           WHERE company_id = ${companyId}
+             AND run_at >= now() - ((${days})::int || ' days')::interval
+        )
+        SELECT DISTINCT ON (tool_key, day_str)
+               tool_key  AS "toolKey",
+               day_str   AS "day",
+               count     AS "count",
+               status    AS "status"
+          FROM per_run
+         ORDER BY tool_key, day_str, run_at DESC
+      `);
+      res.json({ days, companyId, items: (exec as any).rows ?? [] });
+      return;
+    }
+    // Fleet view — rank active companies by total critical issues across all
+    // tools in the window. `criticalRuns` counts how many distinct
+    // (tool, KSA-day) pairs hit critical so a single huge "broken-refs=500"
+    // run doesn't mask a company that is critical on five different tools.
+    const exec = await db.execute<any>(sql`
+      WITH window_runs AS (
+        SELECT m.company_id,
+               m.tool_key,
+               to_char((m.run_at AT TIME ZONE 'Asia/Riyadh')::date, 'YYYY-MM-DD') AS day_str,
+               m.status, m.count, m.run_at
+          FROM maintenance_runs m
+         WHERE m.run_at >= now() - ((${days})::int || ' days')::interval
+      ),
+      crit AS (
+        SELECT company_id, tool_key, day_str, MAX(count) AS day_count
+          FROM window_runs
+         WHERE status = 'critical'
+         GROUP BY company_id, tool_key, day_str
+      )
+      SELECT crit.company_id AS "companyId",
+             c.name_ar       AS "companyName",
+             SUM(day_count)::int          AS "criticalCount",
+             COUNT(*)::int                AS "criticalRuns",
+             COUNT(DISTINCT tool_key)::int AS "toolCount",
+             MAX( (SELECT MAX(run_at) FROM window_runs w
+                    WHERE w.company_id = crit.company_id
+                      AND w.tool_key   = crit.tool_key
+                      AND w.day_str    = crit.day_str
+                      AND w.status     = 'critical') ) AS "lastRunAt"
+        FROM crit
+        JOIN companies c ON c.id = crit.company_id
+       WHERE c.status = 'active'
+       GROUP BY crit.company_id, c.name_ar
+       ORDER BY "criticalRuns" DESC, "criticalCount" DESC
+       LIMIT 5
+    `);
+    res.json({ days, fleet: (exec as any).rows ?? [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب الاتجاه" });
+  }
+});
+
 // GET /maintenance/schedule — single-row config + last-tick snapshot.
 router.get("/maintenance/schedule", requireSuperAdmin, async (_req, res) => {
   try {

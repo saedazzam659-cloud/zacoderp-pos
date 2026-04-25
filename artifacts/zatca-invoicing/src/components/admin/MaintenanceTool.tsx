@@ -65,13 +65,26 @@ export type MaintenanceToolProps = {
     runAt: string;
     trigger: "scheduled" | "manual";
   } | null;
+  /**
+   * Optional 14-day trend (one entry per KSA day with data) used to render a
+   * compact sparkline below the "آخر فحص" line so SuperAdmins can spot
+   * recurring issues. Days without a run are simply omitted by the server.
+   */
+  trend?: {
+    days: number;
+    points: Array<{
+      day: string;        // "YYYY-MM-DD" (Asia/Riyadh)
+      count: number;
+      status: "ok" | "warn" | "critical" | "error";
+    }>;
+  } | null;
 };
 
 export default function MaintenanceTool(props: MaintenanceToolProps) {
   const {
     toolKey, label, description, icon: Icon, checkEndpoint, fixEndpoint,
     destructive, confirmTitle, confirmDescription, buildFixBody, fixActions,
-    renderDetails, externalCta, companyId, onFixed, latestScan,
+    renderDetails, externalCta, companyId, onFixed, latestScan, trend,
   } = props;
   const { token } = useAuth();
   const { toast } = useToast();
@@ -248,6 +261,9 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
             </p>
           );
         })()}
+        {trend && (
+          <Sparkline days={trend.days} points={trend.points} />
+        )}
         {checkQ.isError && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-1.5">
             {(checkQ.error as any)?.message || "فشل الفحص"}
@@ -337,5 +353,61 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
         </AlertDialogContent>
       </AlertDialog>
     </Card>
+  );
+}
+
+// ─── Sparkline ───────────────────────────────────────────────────────────────
+// Compact mini bar-chart: one bar per KSA day in the requested window. Days
+// without a run are rendered as faint placeholders so the chart width stays
+// stable when results are sparse. Bar height encodes the issue count
+// (log-scaled so a single 500-row outlier doesn't flatten the rest), color
+// encodes the worst status of the day. Hover shows the exact day + count.
+function Sparkline(props: {
+  days: number;
+  points: Array<{ day: string; count: number; status: "ok" | "warn" | "critical" | "error" }>;
+}) {
+  const { days, points } = props;
+  // Build the full day window (oldest → newest) so missing days appear as
+  // empty slots. We work in Asia/Riyadh-style YYYY-MM-DD strings.
+  const today = new Date();
+  // Anchor to UTC midnight of "today" — the server already grouped by KSA day
+  // and labels are simple strings, so a naive walk-back is good enough here.
+  const window: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    window.push(d.toISOString().slice(0, 10));
+  }
+  const byDay = new Map(points.map(p => [p.day, p]));
+  const max = Math.max(1, ...points.map(p => p.count));
+  // Log-ish scale so one giant day doesn't flatten the rest.
+  const scale = (n: number) => (n <= 0 ? 0 : Math.max(0.12, Math.log10(1 + n) / Math.log10(1 + max)));
+  const COLOR: Record<string, string> = {
+    ok:       "bg-emerald-400",
+    warn:     "bg-amber-400",
+    critical: "bg-red-500",
+    error:    "bg-rose-500",
+  };
+  const nonZero = points.filter(p => p.count > 0).length;
+  return (
+    <div className="flex items-end gap-[2px] h-7" role="img"
+         aria-label={`اتجاه آخر ${days} يوم — ${nonZero} يوم بنتائج`}
+         title={`اتجاه آخر ${days} يوم — ${nonZero} يوم بنتائج`}>
+      {window.map((day) => {
+        const p = byDay.get(day);
+        const h = p ? `${Math.round(scale(p.count) * 100)}%` : "8%";
+        const cls = p ? COLOR[p.status] ?? "bg-slate-300" : "bg-slate-200";
+        const lbl = p
+          ? `${day} — ${p.status === "ok" ? "سليم" : p.count}`
+          : `${day} — لا فحص`;
+        return (
+          <div key={day}
+               className="flex-1 min-w-[3px] bg-muted/40 rounded-sm overflow-hidden flex items-end"
+               title={lbl}>
+            <div className={`w-full rounded-sm ${cls}`} style={{ height: h }} />
+          </div>
+        );
+      })}
+    </div>
   );
 }
