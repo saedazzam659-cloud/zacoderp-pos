@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@aws-sdk/client-rds-data": "^3.1037.0",
     "@google-cloud/storage": "^7.19.0",
     "@replit/connectors-sdk": "^0.4.0",
     "@workspace/api-zod": "workspace:*",
@@ -19,6 +20,7 @@
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
+    "drizzle-kit": "^0.31.9",
     "drizzle-orm": "catalog:",
     "express": "^5",
     "google-auth-library": "^10.6.2",
