@@ -8,6 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import {
   LogIn, Eye, EyeOff, ShieldCheck, Loader2, ShieldAlert, Mail,
   KeyRound, Smartphone, RefreshCw, ArrowLeft, Clock,
+  Wallet, Boxes, ShoppingCart, Truck, Users, Factory,
+  Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
@@ -344,26 +346,124 @@ export default function Login() {
   };
 
   // ── Layout ─────────────────────────────────────────────────────────────
+  // Two-column "classic" layout:
+  //   • Intro column (visual right in RTL): brand, ERP module grid,
+  //     AI capabilities strip, and vision/mission micro-cards.
+  //   • Form column (visual left in RTL): existing login flow card.
+  // On screens narrower than `lg` we collapse to a single column with the
+  // form FIRST (it's the primary action) and the intro stacked below it.
+  const modules = [
+    { icon: Wallet,       label: "المحاسبة" },
+    { icon: Boxes,        label: "المخازن" },
+    { icon: ShoppingCart, label: "المبيعات" },
+    { icon: Truck,        label: "المشتريات" },
+    { icon: Users,        label: "الموارد البشرية" },
+    { icon: Factory,      label: "الإنتاج" },
+  ];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex justify-end mb-2">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8">
+      <div className="w-full max-w-6xl">
+        <div className="flex justify-end mb-4">
           <LanguageSwitcher variant="compact" />
         </div>
 
-        <div className="text-center mb-8">
-          <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-4 shadow-lg">
-            Z
-          </div>
-          <h1 className="text-3xl font-bold text-foreground">{t("auth.appName")}</h1>
-          <p className="text-muted-foreground mt-2 text-sm">{t("auth.appSubtitle")}</p>
-          <div className="flex items-center justify-center gap-1 mt-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-3 py-1 w-fit mx-auto">
-            <ShieldCheck className="h-3 w-3" />
-            {t("auth.zatcaCompliant")}
-          </div>
-        </div>
+        <div className="grid lg:grid-cols-[1.05fr_minmax(360px,440px)] gap-8 lg:gap-12 items-start">
+          {/* ─── INTRO COLUMN ─────────────────────────────────────────── */}
+          <aside className="order-2 lg:order-1 space-y-6">
+            {/* Brand block */}
+            <div className="text-center lg:text-start">
+              <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-3 shadow-lg">
+                Z
+              </div>
+              <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{t("auth.appName")}</h1>
+              <p className="text-muted-foreground mt-1 text-sm">{t("auth.appSubtitle")}</p>
+              <div className="flex items-center gap-1 mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-3 py-1 w-fit mx-auto lg:mx-0">
+                <ShieldCheck className="h-3 w-3" />
+                {t("auth.zatcaCompliant")}
+              </div>
+            </div>
 
-        <div className="bg-card border border-border rounded-2xl shadow-xl p-8 space-y-6">
+            {/* Tagline / parent product intro */}
+            <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="text-xs font-bold tracking-wide text-primary uppercase">ZacodERP</span>
+              </div>
+              <p className="text-sm text-foreground leading-relaxed">
+                الجيل الجديد من أنظمة إدارة الأعمال المدعومة بالذكاء الاصطناعي.
+                نقدم منصة ذكية شاملة تحلّل بيانات شركتك المالية والفنية لحظيًا
+                وتمنحك رؤية استباقية لقراراتك.
+              </p>
+            </div>
+
+            {/* ERP modules grid */}
+            <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+                <LayoutGrid className="h-4 w-4 text-primary" />
+                وحدات نظام ERP المتكامل
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {modules.map(({ icon: Icon, label }) => (
+                  <div
+                    key={label}
+                    className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                  >
+                    <Icon className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-foreground">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* AI capabilities strip */}
+            <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/20 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Brain className="h-5 w-5 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">ذكاء اصطناعي مدمج</h3>
+              </div>
+              <ul className="space-y-2.5 text-sm text-foreground/80">
+                <li className="flex items-start gap-2">
+                  <TrendingUp className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <span>تحليل مالي ذكي وتوقع الأرباح والتدفقات النقدية</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <BarChart3 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <span>تقارير ولوحات تحكم لحظية ومؤشرات أداء KPI</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <span>توصيات وتنبيهات تلقائية لدعم قرار الإدارة العليا</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Vision / Mission micro-cards */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="border border-border rounded-xl p-4 bg-card/60">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Globe2 className="h-4 w-4 text-primary" />
+                  <h4 className="text-xs font-semibold text-foreground">رؤيتنا</h4>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  تمكين الشركات في مصر والسعودية والمنطقة العربية من التحول الرقمي الحقيقي.
+                </p>
+              </div>
+              <div className="border border-border rounded-xl p-4 bg-card/60">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Zap className="h-4 w-4 text-primary" />
+                  <h4 className="text-xs font-semibold text-foreground">رسالتنا</h4>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  حلول برمجية متقدمة بالذكاء الاصطناعي لرفع كفاءة الأعمال ودقة القرار.
+                </p>
+              </div>
+            </div>
+          </aside>
+
+          {/* ─── FORM COLUMN ──────────────────────────────────────────── */}
+          <main className="order-1 lg:order-2 w-full lg:sticky lg:top-8">
+            <div className="bg-card border border-border rounded-2xl shadow-xl p-8 space-y-6">
           {/* Step header */}
           <div>
             <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
@@ -673,10 +773,12 @@ export default function Login() {
           )}
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          © 2026 {t("auth.appName")} — {t("auth.rights")}
-        </p>
+              <p className="text-center text-xs text-muted-foreground mt-6">
+                © 2026 {t("auth.appName")} — {t("auth.rights")}
+              </p>
+            </main>
+          </div>
+        </div>
       </div>
-    </div>
   );
 }
