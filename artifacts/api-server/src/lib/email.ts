@@ -250,6 +250,82 @@ export async function sendReportsDigest(opts: {
   });
 }
 
+// ─── Maintenance critical-findings digest ────────────────────────────────────
+// Sent by the daily sweep when criticalCount > 0 and alerts aren't snoozed.
+// Each row is one (company, tool) pair so SuperAdmins can triage from inbox.
+export interface MaintenanceDigestRow {
+  companyId:   number;
+  companyName: string;
+  toolKey:     string;
+  toolLabelAr: string;
+  count:       number;
+  runAt:       Date | string;
+}
+
+export interface SendMaintenanceDigestOpts {
+  to: string[];
+  rows: MaintenanceDigestRow[];
+  publicBaseUrl: string;
+  /** Marks the email as a manual test send so SuperAdmins don't confuse it with a real alert. */
+  isTest?: boolean;
+  /** True when more critical findings exist than rows shown — caller is responsible for capping. */
+  truncated?: boolean;
+}
+
+export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestOpts) {
+  const base = opts.publicBaseUrl.replace(/\/$/, "");
+  const link = `${base}/admin/ai-fix`;
+  const distinctCompanies = new Set(opts.rows.map((r) => r.companyId)).size;
+  const truncSuffix = opts.truncated ? " (تم اقتطاع القائمة)" : "";
+  const subjectBase = opts.isTest
+    ? "اختبار: تنبيه فحص الصيانة"
+    : `تنبيه صيانة: ${opts.rows.length} نتيجة حرجة في ${distinctCompanies} شركة${truncSuffix}`;
+  const rowsHtml = opts.rows
+    .map((r) => {
+      const when = (r.runAt instanceof Date ? r.runAt : new Date(r.runAt)).toLocaleString("ar-SA");
+      const escName = String(r.companyName ?? "").replace(/[<>&]/g, (c) =>
+        c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;",
+      );
+      return `
+        <tr>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9;">${escName}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9;">${r.toolLabelAr}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9; color:#b91c1c; font-weight:600;">${r.count}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9; color:#64748b; font-size:12px;">${when}</td>
+        </tr>`;
+    })
+    .join("");
+  const intro = opts.isTest
+    ? `<p>هذه رسالة <strong>تجريبية</strong> أُرسلت من صفحة جدولة الصيانة للتأكد من وصول التنبيهات.</p>`
+    : `<p>اكتشف الفحص التلقائي الأخير <strong>${opts.rows.length}</strong> نتيجة حرجة في <strong>${distinctCompanies}</strong> شركة. تفاصيل أدناه:</p>`;
+  const body = `
+    ${intro}
+    <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;">
+      <thead>
+        <tr style="background:#f8fafc; color:#0f172a;">
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">الشركة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">الأداة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">العدد</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">وقت الفحص</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <p style="margin-top:18px;">
+      <a href="${link}" style="display:inline-block; background:#7c3aed; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">
+        فتح صفحة الإصلاح بالذكاء الاصطناعي
+      </a>
+    </p>
+    <p style="font-size:12px; color:#94a3b8; margin-top:14px;">
+      يمكنك تعطيل هذه التنبيهات أو ضبط وقت الفحص اليومي من بطاقة "الفحص التلقائي اليومي" في صفحة الإصلاح.
+    </p>`;
+  return sendEmail({
+    to: opts.to,
+    subject: subjectBase,
+    html: wrapHtml(opts.isTest ? "اختبار تنبيه الصيانة" : "تنبيه فحص الصيانة الحرج", body),
+  });
+}
+
 export async function sendRecoveryLink(to: string, token: string, publicBaseUrl: string, ip: string | null) {
   const link = `${publicBaseUrl.replace(/\/$/, "")}/recover-superadmin/${encodeURIComponent(token)}`;
   const body = `

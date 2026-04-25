@@ -39,6 +39,14 @@ export const maintenanceScheduleTable = pgTable("maintenance_schedule", {
   lastRunCompanies: integer("last_run_companies").notNull().default(0),
   lastRunCriticalCount: integer("last_run_critical_count").notNull().default(0),
   lastError:    text("last_error"),
+  // Email digest dispatch — populated by the scheduler whenever a sweep finds
+  // critical findings (and alerts aren't snoozed). The UI surfaces these so
+  // operators can verify that SuperAdmins were actually notified.
+  lastEmailAt:             timestamp("last_email_at", { withTimezone: true }),
+  lastEmailStatus:         text("last_email_status"),  // "ok" | "failed" | "skipped" | "no_recipients" | "no_transport"
+  lastEmailError:          text("last_email_error"),
+  lastEmailRecipients:     integer("last_email_recipients").notNull().default(0),
+  lastEmailCriticalCount:  integer("last_email_critical_count").notNull().default(0),
   updatedAt:    timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

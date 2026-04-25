@@ -13,7 +13,7 @@ import {
 } from "../lib/maintenanceChecks.js";
 import {
   ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
-  runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID,
+  runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
 } from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
@@ -3402,6 +3402,14 @@ router.post("/reports/email-schedule/run-now", requireSuperAdmin, async (req, re
 // partial failure rolls back cleanly.
 
 // Common helpers ────────────────────────────────────────────────────────────
+// Reconstructs the public-facing origin (proto://host) for the current request
+// so emails can build deep-links back to the SuperAdmin UI. Mirrors the helper
+// used in superAdminAuth.ts.
+function publicBaseUrlFromReq(req: Request): string {
+  const proto = ((req.headers["x-forwarded-proto"] as string) || "https").split(",")[0].trim();
+  const host  = ((req.headers["x-forwarded-host"]  as string) || (req.headers.host as string) || "");
+  return host ? `${proto}://${host}` : "";
+}
 function maintGuard(req: Request, res: Response): { companyId: number } | null {
   const companyId = Number(req.query.companyId ?? req.body?.companyId);
   if (!Number.isInteger(companyId) || companyId <= 0) {
@@ -4119,7 +4127,7 @@ router.post("/maintenance/run-now", requireSuperAdmin, async (req, res) => {
         failedCompanies: 0,
       };
     } else {
-      summary = await runMaintenanceSweep("manual");
+      summary = await runMaintenanceSweep("manual", { publicBaseUrl: publicBaseUrlFromReq(req) });
     }
     await writeAudit({
       userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
@@ -4145,6 +4153,50 @@ router.get("/maintenance/critical-summary", requireSuperAdmin, async (req, res) 
     res.status(500).json({ error: e?.message || "فشل جلب التنبيهات الحرجة" });
   }
 });
+
+// POST /maintenance/schedule/test-email — fire a one-off SuperAdmin digest
+// using the latest critical findings (or a placeholder row when nothing is
+// critical) so admins can validate that SMTP/Outlook is reachable. Updates
+// the same lastEmail* columns the auto-dispatch uses.
+router.post("/maintenance/schedule/test-email", requireSuperAdmin, async (req, res) => {
+  try {
+    await ensureMaintenanceScheduleRow();
+    const outcome = await dispatchCriticalDigest({
+      publicBaseUrl: publicBaseUrlFromReq(req),
+      isTest: true,
+    });
+    await writeAudit({
+      userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+      role: "superadmin", companyId: null, module: "maintenance",
+      action: "send_test_email",
+      method: req.method, path: req.originalUrl,
+      entityType: "maintenance_schedule", entityId: null, metadata: outcome,
+    });
+    if (outcome.status === "ok") {
+      res.json({ ok: true, outcome });
+    } else {
+      // Surface non-OK outcomes (no recipients, no transport, send failed) as
+      // 400/502 so the UI can show a useful toast — but still return the
+      // structured outcome so the schedule card refreshes consistently.
+      const code = outcome.status === "failed" ? 502 : 400;
+      res.status(code).json({ ok: false, outcome, error: outcomeMessageAr(outcome) });
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل إرسال البريد التجريبي" });
+  }
+});
+
+function outcomeMessageAr(o: { status: string; message: string }): string {
+  switch (o.status) {
+    case "ok":             return "تم الإرسال بنجاح";
+    case "no_recipients":  return "لا يوجد سوبر أدمن لديه بريد إلكتروني مفعّل";
+    case "no_transport":   return "إعدادات البريد غير مهيأة على الخادم (SMTP أو Outlook)";
+    case "snoozed":        return "التنبيهات مكتومة حالياً";
+    case "no_critical":    return "لا توجد نتائج حرجة لإرسالها";
+    case "failed":         return `تعذّر الإرسال: ${o.message}`;
+    default:               return o.message || "حدث خطأ غير معروف";
+  }
+}
 
 // POST /maintenance/critical-summary/snooze — mute the dashboard banner until
 // the next scheduled run lifts the count back up. Body: { hours? } default 24.

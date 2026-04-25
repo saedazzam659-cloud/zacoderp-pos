@@ -10,7 +10,7 @@ import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
-  CalendarClock, Play,
+  CalendarClock, Play, Mail,
   // Toolbox expansion (F): inventory / accounting / logs categories.
   TrendingDown, Scale, Calculator, ScrollText, Trash2, Boxes, BookOpen, ClipboardList,
 } from "lucide-react";
@@ -39,6 +39,21 @@ const SEV_STYLE: Record<string, { bg: string; border: string; text: string; icon
   medium: { bg: "bg-amber-50",  border: "border-amber-200",  text: "text-amber-900",  icon: AlertTriangle,  label: "خطورة متوسطة" },
   low:    { bg: "bg-blue-50",   border: "border-blue-200",   text: "text-blue-900",   icon: Info,           label: "خطورة منخفضة" },
 };
+
+// Friendly Arabic labels for the values stored in maintenance_schedule.last_email_status.
+// Mirrors the strings the backend returns in dispatchCriticalDigest.
+function emailStatusLabelAr(status: string | null): string {
+  switch (status) {
+    case "ok":             return "تم الإرسال";
+    case "no_critical":    return "لا توجد نتائج حرجة";
+    case "no_recipients":  return "لا يوجد مستلمون";
+    case "no_transport":   return "البريد غير مهيأ";
+    case "skipped":
+    case "snoozed":        return "متخطّاة (مكتومة)";
+    case "failed":         return "فشل الإرسال";
+    default:               return status ?? "—";
+  }
+}
 
 function renderMarkdown(md: string) {
   // Lightweight markdown: headings, bold, lists. No code blocks needed.
@@ -545,7 +560,15 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/maintenance/schedule`, { headers });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الجدولة");
-      return r.json() as Promise<{ schedule: { enabled: boolean; hourOfDay: number; minuteOfHour: number; lastRunAt: string | null; lastRunStatus: string | null; lastRunCompanies: number; lastRunCriticalCount: number; lastError: string | null } }>;
+      return r.json() as Promise<{ schedule: {
+        enabled: boolean; hourOfDay: number; minuteOfHour: number;
+        lastRunAt: string | null; lastRunStatus: string | null;
+        lastRunCompanies: number; lastRunCriticalCount: number;
+        lastError: string | null;
+        lastEmailAt: string | null; lastEmailStatus: string | null;
+        lastEmailError: string | null; lastEmailRecipients: number;
+        lastEmailCriticalCount: number;
+      } }>;
     },
     refetchOnWindowFocus: false,
   });
@@ -559,6 +582,30 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance-schedule"] }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+  // Sends a one-off SuperAdmin digest using the current critical findings
+  // (or a placeholder row when nothing is critical) so we can verify SMTP/
+  // Outlook delivery without waiting for the next sweep.
+  const testEmailMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/schedule/test-email`, {
+        method: "POST", headers, body: "{}",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "فشل إرسال البريد التجريبي");
+      return data as { ok: boolean; outcome: { recipients: number; rows: number } };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "تم إرسال البريد التجريبي",
+        description: `إلى ${data.outcome.recipients} مستلم • ${data.outcome.rows} صف`,
+      });
+      qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+    // Always refresh the schedule card so the new lastEmailStatus shows up,
+    // even when the send failed (no recipients, no SMTP, etc.).
+    onSettled: () => qc.invalidateQueries({ queryKey: ["maintenance-schedule"] }),
   });
   const runNowMut = useMutation({
     mutationFn: async (scope: "all" | "one") => {
@@ -680,6 +727,43 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
               )}
               {s.lastError && (
                 <p className="text-[11px] text-red-700 mt-1">آخر خطأ: {s.lastError}</p>
+              )}
+              {/* ── Email digest status ──────────────────────────────────
+                  Shows the result of the last alert dispatch (auto or test)
+                  and lets SuperAdmins verify SMTP/Outlook end-to-end. */}
+              <div className="mt-3 pt-2 border-t border-violet-100 flex flex-wrap items-center gap-2">
+                <Mail className="h-3.5 w-3.5 text-violet-700" />
+                <span className="text-[11px] font-medium text-violet-900">تنبيهات البريد للسوبر أدمن</span>
+                {s.lastEmailAt ? (
+                  <span className="text-[11px] text-muted-foreground">
+                    آخر إرسال: {new Date(s.lastEmailAt).toLocaleString("ar-SA")} •{" "}
+                    <span className={
+                      s.lastEmailStatus === "ok" ? "text-emerald-700 font-medium" :
+                      s.lastEmailStatus === "no_critical" ? "text-emerald-700" :
+                      s.lastEmailStatus === "skipped" || s.lastEmailStatus === "snoozed" ? "text-amber-800" :
+                      "text-red-700 font-medium"
+                    }>
+                      {emailStatusLabelAr(s.lastEmailStatus)}
+                    </span>
+                    {s.lastEmailStatus === "ok" && (
+                      <> • {s.lastEmailRecipients} مستلم • {s.lastEmailCriticalCount} صف</>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">لم يُرسَل بعد</span>
+                )}
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs gap-1 mr-auto"
+                  onClick={() => testEmailMut.mutate()}
+                  disabled={testEmailMut.isPending}
+                >
+                  {testEmailMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                  إرسال بريد تجريبي
+                </Button>
+              </div>
+              {s.lastEmailError && s.lastEmailStatus !== "ok" && s.lastEmailStatus !== "no_critical" && (
+                <p className="text-[11px] text-red-700 mt-1">تفاصيل الخطأ: {s.lastEmailError}</p>
               )}
             </div>
           );

@@ -1,8 +1,29 @@
 import { db } from "@workspace/db";
-import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable } from "@workspace/db";
+import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, usersTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "./logger.js";
 import { runAllChecks, MAINTENANCE_TOOL_KEYS, type ToolRunOutcome } from "./maintenanceChecks.js";
+import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow } from "./email.js";
+
+// Arabic display labels for each tool — kept here (and not in the React UI) so
+// the email digest reads naturally for SuperAdmins. Mirrors the labels rendered
+// in artifacts/zatca-invoicing/src/pages/admin/AICompanyFix.tsx.
+export const MAINTENANCE_TOOL_LABELS_AR: Record<string, string> = {
+  "journal-pending":      "القيود المعلقة",
+  "broken-refs":          "مرجعيات مكسورة",
+  "unlinked-accounts":    "حسابات غير مربوطة",
+  "sequence-gaps":        "فجوات في المسلسلات",
+  "dormant-users":        "مستخدمون خاملون",
+  "orphan-stock":         "حركات مخزون يتيمة",
+  "negative-stock":       "أرصدة مخزون سالبة",
+  "stock-balance-drift":  "انحراف رصيد المخزون",
+  "unbalanced-entries":   "قيود مرحّلة غير متوازنة",
+  "old-audit-logs":       "سجل التدقيق القديم",
+  "old-maintenance-runs": "سجل تشغيل الصيانة القديم",
+};
+function toolLabelAr(key: string): string {
+  return MAINTENANCE_TOOL_LABELS_AR[key] ?? key;
+}
 
 // Single-row config primary key — matches the report-scheduler convention.
 export const MAINTENANCE_SCHEDULE_ID = 1;
@@ -82,7 +103,10 @@ export interface SweepSummary {
   failedCompanies: number;
 }
 
-export async function runMaintenanceSweep(trigger: "scheduled" | "manual"): Promise<SweepSummary> {
+export async function runMaintenanceSweep(
+  trigger: "scheduled" | "manual",
+  opts: { publicBaseUrl?: string } = {},
+): Promise<SweepSummary> {
   const companies = await db.select({ id: companiesTable.id })
     .from(companiesTable)
     .where(eq(companiesTable.status, "active"));
@@ -111,6 +135,23 @@ export async function runMaintenanceSweep(trigger: "scheduled" | "manual"): Prom
     lastError: null,
     updatedAt: new Date(),
   }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+  // Dispatch the SuperAdmin email digest if this *scheduled* sweep surfaced any
+  // critical findings. We deliberately exclude `trigger === "manual"` here —
+  // an admin clicking "Run now" gets immediate on-screen results and shouldn't
+  // surprise other SuperAdmins with an alert email; the spec ties the digest
+  // specifically to the scheduled sweep. The digest is best-effort and never
+  // throws back into the sweep so runs still persist if SMTP/Outlook is down.
+  // IMPORTANT: dispatch BEFORE the auto-unmute below so dispatchCriticalDigest's
+  // snooze check sees the pre-sweep state. Otherwise an active snooze would be
+  // silently overridden and the email would go out anyway, which contradicts
+  // the "alerts not snoozed" requirement.
+  if (criticalCount > 0 && trigger === "scheduled") {
+    try {
+      await dispatchCriticalDigest({ publicBaseUrl: opts.publicBaseUrl });
+    } catch (e: any) {
+      logger.error({ err: e }, "maintenance-sweep: digest dispatch failed");
+    }
+  }
   // Any new criticals lift the snooze flag so the dashboard banner reappears.
   if (criticalCount > 0) {
     await db.update(maintenanceScheduleTable)
@@ -121,6 +162,137 @@ export async function runMaintenanceSweep(trigger: "scheduled" | "manual"): Prom
       ));
   }
   return { companies: companies.length, toolsRun, criticalCount, warnCount, errorCount, failedCompanies };
+}
+
+// ─── Email digest dispatch ───────────────────────────────────────────────────
+// Builds the rows from the latest critical-per-(company, tool) snapshot,
+// fetches all SuperAdmin recipient emails, and updates the schedule row's
+// last-email status so the UI card can render it. Also reused by the
+// "Send test email" button in the AI Company Fix screen.
+export interface EmailDispatchOutcome {
+  status: "ok" | "skipped" | "failed" | "no_recipients" | "no_transport" | "snoozed" | "no_critical";
+  message: string;
+  recipients: number;
+  rows: number;
+}
+
+// Resolves a usable absolute base URL for deep-links inside the digest. The
+// scheduled tick has no incoming request to derive the host from, so we fall
+// back to PUBLIC_BASE_URL (operator-set) and finally to the Replit dev domain.
+// Returning "" makes sendMaintenanceCriticalDigest emit a relative path, which
+// only makes sense when the email is opened from inside the app (rare).
+function resolvePublicBaseUrl(explicit?: string): string {
+  const candidate = (explicit && explicit.trim())
+    || process.env.PUBLIC_BASE_URL
+    || (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "");
+  return candidate ? candidate.replace(/\/+$/, "") : "";
+}
+
+async function getSuperAdminRecipients(): Promise<string[]> {
+  const rows = await db.select({ email: usersTable.email })
+    .from(usersTable)
+    .where(and(eq(usersTable.role, "superadmin"), eq(usersTable.isActive, true)));
+  // De-dupe + drop blanks; SuperAdmins without a configured email simply opt out.
+  return Array.from(new Set(rows.map((r) => (r.email ?? "").trim()).filter((e) => e.length > 0)));
+}
+
+export async function dispatchCriticalDigest(
+  opts: { publicBaseUrl?: string; isTest?: boolean } = {},
+): Promise<EmailDispatchOutcome> {
+  const cfg = await ensureMaintenanceScheduleRow();
+  const muted = cfg.alertsMutedUntil && new Date(cfg.alertsMutedUntil).getTime() > Date.now();
+  // Real (non-test) sends respect the snooze. Test sends bypass it intentionally.
+  if (muted && !opts.isTest) {
+    return recordEmailOutcome({ status: "snoozed", message: "alerts_snoozed", recipients: 0, rows: 0 });
+  }
+
+  // Cap rows so a stuck tenant can't generate a multi-megabyte email, but make
+  // the cap generous (every tool × every active company would be well under
+  // this in practice) and explicitly note truncation if it ever fires.
+  const ROW_CAP = 500;
+  const alerts = await getCriticalAlerts(ROW_CAP + 1);
+  const truncated = alerts.length > ROW_CAP;
+  const visibleAlerts = truncated ? alerts.slice(0, ROW_CAP) : alerts;
+  // For test sends we still want to deliver something even if everything is OK
+  // — the SuperAdmin only wants to verify their inbox actually receives the
+  // template. We slot in a single placeholder row so the email isn't blank.
+  let rows: MaintenanceDigestRow[];
+  if (opts.isTest && visibleAlerts.length === 0) {
+    rows = [{
+      companyId: 0,
+      companyName: "(لا توجد نتائج حرجة حالياً — هذه رسالة تجريبية)",
+      toolKey: "test",
+      toolLabelAr: "اختبار",
+      count: 0,
+      runAt: new Date(),
+    }];
+  } else if (visibleAlerts.length === 0) {
+    return recordEmailOutcome({ status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 });
+  } else {
+    rows = visibleAlerts.map((a) => ({
+      companyId: a.companyId,
+      companyName: a.companyName,
+      toolKey: a.toolKey,
+      toolLabelAr: toolLabelAr(a.toolKey),
+      count: a.count,
+      runAt: a.runAt,
+    }));
+  }
+
+  const recipients = await getSuperAdminRecipients();
+  if (recipients.length === 0) {
+    return recordEmailOutcome({
+      status: "no_recipients",
+      message: "no_superadmin_email_configured",
+      recipients: 0, rows: rows.length,
+    });
+  }
+  if (!emailConfigured()) {
+    return recordEmailOutcome({
+      status: "no_transport",
+      message: "email_transport_unconfigured",
+      recipients: recipients.length, rows: rows.length,
+    });
+  }
+
+  const sendRes = await sendMaintenanceCriticalDigest({
+    to: recipients,
+    rows,
+    publicBaseUrl: resolvePublicBaseUrl(opts.publicBaseUrl),
+    isTest: !!opts.isTest,
+    truncated,
+  });
+  if (!sendRes.ok) {
+    return recordEmailOutcome({
+      status: "failed",
+      message: sendRes.reason ?? "send_failed",
+      recipients: recipients.length, rows: rows.length,
+    });
+  }
+  return recordEmailOutcome({
+    status: "ok",
+    message: opts.isTest ? "test_sent" : "digest_sent",
+    recipients: recipients.length, rows: rows.length,
+  });
+}
+
+async function recordEmailOutcome(o: EmailDispatchOutcome): Promise<EmailDispatchOutcome> {
+  // Always stamp lastEmailAt so the UI shows the most recent attempt regardless
+  // of outcome — operators need to know "we tried and SMTP rejected" just as
+  // much as "we sent successfully". Errors land in lastEmailError for display.
+  try {
+    await db.update(maintenanceScheduleTable).set({
+      lastEmailAt: new Date(),
+      lastEmailStatus: o.status,
+      lastEmailError: o.status === "ok" || o.status === "no_critical" ? null : o.message,
+      lastEmailRecipients: o.recipients,
+      lastEmailCriticalCount: o.rows,
+      updatedAt: new Date(),
+    }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+  } catch (err) {
+    logger.error({ err }, "maintenance-scheduler: failed to record email outcome");
+  }
+  return o;
 }
 
 // ─── Latest-result query (used by the UI badges + dashboard banner) ──────────
