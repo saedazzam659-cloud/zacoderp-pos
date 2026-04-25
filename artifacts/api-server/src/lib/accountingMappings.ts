@@ -93,12 +93,12 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "warehouse_adjustment", roleKey: "adjustment_gain",  accountCode: "4104"  },
   { documentType: "warehouse_adjustment", roleKey: "adjustment_loss",  accountCode: "5504"  },
 
-  // الخزن (الصناديق النقدية)
-  { documentType: "cashbox",              roleKey: "cash_on_hand",    accountCode: "11011" },
-
-  // البنوك
-  { documentType: "bank",                 roleKey: "bank_main",       accountCode: "11021" },
-  { documentType: "bank",                 roleKey: "bank_fees",       accountCode: "5212"  },
+  // ملاحظة:  أُزيلت بطاقتا «cashbox» و«bank» من القالب الافتراضي لأن كل خزينة
+  // أو حساب بنكي يحمل حقل account_id خاصاً به في cash_boxes / bank_accounts،
+  // والترحيل يستخدم هذا الحساب المباشر بدلاً من البحث عن ربط محاسبي عام.
+  // أبقينا أدوار cash/bank داخل customer_settlement و supplier_settlement لأنها
+  // قيم احتياطية فعلية تستخدمها سندات القبض والصرف عند عدم تحديد خزينة/بنك
+  // معيّن.
 
   // الاعتمادات المستندية
   { documentType: "letter_of_credit",     roleKey: "lc_margin",       accountCode: "1150"  },

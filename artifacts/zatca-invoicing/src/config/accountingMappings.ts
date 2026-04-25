@@ -109,23 +109,12 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "transfer_cost",         label: "مصاريف نقل (اختياري)", description: "حساب مدين إذا كان التحويل يحمل تكاليف.", accountType: "expense" },
     ],
   },
-  {
-    key: "cashbox",
-    label: "الخزن (الصناديق النقدية)",
-    description: "الحساب الرئيسي المرتبط بالصناديق النقدية للشركة.",
-    roles: [
-      { key: "cash_on_hand", label: "النقدية في الخزينة", description: "الحساب الأساسي للنقدية المتوفرة.", defaultHintCode: "1110", accountType: "asset" },
-    ],
-  },
-  {
-    key: "bank",
-    label: "البنوك",
-    description: "الحساب الرئيسي المرتبط بحسابات البنوك.",
-    roles: [
-      { key: "bank_main", label: "الحساب البنكي الرئيسي", description: "الحساب الافتراضي للحركات البنكية.", defaultHintCode: "1130", accountType: "asset" },
-      { key: "bank_fees", label: "مصاريف بنكية", description: "حساب مدين للعمولات والرسوم البنكية.", defaultHintCode: "5800", accountType: "expense" },
-    ],
-  },
+  // ملاحظة:  أُزيل بطاقتا «الخزن (الصناديق النقدية)» و«البنوك» من هذه الشاشة
+  // لأن كل خزينة أو بنك يحمل حقل accountId خاصاً به في تعريفه (انظر
+  // cash_boxes.account_id و bank_accounts.account_id في schema/cash.ts).
+  // الترحيل يتم تلقائيًا عبر هذا الحساب المرتبط بدون الحاجة إلى ربط محاسبي
+  // عام في هذه الشاشة، مع الاستمرار في احترام إعداد «الترحيل التلقائي/اليدوي»
+  // على مستوى الشركة.
   {
     key: "letter_of_credit",
     label: "الاعتمادات المستندية",
