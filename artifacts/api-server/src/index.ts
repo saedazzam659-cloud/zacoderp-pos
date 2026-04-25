@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { ensureSchemaUpToDate } from "./lib/ensureSchema";
 import { db } from "@workspace/db";
 import { usersTable, planConfigsTable, subscriptionsTable, companiesTable, systemSettingsTable, auditLogTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -177,22 +178,32 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
+async function bootstrap() {
+  try {
+    await ensureSchemaUpToDate();
+  } catch (err) {
+    logger.error({ err }, "Failed to ensure schema is up to date — server will continue but auth may fail");
   }
 
-  logger.info({ port }, "Server listening");
-  seedSuperAdmin();
-  seedPlanConfigs();
-  // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
-  // company on its configured frequency).
-  import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});
-  // Auto-suspend expired subscriptions (only when superadmin enables the flag).
-  startAutoSuspendScheduler();
-  // Weekly/monthly digest of cross-company reports for the SuperAdmin (opt-in).
-  import("./lib/reportScheduler.js").then(m => m.startReportDigestScheduler?.()).catch(() => {});
-  // Daily maintenance scan across active companies (default 03:00 KSA).
-  import("./lib/maintenanceScheduler.js").then(m => m.startMaintenanceScheduler?.()).catch(() => {});
-});
+  app.listen(port, (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening on port");
+      process.exit(1);
+    }
+
+    logger.info({ port }, "Server listening");
+    seedSuperAdmin();
+    seedPlanConfigs();
+    // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
+    // company on its configured frequency).
+    import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});
+    // Auto-suspend expired subscriptions (only when superadmin enables the flag).
+    startAutoSuspendScheduler();
+    // Weekly/monthly digest of cross-company reports for the SuperAdmin (opt-in).
+    import("./lib/reportScheduler.js").then(m => m.startReportDigestScheduler?.()).catch(() => {});
+    // Daily maintenance scan across active companies (default 03:00 KSA).
+    import("./lib/maintenanceScheduler.js").then(m => m.startMaintenanceScheduler?.()).catch(() => {});
+  });
+}
+
+bootstrap();
