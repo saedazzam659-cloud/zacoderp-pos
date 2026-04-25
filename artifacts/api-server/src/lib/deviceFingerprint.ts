@@ -1,10 +1,15 @@
 import { createHash } from "crypto";
 import type { Request } from "express";
 
+// Resolve the client IP using Express's trust-proxy chain (`req.ip`) which
+// respects the `app.set("trust proxy", 1)` config in app.ts. Only the
+// trusted-proxy-supplied IP is honoured, so client-injected X-Forwarded-For
+// headers can NOT be used to spoof an IP and bypass per-IP rate limiting.
+// Falls back to the raw socket address only when Express hasn't populated
+// req.ip (e.g. very early middleware paths).
 export function clientIpFrom(req: Request): string | null {
-  const xf = req.headers["x-forwarded-for"];
-  if (typeof xf === "string" && xf.length) return xf.split(",")[0].trim().slice(0, 64);
-  if (Array.isArray(xf) && xf.length) return String(xf[0]).slice(0, 64);
+  const ipFromExpress = (req.ip ?? "").toString().trim();
+  if (ipFromExpress) return ipFromExpress.slice(0, 64);
   return (req.socket?.remoteAddress ?? null)?.slice(0, 64) ?? null;
 }
 

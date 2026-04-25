@@ -231,8 +231,12 @@ router.post("/", async (req, res) => {
 
     res.status(201).json(created);
   } catch (e: any) {
-    if (String(e?.message).includes("duplicate") || e?.code === "23505")
-      return res.status(409).json({ error: "رقم العرض مستخدم مسبقاً" });
+    // The unique index on (companyId, offerNumber) raises 23505 if a caller
+    // races with another admin issuing the same number — surface as a 409.
+    if (String(e?.message).includes("duplicate") || e?.code === "23505") {
+      res.status(409).json({ error: "رقم العرض مستخدم مسبقاً" });
+      return;
+    }
     res.status(500).json({ error: e.message });
   }
 });
@@ -240,19 +244,23 @@ router.post("/", async (req, res) => {
 // PUT /api/offers/:id — replace the offer + the three junction lists.
 // Locked once `active` per spec rule #11 ("منع تعديل العرض بعد تفعيله"). Use
 // /expire then re-create if you need to change a live offer.
+//
+// Concurrency note: we enforce the active-lock atomically inside the UPDATE
+// itself by including `status <> 'active'` in the WHERE clause. This way a
+// concurrent /:id/activate call cannot slip in between a TOCTOU check and
+// the write — if the offer became active while the request was in flight,
+// the UPDATE returns zero rows and we surface a 409.
 router.put("/:id", async (req, res) => {
   try {
     const cid = bodyCid(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body ?? {};
 
-    const [existing] = await db.select().from(offersTable)
+    // Cheap up-front existence check just so we can give a clean 404 message.
+    // The real lock is enforced atomically below by the conditional UPDATE.
+    const [existing] = await db.select({ id: offersTable.id }).from(offersTable)
       .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
     if (!existing) { res.status(404).json({ error: "العرض غير موجود" }); return; }
-    if (existing.status === "active") {
-      res.status(409).json({ error: "لا يمكن تعديل عرض مفعّل — قم بإيقافه أولاً" });
-      return;
-    }
 
     const err = validatePayload(b); if (err) { res.status(400).json({ error: err }); return; }
     const ownErr = await checkOwnership(cid, b);
@@ -260,8 +268,10 @@ router.put("/:id", async (req, res) => {
 
     const status = b.status === "active" ? "active" : (b.status === "expired" ? "expired" : "draft");
 
-    await db.transaction(async (tx) => {
-      await tx.update(offersTable).set({
+    const ok = await db.transaction(async (tx) => {
+      // Conditional update: ONLY when status isn't 'active'. If a concurrent
+      // /activate raced ahead, this matches zero rows and we abort the txn.
+      const updated = await tx.update(offersTable).set({
         nameAr:        b.nameAr || null,
         description:   b.description || null,
         customerScope: b.customerScope,
@@ -271,7 +281,12 @@ router.put("/:id", async (req, res) => {
         priority:      Number(b.priority),
         expiryDate:    b.expiryDate || null,
         updatedAt:     new Date(),
-      }).where(eq(offersTable.id, id));
+      }).where(and(
+        eq(offersTable.id, id),
+        eq(offersTable.companyId, cid),
+        sql`${offersTable.status} <> 'active'`,
+      )).returning({ id: offersTable.id });
+      if (updated.length === 0) return false;
 
       // Wipe-and-replace is fine here because the junctions carry no audit
       // history — the master record is the source of truth.
@@ -300,8 +315,13 @@ router.put("/:id", async (req, res) => {
           (b.salesReps as any[]).map((rid) => ({ offerId: id, salesRepId: Number(rid) })),
         );
       }
+      return true;
     });
 
+    if (!ok) {
+      res.status(409).json({ error: "لا يمكن تعديل عرض مفعّل — قم بإيقافه أولاً" });
+      return;
+    }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -341,14 +361,25 @@ router.delete("/:id", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const id = Number(req.params.id);
-    const [row] = await db.select().from(offersTable)
-      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
-    if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
-    if (row.status === "active") {
+
+    // Atomic delete with active-lock built into the WHERE clause so a
+    // concurrent activate can't slip past us. We then read back rowCount
+    // to figure out whether the offer simply didn't exist (404) or was
+    // active (409). The follow-up SELECT after a 0-row delete is safe
+    // because the only way row count is 0 is one of those two cases.
+    const deleted = await db.delete(offersTable).where(and(
+      eq(offersTable.id, id),
+      eq(offersTable.companyId, cid),
+      sql`${offersTable.status} <> 'active'`,
+    )).returning({ id: offersTable.id });
+
+    if (deleted.length === 0) {
+      const [row] = await db.select({ status: offersTable.status }).from(offersTable)
+        .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+      if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
       res.status(409).json({ error: "لا يمكن حذف عرض مفعّل — قم بإيقافه أولاً" });
       return;
     }
-    await db.delete(offersTable).where(eq(offersTable.id, id));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

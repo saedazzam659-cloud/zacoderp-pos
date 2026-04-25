@@ -69,6 +69,8 @@ import Warehouses from "@/pages/inventory/Warehouses";
 import ItemGroups from "@/pages/inventory/ItemGroups";
 import Units from "@/pages/inventory/Units";
 import Items from "@/pages/inventory/Items";
+import Offers from "@/pages/inventory/Offers";
+import OfferForm from "@/pages/inventory/OfferForm";
 import StockTransfer from "@/pages/inventory/StockTransfer";
 import StockAdjustment from "@/pages/inventory/StockAdjustment";
 import StockCounting from "@/pages/inventory/StockCounting";
@@ -264,6 +266,9 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/units"            module="items"             component={Units} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items"            module="items"             component={Items} />}
             {!isSuperAdmin && <PermRoute path="/inventory/items/new"        module="items" action="create" component={Items} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/offers"           module="items"             component={Offers} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/offers/new"       module="items" action="create" component={OfferForm} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/offers/:id/edit"  module="items" action="update" component={OfferForm} />}
             {!isSuperAdmin && <PermRoute path="/inventory/transfers"        module="stock_transfers"   component={StockTransfer} />}
             {!isSuperAdmin && <PermRoute path="/inventory/transfers/new"    module="stock_transfers" action="create" component={StockTransfer} />}
             {!isSuperAdmin && <PermRoute path="/inventory/adjustments"      module="stock_adjustments" component={StockAdjustment} />}

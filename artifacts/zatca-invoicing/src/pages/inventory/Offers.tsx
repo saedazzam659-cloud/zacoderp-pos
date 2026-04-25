@@ -39,9 +39,12 @@ export default function Offers() {
 
   const [filter, setFilter] = useState<StatusFilter>("all");
 
+  // Always fetch the *unfiltered* list. We filter client-side so the status
+  // chips show accurate global counts regardless of which chip is active —
+  // otherwise switching to "active" would zero-out the draft/expired counts.
   const offersQ = useQuery({
-    queryKey: ["offers", cid, filter],
-    queryFn:  () => offersApi.list(cid, filter === "all" ? undefined : filter),
+    queryKey: ["offers", cid],
+    queryFn:  () => offersApi.list(cid),
     enabled:  !!cid,
   });
 
@@ -63,13 +66,16 @@ export default function Offers() {
     onError:   (e) => toast({ title: t("offers.deleteError", "تعذّر الحذف"), description: parseError(e), variant: "destructive" }),
   });
 
-  const rows = offersQ.data ?? [];
-  const counts = useMemo(() => {
-    const all = rows.length, active = rows.filter(r => r.status === "active").length;
-    const draft = rows.filter(r => r.status === "draft").length;
-    const expired = rows.filter(r => r.status === "expired").length;
-    return { all, active, draft, expired };
-  }, [rows]);
+  const allRows = offersQ.data ?? [];
+  const counts = useMemo(() => ({
+    all:     allRows.length,
+    active:  allRows.filter(r => r.status === "active").length,
+    draft:   allRows.filter(r => r.status === "draft").length,
+    expired: allRows.filter(r => r.status === "expired").length,
+  }), [allRows]);
+  // Apply the chip filter on the client so the count badges (computed above
+  // from the unfiltered set) and the visible rows always agree.
+  const rows = filter === "all" ? allRows : allRows.filter(r => r.status === filter);
 
   return (
     <div className="space-y-6">

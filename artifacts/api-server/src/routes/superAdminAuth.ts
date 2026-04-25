@@ -256,10 +256,16 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
   if (user.email) {
     sendOtpEmail(user.email, code, ip, ua).catch(() => {});
   }
-  // Always log to console as a fallback when SMTP is unconfigured so the
-  // SuperAdmin can still complete the login during initial setup.
-  if (!emailConfigured()) {
-    console.log(`[sa-otp] code=${code} user=${user.username} fp=${fp} valid_for=${OTP_TTL_MS / 1000}s`);
+  // Initial-setup convenience: when SMTP isn't configured AND we're running
+  // outside of production, surface the OTP to server logs so the engineer
+  // can complete the multi-factor login. NEVER log the actual code in
+  // production — even if logs are accessible only to admins, the OTP is a
+  // bearer credential and must not be persisted in plaintext anywhere
+  // beyond the user's email inbox.
+  if (!emailConfigured() && process.env.NODE_ENV !== "production") {
+    console.log(`[sa-otp DEV-ONLY] code=${code} user=${user.username} valid_for=${OTP_TTL_MS / 1000}s`);
+  } else if (!emailConfigured()) {
+    console.warn(`[sa-otp] email transport not configured — OTP for ${user.username} cannot be delivered`);
   }
 
   await recordAttempt({
@@ -307,7 +313,12 @@ router.post("/resend-otp", saOtpLimit, async (req, res) => {
   }).where(eq(superAdminOtpCodesTable.id, otp.id));
 
   if (user.email) sendOtpEmail(user.email, code, otp.ip, otp.userAgent).catch(() => {});
-  if (!emailConfigured()) console.log(`[sa-otp resend] code=${code} user=${user.username}`);
+  // Same dev-only OTP echo policy as the initial /login leg.
+  if (!emailConfigured() && process.env.NODE_ENV !== "production") {
+    console.log(`[sa-otp resend DEV-ONLY] code=${code} user=${user.username}`);
+  } else if (!emailConfigured()) {
+    console.warn(`[sa-otp resend] email transport not configured — OTP for ${user.username} cannot be delivered`);
+  }
 
   res.json({ ok: true, otpExpiresInSec: OTP_TTL_MS / 1000 });
 });
@@ -525,14 +536,19 @@ router.post("/recovery/request-link", saRecoveryLimit, async (req, res) => {
     expiresAt: new Date(Date.now() + RECOVERY_TTL_MS),
   });
   sendRecoveryLink(user.email, token, publicBaseUrlFromReq(req), ip).catch(() => {});
-  if (!emailConfigured()) console.log(`[sa-recovery] link token=${token} user=${user.username}`);
+  // Recovery tokens are bearer credentials — same dev-only echo policy.
+  if (!emailConfigured() && process.env.NODE_ENV !== "production") {
+    console.log(`[sa-recovery DEV-ONLY] link token=${token} user=${user.username}`);
+  } else if (!emailConfigured()) {
+    console.warn(`[sa-recovery] email transport not configured — recovery link for ${user.username} cannot be delivered`);
+  }
   res.json({ ok: true, message: "إذا كان الحساب موجودًا، فقد أُرسل الرابط إلى بريده." });
 });
 
 // GET /recovery/link/:token  → validate
 router.get("/recovery/link/:token", async (req, res) => {
   const [link] = await db.select().from(superAdminRecoveryLinksTable)
-    .where(eq(superAdminRecoveryLinksTable.token, req.params.token));
+    .where(eq(superAdminRecoveryLinksTable.token, String(req.params.token)));
   if (!link || link.usedAt || link.expiresAt.getTime() < Date.now()) {
     res.status(400).json({ error: "الرابط غير صالح أو منتهي" }); return;
   }
@@ -544,15 +560,23 @@ router.get("/recovery/link/:token", async (req, res) => {
 // POST /recovery/link/:token/use  → reset trusted devices, sessions, generate new recovery codes, log in current device.
 // Requires the account password to prevent stolen-link account-takeover, and
 // atomically consumes the recovery link so concurrent reuses are blocked.
+//
+// `newPassword` is OPTIONAL. When supplied we rotate the account password
+// as part of the recovery — the typical use case is "I think my account
+// was compromised, please give me a fresh password too". When omitted we
+// only revoke trusted devices/sessions and regenerate recovery codes.
 router.post("/recovery/link/:token/use", saRecoveryLimit, async (req, res) => {
   const ip = clientIpFrom(req);
   const ua = req.headers["user-agent"]?.toString().slice(0, 500) ?? null;
   const fp = computeFingerprint(req);
-  const { password } = req.body ?? {};
+  const { password, newPassword } = req.body ?? {};
   if (!password) { res.status(400).json({ error: "كلمة المرور مطلوبة لإكمال الاسترجاع" }); return; }
+  if (newPassword !== undefined && newPassword !== null && String(newPassword).length < 10) {
+    res.status(400).json({ error: "كلمة المرور الجديدة يجب أن تكون 10 أحرف فأكثر" }); return;
+  }
 
   const [link] = await db.select().from(superAdminRecoveryLinksTable)
-    .where(eq(superAdminRecoveryLinksTable.token, req.params.token));
+    .where(eq(superAdminRecoveryLinksTable.token, String(req.params.token)));
   if (!link || link.usedAt || link.expiresAt.getTime() < Date.now()) {
     res.status(400).json({ error: "الرابط غير صالح أو منتهي" }); return;
   }
@@ -593,6 +617,16 @@ router.post("/recovery/link/:token/use", saRecoveryLimit, async (req, res) => {
   await db.update(superAdminSessionsTable)
     .set({ revokedAt: now, revokedReason: "recovery" })
     .where(and(eq(superAdminSessionsTable.userId, user.id), isNull(superAdminSessionsTable.revokedAt)));
+
+  // Optional password rotation. Done AFTER device/session revocation so any
+  // active session that was leaked alongside the password is invalidated
+  // before the new password is even live.
+  if (newPassword) {
+    const newHash = await bcrypt.hash(String(newPassword), 12);
+    await db.update(usersTable).set({ passwordHash: newHash, updatedAt: new Date() })
+      .where(eq(usersTable.id, user.id));
+    if (user.email) sendPasswordChangeAlert(user.email, ip).catch(() => {});
+  }
 
   // Trust current device + new session
   await db.insert(superAdminTrustedDevicesTable).values({
@@ -642,7 +676,7 @@ router.post("/recovery/link/:token/use", saRecoveryLimit, async (req, res) => {
 router.get("/device-approvals/:token/status", async (req, res) => {
   const fp = computeFingerprint(req);
   const [a] = await db.select().from(superAdminDeviceApprovalsTable)
-    .where(eq(superAdminDeviceApprovalsTable.approvalToken, req.params.token));
+    .where(eq(superAdminDeviceApprovalsTable.approvalToken, String(req.params.token)));
   if (!a) { res.status(404).json({ error: "غير موجود" }); return; }
   if (a.requestingDeviceFp !== fp) {
     // Hide existence from a different device
@@ -773,7 +807,7 @@ router.post("/device-approvals/:token/decide", async (req, res) => {
   }
   const [a] = await db.select().from(superAdminDeviceApprovalsTable)
     .where(and(
-      eq(superAdminDeviceApprovalsTable.approvalToken, req.params.token),
+      eq(superAdminDeviceApprovalsTable.approvalToken, String(req.params.token)),
       eq(superAdminDeviceApprovalsTable.userId, user.id),
     ));
   if (!a) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -846,7 +880,13 @@ router.post("/recovery-codes/regenerate", async (req, res) => {
   res.json({ ok: true, codes });
 });
 
-// POST /change-password — requires current password, sends alert
+// POST /change-password — requires current password, sends alert.
+//
+// Containment behaviour: rotating the password also revokes every OTHER
+// active SA session (we keep the *current* one so the user isn't kicked
+// out by their own password change). This guarantees that if the password
+// was changed because of a suspected compromise, any stolen session token
+// is invalidated immediately rather than living until natural expiry.
 router.post("/change-password", async (req, res) => {
   const { user } = (req as any).saCtx;
   const ip = clientIpFrom(req);
@@ -858,6 +898,25 @@ router.post("/change-password", async (req, res) => {
   const hash = await bcrypt.hash(newPassword, 12);
   await db.update(usersTable).set({ passwordHash: hash, updatedAt: new Date() })
     .where(eq(usersTable.id, user.id));
+
+  // Identify the current session (if known) so we don't accidentally revoke
+  // it — the request bearer token is exposed via saCtx.sessionRowId by
+  // the SA-auth gate. If unknown, we revoke ALL sessions to fail safe.
+  const currentSaSessionId = (req as any).saCtx?.sessionRowId as number | undefined;
+  const revokeWhere = currentSaSessionId
+    ? and(
+        eq(superAdminSessionsTable.userId, user.id),
+        isNull(superAdminSessionsTable.revokedAt),
+        sql`${superAdminSessionsTable.id} <> ${currentSaSessionId}`,
+      )
+    : and(
+        eq(superAdminSessionsTable.userId, user.id),
+        isNull(superAdminSessionsTable.revokedAt),
+      );
+  await db.update(superAdminSessionsTable)
+    .set({ revokedAt: new Date(), revokedReason: "password_change" })
+    .where(revokeWhere);
+
   if (user.email) sendPasswordChangeAlert(user.email, ip).catch(() => {});
   res.json({ ok: true });
 });

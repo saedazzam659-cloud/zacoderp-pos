@@ -433,6 +433,7 @@
     "stockTransfers": "Stock Transfers",
     "stockAdjustments": "Stock Adjustments",
     "stockCounts": "Stock Counts",
+    "offers": "Offers",
     "inventoryReports": "Inventory Reports",
     "settings": "Settings"
   },
@@ -1874,6 +1875,87 @@
       "payment_voucher":   "Payment Voucher",
       "pos_receipt":       "POS Receipt",
       "__reset__":         "Reset"
+    }
+  },
+  "offers": {
+    "title": "Offers",
+    "subtitle": "Manage offers linked to customers, items, and sales reps",
+    "new": "New Offer",
+    "newTitle": "New Offer",
+    "editTitle": "Edit Offer",
+    "formSubtitle": "Set scopes and save as draft or activate immediately",
+    "empty": "No offers yet. Start by creating one.",
+    "deleteConfirm": "Delete this offer permanently?",
+    "activated": "Offer activated",
+    "expired": "Offer expired",
+    "deleted": "Offer deleted",
+    "created": "Offer created",
+    "updated": "Offer updated",
+    "lockedTitle": "Offer is active",
+    "lockedDesc": "Expire it first, then edit",
+    "activateError": "Could not activate",
+    "expireError": "Could not expire",
+    "deleteError": "Could not delete",
+    "saveError": "Could not save",
+    "errPriority": "Priority must be between 1 and 10",
+    "errPickCustomers": "Pick at least one customer",
+    "errPickItems": "Pick at least one item",
+    "errPickReps": "Pick at least one sales rep",
+    "searchPh": "Search...",
+    "itemsSearchPh": "Search for an item to add...",
+    "noResults": "No results",
+    "pickedCount": "Selected",
+    "itemsEmpty": "No items added yet",
+    "filter": {
+      "all": "All",
+      "draft": "Draft",
+      "active": "Active",
+      "expired": "Expired"
+    },
+    "col": {
+      "number": "Offer #",
+      "name": "Name",
+      "scopes": "Scopes",
+      "priority": "Priority",
+      "expiry": "Expiry Date",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "scope": {
+      "all": "All",
+      "specific": "Specific"
+    },
+    "scopeShort": {
+      "customers": "Customers",
+      "items": "Items",
+      "salesReps": "Reps"
+    },
+    "scopeCard": {
+      "customers": "Customers",
+      "items": "Items",
+      "salesReps": "Sales Reps",
+      "allCustomersHint": "Offer applies to all customers",
+      "allItemsHint": "Offer applies to all items",
+      "allRepsHint": "Offer applies to all sales reps"
+    },
+    "statusVal": {
+      "draft": "Draft",
+      "active": "Active",
+      "expired": "Expired"
+    },
+    "f": {
+      "name": "Offer name (optional)",
+      "namePh": "e.g. Ramadan special",
+      "priority": "Priority (1-10)",
+      "expiry": "Expiry date",
+      "description": "Description",
+      "status": "Status"
+    },
+    "itemCol": {
+      "name": "Item",
+      "price": "Price",
+      "discount": "Discount %",
+      "qty": "Min. Qty"
     }
   }
 }

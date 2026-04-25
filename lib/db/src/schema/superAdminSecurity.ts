@@ -104,14 +104,18 @@ export const superAdminDeviceApprovalsTable = pgTable("sa_device_approvals", {
 }));
 
 export const superAdminRecoveryLinksTable = pgTable("sa_recovery_links", {
-  id:        serial("id").primaryKey(),
-  userId:    integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
-  token:     text("token").notNull().unique(),
-  ip:        text("ip"),
-  userAgent: text("user_agent"),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  usedAt:    timestamp("used_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  id:         serial("id").primaryKey(),
+  userId:     integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  token:      text("token").notNull().unique(),
+  // Capture both the IP that *requested* the link (via email) AND the IP
+  // that ultimately *consumed* it. They almost always differ, and we need
+  // both for the audit trail / risk-scoring on a recovery event.
+  ip:         text("ip"),
+  userAgent:  text("user_agent"),
+  expiresAt:  timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt:     timestamp("used_at", { withTimezone: true }),
+  usedFromIp: text("used_from_ip"),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   byUser: index("sa_recovery_link_user_idx").on(t.userId, t.createdAt),
 }));

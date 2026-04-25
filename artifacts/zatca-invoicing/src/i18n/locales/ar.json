@@ -434,6 +434,7 @@
     "stockTransfers": "التحويل بين المخازن",
     "stockAdjustments": "التسوية المخزنية",
     "stockCounts": "الجرد المخزني",
+    "offers": "العروض",
     "inventoryReports": "تقارير المخازن",
     "settings": "الإعدادات"
   },
@@ -1906,6 +1907,87 @@
       "payment_voucher":   "سند صرف",
       "pos_receipt":       "إيصال نقطة بيع",
       "__reset__":         "إعادة تصفير"
+    }
+  },
+  "offers": {
+    "title": "العروض",
+    "subtitle": "إدارة العروض المرتبطة بالعملاء والأصناف والمناديب",
+    "new": "عرض جديد",
+    "newTitle": "عرض جديد",
+    "editTitle": "تعديل العرض",
+    "formSubtitle": "حدد النطاقات واحفظ كمسوّدة أو فعّل العرض مباشرة",
+    "empty": "لا توجد عروض بعد. ابدأ بإنشاء عرض جديد.",
+    "deleteConfirm": "حذف العرض نهائيًا؟",
+    "activated": "تم تفعيل العرض",
+    "expired": "تم إيقاف العرض",
+    "deleted": "تم حذف العرض",
+    "created": "تم إنشاء العرض",
+    "updated": "تم تحديث العرض",
+    "lockedTitle": "العرض مفعّل",
+    "lockedDesc": "أوقفه أولاً ثم عدّله",
+    "activateError": "تعذّر التفعيل",
+    "expireError": "تعذّر الإيقاف",
+    "deleteError": "تعذّر الحذف",
+    "saveError": "تعذّر الحفظ",
+    "errPriority": "الأولوية يجب أن تكون من 1 إلى 10",
+    "errPickCustomers": "اختر عميلًا واحدًا على الأقل",
+    "errPickItems": "اختر صنفًا واحدًا على الأقل",
+    "errPickReps": "اختر مندوبًا واحدًا على الأقل",
+    "searchPh": "بحث...",
+    "itemsSearchPh": "ابحث عن صنف لإضافته...",
+    "noResults": "لا توجد نتائج",
+    "pickedCount": "محدد",
+    "itemsEmpty": "لم يُضف أي صنف بعد",
+    "filter": {
+      "all": "الكل",
+      "draft": "مسوّدة",
+      "active": "مفعّل",
+      "expired": "منتهي"
+    },
+    "col": {
+      "number": "رقم العرض",
+      "name": "الاسم",
+      "scopes": "النطاقات",
+      "priority": "الأولوية",
+      "expiry": "تاريخ الانتهاء",
+      "status": "الحالة",
+      "actions": "الإجراءات"
+    },
+    "scope": {
+      "all": "الكل",
+      "specific": "محدد"
+    },
+    "scopeShort": {
+      "customers": "عملاء",
+      "items": "أصناف",
+      "salesReps": "مناديب"
+    },
+    "scopeCard": {
+      "customers": "العملاء",
+      "items": "الأصناف",
+      "salesReps": "المناديب",
+      "allCustomersHint": "العرض ينطبق على جميع العملاء",
+      "allItemsHint": "العرض ينطبق على جميع الأصناف",
+      "allRepsHint": "العرض ينطبق على جميع المناديب"
+    },
+    "statusVal": {
+      "draft": "مسوّدة",
+      "active": "مفعّل",
+      "expired": "منتهي"
+    },
+    "f": {
+      "name": "اسم العرض (اختياري)",
+      "namePh": "مثال: عرض رمضان",
+      "priority": "الأولوية (1-10)",
+      "expiry": "تاريخ الانتهاء",
+      "description": "الوصف",
+      "status": "الحالة"
+    },
+    "itemCol": {
+      "name": "الصنف",
+      "price": "السعر",
+      "discount": "الخصم %",
+      "qty": "الحد الأدنى للكمية"
     }
   }
 }

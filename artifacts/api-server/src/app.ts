@@ -9,6 +9,15 @@ const app: Express = express();
 // Disable ETag generation to prevent 304 stale responses
 app.set("etag", false);
 
+// Trust the first proxy hop (Replit's edge proxy) so `req.ip` reflects the
+// real client IP from X-Forwarded-For instead of the proxy's loopback
+// address. SuperAdmin rate-limiting and risk-scoring rely on this — without
+// it, every request looks like it comes from 127.0.0.1 and an attacker can
+// trivially defeat per-IP throttles by spoofing the header. With trust=1,
+// Express only uses the *last* X-Forwarded-For entry (set by the trusted
+// proxy) and ignores client-injected leftmost values.
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,
