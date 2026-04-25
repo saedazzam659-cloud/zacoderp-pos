@@ -53,6 +53,7 @@ export interface RegisterData {
   vatNumber: string; crNumber: string;
   city?: string; district?: string; street?: string;
   buildingNumber?: string; postalCode?: string; country?: string;
+  currency?: string;
   industryName?: string; invoiceType?: string;
   plan: string; billingCycle: string;
   startDate?: string; endDate?: string;

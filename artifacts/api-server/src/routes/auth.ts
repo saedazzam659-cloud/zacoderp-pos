@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -318,6 +318,31 @@ router.put("/me/notifications", async (req, res) => {
   });
 });
 
+// Country → default-currency catalog. Mirrors
+// artifacts/zatca-invoicing/src/lib/countries.ts; kept inline (rather than
+// imported across artifacts) so the API server has no front-end coupling.
+// `currencyOverride` lets the client send an explicit ISO 4217 code that
+// wins over the country mapping when the user wants something custom.
+const COUNTRY_CURRENCY: Record<string, { code: string; nameAr: string; nameEn: string; symbol: string }> = {
+  SA: { code: "SAR", nameAr: "ريال سعودي",  nameEn: "Saudi Riyal",   symbol: "ر.س" },
+  AE: { code: "AED", nameAr: "درهم إماراتي", nameEn: "UAE Dirham",    symbol: "د.إ" },
+  KW: { code: "KWD", nameAr: "دينار كويتي",  nameEn: "Kuwaiti Dinar", symbol: "د.ك" },
+  QA: { code: "QAR", nameAr: "ريال قطري",    nameEn: "Qatari Riyal",  symbol: "ر.ق" },
+  BH: { code: "BHD", nameAr: "دينار بحريني", nameEn: "Bahraini Dinar",symbol: "د.ب" },
+  OM: { code: "OMR", nameAr: "ريال عُماني",  nameEn: "Omani Rial",    symbol: "ر.ع" },
+  EG: { code: "EGP", nameAr: "جنيه مصري",    nameEn: "Egyptian Pound",symbol: "ج.م" },
+  GLOBAL: { code: "USD", nameAr: "دولار أمريكي", nameEn: "US Dollar", symbol: "$" },
+};
+
+function resolveDefaultCurrency(country: string, currencyOverride?: string | null) {
+  const fromCountry = COUNTRY_CURRENCY[country] ?? COUNTRY_CURRENCY.SA;
+  if (!currencyOverride || currencyOverride === fromCountry.code) return fromCountry;
+  // Honor an explicit override even if it's not in our catalog: fall back
+  // to a minimal record so the seed still succeeds with a meaningful code.
+  const known = Object.values(COUNTRY_CURRENCY).find(c => c.code === currencyOverride);
+  return known ?? { code: currencyOverride, nameAr: currencyOverride, nameEn: currencyOverride, symbol: currencyOverride };
+}
+
 // POST /api/auth/register
 // Creates: company + subscription + admin user
 router.post("/register", async (req, res) => {
@@ -325,6 +350,7 @@ router.post("/register", async (req, res) => {
     // Company fields
     nameAr, nameEn, vatNumber, crNumber,
     city, district, street, buildingNumber, postalCode, country,
+    currency,
     industryName, invoiceType,
     // Subscription
     plan, billingCycle, startDate, endDate,
@@ -390,6 +416,26 @@ router.post("/register", async (req, res) => {
     status: companyStatus,
     registrationIp,
   }).returning();
+
+  // Seed the default currency for the new company. The currency code is
+  // derived from the country (SA→SAR, AE→AED, …) unless the client sent an
+  // explicit `currency` override. Failures here are logged but do NOT roll
+  // back the company creation — admins can fix the currency manually from
+  // Settings → Currencies if anything weird happens.
+  try {
+    const cur = resolveDefaultCurrency(country ?? "SA", currency);
+    await db.insert(currenciesTable).values({
+      companyId: company.id,
+      code:      cur.code,
+      nameAr:    cur.nameAr,
+      nameEn:    cur.nameEn,
+      symbol:    cur.symbol,
+      isDefault: true,
+      isActive:  true,
+    });
+  } catch (err) {
+    console.error("[register] failed to seed default currency for company", company.id, err);
+  }
 
   // Create subscription
   const today = new Date().toISOString().split("T")[0];

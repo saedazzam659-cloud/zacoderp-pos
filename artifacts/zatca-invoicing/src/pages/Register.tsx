@@ -7,9 +7,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import {
   Building2, User, Package, Check, ChevronLeft, ChevronRight,
-  Eye, EyeOff, Loader2, ShieldCheck, Star, Zap, Crown
+  Eye, EyeOff, Loader2, ShieldCheck, Star, Zap, Crown, Globe2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  COUNTRIES, DEFAULT_COUNTRY_CODE,
+  getCountryByCode, getCountryPolicy,
+} from "@/lib/countries";
 
 const PLANS = [
   {
@@ -58,14 +62,32 @@ export default function Register() {
   const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">("monthly");
+  // Country/policy acceptance gate. Defaults to Saudi Arabia, the default
+  // country for the platform. The acceptance flag blocks the final submit
+  // in Step 3 — it is reset to false whenever the country changes so users
+  // can't accept policy A and silently submit under country B.
+  const [acceptedPolicy, setAcceptedPolicy] = useState(false);
 
   const [form, setForm] = useState<Partial<RegisterData>>({
-    country: "SA", invoiceType: "both", plan: "professional", billingCycle: "monthly",
+    country: DEFAULT_COUNTRY_CODE,
+    currency: getCountryByCode(DEFAULT_COUNTRY_CODE).currency.code,
+    invoiceType: "both", plan: "professional", billingCycle: "monthly",
     startDate: new Date().toISOString().split("T")[0],
     endDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
   });
 
   const set = (k: keyof RegisterData, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  // Country selection: cascades the country code AND the matching default
+  // currency, and revokes any prior policy acceptance so the user has to
+  // re-confirm the new country's compliance line.
+  const selectedCountry = getCountryByCode(form.country);
+  const policyText      = getCountryPolicy(form.country, "ar");
+  const handleCountryChange = (code: string) => {
+    const c = getCountryByCode(code);
+    setForm(f => ({ ...f, country: c.code, currency: c.currency.code }));
+    setAcceptedPolicy(false);
+  };
 
   const selectedPlan = PLANS.find(p => p.id === form.plan) ?? PLANS[1];
 
@@ -154,6 +176,45 @@ export default function Register() {
             {step === 0 && (
               <div className="space-y-5">
                 <h3 className="font-semibold text-foreground flex items-center gap-2"><Building2 className="h-4 w-4" />بيانات الشركة</h3>
+
+                {/* Country + currency. Country drives the displayed
+                    compliance policy and seeds the company's default
+                    currency on the backend. */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium flex items-center gap-1.5">
+                      <Globe2 className="h-4 w-4 text-muted-foreground" />الدولة <span className="text-destructive">*</span>
+                    </label>
+                    <select
+                      value={form.country ?? DEFAULT_COUNTRY_CODE}
+                      onChange={e => handleCountryChange(e.target.value)}
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      {COUNTRIES.map(c => (
+                        <option key={c.code} value={c.code}>{c.nameAr}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">العملة الافتراضية</label>
+                    <Input
+                      value={`${selectedCountry.currency.nameAr} (${selectedCountry.currency.code}) ${selectedCountry.currency.symbol}`}
+                      readOnly
+                      className="bg-muted/30 cursor-not-allowed"
+                    />
+                    <p className="text-xs text-muted-foreground">يتم تعيينها تلقائياً حسب الدولة، يمكنك تعديلها لاحقاً من إعدادات العملات</p>
+                  </div>
+                </div>
+
+                {/* Country-specific compliance policy preview */}
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-sm">
+                  <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+                  <div className="space-y-0.5">
+                    <div className="font-medium">سياسة التسجيل في {selectedCountry.nameAr}</div>
+                    <div className="text-xs opacity-90">{policyText}</div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="sm:col-span-2 space-y-1.5">
                     <label className="text-sm font-medium">اسم الشركة (عربي) <span className="text-destructive">*</span></label>
@@ -322,6 +383,8 @@ export default function Register() {
                 <div className="rounded-xl border bg-muted/20 p-4 space-y-3 text-sm">
                   <div className="grid grid-cols-2 gap-2">
                     <span className="text-muted-foreground">الشركة:</span><span className="font-medium">{form.nameAr}</span>
+                    <span className="text-muted-foreground">الدولة:</span><span className="font-medium">{selectedCountry.nameAr}</span>
+                    <span className="text-muted-foreground">العملة:</span><span className="font-medium">{selectedCountry.currency.nameAr} ({selectedCountry.currency.code})</span>
                     <span className="text-muted-foreground">الرقم الضريبي:</span><span className="font-mono text-xs">{form.vatNumber}</span>
                     <span className="text-muted-foreground">الباقة:</span>
                     <span className="font-medium">{selectedPlan.name} — {billingCycle === "annual" ? selectedPlan.annual : selectedPlan.monthly} ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
@@ -333,6 +396,19 @@ export default function Register() {
                   </div>
                 </div>
 
+                {/* Country-policy acceptance gate. Required to submit. */}
+                <label className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer hover:bg-amber-100/60 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={acceptedPolicy}
+                    onChange={e => setAcceptedPolicy(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-amber-400 accent-amber-600 cursor-pointer"
+                  />
+                  <span className="text-sm text-amber-900">
+                    أوافق على <span className="font-semibold">{policyText}</span> وأقرّ بأن البيانات المُدخلة صحيحة.
+                  </span>
+                </label>
+
                 <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-sm">
                   <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0 text-blue-600" />
                   <span>بالتسجيل، أنت توافق على الشروط والأحكام وسياسة الخصوصية.</span>
@@ -342,7 +418,19 @@ export default function Register() {
 
                 <div className="flex justify-between pt-2">
                   <Button variant="ghost" onClick={() => setStep(2)} className="gap-2"><ChevronRight className="h-4 w-4" />رجوع</Button>
-                  <Button onClick={handleSubmit} className="gap-2" disabled={loading}>
+                  <Button
+                    onClick={() => {
+                      if (!acceptedPolicy) {
+                        setError("يجب الموافقة على سياسة الدولة لإكمال التسجيل");
+                        return;
+                      }
+                      setError("");
+                      handleSubmit();
+                    }}
+                    className="gap-2"
+                    disabled={loading || !acceptedPolicy}
+                    title={!acceptedPolicy ? "يجب الموافقة على سياسة الدولة أولاً" : undefined}
+                  >
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                     {loading ? "جاري الإنشاء..." : "إنشاء الحساب"}
                   </Button>
