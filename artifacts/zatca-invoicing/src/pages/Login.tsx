@@ -9,6 +9,7 @@ import {
   LogIn, Eye, EyeOff, ShieldCheck, Loader2, ShieldAlert, Mail,
   KeyRound, Smartphone, RefreshCw, ArrowLeft, Clock,
   Wallet, Boxes, ShoppingCart, Truck, Users, Factory,
+  Landmark, Building2, FolderKanban, HardHat, Wrench, Hotel, Hospital,
   Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -352,13 +353,23 @@ export default function Login() {
   //   • Form column (visual left in RTL): existing login flow card.
   // On screens narrower than `lg` we collapse to a single column with the
   // form FIRST (it's the primary action) and the intro stacked below it.
+  // Logical grouping: financial → inventory → commercial → operations →
+  // HR → industry verticals. The grid below collapses to 2 cols on mobile
+  // and 3 cols on tablets+ so the list remains readable at any width.
   const modules = [
-    { icon: Wallet,       label: "المحاسبة" },
-    { icon: Boxes,        label: "المخازن" },
-    { icon: ShoppingCart, label: "المبيعات" },
-    { icon: Truck,        label: "المشتريات" },
-    { icon: Users,        label: "الموارد البشرية" },
-    { icon: Factory,      label: "الإنتاج" },
+    { icon: Wallet,        label: "المحاسبة" },
+    { icon: Landmark,      label: "البنوك" },
+    { icon: Building2,     label: "الأصول الثابتة" },
+    { icon: Boxes,         label: "المخازن" },
+    { icon: ShoppingCart,  label: "المبيعات" },
+    { icon: Truck,         label: "المشتريات" },
+    { icon: Factory,       label: "الإنتاج" },
+    { icon: FolderKanban,  label: "المشاريع" },
+    { icon: HardHat,       label: "المقاولات" },
+    { icon: Wrench,        label: "الصيانة" },
+    { icon: Users,         label: "الموارد البشرية" },
+    { icon: Hotel,         label: "الفنادق" },
+    { icon: Hospital,      label: "المستشفيات" },
   ];
 
   return (
