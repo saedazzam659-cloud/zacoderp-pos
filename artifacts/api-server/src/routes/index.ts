@@ -44,6 +44,7 @@ import dataIoRouter from "./data-io";
 import salesRepsRouter from "./sales-reps";
 import auditLogRouter from "./audit-log";
 import sequencesRouter from "./sequences";
+import offersRouter from "./offers";
 
 const router: IRouter = Router();
 
@@ -90,6 +91,7 @@ router.use("/data-io", dataIoRouter);
 router.use("/sales-reps", salesRepsRouter);
 router.use("/audit-log", auditLogRouter);
 router.use("/sequences", sequencesRouter);
+router.use("/offers", offersRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
 

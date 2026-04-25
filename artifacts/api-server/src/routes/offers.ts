@@ -1,0 +1,470 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+//
+// Offers module — full advanced version.
+//
+// What this router does:
+//   • CRUD for the `offers` master table (multi-tenant via companyId).
+//   • Manages the three "scope" junction tables (customers / items / sales-reps)
+//     in a single atomic transaction so an offer is never half-saved.
+//   • Provides a `match` engine the invoice screen calls to get the best
+//     applicable offer per item line.
+//
+// Business rules enforced here (mirroring the spec in the user request):
+//   1. Once an offer is `active`, the master record cannot be edited or
+//      deleted — admins must `expire` it first.  This protects historical
+//      pricing from silent rewrites.
+//   2. `priority` 1-10; ties on priority break on the highest discount or
+//      the lowest fixed price (handled in the match engine).
+//   3. Match engine ignores expired offers (`expiry_date < today`) and any
+//      offer whose status isn't `active`.
+//   4. Each scope axis is independent: ALL of one + SPECIFIC of another is
+//      a perfectly valid combination.
+//
+import { Router } from "express";
+import { db } from "@workspace/db";
+import {
+  offersTable, offerCustomersTable, offerItemsTable, offerSalesRepsTable,
+  customersTable, itemsTable, salesRepsTable,
+} from "@workspace/db";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+
+const router = Router();
+router.use(extractAuth);
+// Offers piggy-back on the `items` permission key — same family as everything
+// else under the inventory module, so existing role grants Just Work.
+router.use(requireModulePermission("items"));
+router.use(moduleAudit("items"));
+router.use((req, res, next) => {
+  if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  next();
+});
+
+// ─── helpers ───────────────────────────────────────────────────────────────
+function requireCid(req: any, res: any): number | null {
+  const raw = req.query.companyId ? Number(req.query.companyId) : undefined;
+  const cid = resolveCompanyId(req, raw);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
+  return cid;
+}
+function bodyCid(req: any, res: any): number | null {
+  const cid = resolveCompanyId(req, req.body?.companyId ?? req.query.companyId);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
+  return cid;
+}
+
+// Per-tenant offer-number generator: OF0001, OF0002…
+async function nextOfferNumber(cid: number): Promise<string> {
+  const rows = await db.select({ n: offersTable.offerNumber })
+    .from(offersTable).where(eq(offersTable.companyId, cid));
+  let max = 0;
+  for (const r of rows) {
+    const m = /^OF(\d+)$/.exec(String(r.n).trim());
+    if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n) && n > max) max = n; }
+  }
+  return `OF${String(max + 1).padStart(4, "0")}`;
+}
+
+// Coerce text/number/null to a clean numeric string Drizzle will accept,
+// or `null` when the caller didn't supply a value.
+function num(v: any): string | null {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? String(n) : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIST + READ
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/offers — list with optional ?status=active filter.
+router.get("/", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const status = String(req.query.status ?? "").trim();
+    const where = status === "active" || status === "draft" || status === "expired"
+      ? and(eq(offersTable.companyId, cid), eq(offersTable.status, status as any))
+      : eq(offersTable.companyId, cid);
+    const rows = await db.select().from(offersTable).where(where).orderBy(desc(offersTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Convenience endpoint used by the invoice screen — only returns offers that
+// are currently usable so the cache stays small on the client.
+router.get("/active", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = await db.select().from(offersTable).where(and(
+      eq(offersTable.companyId, cid),
+      eq(offersTable.status, "active"),
+      sql`(${offersTable.expiryDate} IS NULL OR ${offersTable.expiryDate} >= ${today})`,
+    )).orderBy(desc(offersTable.priority), desc(offersTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/offers/:id — full record + the three junction lists.
+router.get("/:id", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(offersTable)
+      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+    if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+
+    // Pull all three junctions in parallel — none depend on each other.
+    const [customers, items, salesReps] = await Promise.all([
+      db.select().from(offerCustomersTable).where(eq(offerCustomersTable.offerId, id)),
+      db.select().from(offerItemsTable).where(eq(offerItemsTable.offerId, id)),
+      db.select().from(offerSalesRepsTable).where(eq(offerSalesRepsTable.offerId, id)),
+    ]);
+    res.json({ ...row, customers, items, salesReps });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CREATE / UPDATE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Validate scope payloads so we reject obviously-malformed bodies early — the
+// frontend should never submit "specific" with an empty list.
+function validatePayload(b: any): string | null {
+  const scopes = ["all", "specific"];
+  if (!scopes.includes(b.customerScope)) return "نطاق العملاء غير صالح";
+  if (!scopes.includes(b.itemsScope))    return "نطاق الأصناف غير صالح";
+  if (!scopes.includes(b.salesRepScope)) return "نطاق المناديب غير صالح";
+  if (b.customerScope === "specific" && (!Array.isArray(b.customers) || b.customers.length === 0))
+    return "اختر عميلًا واحدًا على الأقل";
+  if (b.itemsScope === "specific" && (!Array.isArray(b.items) || b.items.length === 0))
+    return "اختر صنفًا واحدًا على الأقل";
+  if (b.salesRepScope === "specific" && (!Array.isArray(b.salesReps) || b.salesReps.length === 0))
+    return "اختر مندوبًا واحدًا على الأقل";
+  const p = Number(b.priority);
+  if (!Number.isFinite(p) || p < 1 || p > 10) return "الأولوية يجب أن تكون رقمًا من 1 إلى 10";
+  return null;
+}
+
+// Confirm every referenced child row belongs to the same tenant — prevents a
+// caller from attaching another company's customer/item/sales-rep to an offer.
+async function checkOwnership(cid: number, b: any): Promise<string | null> {
+  if (b.customerScope === "specific") {
+    const ids: number[] = (b.customers ?? []).map((x: any) => Number(x)).filter(Number.isFinite);
+    if (ids.length) {
+      const rows = await db.select({ id: customersTable.id }).from(customersTable)
+        .where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, ids)));
+      if (rows.length !== new Set(ids).size) return "بعض العملاء غير موجودين أو لا ينتمون للشركة";
+    }
+  }
+  if (b.itemsScope === "specific") {
+    const ids: number[] = (b.items ?? []).map((x: any) => Number(x.itemId)).filter(Number.isFinite);
+    if (ids.length) {
+      const rows = await db.select({ id: itemsTable.id }).from(itemsTable)
+        .where(and(eq(itemsTable.companyId, cid), inArray(itemsTable.id, ids)));
+      if (rows.length !== new Set(ids).size) return "بعض الأصناف غير موجودة أو لا تنتمي للشركة";
+    }
+  }
+  if (b.salesRepScope === "specific") {
+    const ids: number[] = (b.salesReps ?? []).map((x: any) => Number(x)).filter(Number.isFinite);
+    if (ids.length) {
+      const rows = await db.select({ id: salesRepsTable.id }).from(salesRepsTable)
+        .where(and(eq(salesRepsTable.companyId, cid), inArray(salesRepsTable.id, ids)));
+      if (rows.length !== new Set(ids).size) return "بعض المناديب غير موجودين أو لا ينتمون للشركة";
+    }
+  }
+  return null;
+}
+
+router.post("/", async (req, res) => {
+  try {
+    const cid = bodyCid(req, res); if (!cid) return;
+    const b = req.body ?? {};
+
+    const err = validatePayload(b); if (err) { res.status(400).json({ error: err }); return; }
+    const ownErr = await checkOwnership(cid, b);
+    if (ownErr) { res.status(400).json({ error: ownErr }); return; }
+
+    const status = b.status === "active" ? "active" : "draft";
+    const offerNumber = String(b.offerNumber ?? "").trim() || await nextOfferNumber(cid);
+
+    // Wrap everything in one transaction so a failure on the junctions rolls
+    // back the master row too.
+    const created = await db.transaction(async (tx) => {
+      const [offer] = await tx.insert(offersTable).values({
+        companyId:     cid,
+        offerNumber,
+        nameAr:        b.nameAr || null,
+        description:   b.description || null,
+        customerScope: b.customerScope,
+        itemsScope:    b.itemsScope,
+        salesRepScope: b.salesRepScope,
+        status,
+        priority:      Number(b.priority),
+        expiryDate:    b.expiryDate || null,
+      }).returning();
+
+      if (b.customerScope === "specific" && Array.isArray(b.customers) && b.customers.length) {
+        await tx.insert(offerCustomersTable).values(
+          (b.customers as any[]).map((id) => ({ offerId: offer.id, customerId: Number(id) })),
+        );
+      }
+      if (b.itemsScope === "specific" && Array.isArray(b.items) && b.items.length) {
+        await tx.insert(offerItemsTable).values(
+          (b.items as any[]).map((it) => ({
+            offerId:  offer.id,
+            itemId:   Number(it.itemId),
+            price:    num(it.price),
+            discount: num(it.discount),
+            qty:      num(it.qty),
+          })),
+        );
+      }
+      if (b.salesRepScope === "specific" && Array.isArray(b.salesReps) && b.salesReps.length) {
+        await tx.insert(offerSalesRepsTable).values(
+          (b.salesReps as any[]).map((id) => ({ offerId: offer.id, salesRepId: Number(id) })),
+        );
+      }
+      return offer;
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    if (String(e?.message).includes("duplicate") || e?.code === "23505")
+      return res.status(409).json({ error: "رقم العرض مستخدم مسبقاً" });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/offers/:id — replace the offer + the three junction lists.
+// Locked once `active` per spec rule #11 ("منع تعديل العرض بعد تفعيله"). Use
+// /expire then re-create if you need to change a live offer.
+router.put("/:id", async (req, res) => {
+  try {
+    const cid = bodyCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body ?? {};
+
+    const [existing] = await db.select().from(offersTable)
+      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+    if (existing.status === "active") {
+      res.status(409).json({ error: "لا يمكن تعديل عرض مفعّل — قم بإيقافه أولاً" });
+      return;
+    }
+
+    const err = validatePayload(b); if (err) { res.status(400).json({ error: err }); return; }
+    const ownErr = await checkOwnership(cid, b);
+    if (ownErr) { res.status(400).json({ error: ownErr }); return; }
+
+    const status = b.status === "active" ? "active" : (b.status === "expired" ? "expired" : "draft");
+
+    await db.transaction(async (tx) => {
+      await tx.update(offersTable).set({
+        nameAr:        b.nameAr || null,
+        description:   b.description || null,
+        customerScope: b.customerScope,
+        itemsScope:    b.itemsScope,
+        salesRepScope: b.salesRepScope,
+        status,
+        priority:      Number(b.priority),
+        expiryDate:    b.expiryDate || null,
+        updatedAt:     new Date(),
+      }).where(eq(offersTable.id, id));
+
+      // Wipe-and-replace is fine here because the junctions carry no audit
+      // history — the master record is the source of truth.
+      await tx.delete(offerCustomersTable).where(eq(offerCustomersTable.offerId, id));
+      await tx.delete(offerItemsTable).where(eq(offerItemsTable.offerId, id));
+      await tx.delete(offerSalesRepsTable).where(eq(offerSalesRepsTable.offerId, id));
+
+      if (b.customerScope === "specific" && Array.isArray(b.customers) && b.customers.length) {
+        await tx.insert(offerCustomersTable).values(
+          (b.customers as any[]).map((cid) => ({ offerId: id, customerId: Number(cid) })),
+        );
+      }
+      if (b.itemsScope === "specific" && Array.isArray(b.items) && b.items.length) {
+        await tx.insert(offerItemsTable).values(
+          (b.items as any[]).map((it) => ({
+            offerId:  id,
+            itemId:   Number(it.itemId),
+            price:    num(it.price),
+            discount: num(it.discount),
+            qty:      num(it.qty),
+          })),
+        );
+      }
+      if (b.salesRepScope === "specific" && Array.isArray(b.salesReps) && b.salesReps.length) {
+        await tx.insert(offerSalesRepsTable).values(
+          (b.salesReps as any[]).map((rid) => ({ offerId: id, salesRepId: Number(rid) })),
+        );
+      }
+    });
+
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIFECYCLE
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.post("/:id/activate", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(offersTable)
+      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+    if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+    if (row.status === "expired") { res.status(409).json({ error: "العرض منتهي" }); return; }
+    await db.update(offersTable).set({ status: "active", updatedAt: new Date() })
+      .where(eq(offersTable.id, id));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/:id/expire", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(offersTable)
+      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+    if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+    await db.update(offersTable).set({ status: "expired", updatedAt: new Date() })
+      .where(eq(offersTable.id, id));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/:id", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [row] = await db.select().from(offersTable)
+      .where(and(eq(offersTable.id, id), eq(offersTable.companyId, cid)));
+    if (!row) { res.status(404).json({ error: "العرض غير موجود" }); return; }
+    if (row.status === "active") {
+      res.status(409).json({ error: "لا يمكن حذف عرض مفعّل — قم بإيقافه أولاً" });
+      return;
+    }
+    await db.delete(offersTable).where(eq(offersTable.id, id));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MATCH ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// POST /api/offers/match
+// Body: { customerId, salesRepId, items: [{ itemId }, …] }
+//
+// Returns: { matches: { [itemId]: { offerId, offerNumber, priority, price?, discount?, qty? } } }
+//
+// The algorithm:
+//   1. Pull all `active` non-expired offers for this tenant.
+//   2. For each offer, decide if it matches the customer + the sales-rep
+//      (their scopes are item-independent).
+//   3. Walk every requested item and pick the best matching offer for it
+//      (highest priority, then highest discount, then lowest fixed price).
+//
+// Matching uses sets built from each junction so the inner loop stays O(1).
+//
+router.post("/match", async (req, res) => {
+  try {
+    const cid = requireCid(req, res); if (!cid) return;
+    const customerId = req.body?.customerId ? Number(req.body.customerId) : null;
+    const salesRepId = req.body?.salesRepId ? Number(req.body.salesRepId) : null;
+    const itemsIn: number[] = Array.isArray(req.body?.items)
+      ? req.body.items.map((x: any) => Number(x?.itemId ?? x)).filter(Number.isFinite)
+      : [];
+    if (!customerId)        { res.status(400).json({ error: "العميل مطلوب لتطبيق العروض" }); return; }
+    if (itemsIn.length === 0) { res.json({ matches: {} }); return; }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const offers = await db.select().from(offersTable).where(and(
+      eq(offersTable.companyId, cid),
+      eq(offersTable.status, "active"),
+      sql`(${offersTable.expiryDate} IS NULL OR ${offersTable.expiryDate} >= ${today})`,
+    )).orderBy(desc(offersTable.priority));
+
+    if (offers.length === 0) { res.json({ matches: {} }); return; }
+
+    const offerIds = offers.map((o) => o.id);
+    const [custLinks, itemLinks, repLinks] = await Promise.all([
+      db.select().from(offerCustomersTable).where(inArray(offerCustomersTable.offerId, offerIds)),
+      db.select().from(offerItemsTable).where(inArray(offerItemsTable.offerId, offerIds)),
+      db.select().from(offerSalesRepsTable).where(inArray(offerSalesRepsTable.offerId, offerIds)),
+    ]);
+
+    // Build indices keyed by offerId so the per-offer check below is O(1).
+    const custByOffer  = new Map<number, Set<number>>();
+    const repByOffer   = new Map<number, Set<number>>();
+    const itemsByOffer = new Map<number, Map<number, { price: string | null; discount: string | null; qty: string | null }>>();
+    for (const r of custLinks)  { (custByOffer.get(r.offerId)  ?? custByOffer.set(r.offerId,  new Set()).get(r.offerId)!).add(r.customerId); }
+    for (const r of repLinks)   { (repByOffer.get(r.offerId)   ?? repByOffer.set(r.offerId,   new Set()).get(r.offerId)!).add(r.salesRepId); }
+    for (const r of itemLinks)  {
+      const m = itemsByOffer.get(r.offerId) ?? itemsByOffer.set(r.offerId, new Map()).get(r.offerId)!;
+      m.set(r.itemId, { price: r.price, discount: r.discount, qty: r.qty });
+    }
+
+    // For each requested item, find the winner.
+    const matches: Record<number, any> = {};
+    for (const itemId of itemsIn) {
+      let best: { offer: typeof offers[number]; price: string | null; discount: string | null; qty: string | null } | null = null;
+
+      for (const o of offers) {
+        // Scope check 1 — customer.
+        if (o.customerScope === "specific") {
+          if (!custByOffer.get(o.id)?.has(customerId)) continue;
+        }
+        // Scope check 2 — sales rep (skip if no rep on the invoice but offer
+        // requires a specific one).
+        if (o.salesRepScope === "specific") {
+          if (!salesRepId || !repByOffer.get(o.id)?.has(salesRepId)) continue;
+        }
+        // Scope check 3 — item.  When scope is `all` there's no per-item
+        // pricing, so we surface no price/discount/qty.
+        let price: string | null = null, discount: string | null = null, qty: string | null = null;
+        if (o.itemsScope === "specific") {
+          const link = itemsByOffer.get(o.id)?.get(itemId);
+          if (!link) continue;
+          price = link.price; discount = link.discount; qty = link.qty;
+        }
+
+        // Tie-breaker: priority (already sorted DESC), then higher discount,
+        // then lower fixed price.
+        if (!best) { best = { offer: o, price, discount, qty }; continue; }
+        if (o.priority < best.offer.priority) continue;             // lower priority — skip
+        if (o.priority === best.offer.priority) {
+          const d  = Number(discount       ?? 0);
+          const bd = Number(best.discount  ?? 0);
+          if (d < bd) continue;
+          if (d === bd) {
+            const p  = Number(price       ?? Infinity);
+            const bp = Number(best.price  ?? Infinity);
+            if (p >= bp) continue;
+          }
+        }
+        best = { offer: o, price, discount, qty };
+      }
+
+      if (best) {
+        matches[itemId] = {
+          offerId:     best.offer.id,
+          offerNumber: best.offer.offerNumber,
+          priority:    best.offer.priority,
+          nameAr:      best.offer.nameAr,
+          price:       best.price,
+          discount:    best.discount,
+          qty:         best.qty,
+        };
+      }
+    }
+
+    res.json({ matches });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+export default router;

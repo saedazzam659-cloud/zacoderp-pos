@@ -1,0 +1,214 @@
+[Offers Module - Full Advanced Version]
+
+========================================
+[Overview]
+========================================
+نظام عروض احترافي يدعم:
+- ربط العرض بالعملاء (عميل / أكثر / كل العملاء)
+- ربط العرض بالأصناف (صنف / أكثر / كل الأصناف)
+- ربط العرض بالمناديب (مندوب / أكثر / كل المناديب)
+
+يتم تطبيق العروض تلقائياً داخل الفواتير حسب الشروط.
+
+========================================
+[1] Main Fields
+========================================
+
+offer_number: رقم العرض (Auto Serial)
+customer_scope: (all / specific)
+items_scope: (all / specific)
+salesrep_scope: (all / specific)
+status: (draft / active / expired)
+priority: رقم أولوية (1 - 10)
+expiry_date: تاريخ انتهاء العرض
+created_at: تاريخ الإنشاء
+
+========================================
+[2] Customers Logic
+========================================
+
+IF customer_scope = specific:
+    يتم اختيار عميل أو أكثر (Multi Select)
+
+IF customer_scope = all:
+    يتم تطبيق العرض على كل العملاء
+
+========================================
+[3] Items Logic
+========================================
+
+IF items_scope = specific:
+    يتم اختيار صنف أو أكثر (Multi Select)
+
+IF items_scope = all:
+    يتم تطبيق العرض على كل الأصناف
+
+========================================
+[4] Sales Reps Logic
+========================================
+
+IF salesrep_scope = specific:
+    يتم اختيار مندوب أو أكثر (Multi Select)
+
+IF salesrep_scope = all:
+    يتم تطبيق العرض على كل المناديب
+
+========================================
+[5] Database Design
+========================================
+
+Table: offers
+- id
+- offer_number
+- customer_scope
+- items_scope
+- salesrep_scope
+- status
+- priority
+- expiry_date
+- created_at
+
+----------------------------
+
+Table: offer_customers
+- id
+- offer_id
+- customer_id
+
+----------------------------
+
+Table: offer_items
+- id
+- offer_id
+- item_id
+- price
+- discount
+- qty
+
+----------------------------
+
+Table: offer_salesreps
+- id
+- offer_id
+- salesrep_id
+
+========================================
+[6] Invoice Logic (Core Engine)
+========================================
+
+INPUT:
+- customer_id
+- salesrep_id
+- items_list
+
+PROCESS:
+
+FOR each offer WHERE status = active:
+
+    IF (customer_scope = all OR customer_id IN offer_customers)
+    AND (salesrep_scope = all OR salesrep_id IN offer_salesreps)
+    AND (items_scope = all OR item_id IN offer_items)
+    AND (expiry_date >= today):
+
+        APPLY offer
+
+========================================
+[7] Rules
+========================================
+
+- في حالة وجود أكثر من عرض:
+    يتم اختيار:
+        أعلى priority
+        أو أعلى خصم
+
+- لا يتم تطبيق أكثر من عرض على نفس الصنف
+
+- في حالة customer_scope = all:
+    يتم تجاهل شرط العملاء
+
+- في حالة items_scope = all:
+    يتم تجاهل شرط الأصناف
+
+- في حالة salesrep_scope = all:
+    يتم تجاهل شرط المناديب
+
+========================================
+[8] Invoice Screen Behavior
+========================================
+
+- عند اختيار العميل:
+    يتم تحميل العروض المرتبطة
+
+- عند اختيار المندوب:
+    يتم فلترة العروض
+
+- عند إضافة صنف:
+    يتم فحص العروض تلقائياً
+
+- إضافة زر:
+    "تطبيق العروض"
+
+========================================
+[9] UI Design
+========================================
+
+Toggles:
+
+- العملاء:
+    (All / Specific)
+
+- الأصناف:
+    (All / Specific)
+
+- المناديب:
+    (All / Specific)
+
+في حالة Specific:
+    يظهر Multi Select
+
+إظهار Badge:
+- عرض عام
+- عرض مخصص
+
+========================================
+[10] Performance
+========================================
+
+- عمل Index على:
+    customer_id
+    item_id
+    salesrep_id
+
+- Cache:
+    تحميل العروض النشطة فقط
+
+========================================
+[11] Security & Control
+========================================
+
+- منع تعديل العرض بعد تفعيله (active)
+- تسجيل Log عند تطبيق العرض
+- التحكم في الصلاحيات:
+    إنشاء / تعديل / اعتماد / تطبيق
+
+========================================
+[12] Important Notes
+========================================
+
+- لا يمكن تطبيق عرض بدون وجود عميل في الفاتورة
+- العروض العامة يتم تطبيقها بعد اختيار العميل
+- يجب تحقق جميع الشروط:
+    (العميل + المندوب + الصنف)
+
+========================================
+[13] Future Enhancements
+========================================
+
+- Minimum Quantity
+- Minimum Invoice Value
+- Buy X Get Y
+- Time-Based Offers
+- Geo-Based Offers
+- POS Integration
+- AI Suggestions
+- Dashboard تحليل العروض
