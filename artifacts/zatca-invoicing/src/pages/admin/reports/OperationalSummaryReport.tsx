@@ -8,36 +8,40 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { downloadCsv } from "./shared/downloadCsv";
-import { useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
+import { PeriodSelector, periodToQuery, usePeriodState, useStoredBoolean, useStoredSearch } from "./shared/PeriodSelector";
 
 interface OpsRow {
   companyId: number; companyName: string; companyStatus: string;
   customers: number; suppliers: number; items: number;
   openPosSessions: number;
   lastActivityAt: string | null; inactive: boolean;
-  auditEvents7d: number; denied7d: number;
+  // Period-window counts. Backend also still emits the legacy `*7d`
+  // aliases for one release window of compatibility.
+  auditEventsPeriod: number; deniedPeriod: number;
+  auditEvents7d?: number; denied7d?: number;
   latestBackupReason: string | null; latestBackupAt: string | null;
 }
-interface OpsResp { rows: OpsRow[] }
+interface OpsResp {
+  period: { from: string; to: string; prevFrom: string; prevTo: string };
+  rows: OpsRow[];
+}
 
 const fmtInt = new Intl.NumberFormat("ar-SA");
 
 export default function OperationalSummaryReport() {
   const { token } = useAuth();
-  // Persist search across visits. No period selector here, but the same
-  // localStorage convention keeps reset behavior consistent with other reports.
+  // Persist period + search + the inactive-only toggle across visits, so the
+  // admin returns to the same view they left (e.g. month-end audit pass).
+  const period = usePeriodState("this_month", "operational-summary");
   const [search, setSearch] = useStoredSearch("operational-summary");
   const [onlyInactive, setOnlyInactive] = useStoredBoolean("operational-summary:onlyInactive");
 
-  // The KPIs on this report use fixed reporting windows per spec
-  // (audit/denied = trailing 7 days, inactivity = trailing 30 days),
-  // so there is no period selector — only search + inactive filter.
   const queryString = useMemo(() => {
-    const qs = new URLSearchParams();
+    const qs = new URLSearchParams(periodToQuery(period));
     if (search.trim()) qs.set("search", search.trim());
     if (onlyInactive) qs.set("onlyInactive", "true");
     return qs.toString();
-  }, [search, onlyInactive]);
+  }, [period.preset, period.from, period.to, search, onlyInactive]);
 
   const { data, isLoading, error } = useQuery<OpsResp>({
     queryKey: ["report-operational-summary", queryString],
@@ -51,6 +55,9 @@ export default function OperationalSummaryReport() {
   });
 
   const rows = data?.rows ?? [];
+  const periodLabel = data?.period
+    ? `${data.period.from} → ${data.period.to}`
+    : "";
 
   return (
     <div className="space-y-4" dir="rtl">
@@ -68,7 +75,12 @@ export default function OperationalSummaryReport() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/operational-summary?${queryString}&format=csv`, `operational-summary.csv`)}
+          onClick={() => {
+            const fname = data?.period
+              ? `operational-summary-${data.period.from}_${data.period.to}.csv`
+              : `operational-summary.csv`;
+            downloadCsv(token, `/api/admin/reports/operational-summary?${queryString}&format=csv`, fname);
+          }}
           disabled={!data || rows.length === 0}
         >
           <Download className="h-4 w-4 ml-1" /> تصدير CSV
@@ -76,6 +88,7 @@ export default function OperationalSummaryReport() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3 p-3 border rounded-lg bg-muted/20">
+        <PeriodSelector period={period} />
         <div className="flex-1 min-w-[200px]">
           <label className="text-xs text-muted-foreground block mb-1">بحث باسم الشركة</label>
           <div className="relative">
@@ -90,13 +103,15 @@ export default function OperationalSummaryReport() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => { setSearch(""); setOnlyInactive(false); }}
-          title="مسح البحث"
+          onClick={() => { period.reset(); setSearch(""); setOnlyInactive(false); }}
+          title="إعادة الفترة الافتراضية ومسح البحث"
         >
           <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
         </Button>
         <p className="text-xs text-muted-foreground basis-full">
-          أحداث التدقيق والمحاولات المرفوضة تُحسب للأيام السبعة الأخيرة. الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً.
+          أحداث التدقيق والمحاولات المرفوضة تُحسب ضمن الفترة المختارة
+          {periodLabel && <> ({periodLabel})</>}.
+          الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً (تنبيه ثابت بصرف النظر عن الفترة).
         </p>
       </div>
 
@@ -115,8 +130,8 @@ export default function OperationalSummaryReport() {
                 <TableHead className="text-right">أصناف</TableHead>
                 <TableHead className="text-right">جلسات POS</TableHead>
                 <TableHead className="text-right">آخر نشاط</TableHead>
-                <TableHead className="text-right">أحداث التدقيق (7 أيام)</TableHead>
-                <TableHead className="text-right">مرفوضة (7 أيام)</TableHead>
+                <TableHead className="text-right">أحداث التدقيق (الفترة)</TableHead>
+                <TableHead className="text-right">مرفوضة (الفترة)</TableHead>
                 <TableHead className="text-right">نسخة احتياطية</TableHead>
               </TableRow>
             </TableHeader>
@@ -149,9 +164,11 @@ export default function OperationalSummaryReport() {
                     ) : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{r.lastActivityAt ? r.lastActivityAt.slice(0, 19).replace("T", " ") : "—"}</TableCell>
-                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEvents7d)}</TableCell>
+                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEventsPeriod ?? r.auditEvents7d ?? 0)}</TableCell>
                   <TableCell className="tabular-nums">
-                    {r.denied7d > 0 ? <span className="text-rose-700 font-bold">{r.denied7d}</span> : <span className="text-muted-foreground">0</span>}
+                    {(r.deniedPeriod ?? r.denied7d ?? 0) > 0
+                      ? <span className="text-rose-700 font-bold">{r.deniedPeriod ?? r.denied7d}</span>
+                      : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs">
                     {r.latestBackupAt == null ? (
