@@ -4022,10 +4022,40 @@ router.post("/maintenance/old-maintenance-runs/fix", requireSuperAdmin, async (r
 });
 
 // 6. Maintenance history — last N audit_log rows (module='maintenance') ─────
+//    `?format=csv` returns the FULL audit-logged history (not just the
+//    on-screen 50 rows) so admins can archive it for compliance review. The
+//    export call itself is audit-logged via `logMaint` so the trail stays
+//    complete.
 router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   const limit = clampInt(req.query.limit, 1, 200, 50);
   try {
+    if (wantsCsv(req)) {
+      const rows = await db.select({
+        id: auditLogTable.id, action: auditLogTable.action,
+        entityType: auditLogTable.entityType, username: auditLogTable.username,
+        metadata: auditLogTable.metadata, createdAt: auditLogTable.createdAt,
+      })
+        .from(auditLogTable)
+        .where(and(
+          eq(auditLogTable.companyId, g.companyId),
+          eq(auditLogTable.module, "maintenance"),
+        ))
+        .orderBy(desc(auditLogTable.createdAt));
+      const headers = ["التاريخ", "المستخدم", "الفئة", "الإجراء", "التفاصيل"];
+      const csvRows = rows.map((r) => [
+        csvDate(r.createdAt),
+        r.username ?? "",
+        r.entityType ?? "",
+        r.action ?? "",
+        r.metadata ? JSON.stringify(r.metadata) : "",
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "maintenance_history", {
+        count: rows.length, format: "csv",
+      });
+      sendCsv(res, `maintenance-history-${g.companyId}-${Date.now()}.csv`, headers, csvRows);
+      return;
+    }
     const rows = await db.select({
       id: auditLogTable.id, action: auditLogTable.action,
       entityType: auditLogTable.entityType, username: auditLogTable.username,

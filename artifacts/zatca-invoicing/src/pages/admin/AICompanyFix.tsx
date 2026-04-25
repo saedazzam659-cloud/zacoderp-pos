@@ -10,7 +10,7 @@ import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
-  CalendarClock, Play, Mail,
+  CalendarClock, Play, Mail, Download,
   // Toolbox expansion (F): inventory / accounting / logs categories.
   TrendingDown, Scale, Calculator, ScrollText, Trash2, Boxes, BookOpen, ClipboardList,
 } from "lucide-react";
@@ -558,6 +558,41 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     },
     enabled: !!companyId && historyOpen,
     refetchOnWindowFocus: false,
+  });
+
+  // CSV export — calls the same history endpoint with `?format=csv` so admins
+  // get the FULL audit-logged history (not just the on-screen 50 rows). The
+  // server writes a maintenance audit-log row for the export itself.
+  const historyCsvMut = useMutation({
+    mutationFn: async () => {
+      if (!companyId) throw new Error("اختر الشركة أولاً");
+      const r = await fetch(
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-history-${companyId}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => {
+      toast({ title: "تم تنزيل ملف CSV" });
+      // Refresh the history panel so the export entry shows up.
+      setHistoryTick((t) => t + 1);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   // Schedule config (single global row) — drives the auto-scan toggle / time.
@@ -1452,15 +1487,38 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
 
         {/* History panel — last 50 maintenance actions for the selected company */}
         <div className="border rounded">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen(o => !o)}
-            disabled={!companyId}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium bg-muted/40 hover:bg-muted/60 rounded-t disabled:opacity-50"
-          >
-            <span className="flex items-center gap-2"><History className="h-4 w-4" /> سجل الإصلاحات</span>
-            {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
+          <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-medium bg-muted/40 hover:bg-muted/60 rounded-t">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(o => !o)}
+              disabled={!companyId}
+              className="flex items-center gap-2 flex-1 min-w-0 py-1 text-right disabled:opacity-50"
+            >
+              <span className="flex items-center gap-2"><History className="h-4 w-4" /> سجل الإصلاحات</span>
+            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                onClick={() => historyCsvMut.mutate()}
+                disabled={!companyId || historyCsvMut.isPending}
+                title="تنزيل سجل الإصلاحات الكامل كملف CSV"
+              >
+                {historyCsvMut.isPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Download className="h-3 w-3" />}
+                تصدير CSV
+              </Button>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(o => !o)}
+                disabled={!companyId}
+                className="p-1 disabled:opacity-50"
+                aria-label={historyOpen ? "طي السجل" : "فتح السجل"}
+              >
+                {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
           {historyOpen && (
             <div className="p-2.5">
               {historyQ.isLoading && (
