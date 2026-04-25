@@ -357,19 +357,19 @@ export default function Login() {
   // HR → industry verticals. The grid below collapses to 2 cols on mobile
   // and 3 cols on tablets+ so the list remains readable at any width.
   const modules = [
-    { icon: Wallet,        label: "المحاسبة" },
-    { icon: Landmark,      label: "البنوك" },
-    { icon: Building2,     label: "الأصول الثابتة" },
-    { icon: Boxes,         label: "المخازن" },
-    { icon: ShoppingCart,  label: "المبيعات" },
-    { icon: Truck,         label: "المشتريات" },
-    { icon: Factory,       label: "الإنتاج" },
-    { icon: FolderKanban,  label: "المشاريع" },
-    { icon: HardHat,       label: "المقاولات" },
-    { icon: Wrench,        label: "الصيانة" },
-    { icon: Users,         label: "الموارد البشرية" },
-    { icon: Hotel,         label: "الفنادق" },
-    { icon: Hospital,      label: "المستشفيات" },
+    { icon: Wallet,        label: t("auth.intro.modules.accounting") },
+    { icon: Landmark,      label: t("auth.intro.modules.banks") },
+    { icon: Building2,     label: t("auth.intro.modules.fixedAssets") },
+    { icon: Boxes,         label: t("auth.intro.modules.inventory") },
+    { icon: ShoppingCart,  label: t("auth.intro.modules.sales") },
+    { icon: Truck,         label: t("auth.intro.modules.purchases") },
+    { icon: Factory,       label: t("auth.intro.modules.production") },
+    { icon: FolderKanban,  label: t("auth.intro.modules.projects") },
+    { icon: HardHat,       label: t("auth.intro.modules.contracting") },
+    { icon: Wrench,        label: t("auth.intro.modules.maintenance") },
+    { icon: Users,         label: t("auth.intro.modules.hr") },
+    { icon: Hotel,         label: t("auth.intro.modules.hotels") },
+    { icon: Hospital,      label: t("auth.intro.modules.hospitals") },
   ];
 
   return (
@@ -402,9 +402,7 @@ export default function Login() {
                 <span className="text-xs font-bold tracking-wide text-primary uppercase">ZacodERP</span>
               </div>
               <p className="text-sm text-foreground leading-relaxed">
-                الجيل الجديد من أنظمة إدارة الأعمال المدعومة بالذكاء الاصطناعي.
-                نقدم منصة ذكية شاملة تحلّل بيانات شركتك المالية والفنية لحظيًا
-                وتمنحك رؤية استباقية لقراراتك.
+                {t("auth.intro.lead")}
               </p>
             </div>
 
@@ -412,7 +410,7 @@ export default function Login() {
             <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
               <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
                 <LayoutGrid className="h-4 w-4 text-primary" />
-                وحدات نظام ERP المتكامل
+                {t("auth.intro.modulesTitle")}
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 {modules.map(({ icon: Icon, label }) => (
@@ -431,20 +429,20 @@ export default function Login() {
             <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/20 rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Brain className="h-5 w-5 text-primary" />
-                <h3 className="text-sm font-semibold text-foreground">ذكاء اصطناعي مدمج</h3>
+                <h3 className="text-sm font-semibold text-foreground">{t("auth.intro.aiTitle")}</h3>
               </div>
               <ul className="space-y-2.5 text-sm text-foreground/80">
                 <li className="flex items-start gap-2">
                   <TrendingUp className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <span>تحليل مالي ذكي وتوقع الأرباح والتدفقات النقدية</span>
+                  <span>{t("auth.intro.aiBullets.financial")}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <BarChart3 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <span>تقارير ولوحات تحكم لحظية ومؤشرات أداء KPI</span>
+                  <span>{t("auth.intro.aiBullets.reports")}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <span>توصيات وتنبيهات تلقائية لدعم قرار الإدارة العليا</span>
+                  <span>{t("auth.intro.aiBullets.recommendations")}</span>
                 </li>
               </ul>
             </div>
@@ -454,19 +452,19 @@ export default function Login() {
               <div className="border border-border rounded-xl p-4 bg-card/60">
                 <div className="flex items-center gap-2 mb-1.5">
                   <Globe2 className="h-4 w-4 text-primary" />
-                  <h4 className="text-xs font-semibold text-foreground">رؤيتنا</h4>
+                  <h4 className="text-xs font-semibold text-foreground">{t("auth.intro.visionTitle")}</h4>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  تمكين الشركات في مصر والسعودية والمنطقة العربية من التحول الرقمي الحقيقي.
+                  {t("auth.intro.visionText")}
                 </p>
               </div>
               <div className="border border-border rounded-xl p-4 bg-card/60">
                 <div className="flex items-center gap-2 mb-1.5">
                   <Zap className="h-4 w-4 text-primary" />
-                  <h4 className="text-xs font-semibold text-foreground">رسالتنا</h4>
+                  <h4 className="text-xs font-semibold text-foreground">{t("auth.intro.missionTitle")}</h4>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  حلول برمجية متقدمة بالذكاء الاصطناعي لرفع كفاءة الأعمال ودقة القرار.
+                  {t("auth.intro.missionText")}
                 </p>
               </div>
             </div>

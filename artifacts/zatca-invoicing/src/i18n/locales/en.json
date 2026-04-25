@@ -319,7 +319,36 @@
     "appSubtitle": "Compliant with ZATCA",
     "zatcaCompliant": "ZATCA Compliant",
     "rights": "All rights reserved",
-    "loginError": "Invalid username or password"
+    "loginError": "Invalid username or password",
+    "intro": {
+      "lead": "The next generation of AI-powered business management systems. A comprehensive smart platform that analyzes your company's financial and operational data in real time, giving you proactive insight for every decision.",
+      "modulesTitle": "Integrated ERP Modules",
+      "modules": {
+        "accounting": "Accounting",
+        "banks": "Banking",
+        "fixedAssets": "Fixed Assets",
+        "inventory": "Inventory",
+        "sales": "Sales",
+        "purchases": "Purchasing",
+        "production": "Production",
+        "projects": "Projects",
+        "contracting": "Contracting",
+        "maintenance": "Maintenance",
+        "hr": "Human Resources",
+        "hotels": "Hotels",
+        "hospitals": "Hospitals"
+      },
+      "aiTitle": "Built-in Artificial Intelligence",
+      "aiBullets": {
+        "financial": "Smart financial analysis with profit and cash-flow forecasting",
+        "reports": "Real-time reports, dashboards, and KPI indicators",
+        "recommendations": "Automated recommendations and alerts to support executive decisions"
+      },
+      "visionTitle": "Our Vision",
+      "visionText": "Empowering companies across Egypt, Saudi Arabia, and the wider Arab region with a true digital transformation.",
+      "missionTitle": "Our Mission",
+      "missionText": "Advanced AI-driven software solutions that elevate business efficiency and decision accuracy."
+    }
   },
   "nav": {
     "dashboard": "Dashboard",
