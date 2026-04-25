@@ -8,9 +8,9 @@ import {
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
-  salesRepsTable,
+  salesRepsTable, offersTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
@@ -262,7 +262,28 @@ router.get("/sales-invoices/:id", async (req, res) => {
     const lines = await db.select().from(salesInvoiceLinesTable)
       .where(eq(salesInvoiceLinesTable.invoiceId, id))
       .orderBy(asc(salesInvoiceLinesTable.id));
-    res.json({ ...inv, lines });
+    // Surface offer names alongside the FK ids so the form can render the
+    // "applied offer" badges immediately on edit, without an extra round-trip.
+    const offerIds = new Set<number>();
+    if (inv.documentOfferId) offerIds.add(inv.documentOfferId);
+    for (const l of lines) if (l.appliedOfferId) offerIds.add(l.appliedOfferId);
+    const offerRows = offerIds.size
+      ? await db.select({ id: offersTable.id, nameAr: offersTable.nameAr, offerNumber: offersTable.offerNumber })
+          .from(offersTable)
+          // Tenant-scoped — never resolve names for offers that don't belong
+          // to this company, even if the FK somehow points cross-tenant.
+          .where(and(inArray(offersTable.id, [...offerIds]), eq(offersTable.companyId, cid)))
+      : [];
+    const offerNameById = new Map(offerRows.map(o => [o.id, o.nameAr ?? o.offerNumber] as const));
+    const linesWithOfferName = lines.map(l => ({
+      ...l,
+      appliedOfferName: l.appliedOfferId ? (offerNameById.get(l.appliedOfferId) ?? null) : null,
+    }));
+    res.json({
+      ...inv,
+      documentOfferName: inv.documentOfferId ? (offerNameById.get(inv.documentOfferId) ?? null) : null,
+      lines: linesWithOfferName,
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -282,7 +303,50 @@ function mapInvoiceLine(l: any, invoiceId: number, cid: number) {
     vatRate:     String(l.vatRate   || "15"),
     lineTotal:   String(l.lineTotal || "0"),
     notes:       l.notes || null,
+    // Audit trail link to the line-level promotion that produced this
+    // discount / unit-price (line_pricing or buy_x_get_y). NULL when the
+    // discount was manual or no offer matched.
+    appliedOfferId: l.appliedOfferId ? Number(l.appliedOfferId) : null,
   };
+}
+
+// Bumps the `times_used` counter for every distinct offer id given. Safe to
+// call with an empty array. Tenant-scoped so a malicious client can't bump
+// counters on another company's offers by sending its ids.
+async function bumpOffersTimesUsed(cid: number, offerIds: number[]) {
+  if (!offerIds.length) return;
+  await db.update(offersTable)
+    .set({ timesUsed: sql`${offersTable.timesUsed} + 1` })
+    .where(and(inArray(offersTable.id, offerIds), eq(offersTable.companyId, cid)));
+}
+
+// Throws if any of the given offer ids don't belong to `cid`. Used on the
+// invoice POST/PUT path so a crafted client payload can't pin a foreign
+// company's offer onto our invoice (which would corrupt the audit trail
+// and leak that offer's name back through the invoice GET join).
+async function validateOffersBelongToCompany(cid: number, offerIds: number[]) {
+  if (!offerIds.length) return;
+  const found = await db.select({ id: offersTable.id })
+    .from(offersTable)
+    .where(and(inArray(offersTable.id, offerIds), eq(offersTable.companyId, cid)));
+  const foundSet = new Set(found.map(r => r.id));
+  for (const oid of offerIds) {
+    if (!foundSet.has(oid)) {
+      throw new Error(`العرض رقم ${oid} غير موجود ضمن هذه الشركة`);
+    }
+  }
+}
+
+// Collects every distinct offer id referenced by an invoice payload (line
+// `appliedOfferId`s + header `documentOfferId`). Returns an empty array if
+// nothing is referenced.
+function collectInvoiceOfferIds(documentOfferId: any, lines: any[] | undefined): number[] {
+  const ids = new Set<number>();
+  for (const l of (lines ?? [])) {
+    if (l?.appliedOfferId) ids.add(Number(l.appliedOfferId));
+  }
+  if (documentOfferId) ids.add(Number(documentOfferId));
+  return [...ids];
 }
 
 router.post("/sales-invoices", async (req, res) => {
@@ -291,11 +355,15 @@ router.post("/sales-invoices", async (req, res) => {
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId, salesRepId } = req.body;
+            posSessionId, salesRepId, documentOfferId } = req.body;
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
+    // Reject the request before INSERT if any offer id (line-level or
+    // document-level) doesn't belong to this tenant. Prevents cross-tenant
+    // FK pollution and the resulting offer-name leak via the GET join.
+    await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
     const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
     // Snapshot the rep's commission % at save time so historical invoices keep
     // their commission even if the rep's % changes later.
@@ -344,6 +412,7 @@ router.post("/sales-invoices", async (req, res) => {
       salesRepId:         repInfo.salesRepId,
       commissionPct:      repInfo.commissionPct,
       commissionAmount:   repInfo.commissionAmount,
+      documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
     }).returning();
     // Validate posSessionId belongs to the same company before linking — prevents cross-tenant pollution.
     if (posSessionId) {
@@ -360,6 +429,17 @@ router.post("/sales-invoices", async (req, res) => {
     if (lines?.length) {
       await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, inv.id, cid)));
     }
+    // Bump times_used once per distinct offer that influenced this invoice
+    // (line-level + the doc-level header offer). Counter increments only
+    // when an invoice is actually saved — never just by the matcher firing.
+    {
+      const usedOfferIds = new Set<number>();
+      for (const l of (lines ?? [])) {
+        if (l?.appliedOfferId) usedOfferIds.add(Number(l.appliedOfferId));
+      }
+      if (documentOfferId) usedOfferIds.add(Number(documentOfferId));
+      await bumpOffersTimesUsed(cid, [...usedOfferIds]);
+    }
     res.status(201).json(inv);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -372,7 +452,23 @@ router.put("/sales-invoices/:id", async (req, res) => {
     // edit (see the .set() below).
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
-            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
+            cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
+            documentOfferId } = req.body;
+    // Snapshot offer ids that were already attached to this invoice BEFORE
+    // we delete-and-reinsert lines, so we can bump times_used for the offers
+    // that are NEW on this update (and not double-count the ones already
+    // there). Computed before the update so we don't lose them when the
+    // line-level FKs are cascaded away.
+    const prevLineOffers = await db.select({ aoid: salesInvoiceLinesTable.appliedOfferId })
+      .from(salesInvoiceLinesTable).where(eq(salesInvoiceLinesTable.invoiceId, id));
+    const [prevInvRow] = await db.select({ doid: salesInvoicesTable.documentOfferId })
+      .from(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    const prevOfferIds = new Set<number>();
+    for (const r of prevLineOffers) if (r.aoid) prevOfferIds.add(r.aoid);
+    if (prevInvRow?.doid) prevOfferIds.add(prevInvRow.doid);
+    // Same tenant guard as POST — incoming payload can't reference a foreign
+    // company's offer.
+    await validateOffersBelongToCompany(cid, collectInvoiceOfferIds(documentOfferId, lines));
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند البيع بنكياً" }); return; }
@@ -409,6 +505,12 @@ router.put("/sales-invoices/:id", async (req, res) => {
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
       taxAccountId:       taxAccountId       ? Number(taxAccountId)       : null,
       discountAccountId:  discountAccountId  ? Number(discountAccountId)  : null,
+      // documentOfferId is allowed to be cleared (set to null) on edit when
+      // the matcher decides the doc-level promo no longer qualifies — the
+      // explicit `documentOfferId === undefined` ? skip : write semantics
+      // would be safer but, since the form always sends it, an unconditional
+      // write is fine here and keeps the audit trail honest.
+      documentOfferId:    documentOfferId ? Number(documentOfferId) : null,
       ...repPatch,
     }).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid))).returning();
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
@@ -417,6 +519,20 @@ router.put("/sales-invoices/:id", async (req, res) => {
       if (lines.length) {
         await db.insert(salesInvoiceLinesTable).values(lines.map((l: any) => mapInvoiceLine(l, id, cid)));
       }
+    }
+    // Bump times_used for offers that are NEW to this invoice on this edit
+    // (didn't exist before the update). Re-saving the same invoice with the
+    // same offers does NOT bump the counter — matches the "counted once per
+    // applied invoice" intent.
+    {
+      const newOfferIds = new Set<number>();
+      for (const l of (lines ?? [])) {
+        if (l?.appliedOfferId) newOfferIds.add(Number(l.appliedOfferId));
+      }
+      if (documentOfferId) newOfferIds.add(Number(documentOfferId));
+      const toBump: number[] = [];
+      for (const oid of newOfferIds) if (!prevOfferIds.has(oid)) toBump.push(oid);
+      await bumpOffersTimesUsed(cid, toBump);
     }
     res.json(inv);
   } catch (e: any) { res.status(500).json({ error: e.message }); }

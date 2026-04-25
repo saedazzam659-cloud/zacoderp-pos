@@ -520,41 +520,80 @@ router.delete("/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // POST /api/offers/match
-// Body: { customerId, salesRepId, items: [{ itemId }, …] }
 //
-// Returns: { matches: { [itemId]: { offerId, offerNumber, priority, price?, discount?, qty? } } }
+// Two payload shapes are accepted:
+//
+//   • LEGACY (kept for any caller still using the simple per-item probe):
+//       Body: { customerId, salesRepId, items: [{ itemId }, …] }
+//       Returns: { matches: { [itemId]: { offerId, offerNumber, priority, … } } }
+//     The legacy mode just identifies which offer wins for each item — it
+//     does NOT compute discount amounts, so the caller can't actually price
+//     the cart from the response.  Used only by experimental probes.
+//
+//   • RICH (used by the sales invoice form — server is authoritative for
+//     promotion math so two browsers can't disagree):
+//       Body: { customerId, salesRepId?, applyTo?, lines: [{ lineKey, itemId, qty, unitPrice }] }
+//       Returns: { lineMatches, documentMatch }
 //
 // The algorithm:
-//   1. Pull all `active` non-expired offers for this tenant.
-//   2. For each offer, decide if it matches the customer + the sales-rep
-//      (their scopes are item-independent).
-//   3. Walk every requested item and pick the best matching offer for it
-//      (highest priority, then highest discount, then lowest fixed price).
-//
-// Matching uses sets built from each junction so the inner loop stays O(1).
+//   1. Pull all `active` non-expired offers for this tenant, optionally
+//      filtered by `applyTo` (so POS-only offers don't bleed into invoices
+//      and vice-versa — `all` matches both channels).
+//   2. Build O(1) indices for the three scope junctions (customers / items /
+//      sales-reps) so the inner loop stays cheap.
+//   3. RICH mode walks lines twice:
+//       a. Per-line: best line_pricing or buy_x_get_y offer wins (by
+//          priority, ties break on larger absolute discount).
+//       b. Document-level: best percentage_total or fixed_total offer wins
+//          against the cart subtotal (after honouring minPurchaseAmount).
+//      Document-level discount is returned separately so the form can show
+//      it as its own row instead of mangling per-line discounts.
 //
 router.post("/match", async (req, res) => {
   try {
     const cid = requireCid(req, res); if (!cid) return;
     const customerId = req.body?.customerId ? Number(req.body.customerId) : null;
     const salesRepId = req.body?.salesRepId ? Number(req.body.salesRepId) : null;
-    const itemsIn: number[] = Array.isArray(req.body?.items)
-      ? req.body.items.map((x: any) => Number(x?.itemId ?? x)).filter(Number.isFinite)
-      : [];
-    if (!customerId)        { res.status(400).json({ error: "العميل مطلوب لتطبيق العروض" }); return; }
-    if (itemsIn.length === 0) { res.json({ matches: {} }); return; }
+    const applyToRaw = String(req.body?.applyTo ?? "").trim();
+    const filterApplyTo: "invoice" | "pos" | null =
+      applyToRaw === "invoice" || applyToRaw === "pos" ? applyToRaw : null;
+
+    // Detect rich vs legacy shape.  A request with `lines` is rich; one with
+    // only `items` is legacy.  An empty cart in either shape returns empty.
+    const richLines: Array<{ lineKey: string; itemId: number; qty: number; unitPrice: number }> =
+      Array.isArray(req.body?.lines)
+        ? req.body.lines.map((l: any) => ({
+            lineKey:   String(l?.lineKey ?? l?.itemId ?? ""),
+            itemId:    Number(l?.itemId),
+            qty:       Number(l?.qty)       || 0,
+            unitPrice: Number(l?.unitPrice) || 0,
+          })).filter((l: any) => Number.isFinite(l.itemId) && l.lineKey)
+        : [];
+    const isRich = richLines.length > 0 || Array.isArray(req.body?.lines);
+
+    if (!customerId) { res.status(400).json({ error: "العميل مطلوب لتطبيق العروض" }); return; }
 
     const today = new Date().toISOString().slice(0, 10);
     // Mirror /active — both ends of the validity window are honoured so the
     // matcher never fires a future-dated promo before its start.
-    const offers = await db.select().from(offersTable).where(and(
+    const baseConds: any[] = [
       eq(offersTable.companyId, cid),
       eq(offersTable.status, "active"),
       sql`(${offersTable.startDate}  IS NULL OR ${offersTable.startDate}  <= ${today})`,
       sql`(${offersTable.expiryDate} IS NULL OR ${offersTable.expiryDate} >= ${today})`,
-    )).orderBy(desc(offersTable.priority));
+    ];
+    if (filterApplyTo) {
+      // 'all' applies to every channel; the channel-specific value matches
+      // exactly.  Other values (impossible by enum) get no offers — safe.
+      baseConds.push(sql`(${offersTable.applyTo} = 'all' OR ${offersTable.applyTo} = ${filterApplyTo})`);
+    }
+    const offers = await db.select().from(offersTable).where(and(...baseConds))
+      .orderBy(desc(offersTable.priority));
 
-    if (offers.length === 0) { res.json({ matches: {} }); return; }
+    if (offers.length === 0) {
+      if (isRich) { res.json({ lineMatches: {}, documentMatch: null }); return; }
+      res.json({ matches: {} }); return;
+    }
 
     const offerIds = offers.map((o) => o.id);
     const [custLinks, itemLinks, repLinks] = await Promise.all([
@@ -574,34 +613,175 @@ router.post("/match", async (req, res) => {
       m.set(r.itemId, { price: r.price, discount: r.discount, qty: r.qty });
     }
 
-    // For each requested item, find the winner.
+    // Customer + sales-rep scopes are item-independent; item scope is only
+    // meaningful for line-level decisions, so we pass it as an option.
+    function passesCustRepScopes(o: typeof offers[number]): boolean {
+      if (o.customerScope === "specific") {
+        if (!custByOffer.get(o.id)?.has(customerId!)) return false;
+      }
+      if (o.salesRepScope === "specific") {
+        if (!salesRepId || !repByOffer.get(o.id)?.has(salesRepId)) return false;
+      }
+      return true;
+    }
+
+    // ── RICH MODE: compute line-level + document-level discounts ──────────
+    if (isRich) {
+      const lineMatches: Record<string, any> = {};
+      // Per-line: line_pricing + buy_x_get_y compete; only one offer can win
+      // per line so non-stackable behaviour is the default (matches Odoo).
+      for (const ln of richLines) {
+        if (ln.qty <= 0 || ln.unitPrice <= 0) continue;
+        const lineGross = ln.qty * ln.unitPrice;
+        let best: {
+          offer: typeof offers[number];
+          effectivePct: number;      // 0–100, applied to the line's gross
+          lineDiscAmt: number;       // currency amount this offer saves
+          price: string | null;      // suggested unit price (line_pricing only)
+          pct:   string | null;      // suggested discount % (line_pricing only)
+          bxgY:  { buyQty: number; getQty: number; getDiscountPercent: number; freeQty: number } | null;
+          mode:  "price" | "percent" | "bxgy"; // which lever won
+        } | null = null;
+
+        for (const o of offers) {
+          if (o.discountType !== "line_pricing" && o.discountType !== "buy_x_get_y") continue;
+          if (!passesCustRepScopes(o)) continue;
+          if (o.itemsScope === "specific" && !itemsByOffer.get(o.id)?.has(ln.itemId)) continue;
+
+          let effPct = 0, discAmt = 0;
+          let price: string | null = null, pct: string | null = null;
+          let bxgY: { buyQty: number; getQty: number; getDiscountPercent: number; freeQty: number } | null = null;
+          // Which lever actually won this offer's evaluation. Sent to the
+          // client so it knows whether to apply price OR discount % — never
+          // both. Without this signal the form would double-discount and
+          // could oscillate when the engine picks "price" but the client
+          // still writes the implicit % derived from it.
+          let mode: "price" | "percent" | "bxgy" = "percent";
+
+          if (o.discountType === "line_pricing") {
+            // Per-item override — only meaningful when itemsScope='specific'
+            // (the user wired the item explicitly).  When 'all', line_pricing
+            // has no concrete numbers to apply, so it's a no-op.
+            const link = itemsByOffer.get(o.id)?.get(ln.itemId);
+            if (!link) continue;
+            const minQty = Number(link.qty ?? 0) || 0;
+            if (ln.qty < minQty) continue;
+            price = link.price;
+            pct   = link.discount;
+            // Pick whichever lever (price override OR % off) saves the customer
+            // more money.  Either or both may be set.
+            const np = price != null ? Number(price) : NaN;
+            if (Number.isFinite(np) && np >= 0 && np < ln.unitPrice) {
+              const a = (ln.unitPrice - np) * ln.qty;
+              if (a > discAmt) { discAmt = a; effPct = (1 - np / ln.unitPrice) * 100; mode = "price"; }
+            }
+            const dp = pct != null ? Number(pct) : NaN;
+            if (Number.isFinite(dp) && dp > 0) {
+              const a = lineGross * (Math.min(100, dp) / 100);
+              if (a > discAmt) { discAmt = a; effPct = Math.min(100, dp); mode = "percent"; }
+            }
+          } else {
+            // buy_x_get_y — every (X+Y) units triggers Y units at the configured
+            // discount %.  Remainder qty pays full price.  Matches Odoo / SAP B1.
+            const X = Number(o.buyQty ?? 0);
+            const Y = Number(o.getQty ?? 0);
+            const pctOff = Number(o.getDiscountPercent ?? 0);
+            if (X <= 0 || Y <= 0 || pctOff <= 0) continue;
+            const cycles = Math.floor(ln.qty / (X + Y));
+            const freeQty = cycles * Y;
+            if (freeQty <= 0) continue;
+            discAmt = freeQty * ln.unitPrice * (Math.min(100, pctOff) / 100);
+            effPct  = lineGross > 0 ? (discAmt / lineGross) * 100 : 0;
+            bxgY    = { buyQty: X, getQty: Y, getDiscountPercent: pctOff, freeQty };
+            mode    = "bxgy";
+          }
+
+          if (discAmt <= 0) continue;
+          // Tie-break: higher priority first, then bigger absolute saving.
+          if (!best
+              || o.priority > best.offer.priority
+              || (o.priority === best.offer.priority && discAmt > best.lineDiscAmt)) {
+            best = { offer: o, effectivePct: effPct, lineDiscAmt: discAmt, price, pct, bxgY, mode };
+          }
+        }
+
+        if (best) {
+          lineMatches[ln.lineKey] = {
+            offerId:              best.offer.id,
+            offerNumber:          best.offer.offerNumber,
+            nameAr:               best.offer.nameAr,
+            discountType:         best.offer.discountType,
+            suggestedPrice:       best.price,
+            suggestedDiscountPct: best.pct,
+            // Round to 4 decimals so "12.5" stays clean and we don't surface
+            // floating-point dust in the discount cell.
+            effectiveDiscountPct: Math.round(best.effectivePct * 10000) / 10000,
+            lineDiscountAmount:   Math.round(best.lineDiscAmt   * 100)   / 100,
+            buyXGetY:             best.bxgY,
+            // Authoritative signal for the form: tells it which lever to
+            // apply (and therefore which fields it owns).
+            //   "price"  → set unitPrice = suggestedPrice, discount = 0
+            //   "percent"→ set discount = effectiveDiscountPct, leave price
+            //   "bxgy"   → set discount = effectiveDiscountPct, leave price
+            appliedMode:          best.mode,
+          };
+        }
+      }
+
+      // Document-level: best percentage_total / fixed_total against the cart's
+      // gross-before-VAT.  Item scope is intentionally ignored at this layer —
+      // these promos are by definition cart-wide.
+      const cartGross = richLines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+      let docBest: { offer: typeof offers[number]; amount: number } | null = null;
+      for (const o of offers) {
+        if (o.discountType !== "percentage_total" && o.discountType !== "fixed_total") continue;
+        if (!passesCustRepScopes(o)) continue;
+        const minPurchase = Number(o.minPurchaseAmount ?? 0) || 0;
+        if (cartGross < minPurchase) continue;
+        const dv = Number(o.discountValue ?? 0) || 0;
+        if (dv <= 0) continue;
+        const amt = o.discountType === "percentage_total"
+          ? cartGross * (Math.min(100, dv) / 100)
+          : Math.min(dv, cartGross);
+        if (amt <= 0) continue;
+        if (!docBest
+            || o.priority > docBest.offer.priority
+            || (o.priority === docBest.offer.priority && amt > docBest.amount)) {
+          docBest = { offer: o, amount: amt };
+        }
+      }
+      const documentMatch = docBest ? {
+        offerId:                docBest.offer.id,
+        offerNumber:            docBest.offer.offerNumber,
+        nameAr:                 docBest.offer.nameAr,
+        discountType:           docBest.offer.discountType,
+        discountValue:          String(docBest.offer.discountValue ?? "0"),
+        documentDiscountAmount: Math.round(docBest.amount * 100) / 100,
+      } : null;
+
+      res.json({ lineMatches, documentMatch });
+      return;
+    }
+
+    // ── LEGACY MODE: per-item winner only, no compute ─────────────────────
+    const itemsIn: number[] = Array.isArray(req.body?.items)
+      ? req.body.items.map((x: any) => Number(x?.itemId ?? x)).filter(Number.isFinite)
+      : [];
+    if (itemsIn.length === 0) { res.json({ matches: {} }); return; }
+
     const matches: Record<number, any> = {};
     for (const itemId of itemsIn) {
       let best: { offer: typeof offers[number]; price: string | null; discount: string | null; qty: string | null } | null = null;
-
       for (const o of offers) {
-        // Scope check 1 — customer.
-        if (o.customerScope === "specific") {
-          if (!custByOffer.get(o.id)?.has(customerId)) continue;
-        }
-        // Scope check 2 — sales rep (skip if no rep on the invoice but offer
-        // requires a specific one).
-        if (o.salesRepScope === "specific") {
-          if (!salesRepId || !repByOffer.get(o.id)?.has(salesRepId)) continue;
-        }
-        // Scope check 3 — item.  When scope is `all` there's no per-item
-        // pricing, so we surface no price/discount/qty.
+        if (!passesCustRepScopes(o)) continue;
         let price: string | null = null, discount: string | null = null, qty: string | null = null;
         if (o.itemsScope === "specific") {
           const link = itemsByOffer.get(o.id)?.get(itemId);
           if (!link) continue;
           price = link.price; discount = link.discount; qty = link.qty;
         }
-
-        // Tie-breaker: priority (already sorted DESC), then higher discount,
-        // then lower fixed price.
         if (!best) { best = { offer: o, price, discount, qty }; continue; }
-        if (o.priority < best.offer.priority) continue;             // lower priority — skip
+        if (o.priority < best.offer.priority) continue;
         if (o.priority === best.offer.priority) {
           const d  = Number(discount       ?? 0);
           const bd = Number(best.discount  ?? 0);
@@ -614,7 +794,6 @@ router.post("/match", async (req, res) => {
         }
         best = { offer: o, price, discount, qty };
       }
-
       if (best) {
         matches[itemId] = {
           offerId:     best.offer.id,
@@ -627,7 +806,6 @@ router.post("/match", async (req, res) => {
         };
       }
     }
-
     res.json({ matches });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

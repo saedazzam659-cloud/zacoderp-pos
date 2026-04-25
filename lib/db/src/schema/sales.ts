@@ -5,6 +5,7 @@ import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
 import { accountsTable } from "./accounts";
 import { salesRepsTable } from "./salesReps";
+import { offersTable } from "./offers";
 
 // ─── Sales Invoices ──────────────────────────────────────────────────────────
 export const salesInvoiceStatusEnum = pgEnum("sales_invoice_status", [
@@ -52,6 +53,11 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   salesRepId:        integer("sales_rep_id"),
   commissionPct:     numeric("commission_pct",     { precision: 6,  scale: 3 }).notNull().default("0"),
   commissionAmount:  numeric("commission_amount",  { precision: 15, scale: 2 }).notNull().default("0"),
+  // Header-level promotion that produced any document-wide discount
+  // (percentage_total / fixed_total). NULL when no doc-level promo applied or
+  // when only line-level promos (line_pricing / buy_x_get_y) were used.
+  // SET NULL on offer delete so historical invoices survive a deleted offer.
+  documentOfferId:   integer("document_offer_id").references(() => offersTable.id, { onDelete: "set null" }),
   createdAt:      timestamp("created_at").defaultNow().notNull(),
   updatedAt:      timestamp("updated_at").defaultNow().notNull(),
 });
@@ -73,6 +79,9 @@ export const salesInvoiceLinesTable = pgTable("sales_invoice_lines", {
   vatRate:     numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
   lineTotal:   numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
   notes:       text("notes"),
+  // Per-line promotion that influenced this line's price/discount
+  // (line_pricing or buy_x_get_y). NULL when no offer applied to this line.
+  appliedOfferId: integer("applied_offer_id").references(() => offersTable.id, { onDelete: "set null" }),
 });
 
 // ─── Sales Returns ───────────────────────────────────────────────────────────

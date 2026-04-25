@@ -22,7 +22,8 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator, Tag } from "lucide-react";
+import { offersApi } from "@/lib/offersApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -42,6 +43,26 @@ interface DocLine {
   vatRate: string;
   lineTotal: string;
   notes: string;
+  // Promotion that the engine matched to this line (null when no offer
+  // applies). Saved on the invoice line for audit trail; cleared when the
+  // user changes inputs that make the offer no longer qualify.
+  appliedOfferId: number | null;
+  appliedOfferName: string | null;
+  // Snapshot of the field values the engine wrote LAST. Used so that on a
+  // "no match" tick we only revert fields the engine actually owns —
+  // preserving any manual edits the user made on top of (or alongside) an
+  // engine-applied value. Cleared whenever the user types into the field
+  // (handled via updateLine).
+  engineUnitPrice: string | null;
+  engineDiscount:  string | null;
+  // The unit price BEFORE the engine ever touched it. Sent to the matcher
+  // every cycle so the engine evaluates offers against a stable base, never
+  // against its own previous output. Without this, a price-mode line_pricing
+  // offer could flip to percent mode on cycle 2 (because np === unitPrice
+  // makes the price lever yield 0 saving) and stack a discount % on top of
+  // the already-reduced price → cross-cycle double-discount.
+  // Updated only when the user manually edits unitPrice or selects an item.
+  baseUnitPrice: string;
 }
 
 function newLine(): DocLine {
@@ -50,6 +71,9 @@ function newLine(): DocLine {
     unitId: "", unit: "", conversionFactor: "1", warehouseId: "",
     qty: "1", unitPrice: "0", discount: "0", vatRate: "15",
     lineTotal: "0", notes: "",
+    appliedOfferId: null, appliedOfferName: null,
+    engineUnitPrice: null, engineDiscount: null,
+    baseUnitPrice: "0",
   };
 }
 
@@ -114,6 +138,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [salesRepId, setSalesRepId]     = useState("");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [docDiscount, setDocDiscount]   = useState("0");
+  // Document-level promotion that the engine applied (drives docDiscount when
+  // non-null). Cleared automatically when the cart no longer qualifies. Saved
+  // alongside docDiscount so the back-office can audit which offer triggered
+  // the document-wide saving.
+  const [documentOfferId,   setDocumentOfferId]   = useState<number | null>(null);
+  const [documentOfferName, setDocumentOfferName] = useState<string | null>(null);
+  // Latest documentOfferId mirror for the apply-matches effect — lets the
+  // effect know whether the previous cycle applied a doc-offer (so we only
+  // wipe docDiscount when WE set it, never the user's manual entry).
+  const documentOfferIdRef = useRef<number | null>(null);
+  useEffect(() => { documentOfferIdRef.current = documentOfferId; }, [documentOfferId]);
   const [lines,     setLines]           = useState<DocLine[]>(() => {
     const l = newLine();
     return [l];
@@ -312,7 +347,27 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
       lineTotal:   String(l.lineTotal),
       notes:       l.notes ?? "",
+      // Carry forward the historical offer link so the badge shows on edit.
+      // The auto-match effect may overwrite this with a fresh decision when
+      // the cart still qualifies, or clear it when conditions changed.
+      appliedOfferId:   l.appliedOfferId   ? Number(l.appliedOfferId)        : null,
+      appliedOfferName: l.appliedOfferName ? String(l.appliedOfferName)      : null,
+      // Treat persisted offer values as engine-owned on load so a re-match
+      // on no-qualify can revert them; the matcher will overwrite these
+      // refs as soon as it runs against the loaded cart.
+      engineUnitPrice:  l.appliedOfferId ? String(l.unitPrice ?? "0")        : null,
+      engineDiscount:   l.appliedOfferId ? String(l.discount  ?? "0")        : null,
+      // Best-effort: persisted unitPrice IS the base for non-engine-owned
+      // lines, and is the post-override price for engine-owned ones (we
+      // didn't save the original). Acceptable trade-off — on no-match the
+      // line drops out cleanly; on still-qualify the engine writes the same
+      // value and idempotency holds.
+      baseUnitPrice:    String(l.unitPrice ?? "0"),
     })) : [newLine()]);
+    if (isInvoice) {
+      setDocumentOfferId(existing.documentOfferId ? Number(existing.documentOfferId) : null);
+      setDocumentOfferName(existing.documentOfferName ? String(existing.documentOfferName) : null);
+    }
   }, [existing]);
 
   // ── Duplicate from another document (?from=<id> on /new) ──
@@ -365,7 +420,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
           lineTotal:   String(l.lineTotal),
           notes:       l.notes ?? "",
+          // Don't carry the historical offer onto a duplicate — the new
+          // invoice will get a fresh match cycle.
+          appliedOfferId:   null,
+          appliedOfferName: null,
+          engineUnitPrice:  null,
+          engineDiscount:   null,
+          baseUnitPrice:    String(l.unitPrice ?? "0"),
         })) : [newLine()]);
+        // Same logic for the document offer — duplicate gets a fresh match.
+        setDocumentOfferId(null);
+        setDocumentOfferName(null);
         toast({ title: t("salesDocForm.toastDuplicated") });
         const url = new URL(window.location.href);
         url.searchParams.delete("from");
@@ -378,7 +443,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   function updateLine(id: string, field: keyof DocLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
-      const updated = { ...l, [field]: value };
+      const updated: DocLine = { ...l, [field]: value };
+      // User typing into unitPrice or discount means they're taking over
+      // that field. Drop the engine-owned snapshot for it so the matcher's
+      // next "no match" pass won't silently revert their value to 0 / the
+      // engine's prior write. Keep the badge if the OTHER field is still
+      // engine-owned, otherwise also clear the offer link.
+      if (field === "unitPrice" && value !== l.engineUnitPrice) {
+        updated.engineUnitPrice = null;
+        // User typed a new unit price — that's the new base for matching.
+        updated.baseUnitPrice = value || "0";
+      }
+      if (field === "discount" && value !== l.engineDiscount) {
+        updated.engineDiscount = null;
+      }
+      if (l.appliedOfferId && updated.engineUnitPrice === null && updated.engineDiscount === null) {
+        updated.appliedOfferId = null;
+        updated.appliedOfferName = null;
+      }
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
@@ -417,6 +499,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
+      const newPrice = trimTrailingZeros(chosenPrice);
       const updated: DocLine = {
         ...l,
         itemId:    String(item.id),
@@ -425,7 +508,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         unitId:    chosenUnitId ? String(chosenUnitId) : "",
         unit:      chosenUnitName,
         conversionFactor: String(chosenFactor),
-        unitPrice: trimTrailingZeros(chosenPrice),
+        unitPrice: newPrice,
+        // Picking a new item resets the engine ownership and the matching
+        // base — the catalog price IS the new base.
+        baseUnitPrice: newPrice,
+        engineUnitPrice: null,
+        engineDiscount:  null,
+        appliedOfferId:  null,
+        appliedOfferName: null,
+        discount:  "0",
         vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
@@ -439,18 +530,165 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const itemUnits = itemUnitsMap[l.itemId] ?? [];
       const row = itemUnits.find((u: any) => String(u.unitId) === newUnitId);
       const globalUnit = units.find((u: any) => String(u.id) === newUnitId);
+      // If item has this unit configured, snap to its salePrice; either way
+      // a unit change resets the matching base (the item now has a new
+      // catalog price for this unit) and clears any engine ownership /
+      // applied offer — it must be re-evaluated next cycle.
+      const newPrice = row?.salePrice != null ? trimTrailingZeros(row.salePrice) : l.unitPrice;
       const updated: DocLine = {
         ...l,
         unitId: newUnitId,
         unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
-        // If item has this unit configured, snap to its salePrice
-        unitPrice: row?.salePrice != null ? trimTrailingZeros(row.salePrice) : l.unitPrice,
+        unitPrice: newPrice,
+        baseUnitPrice: newPrice,
+        engineUnitPrice: null,
+        engineDiscount:  null,
+        appliedOfferId:  null,
+        appliedOfferName: null,
+        discount:  "0",
       };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2) };
     }));
   }
+
+  // ── Promotion engine ─────────────────────────────────────────────────
+  // The server is authoritative for promo math (it already filters by
+  // tenant + active window + scopes). The form sends the cart whenever it
+  // changes; the apply-effect below maps the response back onto the lines
+  // and the document discount field. Only invoice mode runs offers — the
+  // quotation form ships pricing manually.
+  // Sig is keyed off baseUnitPrice (NOT unitPrice) so the engine's own
+  // writes don't trigger a re-fetch — that's what closes the cross-cycle
+  // double-discount loop the architect flagged.
+  const cartSig = lines
+    .filter(l => l.itemId && Number(l.qty) > 0 && Number(l.baseUnitPrice) > 0)
+    .map(l => `${l._id}:${l.itemId}:${l.qty}:${l.baseUnitPrice}`)
+    .join("|");
+  const matchEnabled = isInvoice && !!user && !!customerId && cartSig.length > 0;
+  const matchCartQuery = useQuery({
+    queryKey: ["offers-match-cart", cid, customerId, salesRepId, cartSig],
+    queryFn: async () => {
+      const cartLines = lines
+        .filter(l => l.itemId && Number(l.qty) > 0 && Number(l.baseUnitPrice) > 0)
+        .map(l => ({
+          lineKey:   l._id,
+          itemId:    Number(l.itemId),
+          qty:       Number(l.qty),
+          // ALWAYS send the base (pre-engine) unit price — never the current
+          // displayed unitPrice, which may have been overwritten by a
+          // previous price-mode match. Sending the post-mutation price would
+          // let the engine re-evaluate against its own output and stack a
+          // percent discount on top of an already-reduced price.
+          unitPrice: Number(l.baseUnitPrice),
+        }));
+      return offersApi.matchCart({
+        companyId:  cid,
+        customerId: Number(customerId),
+        salesRepId: salesRepId ? Number(salesRepId) : null,
+        applyTo:    "invoice",
+        lines:      cartLines,
+      });
+    },
+    enabled: matchEnabled,
+    // Small stale window so rapid edits batch into one network round-trip
+    // instead of firing on every keystroke.
+    staleTime: 800,
+  });
+
+  // Apply matches whenever the engine returns fresh data. The setLines
+  // callback compares each line against the proposed update and skips the
+  // setState when nothing changed — that's what keeps us out of an infinite
+  // re-fire loop (the cache key includes unitPrice, which line_pricing may
+  // overwrite, so without the no-op guard we'd loop forever).
+  useEffect(() => {
+    const data = matchCartQuery.data;
+    if (!data) return;
+
+    setLines(prev => {
+      let changed = false;
+      const next = prev.map(l => {
+        const m = data.lineMatches[l._id];
+        if (m) {
+          // Trust the engine's `appliedMode` to decide which field this
+          // offer owns — never write both unitPrice AND discount, that's
+          // the double-discount oscillation bug. "price" mode means the
+          // line_pricing offer beat the % lever and the unit price drop
+          // already encodes the saving, so discount must be zeroed.
+          // In price mode we replace unitPrice with the offer's price; in
+          // every other mode (percent / bxgy / no-price-on-offer) the
+          // unitPrice should snap back to the base so a previous price-mode
+          // overwrite is undone before the percent discount is applied.
+          const targetPrice =
+            m.appliedMode === "price" && m.suggestedPrice
+              ? trimTrailingZeros(m.suggestedPrice)
+              : l.baseUnitPrice;
+          const targetDiscount =
+            m.appliedMode === "price" ? "0" : String(m.effectiveDiscountPct);
+          if (l.appliedOfferId === m.offerId
+              && l.discount === targetDiscount
+              && l.unitPrice === targetPrice) return l;
+          changed = true;
+          const updated: DocLine = {
+            ...l,
+            appliedOfferId:   m.offerId,
+            appliedOfferName: m.nameAr ?? m.offerNumber,
+            discount:         targetDiscount,
+            unitPrice:        targetPrice,
+            // Snapshot the values we just wrote — used by updateLine to
+            // detect manual overrides and by the no-match branch below to
+            // know what's safe to revert.
+            engineUnitPrice:  m.appliedMode === "price" ? targetPrice : null,
+            engineDiscount:   m.appliedMode === "price" ? null : targetDiscount,
+          };
+          const { lineTotal } = calcLine(updated, priceIncludesVat);
+          return { ...updated, lineTotal: lineTotal.toFixed(2) };
+        }
+        // No match this cycle — only revert fields the engine actually
+        // owned, leaving any manual overrides intact. If the user already
+        // edited away from the engine value, those engine-owned snapshots
+        // are already null (cleared in updateLine), so we'd skip the field.
+        if (l.appliedOfferId) {
+          changed = true;
+          const updated: DocLine = {
+            ...l,
+            appliedOfferId: null,
+            appliedOfferName: null,
+            // Only zero the discount if the engine owned it AND user didn't
+            // touch it (engineDiscount === current discount).
+            discount: l.engineDiscount !== null && l.engineDiscount === l.discount
+              ? "0"
+              : l.discount,
+            // If the engine owned unitPrice (price-mode line_pricing) and
+            // the user didn't override it since, snap back to baseUnitPrice
+            // — restores the original catalog price when the offer expires.
+            unitPrice: l.engineUnitPrice !== null && l.engineUnitPrice === l.unitPrice
+              ? l.baseUnitPrice
+              : l.unitPrice,
+            engineUnitPrice: null,
+            engineDiscount: null,
+          };
+          const { lineTotal } = calcLine(updated, priceIncludesVat);
+          return { ...updated, lineTotal: lineTotal.toFixed(2) };
+        }
+        return l;
+      });
+      return changed ? next : prev;
+    });
+
+    // Document-level discount: same "only touch what we own" guard.
+    if (data.documentMatch) {
+      setDocumentOfferId(data.documentMatch.offerId);
+      setDocumentOfferName(data.documentMatch.nameAr ?? data.documentMatch.offerNumber);
+      setDocDiscount(String(data.documentMatch.documentDiscountAmount));
+    } else if (documentOfferIdRef.current !== null) {
+      setDocumentOfferId(null);
+      setDocumentOfferName(null);
+      setDocDiscount("0");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchCartQuery.data, priceIncludesVat]);
 
   const subtotal    = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).subtotal, 0);
   const vatAmount   = lines.reduce((s, l) => s + calcLine(l, priceIncludesVat).vat,      0);
@@ -501,10 +739,20 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       discountAmount: discountAmt.toFixed(2), totalAmount: totalAmount.toFixed(2),
       priceIncludesVat,
       notes: notes || null,
-      lines: lines.filter(l => l.itemName).map(l => ({ ...l, _id: undefined })),
+      // Strip the local-only `_id` and `appliedOfferName` (display-only) but
+      // keep `appliedOfferId` so the server persists the audit-trail FK.
+      lines: lines.filter(l => l.itemName).map(l => ({
+        ...l,
+        _id: undefined,
+        appliedOfferName: undefined,
+      })),
     };
     if (isInvoice) {
       base.invoiceDate = docDate;
+      // Header-level offer FK — sent on every save (including null) so the
+      // engine can clear a previously-applied doc offer when conditions
+      // change. Quotations don't run offers.
+      base.documentOfferId = documentOfferId || null;
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.bankAccountId = paymentType === "bank" ? (bankAccountId || null) : null;
@@ -622,9 +870,19 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                       })()}
                       <Input className="h-8 text-xs" type="text" inputMode="numeric" dir="ltr" value={l.qty}
                         onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9]/g, ""))} />
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
+                      <Input
+                        className={cn(
+                          "h-8 text-xs",
+                          l.appliedOfferId && l.appliedOfferName && "bg-emerald-50 border-emerald-300 text-emerald-800"
+                        )}
+                        type="text" inputMode="decimal" dir="ltr" value={l.unitPrice}
                         onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
-                      <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.discount}
+                      <Input
+                        className={cn(
+                          "h-8 text-xs",
+                          l.appliedOfferId && "bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold"
+                        )}
+                        type="text" inputMode="decimal" dir="ltr" value={l.discount}
                         onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
                       <Input className="h-8 text-xs" type="text" inputMode="decimal" dir="ltr" value={l.vatRate}
                         onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
@@ -636,6 +894,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
+                    {l.appliedOfferId && l.appliedOfferName && (
+                      <div className="mt-1 ms-1 flex items-center gap-1.5 text-[10px] text-emerald-700" data-testid={`applied-offer-${l._id}`}>
+                        <Tag className="h-3 w-3" />
+                        <span>
+                          {t("salesDocForm.appliedOfferLine", { name: l.appliedOfferName, discount: l.discount })}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ))}
                 </div>
@@ -688,6 +954,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </div>
                   )}
                   <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
+                  {documentOfferId && documentOfferName && (
+                    <div
+                      className="flex items-start gap-1.5 -mt-1 px-2 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800"
+                      data-testid="applied-document-offer"
+                    >
+                      <Tag className="h-3 w-3 mt-0.5 shrink-0" />
+                      <div className="flex-1 text-[10px] leading-relaxed">
+                        <p className="font-semibold">{t("salesDocForm.appliedOffer")}: {documentOfferName}</p>
+                        <p>{t("salesDocForm.appliedOfferDocumentHint", { name: documentOfferName })}</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
                     <span>{priceIncludesVat ? t("salesDocForm.totalLabelInclusive") : t("salesDocForm.totalLabel")}</span>
                     <span className="font-mono text-primary">{fmt(totalAmount)}</span>

@@ -177,7 +177,12 @@
     "toastInvoiceCreated": "✓ Invoice created and posted",
     "toastQuotationCreated": "✓ Quotation created",
     "toastInvoiceSaved": "✓ Saved and posted",
-    "toastQuotationSaved": "✓ Saved"
+    "toastQuotationSaved": "✓ Saved",
+    "appliedOffer": "Applied offer",
+    "appliedOfferLine": "Offer “{{name}}” applied to this line ({{discount}}%)",
+    "appliedOfferDocument": "Document offer discount",
+    "appliedOfferDocumentHint": "Offer “{{name}}” applied to the invoice total",
+    "appliedOfferBuyXGetY": "Buy {{buy}}, get {{get}} at {{pct}}% off"
   },
   "salesQuotations": {
     "title": "Quotations",

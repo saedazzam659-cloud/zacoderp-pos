@@ -177,7 +177,12 @@
     "toastInvoiceCreated": "✓ تم إنشاء الفاتورة وترحيلها",
     "toastQuotationCreated": "✓ تم إنشاء العرض",
     "toastInvoiceSaved": "✓ تم الحفظ والترحيل",
-    "toastQuotationSaved": "✓ تم الحفظ"
+    "toastQuotationSaved": "✓ تم الحفظ",
+    "appliedOffer": "العرض المطبق",
+    "appliedOfferLine": "تم تطبيق العرض «{{name}}» على هذا الصنف ({{discount}}%)",
+    "appliedOfferDocument": "خصم العرض على الإجمالي",
+    "appliedOfferDocumentHint": "تم تطبيق العرض «{{name}}» على إجمالي الفاتورة",
+    "appliedOfferBuyXGetY": "اشترِ {{buy}} واحصل على {{get}} بخصم {{pct}}%"
   },
   "salesQuotations": {
     "title": "عروض الأسعار",

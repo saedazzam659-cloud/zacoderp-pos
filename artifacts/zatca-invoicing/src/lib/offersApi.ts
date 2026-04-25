@@ -115,7 +115,51 @@ export const offersApi = {
   activate: (id: number, cid?: number) => req<{ ok: true }>("POST", `/${id}/activate${cid ? `?companyId=${cid}` : ""}`),
   expire:   (id: number, cid?: number) => req<{ ok: true }>("POST", `/${id}/expire${cid ? `?companyId=${cid}` : ""}`),
   remove:   (id: number, cid?: number) => req<{ ok: true }>("DELETE", `/${id}${cid ? `?companyId=${cid}` : ""}`),
+  // Legacy match — kept for any caller that still sends `items: [{itemId}]`.
+  // Returns the simple per-item match (one winning offer per item, no compute).
   match:    (payload: { customerId: number; salesRepId?: number; items: { itemId: number }[]; companyId?: number }) =>
     req<{ matches: Record<string, { offerId: number; offerNumber: string; priority: number; nameAr: string | null; price: string | null; discount: string | null; qty: string | null }> }>(
       "POST", "/match", payload),
+
+  // Rich match: send the cart with qty/unitPrice and get back the computed
+  // discount per line PLUS any document-wide discount the engine selected.
+  // The form uses this as the single source of truth for promo math —
+  // backend is authoritative so two browsers can't disagree.
+  matchCart: (payload: {
+    customerId: number;
+    salesRepId?: number | null;
+    applyTo?: "invoice" | "pos";
+    lines: { lineKey: string; itemId: number; qty: number; unitPrice: number }[];
+    companyId?: number;
+  }) =>
+    req<{
+      lineMatches: Record<string, {
+        offerId: number;
+        offerNumber: string;
+        nameAr: string | null;
+        discountType: OfferDiscountType;
+        // For line_pricing: surfaced from offer_items
+        suggestedPrice: string | null;
+        suggestedDiscountPct: string | null;
+        // The effective discount % to apply to this line (after BxGy compute)
+        effectiveDiscountPct: number;
+        // The discount amount this offer saved on this line (gross-before-VAT)
+        lineDiscountAmount: number;
+        // Buy-X-get-Y breakdown for transparency in the UI
+        buyXGetY: { buyQty: number; getQty: number; getDiscountPercent: number; freeQty: number } | null;
+        // Authoritative signal: which lever the engine actually picked.
+        //   "price"  → form should set unitPrice and zero discount
+        //   "percent"→ form should set discount %, leave unitPrice
+        //   "bxgy"   → form should set discount %, leave unitPrice
+        appliedMode: "price" | "percent" | "bxgy";
+      }>;
+      documentMatch: null | {
+        offerId: number;
+        offerNumber: string;
+        nameAr: string | null;
+        discountType: OfferDiscountType;
+        discountValue: string;
+        documentDiscountAmount: number;
+      };
+    }>("POST", "/match", payload),
 };
