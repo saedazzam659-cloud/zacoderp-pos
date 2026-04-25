@@ -63,7 +63,9 @@ function ksaDateKey(now: Date): string {
 // Decides whether the daily tick should fire right now: schedule is enabled,
 // we've crossed the configured local time of day, and we haven't already run
 // today (lastRunAt is on a different KSA-local date).
-function isDailyDue(
+// Exported so the maintenance test suite can pin this behaviour at the unit
+// level (the only other call site is the in-process tick loop below).
+export function isDailyDue(
   now: Date,
   cfg: { enabled: boolean; hourOfDay: number; minuteOfHour: number; lastRunAt: Date | null },
 ): boolean {

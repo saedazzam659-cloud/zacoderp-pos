@@ -246,8 +246,8 @@ export async function checkNegativeStock(
            sb.avg_cost::text AS "avgCost",
            sb.updated_at   AS "updatedAt",
            i.code          AS "itemCode",
-           COALESCE(i.name_ar, i.name)         AS "itemName",
-           COALESCE(w.name_ar, w.name)         AS "warehouseName"
+           COALESCE(i.name_ar, i.name_en)      AS "itemName",
+           COALESCE(w.name_ar, w.name_en)      AS "warehouseName"
       FROM stock_balance sb
       JOIN items      i ON i.id = sb.item_id
       JOIN warehouses w ON w.id = sb.warehouse_id
@@ -289,8 +289,8 @@ export async function checkStockBalanceDrift(
            COALESCE(l.qty, 0)::text                 AS "ledgerQty",
            (COALESCE(b.qty, 0) - COALESCE(l.qty, 0))::text AS "drift",
            i.code  AS "itemCode",
-           COALESCE(i.name_ar, i.name) AS "itemName",
-           COALESCE(w.name_ar, w.name) AS "warehouseName"
+           COALESCE(i.name_ar, i.name_en) AS "itemName",
+           COALESCE(w.name_ar, w.name_en) AS "warehouseName"
       FROM bal b
       FULL OUTER JOIN led l
         ON l.item_id = b.item_id AND l.warehouse_id = b.warehouse_id
