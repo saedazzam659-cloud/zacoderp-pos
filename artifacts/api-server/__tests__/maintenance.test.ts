@@ -109,6 +109,18 @@ let dirtyCompanyId: number;
 // to the company under check.
 let otherCompanyId: number;
 
+// Schema-pin company: a third tenant freshly seeded with **multiple** items
+// and warehouses. Used by the `schema-pin: every check returns the documented
+// shape` block to defend against silent column drift in the JOINed checks
+// (e.g. negative-stock, stock-balance-drift). Two checks previously broke
+// when an items/warehouses column was renamed — the per-check tests above
+// only seed one item+warehouse so the JOIN had a single row to match and
+// the bug surfaced as "count=1, error=null". With multiple items+warehouses
+// the JOIN is forced to discriminate, so any column rename trips the SQL.
+let schemaCompanyId: number;
+const schemaWarehouseIds: number[] = [];
+const schemaItemIds: number[]      = [];
+
 // Cleanup tracking — strict by primary key.
 const insertedCompanyIds:        number[] = [];
 const insertedUserIds:           number[] = [];
@@ -251,6 +263,211 @@ before(async () => {
   }).returning({ id: usersTable.id });
   regularUserId = u.id;
   insertedUserIds.push(regularUserId);
+
+  // ─── Schema-pin tenant ──────────────────────────────────────────────────
+  // Fresh company seeded with 2 warehouses + 3 items + a row per check that
+  // exercises the JOIN paths. A schema rename in items/warehouses (or any of
+  // the other tables a check joins against) breaks the SELECT here even
+  // though the simpler per-check tests above can still pass with their
+  // single-item seed.
+  const [schemaCo] = await db.insert(companiesTable).values({
+    nameAr:         `${TEST_TAG} شركة الاختبار S`,
+    nameEn:         `${TEST_TAG} Test Co S`,
+    vatNumber:      `300000000000${("S".charCodeAt(0)) % 10}`,
+    crNumber:       `CR_${TEST_TAG}_S`,
+    city:           "Riyadh",
+    street:         "Test St",
+    buildingNumber: "1",
+    postalCode:     "12345",
+    country:        "SA",
+    invoiceType:    "both",
+    status:         "active",
+  }).returning({ id: companiesTable.id });
+  schemaCompanyId = schemaCo.id;
+  insertedCompanyIds.push(schemaCompanyId);
+
+  // Two warehouses — both get bilingual names so the COALESCE(name_ar, name_en)
+  // expression in the JOIN cannot mask a missing column by silently falling
+  // back to the other.
+  const wh = await db.insert(warehousesTable).values([
+    { companyId: schemaCompanyId, code: `${TEST_TAG}-S-WH-A`,
+      nameAr: `مستودع ${TEST_TAG} A`, nameEn: `Warehouse ${TEST_TAG} A`, isActive: true },
+    { companyId: schemaCompanyId, code: `${TEST_TAG}-S-WH-B`,
+      nameAr: `مستودع ${TEST_TAG} B`, nameEn: `Warehouse ${TEST_TAG} B`, isActive: true },
+  ]).returning({ id: warehousesTable.id });
+  schemaWarehouseIds.push(wh[0].id, wh[1].id);
+  insertedWarehouseIds.push(wh[0].id, wh[1].id);
+
+  // Three items, all bilingual so the same COALESCE rule applies to itemName.
+  const its = await db.insert(itemsTable).values([
+    { companyId: schemaCompanyId, code: `${TEST_TAG}-S-IT-1`,
+      nameAr: `صنف ${TEST_TAG} 1`, nameEn: `Item ${TEST_TAG} 1`,
+      itemType: "stock", costPrice: "10", salePrice: "15" },
+    { companyId: schemaCompanyId, code: `${TEST_TAG}-S-IT-2`,
+      nameAr: `صنف ${TEST_TAG} 2`, nameEn: `Item ${TEST_TAG} 2`,
+      itemType: "stock", costPrice: "20", salePrice: "30" },
+    { companyId: schemaCompanyId, code: `${TEST_TAG}-S-IT-3`,
+      nameAr: `صنف ${TEST_TAG} 3`, nameEn: `Item ${TEST_TAG} 3`,
+      itemType: "stock", costPrice: "30", salePrice: "45" },
+  ]).returning({ id: itemsTable.id });
+  schemaItemIds.push(its[0].id, its[1].id, its[2].id);
+  insertedItemIds.push(its[0].id, its[1].id, its[2].id);
+
+  // Negative-stock + drift seed: three (item, warehouse) pairs all with
+  // qty<0 — the SQL must JOIN each one back to its items / warehouses row
+  // for itemName + warehouseName. A column rename would either fail the
+  // query or yield NULL placeholders the shape test catches.
+  const sb = await db.insert(stockBalanceTable).values([
+    { companyId: schemaCompanyId, itemId: its[0].id, warehouseId: wh[0].id, qty: "-3", avgCost: "10" },
+    { companyId: schemaCompanyId, itemId: its[1].id, warehouseId: wh[0].id, qty: "-7", avgCost: "20" },
+    { companyId: schemaCompanyId, itemId: its[2].id, warehouseId: wh[1].id, qty: "-2", avgCost: "30" },
+  ]).returning({ id: stockBalanceTable.id });
+  for (const r of sb) insertedStockBalanceIds.push(r.id);
+
+  // Drift seed: seed ledger movements that disagree with the stored balances
+  // above. The third row (item-3, warehouse-A) has no balance row at all to
+  // exercise the FULL OUTER JOIN edge case the SQL guards against.
+  const sl = await db.insert(stockLedgerTable).values([
+    // Pair 1: stored=-3, ledger=0 → drift=-3 (skip ledger insert)
+    // Pair 2: stored=-7, ledger=+5 → drift=-12
+    { companyId: schemaCompanyId, itemId: its[1].id, warehouseId: wh[0].id, txDate: "2025-06-01",
+      txType: "purchase", qty: "5", costPrice: "20", totalCost: "100", balanceQty: "5",
+      refId: 1, refType: "purchase_invoice" },
+    // Pair 3: stored=-2, ledger=+1 → drift=-3
+    { companyId: schemaCompanyId, itemId: its[2].id, warehouseId: wh[1].id, txDate: "2025-06-01",
+      txType: "purchase", qty: "1", costPrice: "30", totalCost: "30", balanceQty: "1",
+      refId: 2, refType: "purchase_invoice" },
+    // Edge case: ledger movement with NO matching stock_balance row.
+    // Forces the FULL OUTER JOIN's right-side branch to execute.
+    { companyId: schemaCompanyId, itemId: its[2].id, warehouseId: wh[0].id, txDate: "2025-06-02",
+      txType: "purchase", qty: "10", costPrice: "30", totalCost: "300", balanceQty: "10",
+      refId: 3, refType: "purchase_invoice" },
+    // Orphan-stock seed: ledger row pointing at a non-existent invoice.
+    { companyId: schemaCompanyId, itemId: its[0].id, warehouseId: wh[0].id, txDate: "2025-06-03",
+      txType: "sale", qty: "1", costPrice: "10", totalCost: "10", balanceQty: "0",
+      refId: 2_000_000_000, refType: "sales_invoice" },
+  ]).returning({ id: stockLedgerTable.id });
+  for (const r of sl) insertedStockLedgerIds.push(r.id);
+
+  // journal-pending seed: TWO old drafts so the items array has length>=2.
+  const oldCreatedAt = new Date(Date.now() - 45 * 86_400_000);
+  const jeOld = await db.insert(journalEntriesTable).values([
+    { companyId: schemaCompanyId, docNumber: `${TEST_TAG}-S-JE-OLD-1`,
+      entryDate: "2025-01-01", description: "old draft 1",
+      status: "draft", createdAt: oldCreatedAt, updatedAt: oldCreatedAt },
+    { companyId: schemaCompanyId, docNumber: `${TEST_TAG}-S-JE-OLD-2`,
+      entryDate: "2025-01-02", description: "old draft 2",
+      status: "draft", createdAt: oldCreatedAt, updatedAt: oldCreatedAt },
+  ]).returning({ id: journalEntriesTable.id });
+  for (const r of jeOld) insertedJournalEntryIds.push(r.id);
+
+  // broken-refs seed: 2 sales (one missing JE, one stale JE) + 1 purchase (stale JE).
+  const si = await db.insert(salesInvoicesTable).values([
+    { companyId: schemaCompanyId, invoiceDate: "2025-06-01", paymentType: "cash",
+      currencyCode: "SAR", exchangeRate: "1", subtotal: "100", vatAmount: "0",
+      discountAmount: "0", totalAmount: "100", status: "posted",
+      docNumber: `${TEST_TAG}-S-SI-MISS` },
+    { companyId: schemaCompanyId, invoiceDate: "2025-06-02", paymentType: "cash",
+      currencyCode: "SAR", exchangeRate: "1", subtotal: "200", vatAmount: "0",
+      discountAmount: "0", totalAmount: "200", status: "posted",
+      docNumber: `${TEST_TAG}-S-SI-STALE`, journalEntryId: 2_000_000_001 },
+  ]).returning({ id: salesInvoicesTable.id });
+  for (const r of si) insertedSalesInvoiceIds.push(r.id);
+
+  const pi = await db.insert(purchaseInvoicesTable).values({
+    companyId: schemaCompanyId, invoiceDate: "2025-06-03", paymentType: "cash",
+    currencyCode: "SAR", exchangeRate: "1", subtotal: "300", vatAmount: "0",
+    discountAmount: "0", totalAmount: "300", status: "posted",
+    docNumber: `${TEST_TAG}-S-PI-STALE`, journalEntryId: 2_000_000_002,
+  }).returning({ id: purchaseInvoicesTable.id });
+  insertedPurchaseInvoiceIds.push(pi[0].id);
+
+  // unlinked-accounts seed: foreign account in a JE line on the schema company.
+  const [foreignAcct] = await db.insert(accountsTable).values({
+    companyId: otherCompanyId, code: `${TEST_TAG}-S-FOREIGN`,
+    nameAr: "حساب أجنبي ع", accountType: "asset",
+    level: 1, isPosting: true, isActive: true,
+  }).returning({ id: accountsTable.id });
+  insertedAccountIds.push(foreignAcct.id);
+
+  const [jeXlink] = await db.insert(journalEntriesTable).values({
+    companyId: schemaCompanyId, docNumber: `${TEST_TAG}-S-JE-XLINK`,
+    entryDate: "2025-06-01", description: "uses foreign account",
+    status: "draft",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalEntryIds.push(jeXlink.id);
+
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: jeXlink.id, accountId: foreignAcct.id, debit: "10", credit: "0",  sortOrder: 0 },
+    { entryId: jeXlink.id, accountId: foreignAcct.id, debit: "0",  credit: "10", sortOrder: 1 },
+  ]);
+
+  // sequence-gaps seed: TWO sequences, each with multiple gaps.
+  const seqs = await db.insert(sequencesTable).values([
+    { companyId: schemaCompanyId, code: `${TEST_TAG}_S_SEQ1`,
+      nameAr: "مسلسل اختبار 1", nameEn: "Test seq 1",
+      prefix: "T1-", startNumber: 1, endNumber: 9999, currentNumber: 4,
+      padLength: 4, isActive: true, transactionTypes: ["sales_invoice"] },
+    { companyId: schemaCompanyId, code: `${TEST_TAG}_S_SEQ2`,
+      nameAr: "مسلسل اختبار 2", nameEn: "Test seq 2",
+      prefix: "T2-", startNumber: 1, endNumber: 9999, currentNumber: 6,
+      padLength: 4, isActive: true, transactionTypes: ["purchase_invoice"] },
+  ]).returning({ id: sequencesTable.id });
+  insertedSequenceIds.push(seqs[0].id, seqs[1].id);
+
+  // dormant-users seed: TWO dormant users on the schema company.
+  const oldLogin = new Date(Date.now() - 200 * 86_400_000);
+  const dormantHash = await bcrypt.hash("ignored", 4);
+  const dormantUsers = await db.insert(usersTable).values([
+    { username: `${TEST_TAG}_S_dormant_1`, email: null, passwordHash: dormantHash,
+      role: "admin", isActive: true, sessionToken: null, sessionId: null,
+      companyId: schemaCompanyId, lastLoginAt: oldLogin },
+    { username: `${TEST_TAG}_S_dormant_2`, email: null, passwordHash: dormantHash,
+      role: "admin", isActive: true, sessionToken: null, sessionId: null,
+      companyId: schemaCompanyId, lastLoginAt: oldLogin },
+  ]).returning({ id: usersTable.id });
+  insertedUserIds.push(dormantUsers[0].id, dormantUsers[1].id);
+
+  // unbalanced-entries seed: TWO posted JEs with debit ≠ credit.
+  const unbal = await db.insert(journalEntriesTable).values([
+    { companyId: schemaCompanyId, docNumber: `${TEST_TAG}-S-JE-UNBAL-1`,
+      entryDate: "2025-06-04", description: "unbalanced 1", status: "posted" },
+    { companyId: schemaCompanyId, docNumber: `${TEST_TAG}-S-JE-UNBAL-2`,
+      entryDate: "2025-06-05", description: "unbalanced 2", status: "posted" },
+  ]).returning({ id: journalEntriesTable.id });
+  insertedJournalEntryIds.push(unbal[0].id, unbal[1].id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: unbal[0].id, accountId: null, debit: "100", credit: "0",  sortOrder: 0 },
+    { entryId: unbal[0].id, accountId: null, debit: "0",   credit: "70", sortOrder: 1 },
+    { entryId: unbal[1].id, accountId: null, debit: "200", credit: "0",   sortOrder: 0 },
+    { entryId: unbal[1].id, accountId: null, debit: "0",   credit: "150", sortOrder: 1 },
+  ]);
+
+  // old-audit-logs seed: TWO rows older than 365 days.
+  const oldAuditAt = new Date(Date.now() - 400 * 86_400_000);
+  const oldAudits = await db.insert(auditLogTable).values([
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: schemaCompanyId, module: "test", action: "view",
+      method: "GET", path: "/api/test/1", statusCode: 200,
+      ip: "127.0.0.1", createdAt: oldAuditAt },
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: schemaCompanyId, module: "test", action: "view",
+      method: "GET", path: "/api/test/2", statusCode: 200,
+      ip: "127.0.0.2", createdAt: oldAuditAt },
+  ]).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(oldAudits[0].id, oldAudits[1].id);
+
+  // old-maintenance-runs seed: TWO rows older than 90 days.
+  const oldRunAt = new Date(Date.now() - 120 * 86_400_000);
+  const oldRuns = await db.insert(maintenanceRunsTable).values([
+    { companyId: schemaCompanyId, toolKey: "journal-pending", status: "ok",
+      count: 0, trigger: "scheduled", runAt: oldRunAt, durationMs: 5,
+      error: null, details: null },
+    { companyId: schemaCompanyId, toolKey: "broken-refs", status: "warn",
+      count: 1, trigger: "scheduled", runAt: oldRunAt, durationMs: 7,
+      error: null, details: null },
+  ]).returning({ id: maintenanceRunsTable.id });
+  insertedMaintenanceRunIds.push(oldRuns[0].id, oldRuns[1].id);
 });
 
 after(async () => {
@@ -1004,6 +1221,297 @@ test("checkOldMaintenanceRuns: counts maintenance_runs older than the threshold"
   assert.ok(r.items!.some((it: { id: number }) => it.id === mr.id),
     "items must include the old maintenance_runs row");
   assert.ok(isObject(r.extras) && r.extras!.days === 90);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Schema-pin: every check returns the documented `items` shape against a
+//  freshly-seeded company with multiple items / warehouses. These tests are
+//  the regression guard for the column-rename bug that crashed
+//  negative-stock and stock-balance-drift in production: the per-check
+//  positive-finding tests above only seed ONE item+warehouse, which lets the
+//  buggy SQL still match its single row. With multiple rows on the JOINed
+//  side, any column rename in items / warehouses (or the other tables a
+//  check references) either fails the SELECT outright or yields NULL
+//  placeholders — both of which trip the field-presence assertions here.
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Helper: every documented field on a row must (a) exist as a key and
+// (b) carry a non-null value (or the explicitly allowed null type). The
+// per-check tests above already prove `count`, so the focus here is
+// strictly on the items payload that powers the operator UI / CSV export.
+type ExpectedKind = "string" | "number" | "date" | "json";
+function assertRowShape(
+  label: string,
+  row: Record<string, unknown>,
+  expected: Record<string, ExpectedKind>,
+): void {
+  for (const [key, kind] of Object.entries(expected)) {
+    assert.ok(key in row, `${label}: missing field "${key}" — likely column rename`);
+    const v = row[key];
+    assert.notEqual(v, null,    `${label}: field "${key}" is null — JOIN missed its target`);
+    assert.notEqual(v, undefined, `${label}: field "${key}" is undefined`);
+    switch (kind) {
+      case "string":
+        assert.equal(typeof v, "string", `${label}: field "${key}" expected string, got ${typeof v}`);
+        assert.ok((v as string).length > 0, `${label}: field "${key}" is empty string`);
+        break;
+      case "number":
+        assert.equal(typeof v, "number", `${label}: field "${key}" expected number, got ${typeof v}`);
+        assert.ok(Number.isFinite(v as number),
+          `${label}: field "${key}" is not finite (${String(v)})`);
+        break;
+      case "date":
+        // pg returns timestamps as Date instances; ISO strings are also acceptable.
+        assert.ok(v instanceof Date || typeof v === "string",
+          `${label}: field "${key}" expected Date|string, got ${typeof v}`);
+        break;
+      case "json":
+        assert.equal(typeof v, "object",
+          `${label}: field "${key}" expected object/array, got ${typeof v}`);
+        break;
+    }
+  }
+}
+
+test("schema-pin: checkJournalPending items expose every documented field", async () => {
+  const r = await checkJournalPending(schemaCompanyId, 30);
+  assert.ok(r.count >= 2, `expected >=2 old drafts, got ${r.count}`);
+  assert.ok(Array.isArray(r.items) && r.items.length >= 2,
+    "items must be a >=2-row array (multi-row seed)");
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("journal-pending", it, {
+      id:          "number",
+      docNumber:   "string",
+      entryDate:   "string", // pg date column → string
+      description: "string",
+      createdAt:   "date",
+      totalDebit:  "string", // ::text cast in SQL
+      totalCredit: "string",
+    });
+  }
+});
+
+test("schema-pin: checkBrokenRefs items expose every documented field for both kinds", async () => {
+  const r = await checkBrokenRefs(schemaCompanyId);
+  assert.ok(r.count >= 3, `expected >=3 broken refs, got ${r.count}`);
+  // Both kinds must appear so we cover both SELECT branches.
+  const kinds = new Set((r.items ?? []).map((it: { kind: string }) => it.kind));
+  assert.ok(kinds.has("sales") && kinds.has("purchase"),
+    `expected both kinds, got ${[...kinds].join(",")}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("broken-refs", it, {
+      id:           "number",
+      docNumber:    "string",
+      invoiceDate:  "string",
+      totalAmount:  "string",
+      reason:       "string",
+      kind:         "string",
+    });
+    // journalEntryId is null on the "missing" branch by definition; check
+    // it's the right type when present.
+    const reason = it.reason as string;
+    if (reason === "stale") {
+      assert.equal(typeof it.journalEntryId, "number",
+        "stale broken-ref must expose a numeric journalEntryId");
+    } else {
+      assert.equal(it.journalEntryId, null,
+        "missing broken-ref must expose journalEntryId=null");
+    }
+  }
+});
+
+test("schema-pin: checkUnlinkedAccounts items expose every documented field", async () => {
+  const r = await checkUnlinkedAccounts(schemaCompanyId);
+  assert.ok(r.count >= 1, `expected >=1 unlinked account, got ${r.count}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("unlinked-accounts", it, {
+      accountId:        "number",
+      lineCount:        "number",
+      sampleEntryId:    "number",
+      sampleDocNumber:  "string",
+    });
+    // The seed put TWO lines on the same JE → lineCount must reflect that.
+    assert.ok((it.lineCount as number) >= 2,
+      `expected lineCount>=2 for the cross-link account, got ${it.lineCount}`);
+  }
+});
+
+test("schema-pin: checkSequenceGaps items + sampleGaps expose every documented field", async () => {
+  const r = await checkSequenceGaps(schemaCompanyId);
+  assert.ok(r.count >= 5, `expected >=5 gaps across 2 sequences, got ${r.count}`);
+  assert.ok((r.items ?? []).length >= 2, "must report both seeded sequences");
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("sequence-gaps", it, {
+      sequenceId:  "number",
+      code:        "string",
+      nameAr:      "string",
+      gapCount:    "number",
+    });
+    const samples = it.sampleGaps as Array<{ number: unknown; formatted: unknown }>;
+    assert.ok(Array.isArray(samples) && samples.length > 0,
+      "sampleGaps must be a non-empty array");
+    for (const s of samples) {
+      assert.equal(typeof s.number, "number",
+        `sequence-gaps.sampleGaps[].number must be a number, got ${typeof s.number}`);
+      assert.equal(typeof s.formatted, "string",
+        `sequence-gaps.sampleGaps[].formatted must be a string, got ${typeof s.formatted}`);
+      assert.ok((s.formatted as string).length > 0,
+        "sequence-gaps.sampleGaps[].formatted must be non-empty");
+    }
+  }
+  assert.ok(isObject(r.extras) && typeof r.extras!.sequencesAffected === "number");
+});
+
+test("schema-pin: checkDormantUsers items expose every documented field", async () => {
+  const r = await checkDormantUsers(schemaCompanyId, 90);
+  assert.ok(r.count >= 2, `expected >=2 dormant users, got ${r.count}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assert.ok("id" in it && typeof it.id === "number", "dormant: id required");
+    assert.ok("username" in it && typeof it.username === "string",
+      "dormant: username required");
+    // email/nameAr/lastLoginAt may legitimately be null per schema; we only
+    // pin the *keys* so a column rename still trips the test.
+    for (const key of ["email", "nameAr", "role", "lastLoginAt", "isActive", "createdAt"]) {
+      assert.ok(key in it, `dormant: missing key "${key}" — likely column rename`);
+    }
+    assert.equal(typeof it.role, "string", "dormant: role must be string");
+    assert.equal(typeof it.isActive, "boolean", "dormant: isActive must be boolean");
+  }
+});
+
+test("schema-pin: checkOrphanStock returns the seeded count", async () => {
+  // Orphan-stock returns count only (no items payload), so we just verify
+  // the SQL still resolves and finds our seeded ledger row pointing at a
+  // non-existent invoice.
+  const r = await checkOrphanStock(schemaCompanyId);
+  assert.ok(r.count >= 1, `expected >=1 orphan ledger row, got ${r.count}`);
+  assert.equal(typeof r.count, "number");
+});
+
+test("schema-pin: checkNegativeStock items expose every documented field across multiple items/warehouses", async () => {
+  const r = await checkNegativeStock(schemaCompanyId);
+  // Three negative-balance pairs were seeded.
+  assert.ok(r.count >= 3, `expected >=3 negative balances, got ${r.count}`);
+  // Distinct items + warehouses must show up — proves the JOIN correctly
+  // discriminates per-row (the bug we are guarding against would either
+  // crash the SELECT or coalesce all rows to NULL placeholders).
+  const items = r.items as Array<Record<string, unknown>>;
+  const seenItems = new Set(items.map((i) => i.itemId as number));
+  const seenWhs   = new Set(items.map((i) => i.warehouseId as number));
+  assert.ok(seenItems.size >= 2, `expected >=2 distinct itemIds, got ${seenItems.size}`);
+  assert.ok(seenWhs.size   >= 2, `expected >=2 distinct warehouseIds, got ${seenWhs.size}`);
+  for (const it of items) {
+    assertRowShape("negative-stock", it, {
+      id:            "number",
+      itemId:        "number",
+      warehouseId:   "number",
+      qty:           "string",
+      avgCost:       "string",
+      updatedAt:     "date",
+      itemCode:      "string",
+      itemName:      "string",
+      warehouseName: "string",
+    });
+    // qty must parse as a negative number.
+    assert.ok(Number(it.qty as string) < 0,
+      `negative-stock row ${it.id} should have qty<0, got ${it.qty}`);
+  }
+});
+
+test("schema-pin: checkStockBalanceDrift items expose every documented field including FULL OUTER edge cases", async () => {
+  const r = await checkStockBalanceDrift(schemaCompanyId);
+  // Three pairs with stored balances + one ledger-only pair = 4 drifting rows.
+  assert.ok(r.count >= 4, `expected >=4 drift rows, got ${r.count}`);
+  const items = r.items as Array<Record<string, unknown>>;
+  for (const it of items) {
+    assertRowShape("stock-balance-drift", it, {
+      itemId:        "number",
+      warehouseId:   "number",
+      storedQty:     "string",
+      ledgerQty:     "string",
+      drift:         "string",
+      itemCode:      "string",
+      itemName:      "string",
+      warehouseName: "string",
+    });
+    // drift must equal storedQty - ledgerQty within 4 decimal places.
+    const stored = Number(it.storedQty as string);
+    const ledger = Number(it.ledgerQty as string);
+    const drift  = Number(it.drift as string);
+    assert.ok(Math.abs((stored - ledger) - drift) < 1e-4,
+      `drift arithmetic broken for row item=${it.itemId}: ${stored} - ${ledger} ≠ ${drift}`);
+    assert.notEqual(drift, 0, "WHERE clause must filter out balanced rows");
+  }
+});
+
+test("schema-pin: checkUnbalancedEntries items expose every documented field", async () => {
+  const r = await checkUnbalancedEntries(schemaCompanyId);
+  assert.ok(r.count >= 2, `expected >=2 unbalanced JEs, got ${r.count}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("unbalanced-entries", it, {
+      id:          "number",
+      docNumber:   "string",
+      entryDate:   "string",
+      description: "string",
+      status:      "string",
+      totalDebit:  "string",
+      totalCredit: "string",
+      diff:        "string",
+      lineCount:   "number",
+    });
+    // diff must equal debit - credit within 2dp (matches SQL ROUND).
+    const d = Number(it.totalDebit  as string);
+    const c = Number(it.totalCredit as string);
+    const diff = Number(it.diff as string);
+    assert.ok(Math.abs((d - c) - diff) < 1e-2,
+      `unbalanced diff arithmetic broken: ${d} - ${c} ≠ ${diff}`);
+    assert.equal(it.status, "posted", "unbalanced check must only return posted JEs");
+  }
+});
+
+test("schema-pin: checkOldAuditLogs items expose every documented field + extras window", async () => {
+  const r = await checkOldAuditLogs(schemaCompanyId, 365);
+  assert.ok(r.count >= 2, `expected >=2 old audit rows, got ${r.count}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    // Some columns are nullable on the audit_log schema (entityType/userAgent
+    // etc.) but the SELECT only returns the always-present subset; pin those.
+    assert.ok("id" in it && typeof it.id === "number");
+    assert.ok("module" in it && typeof it.module === "string");
+    assert.ok("action" in it && typeof it.action === "string");
+    for (const key of ["userId", "username", "role", "method", "path", "statusCode", "ip", "createdAt"]) {
+      assert.ok(key in it, `old-audit-logs: missing key "${key}" — likely column rename`);
+    }
+  }
+  assert.ok(isObject(r.extras), "extras object required");
+  assert.equal((r.extras as { days: number }).days, 365);
+  assert.ok((r.extras as { oldest: unknown }).oldest != null,
+    "extras.oldest must be set when count>0");
+  assert.ok((r.extras as { newest: unknown }).newest != null,
+    "extras.newest must be set when count>0");
+});
+
+test("schema-pin: checkOldMaintenanceRuns items expose every documented field + extras window", async () => {
+  const r = await checkOldMaintenanceRuns(schemaCompanyId, 90);
+  assert.ok(r.count >= 2, `expected >=2 old maint runs, got ${r.count}`);
+  for (const it of r.items as Array<Record<string, unknown>>) {
+    assertRowShape("old-maintenance-runs", it, {
+      id:         "number",
+      toolKey:    "string",
+      status:     "string",
+      count:      "number",
+      trigger:    "string",
+      runAt:      "date",
+      durationMs: "number",
+    });
+    // `error` column is nullable; pin the key only.
+    assert.ok("error" in it, "old-maintenance-runs: missing key \"error\"");
+  }
+  assert.ok(isObject(r.extras), "extras object required");
+  assert.equal((r.extras as { days: number }).days, 90);
+  assert.ok((r.extras as { oldest: unknown }).oldest != null,
+    "extras.oldest must be set when count>0");
+  assert.ok((r.extras as { newest: unknown }).newest != null,
+    "extras.newest must be set when count>0");
 });
 
 // ════════════════════════════════════════════════════════════════════════════
