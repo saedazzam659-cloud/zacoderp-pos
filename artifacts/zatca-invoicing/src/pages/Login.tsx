@@ -479,18 +479,9 @@ export default function Login() {
                 </div>
               )}
 
-              {!isSuperAdminFlow && (
-                <div className="text-center text-xs text-muted-foreground">
-                  <button
-                    type="button"
-                    onClick={() => { setIsSuperAdminFlow(true); setError(""); setInfo(""); }}
-                    className="hover:text-foreground inline-flex items-center gap-1"
-                  >
-                    <ShieldAlert className="h-3 w-3" />
-                    {t("auth.sa.iAmSuperAdmin", "أنا سوبر أدمن — استخدم التحقق المتعدد")}
-                  </button>
-                </div>
-              )}
+              {/* SuperAdmin entry button is hidden by request — superadmins
+                  are auto-routed through the multi-factor flow once the
+                  backend identifies their account from the credentials. */}
             </form>
           )}
 
