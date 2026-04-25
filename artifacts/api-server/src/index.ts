@@ -95,7 +95,14 @@ async function seedSuperAdmin() {
         const updates: Record<string, unknown> = { passwordHash, updatedAt: new Date() };
         if (newEmail) updates.email = newEmail;
         await db.update(usersTable).set(updates).where(eq(usersTable.role, "superadmin"));
-        logger.warn({ emailUpdated: !!newEmail }, "[BOOTSTRAP_SA_RESET] SuperAdmin password reset (and email if provided). REMOVE BOOTSTRAP_SA_RESET env var now.");
+        logger.warn({ emailUpdated: !!newEmail }, "[BOOTSTRAP_SA_RESET] SuperAdmin password reset (and email if provided).");
+      }
+      try {
+        const { superAdminLoginAttemptsTable } = await import("@workspace/db");
+        await db.delete(superAdminLoginAttemptsTable);
+        logger.warn("[BOOTSTRAP_SA_RESET] Cleared SuperAdmin login attempts (risk-score history). REMOVE BOOTSTRAP_SA_RESET env var now.");
+      } catch (clearErr) {
+        logger.error({ err: clearErr }, "[BOOTSTRAP_SA_RESET] Failed to clear login attempts");
       }
     }
   } catch (err) {
