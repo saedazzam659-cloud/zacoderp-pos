@@ -208,34 +208,36 @@ export default function OfferForm() {
         </div>
       </div>
 
-      {/* Top: basic fields */}
-      <div className="bg-card border border-border rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <Label>{t("offers.f.name", "اسم العرض (اختياري)")}</Label>
-          <Input value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder={t("offers.f.namePh", "مثال: عرض رمضان") as string} />
+      {/* Top: basic fields — same column-count + cell sizing as the Purchase
+          Invoice header tab (grid-cols-2 → 4 on lg, h-9/text-sm inputs,
+          text-xs labels, space-y-1.5 cells) so the two forms feel identical. */}
+      <div className="bg-card border border-border rounded-2xl p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("offers.f.name", "اسم العرض (اختياري)")}</Label>
+          <Input className="h-9 text-sm" value={nameAr} onChange={(e) => setNameAr(e.target.value)} placeholder={t("offers.f.namePh", "مثال: عرض رمضان") as string} />
         </div>
-        <div>
-          <Label>{t("offers.f.priority", "الأولوية (1-10)")}</Label>
-          <Input type="number" min={1} max={10} value={priority} onChange={(e) => setPriority(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} />
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("offers.f.priority", "الأولوية (1-10)")}</Label>
+          <Input className="h-9 text-sm" type="number" min={1} max={10} value={priority} onChange={(e) => setPriority(Math.max(1, Math.min(10, Number(e.target.value) || 1)))} />
         </div>
-        <div>
-          <Label>{t("offers.f.expiry", "تاريخ الانتهاء")}</Label>
-          <Input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("offers.f.expiry", "تاريخ الانتهاء")}</Label>
+          <Input className="h-9 text-sm" type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
         </div>
-        <div className="md:col-span-2">
-          <Label>{t("offers.f.description", "الوصف")}</Label>
-          <Input value={description} onChange={(e) => setDescription(e.target.value)} />
-        </div>
-        <div>
-          <Label>{t("offers.f.status", "الحالة")}</Label>
+        <div className="space-y-1.5">
+          <Label className="text-xs">{t("offers.f.status", "الحالة")}</Label>
           <select
-            className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+            className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
             value={status}
             onChange={(e) => setStatus(e.target.value as any)}
           >
             <option value="draft">{t("offers.statusVal.draft", "مسوّدة")}</option>
             <option value="active">{t("offers.statusVal.active", "مفعّل")}</option>
           </select>
+        </div>
+        <div className="space-y-1.5 col-span-2 lg:col-span-4">
+          <Label className="text-xs">{t("offers.f.description", "الوصف")}</Label>
+          <Input className="h-9 text-sm" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
       </div>
 
