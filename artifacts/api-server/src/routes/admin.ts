@@ -4375,6 +4375,62 @@ router.get("/maintenance/runs", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// GET /maintenance/tool-history?companyId=&toolKey=&limit= — drill-down for a
+// single (company, tool) pair that returns the most recent runs *across all
+// days*, not just one. Powers the "click a broken tool" modal on the
+// AICompanyFix maintenance page so SuperAdmins can diagnose a recurring
+// failure without manually filtering the runs table by hand.
+//
+// Distinct from /maintenance/runs (which is keyed by a single KSA-day so the
+// trend-bar drill-down only ever shows one bar's worth of rows). Default
+// limit is 20 (the modal renders 20 rows comfortably) and capped at 50 to
+// match the same ceiling /maintenance/runs uses.
+//
+// Read-only and audit-free — same rationale as /maintenance/runs.
+router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = Number(req.query.companyId);
+    if (!Number.isInteger(companyId) || companyId <= 0) {
+      res.status(400).json({ error: "companyId غير صحيح" }); return;
+    }
+    const toolKey = String(req.query.toolKey ?? "").trim();
+    if (!toolKey) {
+      res.status(400).json({ error: "toolKey مطلوب" }); return;
+    }
+    const limit = clampInt(req.query.limit, 1, 50, 20);
+    const exec = await db.execute<any>(sql`
+      SELECT id,
+             run_at      AS "runAt",
+             trigger     AS "trigger",
+             status      AS "status",
+             count       AS "count",
+             duration_ms AS "durationMs",
+             error       AS "error",
+             details     AS "details"
+        FROM maintenance_runs
+       WHERE company_id = ${companyId}
+         AND tool_key   = ${toolKey}
+       ORDER BY run_at DESC
+       LIMIT ${limit}
+    `);
+    res.json({
+      companyId, toolKey, limit,
+      items: ((exec as any).rows ?? []).map((r: any) => ({
+        id:         r.id,
+        runAt:      r.runAt instanceof Date ? r.runAt.toISOString() : r.runAt,
+        trigger:    r.trigger,
+        status:     r.status,
+        count:      r.count,
+        durationMs: r.durationMs,
+        error:      r.error,
+        details:    r.details,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب سجل الأداة" });
+  }
+});
+
 // GET /maintenance/schedule — single-row config + last-tick snapshot.
 router.get("/maintenance/schedule", requireSuperAdmin, async (_req, res) => {
   try {

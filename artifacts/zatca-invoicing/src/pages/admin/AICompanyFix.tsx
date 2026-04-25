@@ -17,6 +17,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -941,6 +944,42 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     refetchOnWindowFocus: false,
   });
 
+  // Tool-history drill-down — clicking a tool key in the broken-tool panel
+  // opens a modal listing the most recent runs for that (company, tool) pair
+  // across all days, so SuperAdmins can diagnose a recurring failure without
+  // leaving the page.
+  const [toolHistoryTarget, setToolHistoryTarget] = useState<
+    { companyId: number; companyName: string; toolKey: string } | null
+  >(null);
+  const toolHistoryQ = useQuery({
+    queryKey: ["maintenance-tool-history", toolHistoryTarget?.companyId, toolHistoryTarget?.toolKey],
+    queryFn: async () => {
+      const t = toolHistoryTarget!;
+      const r = await fetch(
+        `${API}/api/admin/maintenance/tool-history?companyId=${t.companyId}&toolKey=${encodeURIComponent(t.toolKey)}&limit=20`,
+        { headers },
+      );
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب سجل الأداة");
+      return r.json() as Promise<{
+        companyId: number;
+        toolKey: string;
+        limit: number;
+        items: Array<{
+          id: number;
+          runAt: string;
+          trigger: "scheduled" | "manual";
+          status: "ok" | "warn" | "critical" | "error";
+          count: number;
+          durationMs: number;
+          error: string | null;
+          details: unknown;
+        }>;
+      }>;
+    },
+    enabled: !!toolHistoryTarget,
+    refetchOnWindowFocus: false,
+  });
+
   const onFixed = () => setHistoryTick((t) => t + 1);
 
   return (
@@ -1346,7 +1385,20 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                           {row.companyName || `#${row.companyId}`}
                         </button>
                       </td>
-                      <td className="px-2 py-1 font-mono text-[11px]">{row.toolKey}</td>
+                      <td className="px-2 py-1 font-mono text-[11px]">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline"
+                          onClick={() => setToolHistoryTarget({
+                            companyId: row.companyId,
+                            companyName: row.companyName || `#${row.companyId}`,
+                            toolKey: row.toolKey,
+                          })}
+                          title={`عرض آخر التشغيلات لـ ${row.toolKey} (${row.companyName || `#${row.companyId}`})`}
+                        >
+                          {row.toolKey}
+                        </button>
+                      </td>
                       <td className="px-2 py-1 text-amber-900 font-mono text-[11px]" title={row.error ?? ""}>
                         {row.error
                           ? (row.error.length > 80 ? `${row.error.slice(0, 80)}…` : row.error)
@@ -2247,6 +2299,109 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             </div>
           )}
         </div>
+
+        {/* ── Tool-history drill-down modal ────────────────────────────────
+            Opens when a SuperAdmin clicks a tool key in the broken-tool
+            panel above. Lists the most recent 20 maintenance_runs for that
+            (company, tool) pair so the operator can see whether the failure
+            is recurring, intermittent, or already recovered without leaving
+            the page or running an ad-hoc DB query. */}
+        <Dialog
+          open={!!toolHistoryTarget}
+          onOpenChange={(o) => { if (!o) setToolHistoryTarget(null); }}
+        >
+          <DialogContent dir="rtl" className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-900">
+                <History className="h-4 w-4" />
+                آخر تشغيلات الأداة
+                {toolHistoryTarget && (
+                  <span className="font-mono text-xs text-amber-800">
+                    {toolHistoryTarget.toolKey}
+                  </span>
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                {toolHistoryTarget && (
+                  <span className="text-xs">
+                    آخر 20 تشغيلاً لهذه الأداة على شركة{" "}
+                    <span className="font-medium">
+                      {toolHistoryTarget.companyName}
+                    </span>{" "}
+                    (#{toolHistoryTarget.companyId}). مرّر فوق رسالة الخطأ لرؤية النص الكامل.
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-2">
+              {toolHistoryQ.isLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> جارٍ تحميل السجل...
+                </div>
+              )}
+              {toolHistoryQ.isError && (
+                <p className="text-xs text-red-700">
+                  {(toolHistoryQ.error as any)?.message || "فشل جلب سجل الأداة"}
+                </p>
+              )}
+              {toolHistoryQ.data && toolHistoryQ.data.items.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  لا توجد تشغيلات مسجّلة لهذه الأداة بعد.
+                </p>
+              )}
+              {toolHistoryQ.data && toolHistoryQ.data.items.length > 0 && (
+                <div className="overflow-x-auto max-h-[60vh] overflow-y-auto border rounded">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1 text-right">الحالة</th>
+                        <th className="px-2 py-1 text-right">التشغيل</th>
+                        <th className="px-2 py-1 text-right">عدد النتائج</th>
+                        <th className="px-2 py-1 text-right">المدة (مللي ث)</th>
+                        <th className="px-2 py-1 text-right">وقت التشغيل</th>
+                        <th className="px-2 py-1 text-right">رسالة الخطأ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {toolHistoryQ.data.items.map((row) => {
+                        const sev =
+                          row.status === "ok"       ? "bg-emerald-100 text-emerald-800" :
+                          row.status === "warn"     ? "bg-amber-100  text-amber-900" :
+                          row.status === "critical" ? "bg-red-100    text-red-800" :
+                                                      "bg-rose-200   text-rose-900";
+                        return (
+                          <tr key={row.id}>
+                            <td className="px-2 py-1">
+                              <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${sev}`}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 text-[11px] text-muted-foreground">
+                              {row.trigger === "manual" ? "يدوي" : "مجدول"}
+                            </td>
+                            <td className="px-2 py-1 font-mono">{row.count}</td>
+                            <td className="px-2 py-1 font-mono">{row.durationMs}</td>
+                            <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">
+                              {new Date(row.runAt).toLocaleString("ar-SA")}
+                            </td>
+                            <td
+                              className="px-2 py-1 text-amber-900 font-mono text-[10px] max-w-[260px] truncate"
+                              title={row.error ?? ""}
+                            >
+                              {row.error
+                                ? (row.error.length > 60 ? `${row.error.slice(0, 60)}…` : row.error)
+                                : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

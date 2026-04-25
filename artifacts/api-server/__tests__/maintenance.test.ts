@@ -1979,6 +1979,168 @@ test("GET /maintenance/runs: never leaks rows from another tenant", async () => 
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// GET /api/admin/maintenance/tool-history — broken-tool drill-down endpoint
+// ════════════════════════════════════════════════════════════════════════════
+// Returns the most recent N maintenance_runs rows for a single (company, tool)
+// pair across all days. Powers the modal that opens from the "broken tools"
+// panel on the SuperAdmin maintenance page so operators can diagnose a
+// recurring failure without trawling the table by hand.
+interface ToolHistoryResponse {
+  companyId: number;
+  toolKey: string;
+  limit: number;
+  items: Array<{
+    id: number;
+    runAt: string;
+    trigger: "scheduled" | "manual";
+    status: "ok" | "warn" | "critical" | "error";
+    count: number;
+    durationMs: number;
+    error: string | null;
+    details: unknown;
+  }>;
+}
+
+test("GET /maintenance/tool-history: 401 without bearer token", async () => {
+  const r = await api(`/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending`, "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/tool-history: 403 for non-superadmin", async () => {
+  const r = await api(`/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending`, "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/tool-history: 400 on missing/invalid arguments", async () => {
+  const cases = [
+    `?companyId=&toolKey=journal-pending`,             // empty companyId
+    `?companyId=abc&toolKey=journal-pending`,          // non-numeric companyId
+    `?companyId=0&toolKey=journal-pending`,            // non-positive companyId
+    `?companyId=${dirtyCompanyId}&toolKey=`,           // empty toolKey
+    `?companyId=${dirtyCompanyId}`,                    // missing toolKey
+  ];
+  for (const qs of cases) {
+    const r = await api(`/api/admin/maintenance/tool-history${qs}`, "GET", { token: saToken });
+    assert.equal(r.status, 400, `expected 400 for ${qs}, got ${r.status}`);
+  }
+});
+
+test("GET /maintenance/tool-history: returns recent rows for the requested (company, tool) only", async () => {
+  // The earlier per-company run-now test inserted manual rows for every tool
+  // for the dirty company. Default limit (20) and DESC ordering by runAt.
+  const r = await api<ToolHistoryResponse>(
+    `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 300)}`);
+  assert.equal(r.body.companyId, dirtyCompanyId);
+  assert.equal(r.body.toolKey, "journal-pending");
+  assert.equal(r.body.limit, 20);
+  assert.ok(Array.isArray(r.body.items), "items must be an array");
+  assert.ok(r.body.items.length >= 1, `expected at least one run, got ${r.body.items.length}`);
+  assert.ok(r.body.items.length <= 20, `expected at most 20 rows (default limit), got ${r.body.items.length}`);
+
+  for (const it of r.body.items) {
+    assert.ok(typeof it.id === "number");
+    assert.ok(["scheduled", "manual"].includes(it.trigger), `unexpected trigger ${it.trigger}`);
+    assert.ok(["ok", "warn", "critical", "error"].includes(it.status), `unexpected status ${it.status}`);
+    assert.ok(typeof it.durationMs === "number");
+  }
+
+  // Ordered by run_at DESC.
+  for (let i = 1; i < r.body.items.length; i++) {
+    assert.ok(
+      new Date(r.body.items[i - 1].runAt).getTime() >= new Date(r.body.items[i].runAt).getTime(),
+      "items must be sorted by runAt DESC",
+    );
+  }
+
+  // Every returned row must actually belong to the requested (company, tool).
+  for (const it of r.body.items) {
+    const [row] = await db.select({
+      companyId: maintenanceRunsTable.companyId,
+      toolKey:   maintenanceRunsTable.toolKey,
+    })
+      .from(maintenanceRunsTable)
+      .where(eq(maintenanceRunsTable.id, it.id));
+    assert.equal(row?.companyId, dirtyCompanyId, `row ${it.id} bled in from companyId=${row?.companyId}`);
+    assert.equal(row?.toolKey, "journal-pending", `row ${it.id} bled in from toolKey=${row?.toolKey}`);
+  }
+});
+
+test("GET /maintenance/tool-history: empty array for a tool that has never run on this company", async () => {
+  const r = await api<ToolHistoryResponse>(
+    `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=__never_existed__`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.items, []);
+});
+
+test("GET /maintenance/tool-history: never leaks rows from another tenant", async () => {
+  const r = await api<ToolHistoryResponse>(
+    `/api/admin/maintenance/tool-history?companyId=${cleanCompanyId}&toolKey=journal-pending`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  for (const it of r.body.items) {
+    const [row] = await db.select({ companyId: maintenanceRunsTable.companyId })
+      .from(maintenanceRunsTable)
+      .where(eq(maintenanceRunsTable.id, it.id));
+    assert.equal(row?.companyId, cleanCompanyId,
+      `row ${it.id} bled in from companyId=${row?.companyId}`);
+  }
+});
+
+test("GET /maintenance/tool-history: honours ?limit and clamps to [1, 50]", async () => {
+  // Within range — request 1 row and assert exactly one row comes back.
+  const r1 = await api<ToolHistoryResponse>(
+    `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending&limit=1`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r1.status, 200);
+  assert.equal(r1.body.limit, 1);
+  assert.ok(r1.body.items.length <= 1, `limit=1 must cap at 1 row, got ${r1.body.items.length}`);
+
+  // Above ceiling — clampInt collapses 999 to the upper bound (50).
+  const r2 = await api<ToolHistoryResponse>(
+    `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending&limit=999`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r2.status, 200);
+  assert.equal(r2.body.limit, 50);
+
+  // Below floor — clampInt collapses 0 / negatives to the lower bound (1).
+  for (const v of ["0", "-5"]) {
+    const r = await api<ToolHistoryResponse>(
+      `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending&limit=${encodeURIComponent(v)}`,
+      "GET",
+      { token: saToken },
+    );
+    assert.equal(r.status, 200, `limit=${v} should still 200`);
+    assert.equal(r.body.limit, 1, `limit=${v} should clamp to min 1, got ${r.body.limit}`);
+  }
+
+  // Non-numeric — clampInt falls back to the default (20). Note: empty string
+  // coerces to 0 via Number(""), so it ends up clamped to the lower bound (1)
+  // rather than the default; only NaN-producing inputs hit the default arm.
+  for (const v of ["abc", "1.2.3"]) {
+    const r = await api<ToolHistoryResponse>(
+      `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending&limit=${encodeURIComponent(v)}`,
+      "GET",
+      { token: saToken },
+    );
+    assert.equal(r.status, 200, `limit=${v} should still 200`);
+    assert.equal(r.body.limit, 20, `limit=${v} should fall back to default 20, got ${r.body.limit}`);
+  }
+});
+
 // Pin the contract that statusForCount agrees with the runs table: every row
 // inserted for the clean company by the sweep above should be status='ok'
 // because the company has no findings.
