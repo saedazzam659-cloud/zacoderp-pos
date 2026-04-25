@@ -5,6 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
+import { seedDefaultAccountingMappings } from "../lib/accountingMappings.js";
 
 const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_invoice:      ["inventory", "vat_input", "payable", "discount"],
@@ -187,6 +188,21 @@ router.post("/seed-lc", requireAdmin, async (req, res) => {
     });
 
     res.json({ created, reused, mapped: Object.keys(roleToAccountId).length });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /seed-defaults — apply the canonical mapping template (purchase /
+// sales / settlements / warehouse / cashbox / bank / LC).  Pass
+// `{ overwrite: true }` to forcibly relink rows that already point at a
+// different account; locked rows are NEVER touched.  Auto-runs after a
+// COA bulk-import too — see seedDefaultAccountingMappings doc for details.
+router.post("/seed-defaults", requireAdmin, async (req, res) => {
+  try {
+    const companyId = resolveCompanyId(req, req.body?.companyId ? Number(req.body.companyId) : undefined);
+    if (!companyId) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const overwrite = req.body?.overwrite === true;
+    const result = await seedDefaultAccountingMappings(companyId, { overwrite });
+    res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

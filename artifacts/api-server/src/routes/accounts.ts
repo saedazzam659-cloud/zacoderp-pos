@@ -4,6 +4,7 @@ import { accountsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { seedDefaultAccountingMappings } from "../lib/accountingMappings.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -110,7 +111,25 @@ router.post("/bulk-import", async (req, res) => {
       ? await db.transaction(async (tx) => performImport(tx))
       : await performImport(db);
 
-    res.json({ ...result, total: accounts.length, errors: result.errors.slice(0, 25) });
+    // Auto-seed the canonical accounting-mapping template right after the
+    // COA lands.  The seed helper is purely additive (overwrite=false) so
+    // re-imports never clobber tweaks the user already made.  If the helper
+    // fails for any reason we log and carry on — a missing default mapping
+    // never justifies failing a successful 1000-account import.
+    let mappingsAutoSeeded = 0;
+    try {
+      const r = await seedDefaultAccountingMappings(cid);
+      mappingsAutoSeeded = r.inserted + r.updated;
+    } catch (e: any) {
+      console.error(`[accounts.bulk-import] default-mappings seed failed for company ${cid}:`, e?.message);
+    }
+
+    res.json({
+      ...result,
+      total: accounts.length,
+      errors: result.errors.slice(0, 25),
+      mappingsAutoSeeded,
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

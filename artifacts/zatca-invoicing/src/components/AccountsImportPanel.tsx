@@ -213,8 +213,16 @@ export default function AccountsImportPanel() {
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["accounts"] });
+      // The mappings cache is also stale — bulk-import auto-seeds the
+      // canonical accounting-mapping template against the new accounts.
+      qc.invalidateQueries({ queryKey: ["accounting-mappings"] });
       setResult(data);
-      toast({ title: `تم — أضيف ${data.inserted}، حُدِّث ${data.updated}، تُجوهل ${data.skipped}` });
+      const mappingsBit = data.mappingsAutoSeeded > 0
+        ? ` — وتم ربط ${data.mappingsAutoSeeded} قيد محاسبي تلقائياً`
+        : "";
+      toast({
+        title: `تم — أضيف ${data.inserted}، حُدِّث ${data.updated}، تُجوهل ${data.skipped}${mappingsBit}`,
+      });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });

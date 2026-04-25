@@ -208,6 +208,56 @@ export default function AccountingMappings() {
     }
   }
 
+  // Apply the canonical out-of-the-box mapping template (the same one that
+  // runs automatically right after a chart-of-accounts bulk-import).  We
+  // expose it as a manual button too because tenants who created accounts
+  // ad-hoc — or who want to re-apply the template after editing the COA —
+  // need a way to trigger it without re-importing every account.  By
+  // default the call is purely additive (overwrite=false) so it never
+  // clobbers a row the user already wired by hand.
+  const seedDefaultsMut = useMutation({
+    mutationFn: async (overwrite: boolean) => {
+      const res = await fetch(`${API}/api/accounting-mappings/seed-defaults`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: cid, overwrite }),
+      });
+      if (!res.ok) {
+        const t = await res.text(); let m = t;
+        try { m = JSON.parse(t).error ?? t; } catch {}
+        throw new Error(m || "فشل تطبيق الربط الافتراضي");
+      }
+      return res.json() as Promise<{
+        inserted: number; updated: number;
+        skippedMissingAccount: number; skippedAlreadyMapped: number;
+        missingAccountCodes: string[];
+      }>;
+    },
+    onSuccess: async (data) => {
+      // Refresh the authoritative mappings into local state so the new rows
+      // appear instantly without losing unsaved edits on other cards.
+      try {
+        const r = await fetch(`${API}/api/accounting-mappings?companyId=${cid}`, { headers });
+        if (r.ok) {
+          const rows: MappingRow[] = await r.json();
+          qc.setQueryData(["accounting-mappings", cid], rows);
+        }
+      } catch {/* non-fatal — the regular query will refetch shortly */}
+      qc.invalidateQueries({ queryKey: ["accounting-mappings", cid] });
+      const applied = data.inserted + data.updated;
+      const tail = data.missingAccountCodes.length > 0
+        ? ` — ${data.missingAccountCodes.length} حساب من القالب غير موجود في شجرة الحسابات (استورد القالب الافتراضي للحسابات أولاً).`
+        : "";
+      toast({
+        title: applied > 0 ? "تم تطبيق الربط الافتراضي" : "لا يوجد جديد لتطبيقه",
+        description: `أُضيف ${data.inserted} ربط${data.updated ? ` وتم تحديث ${data.updated}` : ""}.` + tail,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "تعذّر تطبيق الربط الافتراضي", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const seedLcMut = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API}/api/accounting-mappings/seed-lc`, {
@@ -544,7 +594,7 @@ export default function AccountingMappings() {
   // flight we disable the others to prevent overlapping bulk writes from
   // racing on the same endpoint (last-write-wins). AI per-row suggestions
   // don't write to the bulk endpoint themselves, so they're not gated here.
-  const anyBulkPending = importMut.isPending || saveMut.isPending || seedLcMut.isPending;
+  const anyBulkPending = importMut.isPending || saveMut.isPending || seedLcMut.isPending || seedDefaultsMut.isPending;
 
   function onPickImportFile(file: File) {
     if (loadFailed) {
@@ -576,6 +626,12 @@ export default function AccountingMappings() {
           <div className="text-xs text-muted-foreground px-3 py-1.5 rounded-full bg-muted">
             اكتمال: <span className="font-semibold text-foreground">{completion.done}/{completion.total}</span> ({completion.pct}%)
           </div>
+          <Button variant="outline" size="sm" className="gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => seedDefaultsMut.mutate(false)} disabled={anyBulkPending || !cid}
+            title="ربط أدوار المستندات بالحسابات الموصى بها — يضيف فقط الروابط الناقصة ولا يستبدل القائم">
+            {seedDefaultsMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            تطبيق الربط الافتراضي
+          </Button>
           <Button variant="outline" size="sm" className="gap-1 border-blue-300 text-blue-700 hover:bg-blue-50"
             onClick={() => seedLcMut.mutate()} disabled={anyBulkPending || !cid}>
             {seedLcMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileStack className="h-4 w-4" />}
