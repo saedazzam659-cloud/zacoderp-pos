@@ -66,3 +66,14 @@ export const saRecoveryLimit = rateLimit({
   keyFn: (req) => `sa_recovery:${clientIpFrom(req) ?? "unknown"}`,
   message: "تم رصد طلبات استرجاع كثيرة. حاول بعد ساعة.",
 });
+
+// Strict per-actor + per-IP limit on creating new SuperAdmins
+export const saUserCreateLimit = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 5,
+  keyFn: (req) => {
+    const actorId = (req as any).saCtx?.user?.id ?? "anon";
+    return `sa_user_create:${actorId}:${clientIpFrom(req) ?? "unknown"}`;
+  },
+  message: "تم تجاوز الحد الأقصى لإنشاء حسابات السوبر أدمن. حاول بعد ساعة.",
+});

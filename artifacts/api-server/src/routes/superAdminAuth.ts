@@ -11,6 +11,7 @@ import {
   superAdminRecoveryCodesTable,
   superAdminDeviceApprovalsTable,
   superAdminRecoveryLinksTable,
+  auditLogTable,
 } from "@workspace/db";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { clientIpFrom, computeFingerprint, describeDevice } from "../lib/deviceFingerprint.js";
@@ -25,7 +26,7 @@ import {
   sendDeviceApprovalRequest,
   sendRecoveryLink,
 } from "../lib/email.js";
-import { saLoginIpLimit, saLoginUsernameLimit, saOtpLimit, saRecoveryLimit } from "../middleware/saRateLimit.js";
+import { saLoginIpLimit, saLoginUsernameLimit, saOtpLimit, saRecoveryLimit, saUserCreateLimit } from "../middleware/saRateLimit.js";
 
 const router = Router();
 
@@ -836,6 +837,140 @@ router.post("/change-password", async (req, res) => {
     .where(eq(usersTable.id, user.id));
   if (user.email) sendPasswordChangeAlert(user.email, ip).catch(() => {});
   res.json({ ok: true });
+});
+
+// ── SuperAdmin account management ───────────────────────────────────────
+// GET /users — list all SuperAdmin accounts (for context UX)
+router.get("/users", async (req, res) => {
+  const rows = await db.select({
+    id: usersTable.id,
+    username: usersTable.username,
+    email: usersTable.email,
+    nameAr: usersTable.nameAr,
+    nameEn: usersTable.nameEn,
+    isActive: usersTable.isActive,
+    lastLoginAt: usersTable.lastLoginAt,
+    createdAt: usersTable.createdAt,
+  })
+    .from(usersTable)
+    .where(eq(usersTable.role, "superadmin"))
+    .orderBy(desc(usersTable.createdAt));
+  res.json(rows);
+});
+
+// POST /users — create a new SuperAdmin account
+//   • Strict rate limit (5 / hour / actor+IP).
+//   • Step-up auth: must re-enter current password.
+//   • Returns 409 on uniqueness conflict (DB-enforced — race-safe).
+router.post("/users", saUserCreateLimit, async (req, res) => {
+  const { user: actor } = (req as any).saCtx;
+  const ip = clientIpFrom(req);
+  const ua = req.headers["user-agent"] ?? null;
+
+  const usernameRaw    = String(req.body?.username        ?? "").trim().toLowerCase();
+  const emailRaw       = String(req.body?.email           ?? "").trim().toLowerCase();
+  const nameRaw        = String(req.body?.name            ?? "").trim();
+  const password       = String(req.body?.password        ?? "");
+  const currentPassword = String(req.body?.currentPassword ?? "");
+
+  if (!currentPassword) {
+    res.status(400).json({ error: "أدخل كلمة المرور الحالية لتأكيد الإجراء" });
+    return;
+  }
+  if (!usernameRaw || !password || !nameRaw) {
+    res.status(400).json({ error: "بيانات ناقصة (الاسم واسم المستخدم وكلمة المرور مطلوبة)" });
+    return;
+  }
+  if (!/^[a-z0-9._-]{3,32}$/.test(usernameRaw)) {
+    res.status(400).json({ error: "اسم المستخدم يجب أن يكون 3-32 حرفًا (أحرف إنجليزية صغيرة وأرقام و . _ -)" });
+    return;
+  }
+  if (password.length < 10) {
+    res.status(400).json({ error: "كلمة المرور يجب أن تكون 10 أحرف فأكثر" });
+    return;
+  }
+  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+    res.status(400).json({ error: "كلمة المرور يجب أن تحتوي على أحرف وأرقام" });
+    return;
+  }
+  if (emailRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+    res.status(400).json({ error: "البريد الإلكتروني غير صالح" });
+    return;
+  }
+
+  // Step-up: verify current password
+  const okPw = await bcrypt.compare(currentPassword, actor.passwordHash);
+  if (!okPw) {
+    // Audit failed step-up
+    try {
+      await db.insert(auditLogTable).values({
+        userId: actor.id, username: actor.username, role: "superadmin",
+        module: "superadmin_accounts", action: "create_denied",
+        method: "POST", path: "/api/auth/superadmin/users",
+        statusCode: 401, ip, userAgent: typeof ua === "string" ? ua : null,
+        metadata: { reason: "step_up_password_invalid", attempted: { username: usernameRaw, email: emailRaw } },
+      });
+    } catch { /* ignore */ }
+    res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة" });
+    return;
+  }
+
+  // Insert; rely on DB unique constraint on username for race safety.
+  const passwordHash = await bcrypt.hash(password, 12);
+  let created;
+  try {
+    [created] = await db.insert(usersTable).values({
+      username: usernameRaw,
+      email: emailRaw || null,
+      passwordHash,
+      role: "superadmin",
+      nameAr: nameRaw,
+      isActive: true,
+      viewAllBranches: true,
+    }).returning({
+      id: usersTable.id,
+      username: usersTable.username,
+      email: usersTable.email,
+      nameAr: usersTable.nameAr,
+      isActive: usersTable.isActive,
+      createdAt: usersTable.createdAt,
+    });
+  } catch (err: any) {
+    const msg = String(err?.message ?? "");
+    const code = err?.code ?? err?.cause?.code;
+    // Postgres unique violation: 23505
+    if (code === "23505" || /duplicate key|unique constraint/i.test(msg)) {
+      const onEmail = /email/i.test(msg);
+      res.status(409).json({ error: onEmail ? "البريد الإلكتروني مستخدم بالفعل" : "اسم المستخدم مستخدم بالفعل" });
+      return;
+    }
+    throw err;
+  }
+
+  // Audit success
+  try {
+    await db.insert(auditLogTable).values({
+      userId: actor.id,
+      username: actor.username,
+      role: "superadmin",
+      module: "superadmin_accounts",
+      action: "create",
+      method: "POST",
+      path: "/api/auth/superadmin/users",
+      entityType: "user",
+      entityId: String(created.id),
+      statusCode: 201,
+      ip,
+      userAgent: typeof ua === "string" ? ua : null,
+      metadata: {
+        newUsername: created.username,
+        newEmail: created.email,
+        sessionId: (req as any).saCtx?.sessionRowId ?? null,
+      },
+    });
+  } catch { /* never block on audit */ }
+
+  res.status(201).json(created);
 });
 
 // POST /logout-current

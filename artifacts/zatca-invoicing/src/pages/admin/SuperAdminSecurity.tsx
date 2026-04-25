@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ShieldCheck, Smartphone, KeyRound, History, AlertTriangle, RefreshCw,
-  X, Copy, Download, Check, Clock, MailCheck, MailX,
+  X, Copy, Download, Check, Clock, MailCheck, MailX, UserPlus, Users,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -57,15 +57,26 @@ export default function SuperAdminSecurity() {
   // Change password
   const [pwOld, setPwOld] = useState(""); const [pwNew, setPwNew] = useState(""); const [pwNew2, setPwNew2] = useState("");
 
+  // SuperAdmin accounts
+  interface SAUser { id: number; username: string; email: string | null; nameAr: string | null; nameEn: string | null; isActive: boolean; lastLoginAt: string | null; createdAt: string; }
+  const [saUsers, setSaUsers] = useState<SAUser[]>([]);
+  const [naName, setNaName] = useState("");
+  const [naUsername, setNaUsername] = useState("");
+  const [naEmail, setNaEmail] = useState("");
+  const [naPassword, setNaPassword] = useState("");
+  const [naPassword2, setNaPassword2] = useState("");
+  const [naCurrentPw, setNaCurrentPw] = useState("");
+
   const fetchAll = useCallback(async () => {
     try {
-      const [s1, s2, s3, s4, s5, s6] = await Promise.all([
+      const [s1, s2, s3, s4, s5, s6, s7] = await Promise.all([
         fetch(`${API_BASE}/api/auth/superadmin/security-status`, { headers: authHeaders() }),
         fetch(`${API_BASE}/api/auth/superadmin/sessions`, { headers: authHeaders() }),
         fetch(`${API_BASE}/api/auth/superadmin/devices`, { headers: authHeaders() }),
         fetch(`${API_BASE}/api/auth/superadmin/login-history`, { headers: authHeaders() }),
         fetch(`${API_BASE}/api/auth/superadmin/device-approvals/pending`, { headers: authHeaders() }),
         fetch(`${API_BASE}/api/auth/superadmin/recovery-codes`, { headers: authHeaders() }),
+        fetch(`${API_BASE}/api/auth/superadmin/users`, { headers: authHeaders() }),
       ]);
       if (s1.ok) setStatus(await s1.json());
       if (s2.ok) setSessions(await s2.json());
@@ -73,6 +84,7 @@ export default function SuperAdminSecurity() {
       if (s4.ok) setHistory(await s4.json());
       if (s5.ok) setPending(await s5.json());
       if (s6.ok) setRecoveryCodes(await s6.json());
+      if (s7.ok) setSaUsers(await s7.json());
     } catch { /* ignore */ }
   }, []);
 
@@ -146,6 +158,38 @@ export default function SuperAdminSecurity() {
       setPwOld(""); setPwNew(""); setPwNew2("");
     } else {
       toast({ title: "فشل", description: (await r.json()).error, variant: "destructive" });
+    }
+  }
+
+  async function createSuperAdmin(e: React.FormEvent) {
+    e.preventDefault();
+    if (naPassword !== naPassword2) {
+      toast({ title: "كلمتا المرور غير متطابقتين", variant: "destructive" });
+      return;
+    }
+    if (!naCurrentPw) {
+      toast({ title: "أدخل كلمة المرور الحالية لتأكيد الإجراء", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    const r = await fetch(`${API_BASE}/api/auth/superadmin/users`, {
+      method: "POST", headers: authHeaders(),
+      body: JSON.stringify({
+        name: naName.trim(),
+        username: naUsername.trim().toLowerCase(),
+        email: naEmail.trim().toLowerCase(),
+        password: naPassword,
+        currentPassword: naCurrentPw,
+      }),
+    });
+    setBusy(false);
+    if (r.ok) {
+      toast({ title: "تم إنشاء حساب السوبر أدمن بنجاح" });
+      setNaName(""); setNaUsername(""); setNaEmail(""); setNaPassword(""); setNaPassword2(""); setNaCurrentPw("");
+      fetchAll();
+    } else {
+      const err = await r.json().catch(() => ({}));
+      toast({ title: "فشل الإنشاء", description: err.error ?? "حدث خطأ غير متوقع", variant: "destructive" });
     }
   }
 
@@ -242,6 +286,7 @@ export default function SuperAdminSecurity() {
           <TabsTrigger value="recovery">رموز الاسترجاع</TabsTrigger>
           <TabsTrigger value="history">سجل الدخول</TabsTrigger>
           <TabsTrigger value="password">كلمة المرور</TabsTrigger>
+          <TabsTrigger value="accounts">حسابات السوبر أدمن</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -412,6 +457,105 @@ export default function SuperAdminSecurity() {
             </div>
             <Button type="submit" disabled={busy}>تغيير</Button>
             <p className="text-xs text-muted-foreground">سيتم إنهاء كل جلساتك الأخرى وإرسال تنبيه إلى بريدك.</p>
+          </form>
+        </TabsContent>
+
+        {/* SuperAdmin accounts */}
+        <TabsContent value="accounts" className="space-y-4">
+          {/* Existing SuperAdmin accounts */}
+          <div className="bg-card border rounded-lg p-4">
+            <h3 className="font-medium flex items-center gap-2 mb-3">
+              <Users className="h-4 w-4" />
+              الحسابات الحالية ({saUsers.length})
+            </h3>
+            {saUsers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">لا توجد حسابات.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-muted-foreground border-b">
+                    <tr>
+                      <th className="text-right p-2">الاسم</th>
+                      <th className="text-right p-2">اسم المستخدم</th>
+                      <th className="text-right p-2">البريد</th>
+                      <th className="text-right p-2">الحالة</th>
+                      <th className="text-right p-2">آخر دخول</th>
+                      <th className="text-right p-2">تاريخ الإنشاء</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {saUsers.map(u => (
+                      <tr key={u.id} className="border-b last:border-0">
+                        <td className="p-2">{u.nameAr || u.nameEn || "—"}</td>
+                        <td className="p-2 font-mono text-xs">{u.username}{u.id === user?.id && <span className="mr-2 text-xs text-primary">(أنت)</span>}</td>
+                        <td className="p-2 text-xs">{u.email || "—"}</td>
+                        <td className="p-2">
+                          {u.isActive ? (
+                            <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5">مُفعّل</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground bg-muted rounded px-2 py-0.5">معطّل</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("ar-SA") : "—"}</td>
+                        <td className="p-2 text-xs text-muted-foreground">{new Date(u.createdAt).toLocaleString("ar-SA")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Create new SuperAdmin */}
+          <form onSubmit={createSuperAdmin} className="bg-card border rounded-lg p-4 space-y-3 max-w-xl">
+            <h3 className="font-medium flex items-center gap-2">
+              <UserPlus className="h-4 w-4" />
+              إنشاء حساب سوبر أدمن جديد
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm">الاسم الكامل <span className="text-destructive">*</span></label>
+                <Input value={naName} onChange={e => setNaName(e.target.value)} placeholder="مثال: محمد أحمد" required />
+              </div>
+              <div>
+                <label className="text-sm">اسم المستخدم <span className="text-destructive">*</span></label>
+                <Input value={naUsername} onChange={e => setNaUsername(e.target.value)} placeholder="admin2" pattern="[a-zA-Z0-9._\-]{3,32}" required />
+                <p className="text-xs text-muted-foreground mt-1">3-32 حرفًا، أحرف إنجليزية صغيرة وأرقام و . _ -</p>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-sm">البريد الإلكتروني</label>
+                <Input type="email" value={naEmail} onChange={e => setNaEmail(e.target.value)} placeholder="user@example.com" dir="ltr" />
+                <p className="text-xs text-muted-foreground mt-1">اختياري — يُستخدم لاستقبال رمز التحقق وتنبيهات الأمان.</p>
+              </div>
+              <div>
+                <label className="text-sm">كلمة المرور <span className="text-destructive">*</span></label>
+                <Input type="password" value={naPassword} onChange={e => setNaPassword(e.target.value)} minLength={10} required />
+                <p className="text-xs text-muted-foreground mt-1">10 أحرف فأكثر.</p>
+              </div>
+              <div>
+                <label className="text-sm">تأكيد كلمة المرور <span className="text-destructive">*</span></label>
+                <Input type="password" value={naPassword2} onChange={e => setNaPassword2(e.target.value)} required />
+              </div>
+            </div>
+
+            {/* Step-up auth: confirm with current password */}
+            <div className="border-t pt-3 mt-2">
+              <label className="text-sm flex items-center gap-1">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                كلمة مرورك الحالية <span className="text-destructive">*</span>
+              </label>
+              <Input type="password" value={naCurrentPw} onChange={e => setNaCurrentPw(e.target.value)} required autoComplete="current-password" className="max-w-xs" />
+              <p className="text-xs text-muted-foreground mt-1">
+                نطلب كلمة مرورك الحالية كإجراء أمان إضافي قبل إنشاء حساب سوبر أدمن جديد.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button type="submit" disabled={busy} className="gap-1">
+                <UserPlus className="h-4 w-4" /> إنشاء الحساب
+              </Button>
+              <p className="text-xs text-muted-foreground">يُسجَّل الإجراء في سجل التدقيق. (الحد: 5 حسابات/الساعة)</p>
+            </div>
           </form>
         </TabsContent>
       </Tabs>
