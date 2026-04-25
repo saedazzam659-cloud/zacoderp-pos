@@ -176,6 +176,10 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber ?? null,
     postalCode: data.postalCode ?? null,
     country: data.country ?? "SA",
+    nationalAddressShort: data.nationalAddressShort ?? null,
+    locationLat: data.locationLat ?? null,
+    locationLng: data.locationLng ?? null,
+    locationLink: data.locationLink ?? null,
     accountId,
   }).returning();
   res.status(201).json(supplier);

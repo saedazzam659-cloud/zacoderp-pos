@@ -164,6 +164,7 @@ router.post("/", async (req, res) => {
     }
   }
 
+  const d: any = data;
   const [customer] = await db.insert(customersTable).values({
     companyId: effectiveCompanyId,
     nameAr: data.nameAr,
@@ -178,6 +179,10 @@ router.post("/", async (req, res) => {
     buildingNumber: data.buildingNumber,
     postalCode: data.postalCode,
     country: data.country ?? "SA",
+    nationalAddressShort: d.nationalAddressShort ?? null,
+    locationLat: d.locationLat ?? null,
+    locationLng: d.locationLng ?? null,
+    locationLink: d.locationLink ?? null,
     accountId,
   }).returning();
   res.status(201).json(customer);

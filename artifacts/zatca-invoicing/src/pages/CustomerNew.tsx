@@ -20,6 +20,10 @@ import {
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { LocationCapture, type LocationValue } from "@/components/LocationCapture";
+import { useEnterNavigation } from "@/hooks/useEnterNavigation";
+
+const NATIONAL_ADDRESS_RX = /^[A-Z]{4}[0-9]{4}$/;
 
 const customerSchema = z.object({
   companyId:      z.coerce.number().min(1, "الشركة المسؤولة مطلوبة"),
@@ -36,6 +40,8 @@ const customerSchema = z.object({
   buildingNumber: z.string().optional(),
   postalCode:     z.string().optional(),
   country:        z.string().default("SA"),
+  nationalAddressShort: z.string().optional()
+    .refine(v => !v || NATIONAL_ADDRESS_RX.test(v), "صيغة العنوان الوطني المختصر: 4 حروف إنجليزية + 4 أرقام (مثل RYDH2345)"),
 });
 
 type FormValues = z.infer<typeof customerSchema>;
@@ -62,6 +68,7 @@ export default function CustomerNew() {
   // Superadmin: company text input state
   const [companyText, setCompanyText] = useState("");
   const [custAccountId, setCustAccountId] = useState("");
+  const [location, setLocation_] = useState<LocationValue>({ lat: null, lng: null, link: null });
   const { data: companies } = useListCompanies({
     query: { queryKey: ["companies"], enabled: isSuperAdmin }
   });
@@ -77,6 +84,7 @@ export default function CustomerNew() {
       city: "", district: "", street: "",
       buildingNumber: "", postalCode: "",
       country: "SA",
+      nationalAddressShort: "",
     },
   });
 
@@ -104,8 +112,14 @@ export default function CustomerNew() {
       buildingNumber: c.buildingNumber ?? "",
       postalCode:     c.postalCode ?? "",
       country:        c.country ?? "SA",
+      nationalAddressShort: c.nationalAddressShort ?? "",
     });
     if (c.accountId) setCustAccountId(String(c.accountId));
+    setLocation_({
+      lat: c.locationLat ?? null,
+      lng: c.locationLng ?? null,
+      link: c.locationLink ?? null,
+    });
   }, [isEditMode, existingCustomer]);
 
   const customerType = form.watch("customerType");
@@ -123,7 +137,13 @@ export default function CustomerNew() {
   const onSubmit = (values: FormValues) => {
     if (!isSuperAdmin && userCompanyId) values.companyId = userCompanyId;
     const { customerType: _ct, ...rest } = values;
-    const payload = { ...rest, accountId: custAccountId ? Number(custAccountId) : null } as any;
+    const payload = {
+      ...rest,
+      accountId: custAccountId ? Number(custAccountId) : null,
+      locationLat: location.lat,
+      locationLng: location.lng,
+      locationLink: location.link,
+    } as any;
     if (isEditMode && editingId) {
       updateCustomer.mutate({ id: editingId, data: payload }, {
         onSuccess: () => {
@@ -154,6 +174,12 @@ export default function CustomerNew() {
     });
   };
 
+  // Enter→Next navigation: pressing Enter in any input advances focus,
+  // and on the last field triggers form save.
+  const { containerRef, onKeyDown } = useEnterNavigation(() =>
+    form.handleSubmit(onSubmit)(),
+  );
+
   // Tab badge helper
   const tabBadge = (ok: boolean, required: boolean) => {
     if (!required) return null;
@@ -163,20 +189,23 @@ export default function CustomerNew() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4" dir="rtl">
+    <div ref={containerRef} onKeyDown={onKeyDown} className="max-w-4xl mx-auto space-y-4" dir="rtl">
 
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Button asChild variant="ghost" size="icon">
+        <Button asChild variant="ghost" size="icon" data-enter-skip="true">
           <Link href="/customers"><ArrowRight className="h-5 w-5" /></Link>
         </Button>
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{isEditMode ? "تعديل بيانات العميل" : "إضافة عميل جديد"}</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">أدخل بيانات العميل الذي ستصدر له الفواتير</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            أدخل بيانات العميل — اضغط Enter للانتقال للحقل التالي.
+          </p>
         </div>
         <Button
           type="button"
           className="gap-2 min-w-[140px]"
+          data-enter-submit="true"
           disabled={createCustomer.isPending || updateCustomer.isPending}
           onClick={form.handleSubmit(onSubmit, (errors) => {
             const firstTab =
@@ -565,6 +594,44 @@ export default function CustomerNew() {
                     </div>
                   </div>
 
+                  {/* National Address Short + GPS Location */}
+                  <div className="pt-2 border-t">
+                    <div className="flex items-center gap-2 mb-3">
+                      <MapPin className="h-4 w-4 text-primary" />
+                      <h3 className="font-semibold text-sm">العنوان الوطني المختصر والموقع</h3>
+                      <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5">
+                        تسريع التسجيل
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <FormField control={form.control} name="nationalAddressShort" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>الرمز الوطني المختصر</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="RYDH2345"
+                              dir="ltr"
+                              className="text-left font-mono tracking-widest uppercase"
+                              maxLength={8}
+                              value={field.value ?? ""}
+                              onChange={(e) => field.onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            صيغة قصيرة: 4 حروف + 4 أرقام (يُستخرج من بطاقة العنوان الوطني السعودي).
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium">الموقع الجغرافي (GPS)</label>
+                        <LocationCapture value={location} onChange={setLocation_} />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Accounting link */}
                   <div className="pt-4 border-t space-y-1.5">
                     <label className="text-sm font-medium flex items-center gap-1.5">
@@ -586,10 +653,10 @@ export default function CustomerNew() {
                       <ChevronRight className="h-4 w-4" /> رجوع
                     </Button>
                     <div className="flex gap-3">
-                      <Button type="button" variant="outline" asChild>
+                      <Button type="button" variant="outline" asChild data-enter-skip="true">
                         <Link href="/customers">إلغاء</Link>
                       </Button>
-                      <Button type="submit" className="gap-2 min-w-[140px]" disabled={createCustomer.isPending || updateCustomer.isPending}>
+                      <Button type="submit" className="gap-2 min-w-[140px]" data-enter-skip="true" disabled={createCustomer.isPending || updateCustomer.isPending}>
                         <Save className="h-4 w-4" />
                         {(createCustomer.isPending || updateCustomer.isPending)
                           ? "جاري الحفظ..."

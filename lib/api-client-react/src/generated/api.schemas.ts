@@ -98,6 +98,10 @@ export interface Customer {
   buildingNumber?: string;
   postalCode?: string;
   country?: string;
+  nationalAddressShort?: string | null;
+  locationLat?: string | null;
+  locationLng?: string | null;
+  locationLink?: string | null;
   accountId?: number | null;
   createdAt?: string;
 }
@@ -116,6 +120,10 @@ export interface CreateCustomerBody {
   buildingNumber?: string;
   postalCode?: string;
   country?: string;
+  nationalAddressShort?: string | null;
+  locationLat?: string | null;
+  locationLng?: string | null;
+  locationLink?: string | null;
   accountId?: number | null;
 }
 

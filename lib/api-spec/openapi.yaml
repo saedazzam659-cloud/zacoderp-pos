@@ -587,6 +587,18 @@ components:
         country:
           type: string
           default: "SA"
+        nationalAddressShort:
+          type: string
+          nullable: true
+        locationLat:
+          type: string
+          nullable: true
+        locationLng:
+          type: string
+          nullable: true
+        locationLink:
+          type: string
+          nullable: true
         accountId:
           type: integer
           nullable: true
@@ -627,6 +639,18 @@ components:
           type: string
         country:
           type: string
+        nationalAddressShort:
+          type: string
+          nullable: true
+        locationLat:
+          type: string
+          nullable: true
+        locationLng:
+          type: string
+          nullable: true
+        locationLink:
+          type: string
+          nullable: true
         accountId:
           type: integer
           nullable: true

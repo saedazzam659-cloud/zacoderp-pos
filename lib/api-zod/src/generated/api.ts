@@ -217,6 +217,10 @@ export const ListCustomersResponseItem = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(listCustomersResponseCountryDefault),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
   accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
@@ -239,6 +243,10 @@ export const CreateCustomerBody = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().optional(),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
   accountId: zod.number().nullish(),
 });
 
@@ -266,6 +274,10 @@ export const GetCustomerResponse = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(getCustomerResponseCountryDefault),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
   accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
@@ -291,6 +303,10 @@ export const UpdateCustomerBody = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().optional(),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
   accountId: zod.number().nullish(),
 });
 
@@ -311,6 +327,10 @@ export const UpdateCustomerResponse = zod.object({
   buildingNumber: zod.string().optional(),
   postalCode: zod.string().optional(),
   country: zod.string().default(updateCustomerResponseCountryDefault),
+  nationalAddressShort: zod.string().nullish(),
+  locationLat: zod.string().nullish(),
+  locationLng: zod.string().nullish(),
+  locationLink: zod.string().nullish(),
   accountId: zod.number().nullish(),
   createdAt: zod.coerce.date().optional(),
 });
@@ -425,6 +445,10 @@ export const ListInvoicesResponseItem = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(listInvoicesResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
@@ -566,6 +590,10 @@ export const GetInvoiceResponse = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(getInvoiceResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
@@ -705,6 +733,10 @@ export const UpdateInvoiceResponse = zod.object({
       country: zod
         .string()
         .default(updateInvoiceResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
@@ -821,6 +853,10 @@ export const IssueInvoiceResponse = zod.object({
       buildingNumber: zod.string().optional(),
       postalCode: zod.string().optional(),
       country: zod.string().default(issueInvoiceResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
@@ -932,6 +968,10 @@ export const CancelInvoiceResponse = zod.object({
       country: zod
         .string()
         .default(cancelInvoiceResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
@@ -1068,6 +1108,10 @@ export const GetRecentInvoicesResponseItem = zod.object({
       country: zod
         .string()
         .default(getRecentInvoicesResponseCustomerCountryDefault),
+      nationalAddressShort: zod.string().nullish(),
+      locationLat: zod.string().nullish(),
+      locationLng: zod.string().nullish(),
+      locationLink: zod.string().nullish(),
       accountId: zod.number().nullish(),
       createdAt: zod.coerce.date().optional(),
     })
