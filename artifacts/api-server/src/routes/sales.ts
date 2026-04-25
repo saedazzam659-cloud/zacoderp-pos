@@ -637,8 +637,39 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
 
     const subtotalAmt = Number(inv.subtotal || 0);
     const vatAmt      = Number(inv.vatAmount || 0);
-    const discountAmt = Number(inv.discountAmount || 0);
+    const headerDiscAmt = Number(inv.discountAmount || 0);
     const totalAmt    = Number(inv.totalAmount || 0);
+
+    // Roll line-level discounts (per-line `discount` %) into a single
+    // "خصم مسموح به" debit so promotions like Buy-X-Get-Y / line-pricing
+    // surface as a discrete journal line instead of being silently absorbed
+    // into a smaller revenue figure. The amount is computed as the
+    // VAT-exclusive saving per line so it stacks cleanly with the existing
+    // VAT-exclusive `subtotal`.
+    const priceIncludesVat = !!(inv as any).priceIncludesVat;
+    let lineDiscountTotal = 0;
+    for (const ln of lines) {
+      const qty     = Number(ln.qty)       || 0;
+      const price   = Number(ln.unitPrice) || 0;
+      const discPct = Number(ln.discount)  || 0;
+      if (qty <= 0 || price <= 0 || discPct <= 0) continue;
+      const grossPre = qty * price;
+      const discGross = grossPre * (discPct / 100);
+      const rate    = (Number(ln.vatRate) || 0) / 100;
+      // When prices are VAT-inclusive, the gross saving carries VAT — strip
+      // it so we only book the net portion against revenue. VAT line stays
+      // unchanged because `inv.vatAmount` is already net of the discount.
+      lineDiscountTotal += priceIncludesVat && rate > -1
+        ? discGross / (1 + rate)
+        : discGross;
+    }
+    lineDiscountTotal = Math.round(lineDiscountTotal * 100) / 100;
+
+    // Gross-up for the journal: revenue is credited at pre-discount value
+    // and the saving flows through the discount account. Header discount
+    // (document-level promo) and line discount both ride the same debit.
+    const grossSubtotalAmt = subtotalAmt + lineDiscountTotal;
+    const discountAmt      = headerDiscAmt + lineDiscountTotal;
 
     const partyAccountId =
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
@@ -673,7 +704,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
         { accountId: cogsAccId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
         // Credits
-        { accountId: salesAccId,     credit: subtotalAmt, description: "إيراد المبيعات" },
+        { accountId: salesAccId,     credit: grossSubtotalAmt, description: "إيراد المبيعات" },
         { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
         // Inventory: one credit line per warehouse using its own GL account
         ...Object.entries(cogsByWarehouse)
@@ -1123,14 +1154,39 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       return;
     }
 
-    const totalAmt    = Number(ret.totalAmount || 0);
-    const vatAmt      = Number(ret.vatAmount || 0);
-    const discountAmt = Number(ret.discountAmount || 0);
+    const totalAmt      = Number(ret.totalAmount || 0);
+    const vatAmt        = Number(ret.vatAmount || 0);
+    const headerDiscAmt = Number(ret.discountAmount || 0);
+
+    // Mirror the sales-invoice posting: roll per-line discount % into a single
+    // "عكس خصم مسموح به" credit so a return that was billed with a Buy-X-Get-Y
+    // / line-pricing promotion reverses the discount account too — instead of
+    // letting the saving silently shrink the revenue-reversal debit. Net of
+    // VAT when prices were VAT-inclusive so the existing VAT line stays
+    // untouched.
+    const priceIncludesVat = !!(ret as any).priceIncludesVat;
+    let lineDiscountTotal = 0;
+    for (const ln of lines) {
+      const qty     = Number(ln.qty)       || 0;
+      const price   = Number(ln.unitPrice) || 0;
+      const discPct = Number(ln.discount)  || 0;
+      if (qty <= 0 || price <= 0 || discPct <= 0) continue;
+      const grossPre = qty * price;
+      const discGross = grossPre * (discPct / 100);
+      const rate    = (Number(ln.vatRate) || 0) / 100;
+      lineDiscountTotal += priceIncludesVat && rate > -1
+        ? discGross / (1 + rate)
+        : discGross;
+    }
+    lineDiscountTotal = Math.round(lineDiscountTotal * 100) / 100;
+
     // returns table has no stored subtotal — derive the gross-before-discount
     // figure (the value that originally hit "إيرادات المبيعات" on the sale)
-    // from total + discount − vat.  If discountAmt is 0 this collapses to the
-    // previous behaviour (totalAmt − vatAmt).
-    const subtotalAmt = totalAmt + discountAmt - vatAmt;
+    // from total + headerDisc − vat, then add the line-level rollup so the
+    // revenue debit matches what the sales JE credited gross.
+    const baseSubtotalAmt  = totalAmt + headerDiscAmt - vatAmt;
+    const subtotalAmt      = baseSubtotalAmt + lineDiscountTotal;
+    const discountAmt      = headerDiscAmt + lineDiscountTotal;
 
     const partyAccountId =
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)

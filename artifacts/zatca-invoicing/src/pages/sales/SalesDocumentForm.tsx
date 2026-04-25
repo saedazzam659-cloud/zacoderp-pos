@@ -566,7 +566,30 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     .filter(l => l.itemId && Number(l.qty) > 0 && Number(l.baseUnitPrice) > 0)
     .map(l => `${l._id}:${l.itemId}:${l.qty}:${l.baseUnitPrice}`)
     .join("|");
-  const matchEnabled = isInvoice && !!user && !!customerId && cartSig.length > 0;
+  // When loading an existing invoice for edit, snapshot the cart signature
+  // so we can suppress the engine's first re-evaluation. Otherwise an offer
+  // that no longer matches (or whose price-list changed) would silently
+  // strip the historical discount off persisted lines and leave the form
+  // showing a fresh subtotal that disagrees with what the customer was
+  // actually billed. The engine resumes the moment the user touches the
+  // cart (signature changes), so adding/removing/editing a line still
+  // applies live promos as before.
+  const loadedCartSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editId || !existing) return;
+    if (loadedCartSigRef.current !== null) return;
+    // Wait for the hydration setLines to land — until then cartSig is the
+    // pre-hydration empty signature and locking it would either no-op (if
+    // empty stays empty) or worse, capture a stale baseline that lets the
+    // engine re-evaluate the moment lines hydrate. Empty cartSig is the
+    // sentinel for "not yet hydrated" because the filter requires itemId
+    // and a positive baseUnitPrice — both only present after hydration.
+    if (!cartSig) return;
+    loadedCartSigRef.current = cartSig;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, existing, cartSig]);
+  const cartUntouched = !!editId && loadedCartSigRef.current !== null && loadedCartSigRef.current === cartSig;
+  const matchEnabled = isInvoice && !!user && !!customerId && cartSig.length > 0 && !cartUntouched;
   const matchCartQuery = useQuery({
     queryKey: ["offers-match-cart", cid, customerId, salesRepId, cartSig],
     queryFn: async () => {
