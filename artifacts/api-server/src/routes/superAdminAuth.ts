@@ -39,6 +39,22 @@ const RECOVERY_CODE_COUNT = 10;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const newToken = (bytes = 32) => randomBytes(bytes).toString("hex");
 const newOtp = () => String(randomInt(0, 1_000_000)).padStart(6, "0");
+
+// Emergency operator bypass: when the deployment has no working email
+// transport (no SMTP secrets and no live Outlook connector), a SuperAdmin
+// can be locked out of new devices because the approval / OTP messages
+// never arrive. Setting SA_EMERGENCY_BYPASS=1 in the deployment env unlocks
+// two operator-only behaviors:
+//   1. Device-approval is skipped — login proceeds straight to the OTP
+//      challenge even from a brand-new device.
+//   2. The OTP code is printed to the server logs (with a SECURITY tag) so
+//      the operator who controls the deployment can read it from the live
+//      logs and complete the multi-factor login without an email round-trip.
+// Disable the flag immediately after recovering access.
+const emergencyBypassEnabled = (): boolean => {
+  const v = (process.env.SA_EMERGENCY_BYPASS ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+};
 const newRecoveryCode = () => {
   const raw = randomBytes(8).toString("base64url").toUpperCase().replace(/[^A-Z0-9]/g, "");
   return raw.slice(0, 4) + "-" + raw.slice(4, 8);
@@ -205,8 +221,9 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
 
   let needsApproval = false;
   let approvalToken: string | null = null;
+  const emergency = emergencyBypassEnabled();
 
-  if (!trusted && !isBootstrap) {
+  if (!trusted && !isBootstrap && !emergency) {
     // Create approval request, email link to user
     approvalToken = newToken(24);
     await db.insert(superAdminDeviceApprovalsTable).values({
@@ -262,7 +279,11 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
   // production — even if logs are accessible only to admins, the OTP is a
   // bearer credential and must not be persisted in plaintext anywhere
   // beyond the user's email inbox.
-  if (!emailConfigured() && process.env.NODE_ENV !== "production") {
+  if (emergency) {
+    // Operator explicitly opted in via SA_EMERGENCY_BYPASS — print to logs
+    // even in production so they can recover access without working email.
+    console.warn(`[sa-otp SECURITY EMERGENCY] code=${code} user=${user.username} ip=${ip} valid_for=${OTP_TTL_MS / 1000}s — disable SA_EMERGENCY_BYPASS after recovery`);
+  } else if (!emailConfigured() && process.env.NODE_ENV !== "production") {
     console.log(`[sa-otp DEV-ONLY] code=${code} user=${user.username} valid_for=${OTP_TTL_MS / 1000}s`);
   } else if (!emailConfigured()) {
     console.warn(`[sa-otp] email transport not configured — OTP for ${user.username} cannot be delivered`);
