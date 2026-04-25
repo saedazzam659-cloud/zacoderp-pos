@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -716,15 +716,27 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   });
   const latestByTool = new Map((latestQ.data?.items ?? []).map(i => [i.toolKey, i]));
 
-  // 14-day trend per tool — drives the sparkline beneath each card's "آخر فحص".
+  // Trend window per tool — drives the sparkline beneath each card's "آخر فحص".
   // Shares the same `companyId` filter so a fleet operator sees the trend for
   // whichever tenant they're inspecting. Re-runs after a manual sweep flips
-  // the latest results so the sparkline updates immediately.
-  const TREND_DAYS = 14;
+  // the latest results so the sparkline updates immediately. SuperAdmins can
+  // pick the window via the segmented selector above the toolbox; the choice
+  // is persisted in localStorage so it sticks across sessions.
+  const TREND_DAYS_OPTIONS = [7, 14, 30, 90] as const;
+  const TREND_DAYS_STORAGE_KEY = "maintenance.trendDays";
+  const [trendDays, setTrendDays] = useState<number>(() => {
+    if (typeof window === "undefined") return 14;
+    const raw = Number(window.localStorage.getItem(TREND_DAYS_STORAGE_KEY));
+    return (TREND_DAYS_OPTIONS as readonly number[]).includes(raw) ? raw : 14;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TREND_DAYS_STORAGE_KEY, String(trendDays));
+  }, [trendDays]);
   const trendQ = useQuery({
-    queryKey: ["maintenance-trend", companyId, TREND_DAYS],
+    queryKey: ["maintenance-trend", companyId, trendDays],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/maintenance/trend?companyId=${companyId}&days=${TREND_DAYS}`, { headers });
+      const r = await fetch(`${API}/api/admin/maintenance/trend?companyId=${companyId}&days=${trendDays}`, { headers });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الاتجاه");
       return r.json() as Promise<{
         days: number;
@@ -744,7 +756,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     return m;
   })();
   const trendForTool = (toolKey: string) => ({
-    days: TREND_DAYS,
+    days: trendDays,
     points: trendByTool.get(toolKey) ?? [],
   });
 
@@ -752,9 +764,9 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   // the same window. Always available to SuperAdmins regardless of which
   // company is currently selected, so they can spot recurring offenders.
   const fleetQ = useQuery({
-    queryKey: ["maintenance-trend-fleet", TREND_DAYS],
+    queryKey: ["maintenance-trend-fleet", trendDays],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/maintenance/trend?days=${TREND_DAYS}`, { headers });
+      const r = await fetch(`${API}/api/admin/maintenance/trend?days=${trendDays}`, { headers });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب لوحة الأسطول");
       return r.json() as Promise<{
         days: number;
@@ -1048,6 +1060,37 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             اختر شركة من الأعلى لبدء الفحص.
           </p>
         )}
+
+        {/* ── Trend window selector ───────────────────────────────────────
+            Drives the sparkline window on every maintenance card AND the
+            fleet-view header above. The choice is persisted in localStorage
+            so each operator's preference sticks across sessions. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">نافذة الاتجاه:</span>
+          <div className="inline-flex rounded-md border border-violet-200 overflow-hidden bg-white"
+               role="group" aria-label="اختيار نافذة الاتجاه بالأيام">
+            {TREND_DAYS_OPTIONS.map((d) => {
+              const active = d === trendDays;
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setTrendDays(d)}
+                  aria-pressed={active}
+                  className={
+                    "h-7 px-2.5 text-xs border-l border-violet-200 first:border-l-0 transition-colors " +
+                    (active
+                      ? "bg-violet-600 text-white"
+                      : "bg-white text-violet-900 hover:bg-violet-50")
+                  }
+                  title={`عرض اتجاه آخر ${d} يوم`}
+                >
+                  {d}ي
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {/* 1. القيود المعلقة (drafts older than 30 days) */}
