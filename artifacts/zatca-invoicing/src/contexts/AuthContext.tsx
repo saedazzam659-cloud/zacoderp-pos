@@ -55,6 +55,13 @@ export interface RegisterData {
   buildingNumber?: string; postalCode?: string; country?: string;
   currency?: string;
   industryName?: string; invoiceType?: string;
+  // Multi-industry classification (commercial / industrial / contracting /
+  // medical / hotels). Persisted as a comma-joined list on companies.industryName.
+  selectedIndustries?: string[];
+  // High-level system module keys (sales / purchasing / inventory / pos /
+  // cash / accounting / hr / zatca) chosen at registration. The backend
+  // expands these into a menuPermissions JSON for the new company.
+  selectedModules?: string[];
   plan: string; billingCycle: string;
   startDate?: string; endDate?: string;
   username: string; email?: string; password: string;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth, type RegisterData } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -7,13 +7,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import {
   Building2, User, Package, Check, ChevronLeft, ChevronRight,
-  Eye, EyeOff, Loader2, ShieldCheck, Star, Zap, Crown, Globe2
+  Eye, EyeOff, Loader2, ShieldCheck, Star, Crown, Globe2, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   COUNTRIES, DEFAULT_COUNTRY_CODE,
   getCountryByCode, getCountryPolicy,
 } from "@/lib/countries";
+import { INDUSTRIES, unionRecommendedModules } from "@/lib/industries";
+import {
+  SELECTABLE_MODULES, CATEGORIES, PLAN_INCLUDED, priceFor,
+} from "@/lib/systemModules";
 
 const PLANS = [
   {
@@ -68,6 +72,14 @@ export default function Register() {
   // can't accept policy A and silently submit under country B.
   const [acceptedPolicy, setAcceptedPolicy] = useState(false);
 
+  // ── Industry + module selection state (Step 1 rework) ───────────────
+  // Multi-select industry chips. Picking one or more pre-selects each
+  // industry's recommended modules (UNION); the user can then add/remove
+  // individual modules. Empty = no recommendations applied yet.
+  const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
+  // Per-module checkbox state — keys from systemModules.SELECTABLE_MODULES.
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
+
   const [form, setForm] = useState<Partial<RegisterData>>({
     country: DEFAULT_COUNTRY_CODE,
     currency: getCountryByCode(DEFAULT_COUNTRY_CODE).currency.code,
@@ -77,6 +89,46 @@ export default function Register() {
   });
 
   const set = (k: keyof RegisterData, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  // Toggle industry chip. Module behaviour is intentionally ADDITIVE so
+  // any manual module edits the user has already made are NEVER lost:
+  //  - Activating an industry  → ADDS its recommended modules (union)
+  //  - Deactivating an industry → leaves modules untouched (user can
+  //    deselect manually). Avoids the surprise of recommendations being
+  //    silently revoked.
+  const toggleIndustry = (code: string) => {
+    setSelectedIndustries(prev => {
+      const isActivating = !prev.includes(code);
+      const next = isActivating ? [...prev, code] : prev.filter(c => c !== code);
+      if (isActivating) {
+        // Merge in the recommendations for the newly-activated industry
+        // (deduped via Set). Existing manual picks are preserved.
+        setSelectedModules(curr => Array.from(
+          new Set([...curr, ...unionRecommendedModules([code])]),
+        ));
+      }
+      return next;
+    });
+  };
+  // "اختيار الكل" merges every industry's recommendations into the
+  // current selection (additive). It never removes user picks.
+  const selectAllIndustries = () => {
+    const all = INDUSTRIES.map(i => i.code);
+    setSelectedIndustries(all);
+    setSelectedModules(curr => Array.from(
+      new Set([...curr, ...unionRecommendedModules(all)]),
+    ));
+  };
+  // "مسح" clears BOTH industries and modules. Explicit, predictable.
+  const clearIndustries = () => {
+    setSelectedIndustries([]);
+    setSelectedModules([]);
+  };
+  const toggleModule = (key: string) => {
+    setSelectedModules(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key],
+    );
+  };
 
   // Country selection: cascades the country code AND the matching default
   // currency, and revokes any prior policy acceptance so the user has to
@@ -90,6 +142,15 @@ export default function Register() {
   };
 
   const selectedPlan = PLANS.find(p => p.id === form.plan) ?? PLANS[1];
+
+  // Live price breakdown (memoized) — recomputed only when the plan,
+  // module selection, or billing cycle change. Annual uses monthly × 10
+  // (preserves the ~17% discount baked into the static PLANS.annual values).
+  const priceCalc = useMemo(() => priceFor({
+    basePlanMonthly: selectedPlan.monthly,
+    planKey:         selectedPlan.id,
+    selectedKeys:    selectedModules,
+  }), [selectedPlan.id, selectedPlan.monthly, selectedModules]);
 
   const selectPlan = (planId: string) => {
     const plan = PLANS.find(p => p.id === planId)!;
@@ -116,7 +177,16 @@ export default function Register() {
       const res = await fetch(`${BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, billingCycle }),
+        body: JSON.stringify({
+          ...form,
+          billingCycle,
+          // New: industry classification + per-module selection from Step 1.
+          selectedIndustries,
+          selectedModules,
+          // Send the dynamically-computed price (base + module add-ons) so
+          // the subscription record matches what the user actually saw.
+          price: String(billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
@@ -261,55 +331,197 @@ export default function Register() {
               </div>
             )}
 
-            {/* ─── Step 1: Plan ─── */}
+            {/* ─── Step 1: Industry + Plan + Modules ─── */}
             {step === 1 && (
               <div className="space-y-5">
-                <h3 className="font-semibold text-foreground flex items-center gap-2"><Package className="h-4 w-4" />اختر الباقة المناسبة</h3>
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <Package className="h-4 w-4" />اختر نشاطك ووحدات نظامك
+                </h3>
 
-                {/* Billing toggle */}
-                <div className="flex items-center justify-center gap-3">
-                  <button onClick={() => toggleBilling("monthly")}
-                    className={cn("px-4 py-1.5 rounded-full text-sm font-medium transition-all", billingCycle === "monthly" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+                {/* ── 1. Industry multi-select chips ── */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="text-sm font-medium flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      نوع نشاط الشركة
+                      <span className="text-xs font-normal text-muted-foreground">(اختر واحد أو أكثر)</span>
+                    </label>
+                    <div className="flex gap-3 text-xs">
+                      <button type="button" onClick={selectAllIndustries}
+                        className="text-primary hover:underline" data-testid="industry-select-all">
+                        اختيار الكل
+                      </button>
+                      {selectedIndustries.length > 0 && (
+                        <button type="button" onClick={clearIndustries}
+                          className="text-muted-foreground hover:text-destructive" data-testid="industry-clear">
+                          مسح
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {INDUSTRIES.map(ind => {
+                      const active = selectedIndustries.includes(ind.code);
+                      return (
+                        <button key={ind.code} type="button"
+                          data-testid={`industry-chip-${ind.code}`}
+                          onClick={() => toggleIndustry(ind.code)}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-full border-2 text-sm transition-all",
+                            active
+                              ? "border-primary bg-primary/10 text-primary font-medium shadow-sm"
+                              : "border-border bg-card text-muted-foreground hover:border-primary/40"
+                          )}>
+                          <span className="text-base leading-none">{ind.emoji}</span>
+                          {ind.nameAr}
+                          {active && <Check className="h-3.5 w-3.5" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedIndustries.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      اختر نشاطاً واحداً أو أكثر لاقتراح الوحدات المناسبة تلقائياً، أو حدّد الوحدات يدوياً أسفله.
+                    </p>
+                  )}
+                </div>
+
+                {/* ── 2. Billing cycle ── */}
+                <div className="flex items-center justify-center gap-3 pt-3 border-t">
+                  <button onClick={() => toggleBilling("monthly")} type="button"
+                    className={cn("px-4 py-1.5 rounded-full text-sm font-medium transition-all",
+                      billingCycle === "monthly" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
                     شهري
                   </button>
-                  <button onClick={() => toggleBilling("annual")}
-                    className={cn("px-4 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1", billingCycle === "annual" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+                  <button onClick={() => toggleBilling("annual")} type="button"
+                    className={cn("px-4 py-1.5 rounded-full text-sm font-medium transition-all flex items-center gap-1",
+                      billingCycle === "annual" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
                     سنوي
-                    <span className="text-xs bg-green-100 text-green-700 rounded-full px-1.5 py-0.5">وفّر 15%</span>
+                    <span className="text-xs bg-green-100 text-green-700 rounded-full px-1.5 py-0.5">وفّر ~17%</span>
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* ── 3. Plan tier picker (compact, with "X included free" tag) ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {PLANS.map(plan => {
                     const price = billingCycle === "annual" ? plan.annual : plan.monthly;
                     const isSelected = form.plan === plan.id;
+                    const included = PLAN_INCLUDED[plan.id] ?? 0;
+                    const includedLabel = included >= SELECTABLE_MODULES.length
+                      ? "كل الوحدات مجاناً"
+                      : `${included} وحدات مشمولة`;
                     return (
-                      <button key={plan.id} onClick={() => selectPlan(plan.id)}
-                        className={cn("relative rounded-xl border-2 p-4 text-right transition-all hover:shadow-md",
-                          isSelected ? plan.activeColor : "border-border bg-card hover:border-primary/40")}>
+                      <button key={plan.id} type="button"
+                        data-testid={`plan-${plan.id}`}
+                        onClick={() => selectPlan(plan.id)}
+                        className={cn(
+                          "relative rounded-xl border-2 p-3 text-right transition-all hover:shadow-md",
+                          isSelected ? plan.activeColor : "border-border bg-card hover:border-primary/40"
+                        )}>
                         {plan.recommended && (
-                          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs bg-primary text-primary-foreground rounded-full px-2 py-0.5 whitespace-nowrap">
+                          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] bg-primary text-primary-foreground rounded-full px-2 py-0.5 whitespace-nowrap">
                             الأكثر شيوعاً
                           </span>
                         )}
-                        <div className={cn("inline-flex p-2 rounded-lg mb-3", plan.badgeColor)}>{plan.icon}</div>
-                        <div className="font-bold text-foreground">{plan.name}</div>
-                        <div className="text-2xl font-bold mt-1">
-                          {price} <span className="text-sm font-normal text-muted-foreground">ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={cn("inline-flex p-1.5 rounded-lg", plan.badgeColor)}>{plan.icon}</div>
+                          <span className="font-bold text-foreground text-sm">{plan.name}</span>
                         </div>
-                        <ul className="mt-3 space-y-1.5">
-                          {plan.features.map(f => (
-                            <li key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Check className="h-3 w-3 text-green-600 shrink-0" />{f}
-                            </li>
-                          ))}
-                        </ul>
-                        {isSelected && <div className="absolute top-3 left-3"><Check className="h-4 w-4 text-primary" /></div>}
+                        <div className="text-xl font-bold mt-0.5">
+                          {price} <span className="text-[11px] font-normal text-muted-foreground">ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
+                        </div>
+                        <div className="text-[11px] text-primary mt-1.5 font-medium">{includedLabel}</div>
+                        {isSelected && <div className="absolute top-2 left-2"><Check className="h-3.5 w-3.5 text-primary" /></div>}
                       </button>
                     );
                   })}
                 </div>
 
+                {/* ── 4. Module catalog (grouped by category) ── */}
+                <div className="space-y-3 pt-3 border-t">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h4 className="text-sm font-semibold flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      وحدات النظام
+                      <span className="text-xs font-normal text-muted-foreground">
+                        (محددة {selectedModules.length} من {SELECTABLE_MODULES.length})
+                      </span>
+                    </h4>
+                  </div>
+
+                  {CATEGORIES.map(cat => {
+                    const mods = SELECTABLE_MODULES.filter(m => m.category === cat.key);
+                    if (mods.length === 0) return null;
+                    return (
+                      <div key={cat.key} className="space-y-2">
+                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          {cat.nameAr}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {mods.map(m => {
+                            const checked = selectedModules.includes(m.key);
+                            return (
+                              <label key={m.key}
+                                data-testid={`module-${m.key}`}
+                                className={cn(
+                                  "flex items-start gap-2 p-2.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+                                  checked ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"
+                                )}>
+                                <input type="checkbox" checked={checked}
+                                  onChange={() => toggleModule(m.key)}
+                                  className="mt-0.5 h-4 w-4 accent-primary cursor-pointer" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium text-sm flex items-center gap-1.5">
+                                      <span className="text-base leading-none">{m.emoji}</span>
+                                      {m.nameAr}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                      +{m.monthlyPrice} ر.س
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{m.descAr}</p>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ── 5. Live total / breakdown ── */}
+                <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-2"
+                     data-testid="price-summary">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">الباقة الأساسية ({selectedPlan.name}):</span>
+                    <span className="font-medium">{priceCalc.base} ر.س/شهر</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">وحدات مجانية مشمولة بالباقة:</span>
+                    <span className="font-medium text-green-700">{priceCalc.includedFree} وحدة</span>
+                  </div>
+                  {priceCalc.extraCount > 0 && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        وحدات إضافية ({priceCalc.extraCount}):
+                      </span>
+                      <span className="font-medium">+{priceCalc.extraSubtotal} ر.س/شهر</span>
+                    </div>
+                  )}
+                  <div className="border-t border-primary/20 pt-2 flex items-center justify-between">
+                    <span className="font-bold text-foreground">الإجمالي:</span>
+                    <span className="text-2xl font-bold text-primary" data-testid="price-total">
+                      {billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total}
+                      <span className="text-xs font-normal text-muted-foreground mr-1">
+                        {" "}ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* dates */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium">تاريخ بدء الاشتراك</label>
@@ -323,7 +535,9 @@ export default function Register() {
 
                 <div className="flex justify-between pt-2">
                   <Button variant="ghost" onClick={() => setStep(0)} className="gap-2"><ChevronRight className="h-4 w-4" />رجوع</Button>
-                  <Button onClick={() => { setError(""); setStep(2); }} className="gap-2">التالي <ChevronLeft className="h-4 w-4" /></Button>
+                  <Button onClick={() => { setError(""); setStep(2); }} className="gap-2" data-testid="step1-next">
+                    التالي <ChevronLeft className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             )}
@@ -387,9 +601,23 @@ export default function Register() {
                     <span className="text-muted-foreground">العملة:</span><span className="font-medium">{selectedCountry.currency.nameAr} ({selectedCountry.currency.code})</span>
                     <span className="text-muted-foreground">الرقم الضريبي:</span><span className="font-mono text-xs">{form.vatNumber}</span>
                     <span className="text-muted-foreground">الباقة:</span>
-                    <span className="font-medium">{selectedPlan.name} — {billingCycle === "annual" ? selectedPlan.annual : selectedPlan.monthly} ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
+                    <span className="font-medium">{selectedPlan.name} — {billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total} ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
                     <span className="text-muted-foreground">المستخدمون:</span><span>{selectedPlan.maxUsers === 999 ? "غير محدود" : selectedPlan.maxUsers}</span>
                     <span className="text-muted-foreground">الفواتير الشهرية:</span><span>{selectedPlan.maxInvoices === 999999 ? "غير محدودة" : selectedPlan.maxInvoices}</span>
+                    <span className="text-muted-foreground">نشاط الشركة:</span>
+                    <span className="font-medium">
+                      {selectedIndustries.length === 0
+                        ? "—"
+                        : selectedIndustries
+                            .map(c => INDUSTRIES.find(i => i.code === c)?.nameAr ?? c)
+                            .join("، ")}
+                    </span>
+                    <span className="text-muted-foreground">الوحدات المختارة:</span>
+                    <span className="font-medium">
+                      {selectedModules.length === 0
+                        ? "الأساسيات فقط"
+                        : `${selectedModules.length} وحدة (${selectedModules.map(k => SELECTABLE_MODULES.find(m => m.key === k)?.nameAr ?? k).join("، ")})`}
+                    </span>
                     <span className="text-muted-foreground">تاريخ البدء:</span><span>{form.startDate}</span>
                     <span className="text-muted-foreground">تاريخ الانتهاء:</span><span>{form.endDate}</span>
                     <span className="text-muted-foreground">اسم المستخدم:</span><span className="font-mono text-xs">{form.username}</span>

@@ -352,8 +352,16 @@ router.post("/register", async (req, res) => {
     city, district, street, buildingNumber, postalCode, country,
     currency,
     industryName, invoiceType,
+    // New: multi-industry list + per-module selection from the redesigned
+    // registration wizard Step 1. Both are optional; legacy clients that
+    // only send `industryName` / `plan` continue to work.
+    selectedIndustries, selectedModules,
     // Subscription
     plan, billingCycle, startDate, endDate,
+    // Optional override of the subscription price coming from the new
+    // module-based pricing UI (base plan + per-module add-ons). When
+    // omitted (legacy clients) we fall back to the static plan price.
+    price: priceOverride,
     // Admin user
     username, email, password,
   } = req.body;
@@ -378,6 +386,64 @@ router.post("/register", async (req, res) => {
   };
   const planConfig = PLANS[plan ?? "starter"] ?? PLANS.starter;
 
+  // ── AUTHORITATIVE pricing (server-side) ─────────────────────────────
+  // The new module-based pricing UI computes a total client-side for
+  // display, but BILLING MUST NEVER trust client input. We mirror the
+  // pricing tables here and recompute the monthly total ourselves; the
+  // client's `priceOverride` is intentionally IGNORED for billing — it
+  // only gets logged for tamper detection. This blocks an attacker from
+  // submitting a lower-than-correct price to underpay their subscription.
+  //
+  // Pricing model (mirrors lib/systemModules.ts):
+  //   monthlyTotal = basePlanMonthly +
+  //                  sum(prices of selected modules)
+  //                  - sum(cheapest `included` selected modules' prices)
+  // Annual cycle: monthlyTotal × 10 (preserves the static ~17% discount).
+  const MODULE_PRICES: Record<string, number> = {
+    sales: 35, purchasing: 35, inventory: 40, pos: 45,
+    cash: 30, accounting: 50, hr: 35, zatca: 25,
+  };
+  const PLAN_INCLUDED_MODULES: Record<string, number> = {
+    starter: 2, professional: 5, enterprise: 100,
+  };
+  const BASE_MONTHLY: Record<string, number> = {
+    starter: 99, professional: 299, enterprise: 899,
+  };
+
+  const computeMonthlyPrice = (planKey: string, moduleKeys: unknown): number => {
+    const base = BASE_MONTHLY[planKey] ?? BASE_MONTHLY.starter;
+    if (!Array.isArray(moduleKeys)) return base;
+    const prices = moduleKeys
+      .filter((k): k is string => typeof k === "string")
+      .map(k => MODULE_PRICES[k])
+      .filter((p): p is number => typeof p === "number")
+      .sort((a, b) => a - b);
+    const included = PLAN_INCLUDED_MODULES[planKey] ?? 0;
+    const freeCount = Math.min(included, prices.length);
+    const freeAmount = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
+    const grossTotal = prices.reduce((s, p) => s + p, 0);
+    return base + (grossTotal - freeAmount);
+  };
+
+  const planKeyForPricing = plan ?? "starter";
+  const monthlyTotal = computeMonthlyPrice(planKeyForPricing, selectedModules);
+  const finalPrice: string = billingCycle === "annual"
+    ? String(monthlyTotal * 10)
+    : String(monthlyTotal);
+
+  // Tamper detection — log mismatches but don't reject (gives us a
+  // visibility signal without breaking legitimate clients during rollout).
+  if (priceOverride !== undefined && priceOverride !== null) {
+    const clientNum = Number(priceOverride);
+    const serverNum = Number(finalPrice);
+    if (Number.isFinite(clientNum) && Math.abs(clientNum - serverNum) > 0.01) {
+      console.warn(
+        "[register] client price mismatch",
+        { plan: planKeyForPricing, billingCycle, client: clientNum, server: serverNum, modules: selectedModules },
+      );
+    }
+  }
+
   // Determine if this is an internal admin creation (called by superadmin) vs public registration
   const auth = req.headers.authorization;
   const isAdminCreate = !!auth?.startsWith("Bearer ");
@@ -398,6 +464,44 @@ router.post("/register", async (req, res) => {
     req.socket?.remoteAddress ||
     null;
 
+  // Resolve final industryName: prefer the multi-select list (joined CSV)
+  // if it was sent, otherwise fall back to the single legacy field.
+  const resolvedIndustryName: string | null = (() => {
+    if (Array.isArray(selectedIndustries) && selectedIndustries.length > 0) {
+      return selectedIndustries.filter((s: unknown): s is string => typeof s === "string" && s.length > 0).join(",");
+    }
+    return industryName ?? null;
+  })();
+
+  // Build the menuPermissions JSON from the user-selected high-level
+  // modules. The mapping mirrors systemModules.ts on the frontend; we keep
+  // the backend authoritative so a tampered request can't grant arbitrary
+  // permissions. Core dashboard/invoices/customers are always granted.
+  const MODULE_PERMISSIONS: Record<string, string[]> = {
+    sales:      ["sales_module", "sales_reports", "customers"],
+    purchasing: ["purchases_module", "purchases_reports", "suppliers"],
+    inventory:  ["inventory_mobile", "inventory_reports"],
+    pos:        ["pos"],
+    cash:       ["cash_module", "cash_reports"],
+    accounting: ["accounts", "accounting_reports"],
+    hr:         ["hr_module"],
+    zatca:      ["zatca", "reports"],
+  };
+  const buildMenuPermissionsJson = (keys: unknown): string | null => {
+    if (!Array.isArray(keys)) return null;
+    const out: Record<string, boolean> = {
+      dashboard: true, invoices: true, customers: true, // always-on core
+    };
+    for (const k of keys) {
+      if (typeof k !== "string") continue;
+      const perms = MODULE_PERMISSIONS[k];
+      if (!perms) continue;
+      for (const p of perms) out[p] = true;
+    }
+    return JSON.stringify(out);
+  };
+  const resolvedMenuPermissions = buildMenuPermissionsJson(selectedModules);
+
   // Create company
   const [company] = await db.insert(companiesTable).values({
     nameAr,
@@ -410,11 +514,14 @@ router.post("/register", async (req, res) => {
     buildingNumber: buildingNumber ?? "",
     postalCode: postalCode ?? "",
     country: country ?? "SA",
-    industryName: industryName ?? null,
+    industryName: resolvedIndustryName,
     invoiceType: invoiceType ?? "both",
     isSandbox: false,
     status: companyStatus,
     registrationIp,
+    // Only override default menuPermissions if the user picked modules at
+    // registration; otherwise let the schema default apply.
+    ...(resolvedMenuPermissions ? { menuPermissions: resolvedMenuPermissions } : {}),
   }).returning();
 
   // Seed the default currency for the new company. The currency code is
@@ -450,7 +557,7 @@ router.post("/register", async (req, res) => {
       ? new Date(Date.now() + 365 * 86400000).toISOString().split("T")[0]
       : new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0]),
     isActive: true,
-    price: planConfig.price,
+    price: finalPrice,
   });
 
   // Hash password + create admin user (inactive until superadmin approves)
