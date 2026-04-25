@@ -56,6 +56,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "vat_output", label: "ضريبة المخرجات (دائن)", description: "الحساب الدائن للضريبة المحصلة من العميل.", defaultHintCode: "2140", accountType: "liability" },
       { key: "cogs",       label: "تكلفة البضاعة المباعة (مدين)", description: "تسجيل تكلفة المخزون المباع.", defaultHintCode: "5110", accountType: "expense" },
       { key: "inventory",  label: "المخزون (دائن لأجل COGS)", description: "تخفيض المخزون بمقدار تكلفة المباع.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "discount",   label: "خصم مسموح به (مدين)", description: "الحساب المدين لقيمة الخصم الممنوح للعميل على الفاتورة (طبيعته مصروف).", defaultHintCode: "5103", accountType: "expense" },
     ],
   },
   {
@@ -68,6 +69,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "receivable",     label: "حساب العملاء (دائن)", description: "تخفيض رصيد العميل.", defaultHintCode: "1210", accountType: "asset" },
       { key: "inventory",      label: "المخزون (مدين)", description: "إعادة البضاعة للمخزون بالتكلفة.", defaultHintCode: "1220", accountType: "asset" },
       { key: "cogs",           label: "تكلفة البضاعة المباعة (دائن)", description: "عكس التكلفة للبضاعة المرتجعة.", defaultHintCode: "5110", accountType: "expense" },
+      { key: "discount",       label: "خصم مسموح به (دائن)", description: "نفس حساب الخصم الممنوح في الفاتورة الأصلية — يُعكس في طرف الدائن لاسترداد الخصم عند المرتجع.", defaultHintCode: "5103", accountType: "expense" },
     ],
   },
   {

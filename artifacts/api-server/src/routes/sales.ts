@@ -1108,6 +1108,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     const salesAccId    = pickAccount(ret.salesAccountId,    mapSr("sales_return", "revenue")    ?? mapSi("sales_invoice", "revenue"));
     const cogsAccId     = pickAccount(ret.cogsAccountId,     mapSr("sales_return", "cogs")       ?? mapSi("sales_invoice", "cogs"));
     const taxAccId      = pickAccount(ret.taxAccountId,      mapSr("sales_return", "vat_output") ?? mapSi("sales_invoice", "vat_output"));
+    const discountAccId = pickAccount(ret.discountAccountId, mapSr("sales_return", "discount")   ?? mapSi("sales_invoice", "discount"));
     if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
     if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
     // Inventory account derived from warehouse — verify each used warehouse has one
@@ -1124,7 +1125,12 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
 
     const totalAmt    = Number(ret.totalAmount || 0);
     const vatAmt      = Number(ret.vatAmount || 0);
-    const subtotalAmt = totalAmt - vatAmt; // returns table has no separate subtotal field
+    const discountAmt = Number(ret.discountAmount || 0);
+    // returns table has no stored subtotal — derive the gross-before-discount
+    // figure (the value that originally hit "إيرادات المبيعات" on the sale)
+    // from total + discount − vat.  If discountAmt is 0 this collapses to the
+    // previous behaviour (totalAmt − vatAmt).
+    const subtotalAmt = totalAmt + discountAmt - vatAmt;
 
     const partyAccountId =
       ret.paymentType === "cash" ? await getCashBoxAccountId(cid, ret.cashBoxId)
@@ -1140,6 +1146,9 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
     if (vatAmt > 0 && !taxAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
+    if (discountAmt > 0 && !discountAccId) {
+      res.status(400).json({ error: "لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)" }); return;
+    }
 
     const journalId = await createJournalEntry({
       companyId: cid,
@@ -1150,7 +1159,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       exchangeRate: ret.exchangeRate,
       description: `قيد مرتجع مبيعات رقم ${ret.docNumber || ret.id}`,
       lines: [
-        // Debits (reversed)
+        // Debits (reversed from the original sale)
         { accountId: salesAccId,     debit: subtotalAmt, description: "تخفيض إيراد المبيعات (مرتجع)" },
         { accountId: taxAccId,       debit: vatAmt,      description: "تخفيض ضريبة المخرجات" },
         // Inventory: one debit line per warehouse using its own GL account
@@ -1164,9 +1173,10 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
               description: `زيادة المخزون (مرتجع) — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
             };
           }),
-        // Credits (reversed)
-        { accountId: partyAccountId,    credit: totalAmt,  description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
-        { accountId: cogsAccId, credit: totalCogs, description: "عكس تكلفة البضاعة المباعة" },
+        // Credits (reversed from the original sale)
+        { accountId: partyAccountId,    credit: totalAmt,    description: ret.paymentType === "cash" ? "رد نقدي" : ret.paymentType === "bank" ? "رد بنكي" : "تخفيض ذمم العميل" },
+        { accountId: discountAccId,     credit: discountAmt, description: "عكس خصم مسموح به (مرتجع)" },
+        { accountId: cogsAccId,         credit: totalCogs,   description: "عكس تكلفة البضاعة المباعة" },
       ],
     });
 

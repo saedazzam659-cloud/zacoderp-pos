@@ -71,6 +71,7 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "sales_invoice",    roleKey: "vat_output",         accountCode: "21041" },
   { documentType: "sales_invoice",    roleKey: "cogs",               accountCode: "5101"  },
   { documentType: "sales_invoice",    roleKey: "inventory",          accountCode: "11051" },
+  { documentType: "sales_invoice",    roleKey: "discount",           accountCode: "5103"  },
 
   // مرتجع المبيعات
   { documentType: "sales_return",     roleKey: "revenue_return",     accountCode: "4101"  },
@@ -78,6 +79,7 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "sales_return",     roleKey: "receivable",         accountCode: "11031" },
   { documentType: "sales_return",     roleKey: "inventory",          accountCode: "11051" },
   { documentType: "sales_return",     roleKey: "cogs",               accountCode: "5101"  },
+  { documentType: "sales_return",     roleKey: "discount",           accountCode: "5103"  },
 
   // تسوية العملاء
   { documentType: "customer_settlement", roleKey: "cash",            accountCode: "11011" },
