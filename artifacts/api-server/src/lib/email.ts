@@ -23,8 +23,64 @@ function getFrom(): string {
   return process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "no-reply@localhost";
 }
 
+// Microsoft Outlook (Microsoft Graph) — Replit connector fallback when SMTP isn't set.
+// Uses the @replit/connectors-sdk to send via POST /v1.0/me/sendMail with the
+// authenticated user's mailbox.
+function outlookEnabled(): boolean {
+  return Boolean(
+    process.env.REPLIT_CONNECTORS_HOSTNAME &&
+      (process.env.REPL_IDENTITY || process.env.WEB_REPL_RENEWAL || process.env.REPL_IDENTITY_KEY),
+  );
+}
+
+let cachedOutlook: any = null;
+async function getOutlookConnector() {
+  if (cachedOutlook) return cachedOutlook;
+  try {
+    const mod: any = await import("@replit/connectors-sdk");
+    const Ctor = mod.ReplitConnectors ?? mod.default?.ReplitConnectors ?? mod.default;
+    if (!Ctor) return null;
+    cachedOutlook = new Ctor();
+    return cachedOutlook;
+  } catch {
+    return null;
+  }
+}
+
+async function sendViaOutlook(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
+  const connectors = await getOutlookConnector();
+  if (!connectors) return { ok: false, reason: "outlook_sdk_unavailable" };
+  const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to])
+    .map((e) => ({ emailAddress: { address: e } }));
+  const payload = {
+    message: {
+      subject: opts.subject,
+      body: { contentType: "HTML", content: opts.html },
+      toRecipients: recipients,
+    },
+    saveToSentItems: "true",
+  };
+  try {
+    const resp: any = await connectors.proxy("outlook", "/v1.0/me/sendMail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (resp && typeof resp.status === "number" && resp.status >= 200 && resp.status < 300) {
+      return { ok: true };
+    }
+    let detail = "";
+    try { detail = await resp.text(); } catch {}
+    return { ok: false, reason: `outlook_http_${resp?.status ?? "?"}:${detail.slice(0, 200)}` };
+  } catch (err: any) {
+    return { ok: false, reason: `outlook_error:${err?.message ?? "unknown"}` };
+  }
+}
+
 export function emailConfigured(): boolean {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return Boolean(
+    (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) || outlookEnabled(),
+  );
 }
 
 export interface EmailAttachment {
@@ -43,28 +99,37 @@ export interface SendOpts {
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
   const transporter = getTransporter();
-  if (!transporter) {
-    console.warn("[email] SMTP not configured — skipping send", { to: opts.to, subject: opts.subject });
-    return { ok: false, reason: "smtp_not_configured" };
+  if (transporter) {
+    try {
+      await transporter.sendMail({
+        from: getFrom(),
+        to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
+        subject: opts.subject,
+        html: opts.html,
+        text: opts.text,
+        attachments: opts.attachments?.map(a => ({
+          filename: a.filename,
+          content: a.content,
+          contentType: a.contentType ?? "text/csv; charset=utf-8",
+        })),
+      });
+      return { ok: true };
+    } catch (err: any) {
+      console.error("[email] SMTP send failed", err?.message ?? err);
+      return { ok: false, reason: err?.message ?? "send_failed" };
+    }
   }
-  try {
-    await transporter.sendMail({
-      from: getFrom(),
-      to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
-      subject: opts.subject,
-      html: opts.html,
-      text: opts.text,
-      attachments: opts.attachments?.map(a => ({
-        filename: a.filename,
-        content: a.content,
-        contentType: a.contentType ?? "text/csv; charset=utf-8",
-      })),
-    });
-    return { ok: true };
-  } catch (err: any) {
-    console.error("[email] send failed", err?.message ?? err);
-    return { ok: false, reason: err?.message ?? "send_failed" };
+  if (outlookEnabled()) {
+    const r = await sendViaOutlook(opts);
+    if (r.ok) {
+      console.info("[email] sent via Outlook connector", { to: opts.to, subject: opts.subject });
+      return r;
+    }
+    console.error("[email] Outlook send failed", r.reason);
+    return r;
   }
+  console.warn("[email] No transport configured — skipping send", { to: opts.to, subject: opts.subject });
+  return { ok: false, reason: "no_transport_configured" };
 }
 
 const wrapHtml = (title: string, body: string) => `
