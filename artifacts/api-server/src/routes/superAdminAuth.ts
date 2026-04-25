@@ -44,26 +44,15 @@ const newRecoveryCode = () => {
   return raw.slice(0, 4) + "-" + raw.slice(4, 8);
 };
 
-// Build the public base URL used inside security emails (recovery /
-// device-approval links). Host headers can be forged, so we trust
-// configured values first and only fall back to the request when the
-// trusted sources are unavailable.
-//
-// Priority:
-//   1. process.env.PUBLIC_BASE_URL          (operator-pinned, highest trust)
-//   2. process.env.REPLIT_DEV_DOMAIN        (Replit-injected, trusted)
-//   3. process.env.REPLIT_DOMAINS           (Replit-injected, comma-separated)
-//   4. x-forwarded-host / host              (request-derived, lowest trust)
+// Base URL for security email links. Prefers configured values over
+// request headers (Host can be forged → would phish recovery tokens).
 function publicBaseUrlFromReq(req: any): string {
   const fixed = (process.env.PUBLIC_BASE_URL ?? "").trim();
   if (fixed) return fixed.replace(/\/+$/, "");
-
   const replitDev = (process.env.REPLIT_DEV_DOMAIN ?? "").trim();
   if (replitDev) return `https://${replitDev}`;
-
   const replitDomains = (process.env.REPLIT_DOMAINS ?? "").split(",")[0]?.trim();
   if (replitDomains) return `https://${replitDomains}`;
-
   const proto = (req.headers["x-forwarded-proto"]?.toString() || "https").split(",")[0].trim();
   const host = (req.headers["x-forwarded-host"]?.toString() || req.headers.host?.toString() || "");
   return host ? `${proto}://${host}` : "";
@@ -374,9 +363,8 @@ router.post("/verify-otp", saOtpLimit, async (req, res) => {
     return;
   }
 
-  // Atomic claim: only the first concurrent verifier wins. Two requests that
-  // both pass the read-time checks above could otherwise each mint a session
-  // from a single OTP — guard with a conditional update on consumed_at.
+  // Atomic claim — guards against concurrent verifiers minting two
+  // sessions from a single OTP.
   const claim = await db.update(superAdminOtpCodesTable)
     .set({ consumedAt: new Date() })
     .where(and(

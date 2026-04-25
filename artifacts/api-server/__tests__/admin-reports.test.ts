@@ -472,6 +472,40 @@ test("company-performance reflects a freshly-posted invoice", async () => {
     `avgInvoice should equal seeded amount, got ${row.avgInvoice}`);
 });
 
+// Regression: a company with multiple active subscription rows (possible
+// during plan migrations) used to multiply joined invoices. Seed a second
+// active sub for the test company and verify counts are NOT doubled.
+test("company-performance does not double-count when a company has multiple active subscriptions", async () => {
+  const today = todayISO();
+  const future = isoDate(new Date(Date.now() + 90 * 86_400_000));
+  const [extra] = await db.insert(subscriptionsTable).values({
+    companyId: testCompanyId,
+    plan: "professional",
+    billingCycle: "monthly",
+    maxUsers: 10, maxBranches: 2, maxWarehouses: 2, maxInvoices: 1000,
+    startDate: today,
+    endDate: future,
+    price: "0",
+    isActive: true,
+  }).returning({ id: subscriptionsTable.id });
+
+  try {
+    const r = await api<CompanyPerfResponse>("/api/admin/reports/company-performance", {
+      token: saToken,
+      query: { period: "this_month" },
+    });
+    assert.equal(r.status, 200);
+    const row = r.body.rows.find(x => x.companyId === testCompanyId);
+    assert.ok(row, "test company must appear in company-performance rows");
+    assert.equal(row.invoiceCount, 1,
+      `invoiceCount must stay 1 even with two active subs, got ${row.invoiceCount}`);
+    assert.ok(Math.abs(row.revenue - 1234.56) < 0.001,
+      `revenue must not be doubled, got ${row.revenue}`);
+  } finally {
+    await db.delete(subscriptionsTable).where(inArray(subscriptionsTable.id, [extra.id]));
+  }
+});
+
 test("revenue-by-plan attributes seeded invoice to the company's plan", async () => {
   // The previous test already inserted the invoice; this verifies the
   // separate aggregation path used by /reports/revenue-by-plan.

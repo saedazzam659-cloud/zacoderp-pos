@@ -2811,33 +2811,42 @@ router.get("/reports/company-performance", requireSuperAdmin, async (req, res) =
     const search = typeof req.query?.search === "string" ? req.query.search : undefined;
     const format = req.query?.format === "csv" ? "csv" : "json";
 
-    // Companies with a currently-active subscription only (per task spec).
+    // Restrict to companies with a currently-active subscription. We pick
+    // exactly ONE active sub per company (the most recent end_date, then id)
+    // via DISTINCT ON; otherwise duplicate active rows would multiply the
+    // joined invoices and inflate revenue / invoice counts.
     const today = todayISO();
 
     const [currResult, prevResult, companiesList] = await Promise.all([
       db.execute<RevenueRow>(sql`
+        WITH active_sub AS (
+          SELECT DISTINCT ON (company_id) company_id
+            FROM subscriptions
+           WHERE is_active = true AND end_date >= ${today}
+           ORDER BY company_id, end_date DESC, id DESC
+        )
         SELECT si.company_id,
                COALESCE(SUM(si.total_amount), 0)::text AS revenue,
                COUNT(*)::int                           AS invoice_count
           FROM sales_invoices si
-          JOIN subscriptions sub
-            ON sub.company_id = si.company_id
-           AND sub.is_active = true
-           AND sub.end_date >= ${today}
+          JOIN active_sub a ON a.company_id = si.company_id
          WHERE si.status = 'posted'
            AND si.invoice_date >= ${period.from}
            AND si.invoice_date <= ${period.to}
          GROUP BY si.company_id
       `),
       db.execute<RevenueRow>(sql`
+        WITH active_sub AS (
+          SELECT DISTINCT ON (company_id) company_id
+            FROM subscriptions
+           WHERE is_active = true AND end_date >= ${today}
+           ORDER BY company_id, end_date DESC, id DESC
+        )
         SELECT si.company_id,
                COALESCE(SUM(si.total_amount), 0)::text AS revenue,
                COUNT(*)::int                           AS invoice_count
           FROM sales_invoices si
-          JOIN subscriptions sub
-            ON sub.company_id = si.company_id
-           AND sub.is_active = true
-           AND sub.end_date >= ${today}
+          JOIN active_sub a ON a.company_id = si.company_id
          WHERE si.status = 'posted'
            AND si.invoice_date >= ${period.prevFrom}
            AND si.invoice_date <= ${period.prevTo}
@@ -2895,21 +2904,8 @@ router.get("/reports/company-performance", requireSuperAdmin, async (req, res) =
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  GET /api/admin/reports/operational-summary
-// ───────────────────────────────────────────────────────────────────────────
-//  Operational health per company: CRM counts, open POS sessions, last invoice
-//  activity, latest auto-backup, audit events + denied attempts within the
-//  selected reporting period.
-//
-//  Period contract (matches the other three reports):
-//    `period=this_month|last_month|this_quarter|last_quarter|this_year|last_year`
-//    `period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD`
-//  The selected window drives `auditEvents` and `denied` counts; the
-//  inactivity highlight stays a fixed 30-day rule (a tenant is "راكدة"
-//  if it has done literally nothing for the past 30 days, irrespective
-//  of the report period).
-// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/admin/reports/operational-summary
+// Period drives audit/denied counts; the 30-day inactivity flag is fixed.
 router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) => {
   try {
     const period = parsePeriod(req);
@@ -2918,20 +2914,10 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
     const format = req.query?.format === "csv" ? "csv" : "json";
     const onlyInactive = req.query?.onlyInactive === "true" || req.query?.onlyInactive === "1";
 
-    // Half-open day window: [from 00:00, to+1day 00:00) in UTC, so a row
-    // dated on `period.to` is included regardless of its time-of-day.
     const fromTs = `${period.from} 00:00:00`;
     const toTsExclusive = `${period.to} 23:59:59.999`;
 
     const [opsResult, backupsResult, companiesList] = await Promise.all([
-      // Per-company KPI roll-up:
-      //   * audit events / denied attempts → counted within the selected
-      //     report period (driven by ?period= or custom from/to).
-      //   * inactivity highlight → fixed 30-day rule (separate from the
-      //     report period; surfaces tenants that have gone dark).
-      //   * last activity timestamp → MAX over invoice_date and audit_log.
-      // Outer FROM `companies` ensures every tenant appears even if all
-      // join CTEs are empty.
       db.execute<OperationalRow>(sql`
         WITH c   AS (SELECT company_id, COUNT(*)::int n FROM customers GROUP BY company_id),
              s   AS (SELECT company_id, COUNT(*)::int n FROM suppliers GROUP BY company_id),
@@ -3009,10 +2995,9 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
         customers: r.customers, suppliers: r.suppliers, items: r.items,
         openPosSessions: r.open_pos_sessions,
         lastActivityAt, inactive,
-        // Counts within the selected period; legacy `*7d` aliases retained
-        // for any client that still references them (one release window).
         auditEventsPeriod: r.audit_events_period,
         deniedPeriod:      r.denied_period,
+        // Legacy aliases for one release window of compatibility.
         auditEvents7d:     r.audit_events_period,
         denied7d:          r.denied_period,
         latestBackupReason: backup?.reason ?? null,
