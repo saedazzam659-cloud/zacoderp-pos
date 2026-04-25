@@ -27,6 +27,14 @@ export const MAINTENANCE_TOOL_KEYS = [
   "sequence-gaps",
   "dormant-users",
   "orphan-stock",
+  // Inventory category — added in the toolbox expansion (F).
+  "negative-stock",
+  "stock-balance-drift",
+  // Accounting category — added in the toolbox expansion (F).
+  "unbalanced-entries",
+  // Logs / records category — added in the toolbox expansion (F).
+  "old-audit-logs",
+  "old-maintenance-runs",
 ] as const;
 export type MaintenanceToolKey = typeof MAINTENANCE_TOOL_KEYS[number];
 
@@ -223,6 +231,187 @@ export async function checkOrphanStock(companyId: number): Promise<CheckResult> 
   return { count: n };
 }
 
+// 7. أرصدة مخزون سالبة — items whose stock_balance.qty is below zero. Almost
+// always indicates an out-of-order operation (sale before purchase) or a stale
+// transfer-out, both of which require operator review.
+export async function checkNegativeStock(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
+  const exec = await db.execute<any>(sql`
+    SELECT sb.id,
+           sb.item_id      AS "itemId",
+           sb.warehouse_id AS "warehouseId",
+           sb.qty::text    AS qty,
+           sb.avg_cost::text AS "avgCost",
+           sb.updated_at   AS "updatedAt",
+           i.code          AS "itemCode",
+           COALESCE(i.name_ar, i.name)         AS "itemName",
+           COALESCE(w.name_ar, w.name)         AS "warehouseName"
+      FROM stock_balance sb
+      JOIN items      i ON i.id = sb.item_id
+      JOIN warehouses w ON w.id = sb.warehouse_id
+     WHERE sb.company_id = ${companyId}
+       AND sb.qty < 0
+     ORDER BY sb.qty ASC
+     ${limitClause}
+  `);
+  const items = (exec as any).rows ?? [];
+  return { count: items.length, items };
+}
+
+// 8. انحراف رصيد المخزون — stock_balance.qty diverges from SUM(stock_ledger.qty)
+// per (item, warehouse). The ledger stores signed quantities (see inventory.ts:
+// `transfer_out` writes negative qty), so the running sum should match the
+// stored balance. Drift means a posting bug or a manual DB edit.
+export async function checkStockBalanceDrift(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
+  // The "stored ⊳ ledger" join uses FULL OUTER so we also catch the two edge
+  // cases: balance row exists with no ledger movements, and ledger movements
+  // exist with no balance row. Both indicate drift.
+  const exec = await db.execute<any>(sql`
+    WITH bal AS (
+      SELECT item_id, warehouse_id, qty
+        FROM stock_balance
+       WHERE company_id = ${companyId}
+    ),
+    led AS (
+      SELECT item_id, warehouse_id, COALESCE(SUM(qty), 0) AS qty
+        FROM stock_ledger
+       WHERE company_id = ${companyId}
+       GROUP BY item_id, warehouse_id
+    )
+    SELECT COALESCE(b.item_id, l.item_id)           AS "itemId",
+           COALESCE(b.warehouse_id, l.warehouse_id) AS "warehouseId",
+           COALESCE(b.qty, 0)::text                 AS "storedQty",
+           COALESCE(l.qty, 0)::text                 AS "ledgerQty",
+           (COALESCE(b.qty, 0) - COALESCE(l.qty, 0))::text AS "drift",
+           i.code  AS "itemCode",
+           COALESCE(i.name_ar, i.name) AS "itemName",
+           COALESCE(w.name_ar, w.name) AS "warehouseName"
+      FROM bal b
+      FULL OUTER JOIN led l
+        ON l.item_id = b.item_id AND l.warehouse_id = b.warehouse_id
+      LEFT JOIN items      i ON i.id = COALESCE(b.item_id, l.item_id)
+      LEFT JOIN warehouses w ON w.id = COALESCE(b.warehouse_id, l.warehouse_id)
+     WHERE ROUND(COALESCE(b.qty, 0) - COALESCE(l.qty, 0), 4) <> 0
+     ORDER BY ABS(COALESCE(b.qty, 0) - COALESCE(l.qty, 0)) DESC
+     ${limitClause}
+  `);
+  const items = (exec as any).rows ?? [];
+  return { count: items.length, items };
+}
+
+// 9. قيود غير متوازنة — posted journal entries where SUM(debit) ≠ SUM(credit).
+// A posted entry MUST be balanced; a row here means the integrity rule was
+// bypassed (legacy import, partial rollback, manual SQL). Read-only by design:
+// auto-fixing requires choosing which side is wrong.
+export async function checkUnbalancedEntries(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
+  const exec = await db.execute<any>(sql`
+    SELECT je.id,
+           je.doc_number AS "docNumber",
+           je.entry_date AS "entryDate",
+           je.description,
+           je.status,
+           COALESCE(SUM(jel.debit),  0)::text AS "totalDebit",
+           COALESCE(SUM(jel.credit), 0)::text AS "totalCredit",
+           ROUND(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0), 2)::text AS "diff",
+           COUNT(jel.id)::int AS "lineCount"
+      FROM journal_entries je
+      LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
+     WHERE je.company_id = ${companyId}
+       AND je.status = 'posted'
+     GROUP BY je.id, je.doc_number, je.entry_date, je.description, je.status
+    HAVING ROUND(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0), 2) <> 0
+     ORDER BY ABS(COALESCE(SUM(jel.debit),0) - COALESCE(SUM(jel.credit),0)) DESC
+     ${limitClause}
+  `);
+  const items = (exec as any).rows ?? [];
+  return { count: items.length, items };
+}
+
+// 10. سجلات تدقيق قديمة — count of audit_log rows older than `days`. Operators
+// keep ~12 months on hand; the fix action prunes anything older to keep the
+// table from outgrowing the dashboard.
+export async function checkOldAuditLogs(
+  companyId: number, days = 365, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  // Audit rows are tenant-scoped via companyId (snapshot, no FK).
+  const exec = await db.execute<any>(sql`
+    SELECT COUNT(*)::int AS n,
+           MIN(created_at)            AS "oldest",
+           MAX(created_at)            AS "newest"
+      FROM audit_log
+     WHERE company_id = ${companyId}
+       AND created_at < NOW() - (${days}::int || ' days')::interval
+  `);
+  const row = ((exec as any).rows ?? [{}])[0] ?? {};
+  const n = Number(row.n ?? 0);
+  // For the inline UI / CSV we surface a tiny preview — listing every audit
+  // row is wasteful; the operator only needs counts to decide whether to prune.
+  const previewLimit = opts.unlimited ? sql`LIMIT 5000` : sql`LIMIT 50`;
+  let items: any[] = [];
+  if (n > 0) {
+    const exec2 = await db.execute<any>(sql`
+      SELECT id, user_id AS "userId", username, role, module, action,
+             method, path, status_code AS "statusCode", ip,
+             created_at AS "createdAt"
+        FROM audit_log
+       WHERE company_id = ${companyId}
+         AND created_at < NOW() - (${days}::int || ' days')::interval
+       ORDER BY created_at ASC
+       ${previewLimit}
+    `);
+    items = (exec2 as any).rows ?? [];
+  }
+  return {
+    count: n,
+    items,
+    extras: { days, oldest: row.oldest ?? null, newest: row.newest ?? null },
+  };
+}
+
+// 11. سجلات صيانة قديمة — count of maintenance_runs older than `days`. Default
+// 90 days keeps roughly a quarter of trend data on hand for the dashboard.
+export async function checkOldMaintenanceRuns(
+  companyId: number, days = 90, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const exec = await db.execute<any>(sql`
+    SELECT COUNT(*)::int AS n,
+           MIN(run_at)               AS "oldest",
+           MAX(run_at)               AS "newest"
+      FROM maintenance_runs
+     WHERE company_id = ${companyId}
+       AND run_at < NOW() - (${days}::int || ' days')::interval
+  `);
+  const row = ((exec as any).rows ?? [{}])[0] ?? {};
+  const n = Number(row.n ?? 0);
+  const previewLimit = opts.unlimited ? sql`LIMIT 5000` : sql`LIMIT 50`;
+  let items: any[] = [];
+  if (n > 0) {
+    const exec2 = await db.execute<any>(sql`
+      SELECT id, tool_key AS "toolKey", status, count, trigger,
+             run_at AS "runAt", duration_ms AS "durationMs", error
+        FROM maintenance_runs
+       WHERE company_id = ${companyId}
+         AND run_at < NOW() - (${days}::int || ' days')::interval
+       ORDER BY run_at ASC
+       ${previewLimit}
+    `);
+    items = (exec2 as any).rows ?? [];
+  }
+  return {
+    count: n,
+    items,
+    extras: { days, oldest: row.oldest ?? null, newest: row.newest ?? null },
+  };
+}
+
 // ─── Aggregator used by the scheduler + the run-now endpoint ─────────────────
 export interface ToolRunOutcome {
   toolKey: MaintenanceToolKey;
@@ -235,12 +424,18 @@ export interface ToolRunOutcome {
 
 export async function runAllChecks(companyId: number): Promise<ToolRunOutcome[]> {
   const runners: Array<[MaintenanceToolKey, () => Promise<CheckResult>]> = [
-    ["journal-pending",    () => checkJournalPending(companyId)],
-    ["broken-refs",        () => checkBrokenRefs(companyId)],
-    ["unlinked-accounts",  () => checkUnlinkedAccounts(companyId)],
-    ["sequence-gaps",      () => checkSequenceGaps(companyId)],
-    ["dormant-users",      () => checkDormantUsers(companyId)],
-    ["orphan-stock",       () => checkOrphanStock(companyId)],
+    ["journal-pending",      () => checkJournalPending(companyId)],
+    ["broken-refs",          () => checkBrokenRefs(companyId)],
+    ["unlinked-accounts",    () => checkUnlinkedAccounts(companyId)],
+    ["sequence-gaps",        () => checkSequenceGaps(companyId)],
+    ["dormant-users",        () => checkDormantUsers(companyId)],
+    ["orphan-stock",         () => checkOrphanStock(companyId)],
+    // Toolbox expansion (F): inventory / accounting / logs categories.
+    ["negative-stock",       () => checkNegativeStock(companyId)],
+    ["stock-balance-drift",  () => checkStockBalanceDrift(companyId)],
+    ["unbalanced-entries",   () => checkUnbalancedEntries(companyId)],
+    ["old-audit-logs",       () => checkOldAuditLogs(companyId)],
+    ["old-maintenance-runs", () => checkOldMaintenanceRuns(companyId)],
   ];
   const results: ToolRunOutcome[] = [];
   for (const [toolKey, run] of runners) {

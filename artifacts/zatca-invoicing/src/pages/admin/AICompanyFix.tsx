@@ -11,6 +11,8 @@ import {
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
   CalendarClock, Play,
+  // Toolbox expansion (F): inventory / accounting / logs categories.
+  TrendingDown, Scale, Calculator, ScrollText, Trash2, Boxes, BookOpen, ClipboardList,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -951,6 +953,297 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             companyId={companyId}
             latestScan={latestByTool.get("orphan-stock") ?? null}
             externalCta={{ label: "فتح صفحة التنظيف", href: "/admin/orphan-stock" }}
+          />
+        </div>
+
+        {/* ── Category: المخزون ─────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t">
+          <Boxes className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">المخزون</h3>
+          <span className="text-[11px] text-muted-foreground">— أدوات فحص وإصلاح أرصدة وحركات المخزون.</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {/* أرصدة سالبة — read-only diagnostic. */}
+          <MaintenanceTool
+            toolKey="negative-stock"
+            label="أرصدة مخزون سالبة"
+            description="أصناف ذات رصيد أقل من صفر في أحد المستودعات — تتطلب تسوية يدوية (شراء أو تعديل)."
+            icon={TrendingDown}
+            checkEndpoint="maintenance/negative-stock"
+            companyId={companyId}
+            onFixed={onFixed}
+            latestScan={latestByTool.get("negative-stock") ?? null}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">كود</th>
+                        <th className="px-2 py-1 text-right">الصنف</th>
+                        <th className="px-2 py-1 text-right">المستودع</th>
+                        <th className="px-2 py-1 text-right">الكمية</th>
+                        <th className="px-2 py-1 text-right">متوسط التكلفة</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => (
+                        <tr key={`${it.itemId}:${it.warehouseId}`}>
+                          <td className="px-2 py-1 font-mono">{it.itemCode || "—"}</td>
+                          <td className="px-2 py-1">{it.itemName || `#${it.itemId}`}</td>
+                          <td className="px-2 py-1">{it.warehouseName || `#${it.warehouseId}`}</td>
+                          <td className="px-2 py-1 font-mono text-red-700">{Number(it.qty).toFixed(4)}</td>
+                          <td className="px-2 py-1 font-mono">{Number(it.avgCost).toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+
+          {/* انحراف رصيد — fix recomputes from ledger. */}
+          <MaintenanceTool
+            toolKey="stock-balance-drift"
+            label="انحراف رصيد المخزون"
+            description="فروقات بين الرصيد المخزّن ومجموع الحركات في دفتر الأستاذ — يعيد الحساب من الحركات."
+            icon={Scale}
+            checkEndpoint="maintenance/stock-balance-drift"
+            fixEndpoint="maintenance/stock-balance-drift/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            latestScan={latestByTool.get("stock-balance-drift") ?? null}
+            confirmTitle="إعادة حساب الأرصدة"
+            confirmDescription={(n) => `سيتم تحديث ${n} رصيد مخزون من واقع الحركات. متابعة؟`}
+            buildFixBody={(cid, ids) => {
+              // Composite ids "itemId:warehouseId" → resolve back to objects
+              // by walking the latest scan items the user selected.
+              const items = ids.map((raw) => {
+                const [itemId, warehouseId] = String(raw).split(":");
+                return { itemId: Number(itemId), warehouseId: Number(warehouseId) };
+              });
+              return { companyId: cid, items };
+            }}
+            renderDetails={({ data, selectedIds, toggle, toggleAll, allSelected }) => {
+              const items = data.items ?? [];
+              // Compose a stable id per (item, warehouse) so the parent's
+              // selectedIds set can disambiguate. Also stash ledgerQty on the
+              // body — but the parent only forwards ids; the fix route in
+              // turn re-derives the ledger sum server-side, so dropping
+              // ledgerQty from the wire is intentional and safe.
+              const ids = items.map((it: any) => `${it.itemId}:${it.warehouseId}`);
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">
+                          <input type="checkbox" checked={allSelected} onChange={() => toggleAll(ids)} />
+                        </th>
+                        <th className="px-2 py-1 text-right">كود</th>
+                        <th className="px-2 py-1 text-right">الصنف</th>
+                        <th className="px-2 py-1 text-right">المستودع</th>
+                        <th className="px-2 py-1 text-right">المخزّن</th>
+                        <th className="px-2 py-1 text-right">من الحركات</th>
+                        <th className="px-2 py-1 text-right">الفارق</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => {
+                        const id = `${it.itemId}:${it.warehouseId}`;
+                        return (
+                          <tr key={id}>
+                            <td className="px-2 py-1">
+                              <input type="checkbox" checked={selectedIds.includes(id)} onChange={() => toggle(id)} />
+                            </td>
+                            <td className="px-2 py-1 font-mono">{it.itemCode || "—"}</td>
+                            <td className="px-2 py-1">{it.itemName || `#${it.itemId}`}</td>
+                            <td className="px-2 py-1">{it.warehouseName || `#${it.warehouseId}`}</td>
+                            <td className="px-2 py-1 font-mono">{Number(it.storedQty).toFixed(4)}</td>
+                            <td className="px-2 py-1 font-mono">{Number(it.ledgerQty).toFixed(4)}</td>
+                            <td className="px-2 py-1 font-mono text-amber-700">{Number(it.drift).toFixed(4)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+        </div>
+
+        {/* ── Category: القيود المحاسبية ────────────────────────────────── */}
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t">
+          <BookOpen className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">القيود المحاسبية</h3>
+          <span className="text-[11px] text-muted-foreground">— تحقّق من سلامة دفتر اليومية والتوازن المحاسبي.</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {/* قيود غير متوازنة — read-only. */}
+          <MaintenanceTool
+            toolKey="unbalanced-entries"
+            label="قيود مرحّلة غير متوازنة"
+            description="قيود يومية مرحّلة مجموع المدين فيها لا يساوي مجموع الدائن — تتطلب مراجعة المحاسب."
+            icon={Calculator}
+            checkEndpoint="maintenance/unbalanced-entries"
+            companyId={companyId}
+            onFixed={onFixed}
+            latestScan={latestByTool.get("unbalanced-entries") ?? null}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="px-2 py-1 text-right">#</th>
+                        <th className="px-2 py-1 text-right">رقم المستند</th>
+                        <th className="px-2 py-1 text-right">التاريخ</th>
+                        <th className="px-2 py-1 text-right">مدين</th>
+                        <th className="px-2 py-1 text-right">دائن</th>
+                        <th className="px-2 py-1 text-right">الفارق</th>
+                        <th className="px-2 py-1 text-right">عدد السطور</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {items.slice(0, 30).map((it: any) => (
+                        <tr key={it.id}>
+                          <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                          <td className="px-2 py-1 font-mono">{it.docNumber || "—"}</td>
+                          <td className="px-2 py-1">{it.entryDate}</td>
+                          <td className="px-2 py-1 font-mono">{Number(it.totalDebit).toFixed(2)}</td>
+                          <td className="px-2 py-1 font-mono">{Number(it.totalCredit).toFixed(2)}</td>
+                          <td className="px-2 py-1 font-mono text-red-700">{Number(it.diff).toFixed(2)}</td>
+                          <td className="px-2 py-1">{it.lineCount ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                </div>
+              );
+            }}
+          />
+        </div>
+
+        {/* ── Category: السجلات ─────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t">
+          <ClipboardList className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">السجلات</h3>
+          <span className="text-[11px] text-muted-foreground">— أرشفة السجلات القديمة لتقليص حجم الجداول.</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {/* سجلات تدقيق قديمة — fix deletes. */}
+          <MaintenanceTool
+            toolKey="old-audit-logs"
+            label="سجل التدقيق القديم"
+            description="سجلات تدقيق أقدم من سنة (audit_log) — حذفها يقلّص حجم الجدول دون التأثير على الإجراءات الحديثة."
+            icon={ScrollText}
+            checkEndpoint="maintenance/old-audit-logs"
+            fixEndpoint="maintenance/old-audit-logs/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            destructive
+            latestScan={latestByTool.get("old-audit-logs") ?? null}
+            confirmTitle="حذف سجلات التدقيق القديمة"
+            confirmDescription={(n) => `سيتم حذف ${n} سجل تدقيق أقدم من 365 يوماً نهائياً. متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid, days: 365 })}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground px-1">
+                    أقدم سجل: {data.oldest ? String(data.oldest).slice(0, 16).replace("T", " ") : "—"} ·
+                    أحدث ضمن النطاق: {data.newest ? String(data.newest).slice(0, 16).replace("T", " ") : "—"}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-1 text-right">#</th>
+                          <th className="px-2 py-1 text-right">المستخدم</th>
+                          <th className="px-2 py-1 text-right">الوحدة</th>
+                          <th className="px-2 py-1 text-right">الإجراء</th>
+                          <th className="px-2 py-1 text-right">التاريخ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {items.slice(0, 30).map((it: any) => (
+                          <tr key={it.id}>
+                            <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                            <td className="px-2 py-1">{it.username || "—"}</td>
+                            <td className="px-2 py-1 font-mono">{it.module}</td>
+                            <td className="px-2 py-1">{it.action}</td>
+                            <td className="px-2 py-1">{String(it.createdAt ?? "").slice(0, 16).replace("T", " ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                  </div>
+                </div>
+              );
+            }}
+          />
+
+          {/* سجلات تشغيل صيانة قديمة — fix deletes. */}
+          <MaintenanceTool
+            toolKey="old-maintenance-runs"
+            label="سجل تشغيل الصيانة القديم"
+            description="نتائج فحص صيانة أقدم من 90 يوماً (maintenance_runs) — حذفها يحافظ على لوحة المؤشرات سريعة."
+            icon={Trash2}
+            checkEndpoint="maintenance/old-maintenance-runs"
+            fixEndpoint="maintenance/old-maintenance-runs/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            destructive
+            latestScan={latestByTool.get("old-maintenance-runs") ?? null}
+            confirmTitle="حذف سجلات تشغيل الصيانة القديمة"
+            confirmDescription={(n) => `سيتم حذف ${n} نتيجة فحص أقدم من 90 يوماً نهائياً. متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground px-1">
+                    أقدم سجل: {data.oldest ? String(data.oldest).slice(0, 16).replace("T", " ") : "—"} ·
+                    أحدث ضمن النطاق: {data.newest ? String(data.newest).slice(0, 16).replace("T", " ") : "—"}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-1 text-right">#</th>
+                          <th className="px-2 py-1 text-right">الأداة</th>
+                          <th className="px-2 py-1 text-right">الحالة</th>
+                          <th className="px-2 py-1 text-right">العدد</th>
+                          <th className="px-2 py-1 text-right">المصدر</th>
+                          <th className="px-2 py-1 text-right">التاريخ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {items.slice(0, 30).map((it: any) => (
+                          <tr key={it.id}>
+                            <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                            <td className="px-2 py-1 font-mono">{it.toolKey}</td>
+                            <td className="px-2 py-1">{it.status}</td>
+                            <td className="px-2 py-1 font-mono">{it.count}</td>
+                            <td className="px-2 py-1">{it.trigger}</td>
+                            <td className="px-2 py-1">{String(it.runAt ?? "").slice(0, 16).replace("T", " ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                  </div>
+                </div>
+              );
+            }}
           />
         </div>
 

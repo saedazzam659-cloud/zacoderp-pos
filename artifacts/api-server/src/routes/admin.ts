@@ -6,6 +6,9 @@ import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/r
 import {
   checkJournalPending, checkBrokenRefs, checkUnlinkedAccounts,
   checkSequenceGaps, checkDormantUsers,
+  // Toolbox expansion (F): inventory / accounting / logs categories.
+  checkNegativeStock, checkStockBalanceDrift, checkUnbalancedEntries,
+  checkOldAuditLogs, checkOldMaintenanceRuns,
   MAINTENANCE_TOOL_KEYS,
 } from "../lib/maintenanceChecks.js";
 import {
@@ -3729,6 +3732,280 @@ router.post("/maintenance/dormant-users/fix", requireSuperAdmin, async (req, res
     });
     await logMaint(req, g.companyId, "fix", "dormant_users", { requested: ids.length, ...result });
     res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// ─── Toolbox expansion (F): Inventory / Accounting / Logs ──────────────────
+// Same pattern as the original 5 tools above: GET checker (with ?format=csv),
+// optional POST fix; everything is requireSuperAdmin + per-company + audit-logged.
+
+// 7. أرصدة سالبة — items whose stock_balance.qty < 0. Read-only by design:
+// the right "fix" is to record the missing inflow (purchase / adjustment) via
+// the normal flow so the cost layer is correct.
+router.get("/maintenance/negative-stock", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkNegativeStock(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["كود الصنف", "اسم الصنف", "المستودع", "الكمية", "متوسط التكلفة", "آخر تحديث"];
+      const rows = items.map((it: any) => [
+        it.itemCode ?? "", it.itemName ?? "", it.warehouseName ?? "",
+        Number(it.qty ?? 0).toFixed(4), Number(it.avgCost ?? 0).toFixed(4),
+        csvDate(it.updatedAt),
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "negative_stock", { count: items.length, format: "csv" });
+      sendCsv(res, `negative-stock-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkNegativeStock(g.companyId);
+    res.json({ count: r.count, items: r.items ?? [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+// 8. انحراف رصيد المخزون — stored balance vs running ledger sum. The fix
+// recomputes from the ledger and writes the corrected balance row (creating
+// it when missing). Audit-logged with the per-row delta so the operator can
+// reverse the action manually if needed.
+router.get("/maintenance/stock-balance-drift", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkStockBalanceDrift(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["كود الصنف", "اسم الصنف", "المستودع", "الرصيد المخزّن", "مجموع الحركات", "الفارق"];
+      const rows = items.map((it: any) => [
+        it.itemCode ?? "", it.itemName ?? "", it.warehouseName ?? "",
+        Number(it.storedQty ?? 0).toFixed(4), Number(it.ledgerQty ?? 0).toFixed(4),
+        Number(it.drift ?? 0).toFixed(4),
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "stock_balance_drift", { count: items.length, format: "csv" });
+      sendCsv(res, `stock-balance-drift-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkStockBalanceDrift(g.companyId);
+    res.json({ count: r.count, items: r.items ?? [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/stock-balance-drift/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  // Items shape from client: [{ itemId, warehouseId }]. Anything else (e.g.
+  // a `ledgerQty` field) is IGNORED by design — the authoritative ledger sum
+  // is computed server-side inside the transaction so a privileged caller
+  // cannot smuggle a fake balance through this endpoint.
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const targets: Array<{ itemId: number; warehouseId: number }> = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const itemId = Number(it?.itemId);
+    const warehouseId = Number(it?.warehouseId);
+    if (!Number.isInteger(itemId) || itemId <= 0) continue;
+    if (!Number.isInteger(warehouseId) || warehouseId <= 0) continue;
+    const key = `${itemId}:${warehouseId}`;
+    if (seen.has(key)) continue;     // dedupe — UI may submit the same row twice
+    seen.add(key);
+    targets.push({ itemId, warehouseId });
+  }
+  if (!targets.length) { res.json({ ok: true, processed: 0 }); return; }
+  try {
+    const result = await db.transaction(async (tx) => {
+      // 1. Validate ownership: every (itemId, warehouseId) pair must belong
+      //    to this tenant. Any pair pointing at a foreign item or warehouse
+      //    is silently dropped (would otherwise create cross-tenant data).
+      const itemIds = Array.from(new Set(targets.map(t => t.itemId)));
+      const whIds   = Array.from(new Set(targets.map(t => t.warehouseId)));
+      const ownedItems = await tx.execute<{ id: number }>(sql`
+        SELECT id FROM items
+         WHERE company_id = ${g.companyId}
+           AND id = ANY(${sql.raw(`ARRAY[${itemIds.join(",")}]::int[]`)})
+      `);
+      const ownedWhs = await tx.execute<{ id: number }>(sql`
+        SELECT id FROM warehouses
+         WHERE company_id = ${g.companyId}
+           AND id = ANY(${sql.raw(`ARRAY[${whIds.join(",")}]::int[]`)})
+      `);
+      const okItems = new Set(((ownedItems as any).rows ?? []).map((r: any) => Number(r.id)));
+      const okWhs   = new Set(((ownedWhs   as any).rows ?? []).map((r: any) => Number(r.id)));
+      const valid = targets.filter(t => okItems.has(t.itemId) && okWhs.has(t.warehouseId));
+      const skippedOwnership = targets.length - valid.length;
+      if (!valid.length) return { processed: 0, updated: 0, inserted: 0, skippedOwnership };
+
+      // 2. For each valid pair, compute the authoritative SUM(qty) from the
+      //    ledger (server-side; client value never touched), then UPDATE the
+      //    existing balance row OR INSERT a fresh one with avg_cost=0.
+      //
+      //    Note: we DO NOT recompute avg_cost here. Reconstructing weighted-
+      //    average cost from a possibly-edited ledger is non-trivial (outflows
+      //    consume layers, opening balances may predate the ledger window),
+      //    so we keep the existing avg_cost on update and seed 0 on insert —
+      //    the operator can re-cost via the normal adjustment flow afterwards.
+      let updated = 0, inserted = 0;
+      for (const t of valid) {
+        const sumExec = await tx.execute<{ qty: string }>(sql`
+          SELECT COALESCE(SUM(qty), 0)::text AS qty
+            FROM stock_ledger
+           WHERE company_id   = ${g.companyId}
+             AND item_id      = ${t.itemId}
+             AND warehouse_id = ${t.warehouseId}
+        `);
+        const ledgerQty = String(((sumExec as any).rows ?? [{}])[0]?.qty ?? "0");
+
+        const upd = await tx.execute<{ id: number }>(sql`
+          UPDATE stock_balance
+             SET qty = ${ledgerQty}::numeric,
+                 updated_at = NOW()
+           WHERE company_id   = ${g.companyId}
+             AND item_id      = ${t.itemId}
+             AND warehouse_id = ${t.warehouseId}
+           RETURNING id
+        `);
+        if (((upd as any).rows ?? []).length) { updated += 1; continue; }
+        await tx.execute(sql`
+          INSERT INTO stock_balance (company_id, item_id, warehouse_id, qty, avg_cost, updated_at)
+          VALUES (${g.companyId}, ${t.itemId}, ${t.warehouseId}, ${ledgerQty}::numeric, 0, NOW())
+        `);
+        inserted += 1;
+      }
+      return { processed: updated + inserted, updated, inserted, skippedOwnership };
+    });
+    await logMaint(req, g.companyId, "fix", "stock_balance_drift", {
+      requested: targets.length, ...result,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 9. قيود غير متوازنة — posted JEs where SUM(debit) ≠ SUM(credit). Read-only
+// by design: auto-balancing requires choosing which side is wrong, which only
+// the accountant can decide. Operator typically un-posts via the UI and fixes.
+router.get("/maintenance/unbalanced-entries", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkUnbalancedEntries(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "رقم المستند", "تاريخ القيد", "الوصف", "إجمالي مدين", "إجمالي دائن", "الفارق", "عدد السطور"];
+      const rows = items.map((it: any) => [
+        it.id, it.docNumber ?? "", csvDate(it.entryDate), it.description ?? "",
+        Number(it.totalDebit ?? 0).toFixed(2), Number(it.totalCredit ?? 0).toFixed(2),
+        Number(it.diff ?? 0).toFixed(2), it.lineCount ?? 0,
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "unbalanced_entries", { count: items.length, format: "csv" });
+      sendCsv(res, `unbalanced-entries-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkUnbalancedEntries(g.companyId);
+    res.json({ count: r.count, items: r.items ?? [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+// 10. سجلات تدقيق قديمة — count of audit_log rows older than `days`.
+// Fix: delete those rows. We re-evaluate `days` server-side at fix time so a
+// stale UI cannot widen the cutoff.
+router.get("/maintenance/old-audit-logs", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.query.days, 30, 3650, 365);
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkOldAuditLogs(g.companyId, days, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "المستخدم", "الدور", "الوحدة", "الإجراء", "الطريقة", "المسار", "الحالة", "IP", "التاريخ"];
+      const rows = items.map((it: any) => [
+        it.id, it.username ?? "", it.role ?? "", it.module ?? "", it.action ?? "",
+        it.method ?? "", it.path ?? "", it.statusCode ?? "", it.ip ?? "",
+        csvDate(it.createdAt),
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "old_audit_logs", { count: items.length, format: "csv", days });
+      sendCsv(res, `old-audit-logs-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkOldAuditLogs(g.companyId, days);
+    res.json({
+      count: r.count, days,
+      oldest: r.extras?.oldest ?? null,
+      newest: r.extras?.newest ?? null,
+      items: r.items ?? [],
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/old-audit-logs/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.body?.days, 30, 3650, 365);
+  try {
+    const exec = await db.execute<{ id: number }>(sql`
+      DELETE FROM audit_log
+       WHERE company_id = ${g.companyId}
+         AND created_at < NOW() - (${days}::int || ' days')::interval
+       RETURNING id
+    `);
+    const deleted = ((exec as any).rows ?? []).length;
+    // NB: we deliberately log this AFTER the DELETE so the prune itself is
+    // recorded in audit_log (and won't be erased by its own action since
+    // created_at = NOW() < cutoff).
+    await logMaint(req, g.companyId, "fix", "old_audit_logs", { deleted, days });
+    res.json({ ok: true, deleted, days });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 11. سجلات صيانة قديمة — count of maintenance_runs older than `days`.
+// Fix: delete those rows. Default 90d keeps a quarter of trend data on hand.
+router.get("/maintenance/old-maintenance-runs", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.query.days, 7, 3650, 90);
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkOldMaintenanceRuns(g.companyId, days, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "الأداة", "الحالة", "العدد", "المصدر", "تاريخ التشغيل", "المدة (مللي ثانية)", "الخطأ"];
+      const rows = items.map((it: any) => [
+        it.id, it.toolKey ?? "", it.status ?? "", it.count ?? 0,
+        it.trigger ?? "", csvDate(it.runAt), it.durationMs ?? 0, it.error ?? "",
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "old_maintenance_runs", { count: items.length, format: "csv", days });
+      sendCsv(res, `old-maintenance-runs-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkOldMaintenanceRuns(g.companyId, days);
+    res.json({
+      count: r.count, days,
+      oldest: r.extras?.oldest ?? null,
+      newest: r.extras?.newest ?? null,
+      items: r.items ?? [],
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/old-maintenance-runs/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.body?.days, 7, 3650, 90);
+  try {
+    const exec = await db.execute<{ id: number }>(sql`
+      DELETE FROM maintenance_runs
+       WHERE company_id = ${g.companyId}
+         AND run_at < NOW() - (${days}::int || ' days')::interval
+       RETURNING id
+    `);
+    const deleted = ((exec as any).rows ?? []).length;
+    await logMaint(req, g.companyId, "fix", "old_maintenance_runs", { deleted, days });
+    res.json({ ok: true, deleted, days });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل التنفيذ" });
   }

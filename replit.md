@@ -37,7 +37,11 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
     - **Voucher Suggestions:** AI suggestions for counterparty accounts in vouchers.
     - **Data Import/Export:** Unified center for lossless export and arbitrary file import across 8 entities with AI mapping and transactional upsert.
     - **System Auto-Discovery:** AI System Repair screen automatically discovers system structure (APIs, DB, frontend screens, widgets) for analysis and Arabic markdown summaries.
-    - **Maintenance Scheduler:** Background scheduler runs all 6 maintenance checks (journal-pending, broken-refs, unlinked-accounts, sequence-gaps, dormant-users, orphan-stock) on every active company at a SuperAdmin-configurable daily time (default 03:00 KSA). Outcomes are persisted to `maintenance_runs`; the AI Company Fix screen shows "آخر فحص" badges per tool, and the SuperAdmin dashboard surfaces a critical-alert banner (snoozable) when any tool reaches the critical threshold.
+    - **Maintenance Scheduler:** Background scheduler runs all 11 maintenance checks on every active company at a SuperAdmin-configurable daily time (default 03:00 KSA). Outcomes are persisted to `maintenance_runs`; the AI Company Fix screen shows "آخر فحص" badges per tool, and the SuperAdmin dashboard surfaces a critical-alert banner (snoozable) when any tool reaches the critical threshold.
+      - General tools (6): journal-pending, broken-refs, unlinked-accounts, sequence-gaps, dormant-users, orphan-stock.
+      - **المخزون (2):** negative-stock (read-only), stock-balance-drift (fix recomputes balance from stock_ledger).
+      - **القيود المحاسبية (1):** unbalanced-entries (read-only — posted JEs where SUM(debit) ≠ SUM(credit)).
+      - **السجلات (2):** old-audit-logs (delete >365d), old-maintenance-runs (delete >90d).
 
 **System Design Choices:**
 - **Modular Monorepo:** Promotes code reusability and separation of concerns.
