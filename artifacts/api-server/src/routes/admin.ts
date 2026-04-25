@@ -1,8 +1,17 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
+import {
+  checkJournalPending, checkBrokenRefs, checkUnlinkedAccounts,
+  checkSequenceGaps, checkDormantUsers,
+  MAINTENANCE_TOOL_KEYS,
+} from "../lib/maintenanceChecks.js";
+import {
+  ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
+  runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID,
+} from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -907,6 +916,28 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
         href: "/admin/audit-log",
       });
     }
+
+    // Maintenance: critical findings from the latest scheduled scan. Suppressed
+    // when the operator has snoozed the banner from the maintenance toolbox.
+    try {
+      const [schedRow] = await db.select().from(maintenanceScheduleTable)
+        .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+      const muted = schedRow?.alertsMutedUntil && new Date(schedRow.alertsMutedUntil).getTime() > Date.now();
+      if (!muted) {
+        const alerts = await getCriticalAlerts(50);
+        if (alerts.length > 0) {
+          const distinctCompanies = new Set(alerts.map(a => a.companyId)).size;
+          health.push({
+            level: "red",
+            message: `${alerts.length} نتيجة صيانة حرجة في ${distinctCompanies} شركة — تحتاج مراجعة`,
+            href: "/admin/ai-fix",
+          });
+        }
+      }
+    } catch (e: any) {
+      console.error("[admin/dashboard] maintenance critical summary failed:", e?.message ?? e);
+    }
+
     if (health.length === 0) {
       health.push({ level: "green", message: "النظام يعمل بكفاءة — لا توجد تنبيهات" });
     }
@@ -3405,22 +3436,8 @@ router.get("/maintenance/journal-pending", requireSuperAdmin, async (req, res) =
   const g = maintGuard(req, res); if (!g) return;
   const days = clampInt(req.query.days, 0, 3650, 30);
   try {
-    const exec = await db.execute<any>(sql`
-      SELECT je.id, je.doc_number AS "docNumber", je.entry_date AS "entryDate",
-             je.description, je.created_at AS "createdAt",
-             COALESCE(SUM(jel.debit),0)::text  AS "totalDebit",
-             COALESCE(SUM(jel.credit),0)::text AS "totalCredit"
-        FROM journal_entries je
-        LEFT JOIN journal_entry_lines jel ON jel.entry_id = je.id
-       WHERE je.company_id = ${g.companyId}
-         AND je.status = 'draft'
-         AND je.created_at < NOW() - (${days}::int || ' days')::interval
-       GROUP BY je.id, je.doc_number, je.entry_date, je.description, je.created_at
-       ORDER BY je.created_at ASC
-       LIMIT 500
-    `);
-    const items = (exec as any).rows ?? [];
-    res.json({ count: items.length, days, items });
+    const r = await checkJournalPending(g.companyId, days);
+    res.json({ count: r.count, days, items: r.items ?? [] });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل الفحص" });
   }
@@ -3497,38 +3514,13 @@ router.post("/maintenance/journal-pending/fix", requireSuperAdmin, async (req, r
 router.get("/maintenance/broken-refs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
-    const sExec = await db.execute<any>(sql`
-      SELECT si.id, si.doc_number AS "docNumber", si.invoice_date AS "invoiceDate",
-             si.total_amount AS "totalAmount", si.journal_entry_id AS "journalEntryId",
-             CASE
-               WHEN si.journal_entry_id IS NULL THEN 'missing'
-               ELSE 'stale'
-             END AS reason
-        FROM sales_invoices si
-       WHERE si.company_id = ${g.companyId}
-         AND si.status = 'posted'
-         AND (si.journal_entry_id IS NULL
-              OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = si.journal_entry_id))
-       ORDER BY si.id DESC LIMIT 500
-    `);
-    const pExec = await db.execute<any>(sql`
-      SELECT pi.id, pi.doc_number AS "docNumber", pi.invoice_date AS "invoiceDate",
-             pi.total_amount AS "totalAmount", pi.journal_entry_id AS "journalEntryId",
-             CASE
-               WHEN pi.journal_entry_id IS NULL THEN 'missing'
-               ELSE 'stale'
-             END AS reason
-        FROM purchase_invoices pi
-       WHERE pi.company_id = ${g.companyId}
-         AND pi.status = 'posted'
-         AND (pi.journal_entry_id IS NULL
-              OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = pi.journal_entry_id))
-       ORDER BY pi.id DESC LIMIT 500
-    `);
-    const sales = ((sExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "sales" }));
-    const purchases = ((pExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "purchase" }));
-    const items = [...sales, ...purchases];
-    res.json({ count: items.length, salesCount: sales.length, purchaseCount: purchases.length, items });
+    const r = await checkBrokenRefs(g.companyId);
+    res.json({
+      count: r.count,
+      salesCount:    r.extras?.salesCount    ?? 0,
+      purchaseCount: r.extras?.purchaseCount ?? 0,
+      items: r.items ?? [],
+    });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل الفحص" });
   }
@@ -3589,29 +3581,8 @@ router.post("/maintenance/broken-refs/fix", requireSuperAdmin, async (req, res) 
 router.get("/maintenance/unlinked-accounts", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
-    // Account ids referenced by JE lines (of this tenant's JEs) that don't
-    // exist as an `accounts` row scoped to this company. Includes both:
-    //   - hard-orphaned (account_id missing entirely from accounts table)
-    //   - cross-tenant (account_id belongs to a different company)
-    const exec = await db.execute<any>(sql`
-      SELECT jel.account_id AS "accountId",
-             COUNT(*)::int  AS "lineCount",
-             MIN(je.id)     AS "sampleEntryId",
-             MIN(je.doc_number) AS "sampleDocNumber"
-        FROM journal_entry_lines jel
-        JOIN journal_entries je ON je.id = jel.entry_id
-       WHERE je.company_id = ${g.companyId}
-         AND jel.account_id IS NOT NULL
-         AND NOT EXISTS (
-              SELECT 1 FROM accounts a
-               WHERE a.id = jel.account_id AND a.company_id = ${g.companyId}
-         )
-       GROUP BY jel.account_id
-       ORDER BY "lineCount" DESC
-       LIMIT 200
-    `);
-    const items = (exec as any).rows ?? [];
-    res.json({ count: items.length, items });
+    const r = await checkUnlinkedAccounts(g.companyId);
+    res.json({ count: r.count, items: r.items ?? [] });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل الفحص" });
   }
@@ -3621,43 +3592,12 @@ router.get("/maintenance/unlinked-accounts", requireSuperAdmin, async (req, res)
 router.get("/maintenance/sequence-gaps", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
-    const seqs = await db.select({
-      id: sequencesTable.id, code: sequencesTable.code, nameAr: sequencesTable.nameAr,
-      prefix: sequencesTable.prefix, padLength: sequencesTable.padLength,
-      startNumber: sequencesTable.startNumber, currentNumber: sequencesTable.currentNumber,
-    }).from(sequencesTable).where(eq(sequencesTable.companyId, g.companyId));
-
-    const items: any[] = [];
-    for (const s of seqs) {
-      const start = Number(s.startNumber);
-      const next  = Number(s.currentNumber);
-      // currentNumber is the NEXT to be issued, so issued range = [start, next-1].
-      if (next <= start) continue;
-      const exec = await db.execute<{ n: number }>(sql`
-        WITH issued AS (SELECT generate_series(${start}::int, ${next - 1}::int) AS n),
-             present AS (
-               SELECT DISTINCT NULLIF(regexp_replace(generated_number, '\D', '', 'g'), '')::bigint AS n
-                 FROM sequence_logs
-                WHERE sequence_id = ${s.id} AND company_id = ${g.companyId}
-             )
-        SELECT i.n FROM issued i
-          LEFT JOIN present p ON p.n = i.n
-         WHERE p.n IS NULL
-         ORDER BY i.n
-         LIMIT 200
-      `);
-      const gapRows = (exec as any).rows ?? [];
-      if (gapRows.length === 0) continue;
-      const pad = Math.max(0, Number(s.padLength ?? 0));
-      const fmt = (n: number) => `${s.prefix ?? ""}${pad > 0 ? String(n).padStart(pad, "0") : String(n)}`;
-      items.push({
-        sequenceId: s.id, code: s.code, nameAr: s.nameAr,
-        gapCount: gapRows.length,
-        sampleGaps: gapRows.slice(0, 20).map((r: any) => ({ number: Number(r.n), formatted: fmt(Number(r.n)) })),
-      });
-    }
-    const total = items.reduce((s, it) => s + it.gapCount, 0);
-    res.json({ count: total, sequencesAffected: items.length, items });
+    const r = await checkSequenceGaps(g.companyId);
+    res.json({
+      count: r.count,
+      sequencesAffected: r.extras?.sequencesAffected ?? 0,
+      items: r.items ?? [],
+    });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل الفحص" });
   }
@@ -3668,20 +3608,8 @@ router.get("/maintenance/dormant-users", requireSuperAdmin, async (req, res) => 
   const g = maintGuard(req, res); if (!g) return;
   const days = clampInt(req.query.days, 1, 3650, 90);
   try {
-    const exec = await db.execute<any>(sql`
-      SELECT id, username, email, name_ar AS "nameAr", role,
-             last_login_at AS "lastLoginAt", is_active AS "isActive",
-             created_at AS "createdAt"
-        FROM users
-       WHERE company_id = ${g.companyId}
-         AND role <> 'superadmin'
-         AND is_active = true
-         AND (last_login_at IS NULL OR last_login_at < NOW() - (${days}::int || ' days')::interval)
-       ORDER BY COALESCE(last_login_at, created_at) ASC
-       LIMIT 500
-    `);
-    const items = (exec as any).rows ?? [];
-    res.json({ count: items.length, days, items });
+    const r = await checkDormantUsers(g.companyId, days);
+    res.json({ count: r.count, days, items: r.items ?? [] });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل الفحص" });
   }
@@ -3733,6 +3661,134 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
     res.json({ count: rows.length, items: rows });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب السجل" });
+  }
+});
+
+// ─── Scheduled maintenance scans ─────────────────────────────────────────────
+// GET /maintenance/latest?companyId=X — most recent scheduled/manual run per
+// tool for one company. Drives the "آخر فحص" badge on every tool card.
+router.get("/maintenance/latest", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    // ?trigger=scheduled|manual narrows the badge source (dashboards usually
+    // want the latest *automatic* result so a one-off manual run doesn't hide
+    // the nightly outcome). Default = both, matches existing UI behaviour.
+    const rawTrigger = typeof req.query.trigger === "string" ? req.query.trigger : "";
+    const trigger = rawTrigger === "scheduled" || rawTrigger === "manual" ? rawTrigger : undefined;
+    const items = await getLatestResultsForCompany(g.companyId, { trigger });
+    res.json({ count: items.length, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب آخر نتائج الفحص" });
+  }
+});
+
+// GET /maintenance/schedule — single-row config + last-tick snapshot.
+router.get("/maintenance/schedule", requireSuperAdmin, async (_req, res) => {
+  try {
+    const row = await ensureMaintenanceScheduleRow();
+    res.json({ schedule: row, toolKeys: MAINTENANCE_TOOL_KEYS });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب إعدادات الجدولة" });
+  }
+});
+
+// PUT /maintenance/schedule — body: { enabled, hourOfDay, minuteOfHour }.
+router.put("/maintenance/schedule", requireSuperAdmin, async (req, res) => {
+  try {
+    await ensureMaintenanceScheduleRow();
+    const patch: Record<string, any> = { updatedAt: new Date() };
+    if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
+    if (req.body?.hourOfDay != null) {
+      const h = clampInt(req.body.hourOfDay, 0, 23, 3);
+      patch.hourOfDay = h;
+    }
+    if (req.body?.minuteOfHour != null) {
+      const m = clampInt(req.body.minuteOfHour, 0, 59, 0);
+      patch.minuteOfHour = m;
+    }
+    await db.update(maintenanceScheduleTable).set(patch)
+      .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+    const [row] = await db.select().from(maintenanceScheduleTable)
+      .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+    await writeAudit({
+      userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+      role: "superadmin", companyId: null, module: "maintenance", action: "edit_schedule",
+      method: req.method, path: req.originalUrl, entityType: "maintenance_schedule",
+      entityId: null, metadata: patch,
+    });
+    res.json({ schedule: row });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل تحديث الجدولة" });
+  }
+});
+
+// POST /maintenance/run-now — fire the sweep across all active companies on
+// demand. Body: { companyId? } — when set, scans only that one company.
+router.post("/maintenance/run-now", requireSuperAdmin, async (req, res) => {
+  try {
+    const companyId = req.body?.companyId != null ? Number(req.body.companyId) : null;
+    if (companyId != null && (!Number.isInteger(companyId) || companyId <= 0)) {
+      res.status(400).json({ error: "companyId غير صحيح" }); return;
+    }
+    let summary;
+    if (companyId) {
+      // Per-company manual run: run + persist outcomes for one tenant only.
+      const { runAllChecks } = await import("../lib/maintenanceChecks.js");
+      const outcomes = await runAllChecks(companyId);
+      const rows = outcomes.map(o => ({
+        companyId, toolKey: o.toolKey, status: o.status, count: o.count,
+        trigger: "manual" as const, durationMs: o.durationMs,
+        error: o.error ?? null, details: o.extras ?? null,
+      }));
+      if (rows.length) await db.insert(maintenanceRunsTable).values(rows);
+      summary = {
+        companies: 1, toolsRun: outcomes.length,
+        criticalCount: outcomes.filter(o => o.status === "critical").length,
+        warnCount:     outcomes.filter(o => o.status === "warn").length,
+        errorCount:    outcomes.filter(o => o.status === "error").length,
+        failedCompanies: 0,
+      };
+    } else {
+      summary = await runMaintenanceSweep("manual");
+    }
+    await writeAudit({
+      userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
+      role: "superadmin", companyId: companyId ?? null, module: "maintenance",
+      action: companyId ? "run_now_one" : "run_now_all",
+      method: req.method, path: req.originalUrl,
+      entityType: "maintenance_runs", entityId: null, metadata: summary,
+    });
+    res.json({ ok: true, summary });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل تشغيل الفحص" });
+  }
+});
+
+// GET /maintenance/critical-summary — list of tools that are currently
+// critical across all active companies. Drives the SuperAdmin dashboard banner.
+router.get("/maintenance/critical-summary", requireSuperAdmin, async (req, res) => {
+  const limit = clampInt(req.query.limit, 1, 100, 20);
+  try {
+    const items = await getCriticalAlerts(limit);
+    res.json({ count: items.length, items });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب التنبيهات الحرجة" });
+  }
+});
+
+// POST /maintenance/critical-summary/snooze — mute the dashboard banner until
+// the next scheduled run lifts the count back up. Body: { hours? } default 24.
+router.post("/maintenance/critical-summary/snooze", requireSuperAdmin, async (req, res) => {
+  try {
+    await ensureMaintenanceScheduleRow();
+    const hours = clampInt(req.body?.hours, 1, 24 * 7, 24);
+    const until = new Date(Date.now() + hours * 60 * 60_000);
+    await db.update(maintenanceScheduleTable)
+      .set({ alertsMutedUntil: until, updatedAt: new Date() })
+      .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+    res.json({ ok: true, alertsMutedUntil: until });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل كتم التنبيهات" });
   }
 });
 

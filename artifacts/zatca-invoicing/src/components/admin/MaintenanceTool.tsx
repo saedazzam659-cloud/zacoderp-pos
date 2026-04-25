@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, RefreshCw, ChevronDown, ChevronUp, CheckCircle2,
-  AlertTriangle, AlertCircle,
+  AlertTriangle, AlertCircle, Clock,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -58,13 +58,20 @@ export type MaintenanceToolProps = {
   companyId: number | null;
   /** Notifies the parent that a fix completed so it can refresh siblings. */
   onFixed?: () => void;
+  /** Latest scheduled/manual scan result for this tool — drives the badge. */
+  latestScan?: {
+    status: "ok" | "warn" | "critical" | "error";
+    count: number;
+    runAt: string;
+    trigger: "scheduled" | "manual";
+  } | null;
 };
 
 export default function MaintenanceTool(props: MaintenanceToolProps) {
   const {
     toolKey, label, description, icon: Icon, checkEndpoint, fixEndpoint,
     destructive, confirmTitle, confirmDescription, buildFixBody, fixActions,
-    renderDetails, externalCta, companyId, onFixed,
+    renderDetails, externalCta, companyId, onFixed, latestScan,
   } = props;
   const { token } = useAuth();
   const { toast } = useToast();
@@ -178,6 +185,34 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
       </CardHeader>
       <CardContent className="pt-1 space-y-2">
         {description && <p className="text-[11px] text-muted-foreground leading-5">{description}</p>}
+        {latestScan && (() => {
+          const tone =
+            latestScan.status === "critical" ? "text-red-700"   :
+            latestScan.status === "warn"     ? "text-amber-800" :
+            latestScan.status === "error"    ? "text-rose-700"  :
+                                               "text-emerald-700";
+          const when = (() => {
+            const diffMs = Date.now() - new Date(latestScan.runAt).getTime();
+            const mins = Math.round(diffMs / 60_000);
+            if (mins < 60)         return `قبل ${mins} دقيقة`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24)          return `قبل ${hrs} ساعة`;
+            const days = Math.round(hrs / 24);
+            return `قبل ${days} يوم`;
+          })();
+          const label =
+            latestScan.status === "ok"       ? "سليم" :
+            latestScan.status === "warn"     ? `موجود ${latestScan.count}` :
+            latestScan.status === "critical" ? `حرج ${latestScan.count}` :
+                                               "خطأ";
+          return (
+            <p className={`text-[11px] flex items-center gap-1 ${tone}`}
+               title={new Date(latestScan.runAt).toLocaleString("ar-SA")}>
+              <Clock className="h-3 w-3" />
+              <span>آخر فحص {latestScan.trigger === "manual" ? "يدوي" : "تلقائي"}: {label} — {when}</span>
+            </p>
+          );
+        })()}
         {checkQ.isError && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-1.5">
             {(checkQ.error as any)?.message || "فشل الفحص"}

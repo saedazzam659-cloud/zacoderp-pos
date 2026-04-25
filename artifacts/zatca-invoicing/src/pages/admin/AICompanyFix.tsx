@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,10 @@ import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
+  CalendarClock, Play,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -517,6 +520,8 @@ export default function AICompanyFix() {
 // `module='maintenance'` and replayed in the history panel below.
 function MaintenanceSection({ companyId }: { companyId: number | null }) {
   const { token } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyTick, setHistoryTick] = useState(0);   // bump after fixes
@@ -531,6 +536,62 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
     enabled: !!companyId && historyOpen,
     refetchOnWindowFocus: false,
   });
+
+  // Schedule config (single global row) — drives the auto-scan toggle / time.
+  const scheduleQ = useQuery({
+    queryKey: ["maintenance-schedule"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/schedule`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الجدولة");
+      return r.json() as Promise<{ schedule: { enabled: boolean; hourOfDay: number; minuteOfHour: number; lastRunAt: string | null; lastRunStatus: string | null; lastRunCompanies: number; lastRunCriticalCount: number; lastError: string | null } }>;
+    },
+    refetchOnWindowFocus: false,
+  });
+  const updateScheduleMut = useMutation({
+    mutationFn: async (patch: Partial<{ enabled: boolean; hourOfDay: number; minuteOfHour: number }>) => {
+      const r = await fetch(`${API}/api/admin/maintenance/schedule`, {
+        method: "PUT", headers, body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل التحديث");
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance-schedule"] }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+  const runNowMut = useMutation({
+    mutationFn: async (scope: "all" | "one") => {
+      const body = scope === "one" && companyId ? { companyId } : {};
+      const r = await fetch(`${API}/api/admin/maintenance/run-now`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل التشغيل");
+      return r.json() as Promise<{ ok: boolean; summary: { companies: number; toolsRun: number; criticalCount: number; warnCount: number; errorCount: number } }>;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "اكتمل الفحص",
+        description: `${data.summary.companies} شركة • أدوات: ${data.summary.toolsRun} • حرج: ${data.summary.criticalCount} • تحذير: ${data.summary.warnCount}`,
+      });
+      qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-latest"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-tool"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // Latest scheduled-scan result per tool — drives the small badge in each card.
+  const latestQ = useQuery({
+    queryKey: ["maintenance-latest", companyId],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/latest?companyId=${companyId}`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب آخر فحص");
+      return r.json() as Promise<{ items: Array<{ toolKey: string; status: "ok"|"warn"|"critical"|"error"; count: number; runAt: string; trigger: "scheduled"|"manual" }> }>;
+    },
+    enabled: !!companyId,
+    refetchOnWindowFocus: false,
+  });
+  const latestByTool = new Map((latestQ.data?.items ?? []).map(i => [i.toolKey, i]));
+
   const onFixed = () => setHistoryTick((t) => t + 1);
 
   return (
@@ -545,6 +606,83 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-4 space-y-3">
+        {/* ── Auto-scan schedule ───────────────────────────────────────── */}
+        {scheduleQ.data && (() => {
+          const s = scheduleQ.data.schedule;
+          const hh = String(s.hourOfDay).padStart(2, "0");
+          const mm = String(s.minuteOfHour).padStart(2, "0");
+          return (
+            <div className="border border-violet-200 rounded p-3 bg-white">
+              <div className="flex flex-wrap items-center gap-3 justify-between">
+                <div className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-violet-700" />
+                  <span className="text-sm font-medium">الفحص التلقائي اليومي</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    يفحص كل الشركات النشطة ويُنبّه عند نتائج حرجة
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="maint-enabled" className="text-xs">مفعّل</Label>
+                  <Switch
+                    id="maint-enabled"
+                    checked={s.enabled}
+                    disabled={updateScheduleMut.isPending}
+                    onCheckedChange={(v) => updateScheduleMut.mutate({ enabled: v })}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="maint-time" className="text-xs whitespace-nowrap">وقت التشغيل (KSA)</Label>
+                  <input
+                    id="maint-time"
+                    type="time"
+                    value={`${hh}:${mm}`}
+                    disabled={!s.enabled || updateScheduleMut.isPending}
+                    className="h-7 text-xs border rounded px-2 bg-background"
+                    onChange={(e) => {
+                      const [h, m] = e.target.value.split(":").map(Number);
+                      if (Number.isFinite(h) && Number.isFinite(m)) {
+                        updateScheduleMut.mutate({ hourOfDay: h, minuteOfHour: m });
+                      }
+                    }}
+                  />
+                </div>
+                <div className="flex items-center gap-2 mr-auto">
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs gap-1"
+                    onClick={() => runNowMut.mutate("one")}
+                    disabled={!companyId || runNowMut.isPending}
+                  >
+                    {runNowMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    تشغيل لهذه الشركة
+                  </Button>
+                  <Button
+                    size="sm" className="h-7 text-xs gap-1 bg-violet-600 hover:bg-violet-700"
+                    onClick={() => runNowMut.mutate("all")}
+                    disabled={runNowMut.isPending}
+                  >
+                    {runNowMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    تشغيل لكل الشركات الآن
+                  </Button>
+                </div>
+              </div>
+              {s.lastRunAt && (
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  آخر تشغيل: {new Date(s.lastRunAt).toLocaleString("ar-SA")} — {s.lastRunCompanies} شركة •{" "}
+                  <span className={s.lastRunCriticalCount > 0 ? "text-red-700 font-medium" : "text-emerald-700"}>
+                    {s.lastRunCriticalCount} نتيجة حرجة
+                  </span>
+                  {s.lastRunStatus === "partial" && <span className="text-amber-800"> • جزئي</span>}
+                </p>
+              )}
+              {s.lastError && (
+                <p className="text-[11px] text-red-700 mt-1">آخر خطأ: {s.lastError}</p>
+              )}
+            </div>
+          );
+        })()}
+
         {!companyId && (
           <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded p-2">
             اختر شركة من الأعلى لبدء الفحص.
@@ -562,6 +700,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             fixEndpoint="maintenance/journal-pending/fix"
             companyId={companyId}
             onFixed={onFixed}
+            latestScan={latestByTool.get("journal-pending") ?? null}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids, action: "post" })}
             confirmTitle="ترحيل القيود المختارة"
             confirmDescription={(n) => `سيتم ترحيل ${n} قيد محاسبي (المتوازن منها فقط). متابعة؟`}
@@ -622,6 +761,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             fixEndpoint="maintenance/broken-refs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            latestScan={latestByTool.get("broken-refs") ?? null}
             buildFixBody={(cid, ids) => {
               // Selected ids may be plain numeric ids of items; we need to
               // re-attach `kind`. The render-prop passes composite "kind:id"
@@ -685,6 +825,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             icon={Unlink}
             checkEndpoint="maintenance/unlinked-accounts"
             companyId={companyId}
+            latestScan={latestByTool.get("unlinked-accounts") ?? null}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -721,6 +862,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             icon={ListOrdered}
             checkEndpoint="maintenance/sequence-gaps"
             companyId={companyId}
+            latestScan={latestByTool.get("sequence-gaps") ?? null}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -756,6 +898,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             destructive
             companyId={companyId}
             onFixed={onFixed}
+            latestScan={latestByTool.get("dormant-users") ?? null}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids })}
             confirmTitle="تعطيل المستخدمين المختارين"
             confirmDescription={(n) => `سيتم تعطيل ${n} مستخدم وإلغاء جلساتهم. يمكن إعادة تفعيلهم لاحقاً من إدارة المستخدمين. متابعة؟`}
@@ -806,6 +949,7 @@ function MaintenanceSection({ companyId }: { companyId: number | null }) {
             icon={PackageX}
             checkEndpoint="orphan-stock"
             companyId={companyId}
+            latestScan={latestByTool.get("orphan-stock") ?? null}
             externalCta={{ label: "فتح صفحة التنظيف", href: "/admin/orphan-stock" }}
           />
         </div>

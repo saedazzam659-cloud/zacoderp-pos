@@ -193,4 +193,6 @@ app.listen(port, (err) => {
   startAutoSuspendScheduler();
   // Weekly/monthly digest of cross-company reports for the SuperAdmin (opt-in).
   import("./lib/reportScheduler.js").then(m => m.startReportDigestScheduler?.()).catch(() => {});
+  // Daily maintenance scan across active companies (default 03:00 KSA).
+  import("./lib/maintenanceScheduler.js").then(m => m.startMaintenanceScheduler?.()).catch(() => {});
 });
