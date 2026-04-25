@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable } from "@workspace/db";
+import { and, eq, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
+import { resolveBearerToken } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -31,6 +32,18 @@ router.post("/login", async (req, res) => {
 
   const ip = loginClientIp(req);
   const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
+
+  // SuperAdmin uses the dedicated multi-layer auth flow (2FA, devices,
+  // risk, etc). Tell the client to call the SuperAdmin endpoint instead.
+  const [maybeSuper] = await db.select({ role: usersTable.role }).from(usersTable)
+    .where(eq(usersTable.username, username));
+  if (maybeSuper?.role === "superadmin") {
+    res.status(409).json({
+      error: "هذا الحساب يتطلب تسجيل دخول السوبر أدمن",
+      useSuperAdminFlow: true,
+    });
+    return;
+  }
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.username, username));
   if (!user) {
@@ -144,10 +157,15 @@ router.post("/login", async (req, res) => {
 });
 
 // POST /api/auth/logout
+// Recognises both the legacy single-session token (users.sessionToken) and
+// SuperAdmin multi-session tokens (sa_sessions.sessionToken) so the SA flow
+// can log out cleanly via the same endpoint.
 router.post("/logout", async (req, res) => {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) {
     const token = auth.slice(7);
+
+    // Legacy single-session: clear users.sessionToken / sessionId.
     const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
     if (user) {
       await db.update(usersTable).set({
@@ -155,8 +173,6 @@ router.post("/logout", async (req, res) => {
         sessionId: null,
         updatedAt: new Date(),
       }).where(eq(usersTable.id, user.id));
-      // Audit logout (module="auth"). Driven from the user row found via
-      // session token so we know exactly which session was torn down.
       await writeAudit({
         userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
         module: "auth", action: "logout",
@@ -165,6 +181,32 @@ router.post("/logout", async (req, res) => {
         userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
         metadata: null,
       });
+    } else {
+      // SuperAdmin multi-session: revoke this specific sa_sessions row only.
+      const [sa] = await db.select({
+        id: superAdminSessionsTable.id,
+        userId: superAdminSessionsTable.userId,
+      })
+        .from(superAdminSessionsTable)
+        .where(and(eq(superAdminSessionsTable.sessionToken, token), isNull(superAdminSessionsTable.revokedAt)))
+        .limit(1);
+      if (sa) {
+        await db.update(superAdminSessionsTable)
+          .set({ revokedAt: new Date(), revokedReason: "user_logout" })
+          .where(eq(superAdminSessionsTable.id, sa.id));
+        const [u] = await db.select({
+          username: usersTable.username, role: usersTable.role, companyId: usersTable.companyId,
+        }).from(usersTable).where(eq(usersTable.id, sa.userId));
+        await writeAudit({
+          userId: sa.userId, username: u?.username ?? "superadmin", role: u?.role ?? "superadmin",
+          companyId: u?.companyId ?? null,
+          module: "auth", action: "sa_logout",
+          method: "POST", path: "/api/auth/logout", statusCode: 200,
+          ip: loginClientIp(req),
+          userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
+          metadata: { saSessionId: sa.id },
+        });
+      }
     }
   }
   res.json({ ok: true });
@@ -179,8 +221,24 @@ router.get("/me", async (req, res) => {
   }
   const token = auth.slice(7);
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
-  if (!user || !user.isActive) {
+  // Try regular session first, then SuperAdmin multi-session.
+  let user: any = null;
+  let resolvedSessionId: string | null = null;
+  const [u] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  if (u?.isActive) {
+    user = u;
+    resolvedSessionId = u.sessionId;
+  } else {
+    const resolved = await resolveBearerToken(token);
+    if (resolved) {
+      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+      if (full?.isActive) {
+        user = full;
+        resolvedSessionId = resolved.user.sessionId;
+      }
+    }
+  }
+  if (!user) {
     res.status(401).json({ error: "الجلسة منتهية — يرجى تسجيل الدخول مجدداً" });
     return;
   }
@@ -204,7 +262,7 @@ router.get("/me", async (req, res) => {
     email: user.email,
     role: user.role,
     companyId: user.companyId,
-    sessionId: user.sessionId,
+    sessionId: resolvedSessionId,
     code: (user as any).code ?? null,
     nameAr: (user as any).nameAr ?? null,
     nameEn: (user as any).nameEn ?? null,
@@ -343,11 +401,19 @@ router.post("/register", async (req, res) => {
 });
 
 // PUT /api/auth/profile — change username / password
+// Recognises both legacy users.sessionToken AND SuperAdmin sa_sessions tokens.
 router.put("/profile", async (req, res) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+  if (!user) {
+    const resolved = await resolveBearerToken(token);
+    if (resolved) {
+      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+      if (full) user = full;
+    }
+  }
   if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
 
   const { currentPassword, newUsername, newPassword } = req.body;

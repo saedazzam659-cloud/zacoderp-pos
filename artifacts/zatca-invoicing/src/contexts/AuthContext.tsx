@@ -33,6 +33,12 @@ interface AuthContextType {
   logout: () => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   setUser: React.Dispatch<React.SetStateAction<AuthUser | null>>;
+  /**
+   * Used by alternate sign-in flows (e.g. SuperAdmin multi-factor flow,
+   * recovery-code/recovery-link flows) to install a session that the
+   * client obtained out-of-band from a non-`/api/auth/login` endpoint.
+   */
+  setSession: (args: { token: string; sessionId?: string | null; user: AuthUser }) => void;
   isAuthenticated: boolean;
 }
 
@@ -114,8 +120,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "حدث خطأ في تسجيل الدخول");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(data.error ?? "حدث خطأ في تسجيل الدخول");
+      err.status = res.status;
+      err.data = data;            // expose body so callers can detect e.g. useSuperAdminFlow
+      throw err;
+    }
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(SESSION_KEY, data.sessionId);
     setToken(data.token);
@@ -143,8 +154,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(result.user);
   };
 
+  const setSession = useCallback((args: { token: string; sessionId?: string | null; user: AuthUser }) => {
+    localStorage.setItem(TOKEN_KEY, args.token);
+    if (args.sessionId) localStorage.setItem(SESSION_KEY, args.sessionId);
+    setToken(args.token);
+    setUser(args.user);
+    setLoading(false);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, register, setUser, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout, register, setUser, setSession, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

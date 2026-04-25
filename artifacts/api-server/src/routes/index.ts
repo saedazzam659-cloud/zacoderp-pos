@@ -7,6 +7,7 @@ import dashboardRouter from "./dashboard";
 import deviceInfoRouter from "./device-info";
 import zatcaRouter from "./zatca";
 import authRouter from "./auth";
+import superAdminAuthRouter from "./superAdminAuth";
 import suppliersRouter from "./suppliers";
 import adminRouter from "./admin";
 import reportsRouter from "./reports";
@@ -48,6 +49,7 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
+router.use("/auth/superadmin", superAdminAuthRouter);
 router.use("/admin", adminRouter);
 router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);

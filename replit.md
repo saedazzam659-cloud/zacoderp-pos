@@ -19,6 +19,7 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 - **Database:** PostgreSQL with Drizzle ORM.
 - **Validation:** Zod and `drizzle-zod`.
 - **Authentication:** JWT-style Bearer tokens, single-session enforcement, real-time validation, and bcryptjs for password hashing.
+- **SuperAdmin Multi-Layer Login:** Dedicated hardened flow at `/api/auth/superadmin/*` with email OTP (60s TTL, console fallback when SMTP unset), trusted-device fingerprinting + per-device approval workflow, IP-based risk scoring (new IP / new device / off-hours / recent failures), in-memory per-username + per-IP rate limiting, optional Cloudflare Turnstile, multi-session management, plain-text login-attempt audit log, and account recovery via backup codes + emailed time-limited link. Separate `sa_sessions` token table coexists with legacy `users.sessionToken`; the `resolveBearerToken` middleware helper makes `/me`, `/profile`, `/logout`, and admin guards transparently accept either. SA Security Center UI lives at `/admin/security-superadmin`; recovery flow at `/recover-superadmin/:token`.
 - **ZATCA Integration:** CSR generation (ECDSA secp256k1), APIs for compliance, production CSID onboarding, and invoice submission. QR code generation uses TLV binary encoding with `qrcode.react`. XML generation adheres to UBL 2.1 ZATCA namespace.
 - **Modules:**
     - **Inventory Management:** Tracks warehouses, items, stock balance, ledger, transfers, adjustments, and counts using Weighted Average costing and multi-unit support.

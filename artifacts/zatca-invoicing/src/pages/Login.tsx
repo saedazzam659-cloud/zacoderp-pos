@@ -1,48 +1,338 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, Eye, EyeOff, ShieldCheck, Loader2 } from "lucide-react";
+import {
+  LogIn, Eye, EyeOff, ShieldCheck, Loader2, ShieldAlert, Mail,
+  KeyRound, Smartphone, RefreshCw, ArrowLeft, Clock,
+} from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (el: HTMLElement, opts: {
+        sitekey: string;
+        callback: (token: string) => void;
+        "error-callback"?: () => void;
+        "expired-callback"?: () => void;
+        theme?: "light" | "dark";
+      }) => string;
+      reset: (id?: string) => void;
+      remove: (id?: string) => void;
+    };
+    onTurnstileLoaded?: () => void;
+  }
+}
+
+type Step = "creds" | "otp" | "device-approval" | "recovery-code" | "blocked";
+
+interface OtpStartPayload {
+  challengeToken: string;
+  hint?: string;          // masked email
+  otpExpiresInSec: number;
+  riskLevel?: "low" | "medium" | "high";
+  newDevice?: boolean;
+}
+
+interface DeviceApprovalPayload {
+  approvalToken: string;
+  expiresInSec: number;
+}
+
+const TURNSTILE_SITE_KEY = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
 
 export default function Login() {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
-  const { login } = useAuth();
-  const { toast: _toast } = useToast();
+  const { login, setSession } = useAuth();
+  const { toast } = useToast();
+
+  // Common form state
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Flow state
+  const [step, setStep] = useState<Step>("creds");
+  const [isSuperAdminFlow, setIsSuperAdminFlow] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string>("");
+  const turnstileMountRef = useRef<HTMLDivElement | null>(null);
+  const turnstileWidgetIdRef = useRef<string | null>(null);
+
+  // OTP state
+  const [otp, setOtp] = useState<OtpStartPayload | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpRemaining, setOtpRemaining] = useState(0);
+
+  // Device approval state
+  const [approval, setApproval] = useState<DeviceApprovalPayload | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<string>("pending");
+
+  // Recovery code state
+  const [recoveryCode, setRecoveryCode] = useState("");
+
+  // ── Load Turnstile script when SA flow becomes active ──────────────────
+  useEffect(() => {
+    if (!isSuperAdminFlow || !TURNSTILE_SITE_KEY) return;
+    if (window.turnstile) { renderTurnstile(); return; }
+
+    const existing = document.getElementById("cf-turnstile-script");
+    if (existing) {
+      // Already loading; render when ready
+      const onReady = () => renderTurnstile();
+      window.onTurnstileLoaded = onReady;
+      return;
+    }
+    const s = document.createElement("script");
+    s.id = "cf-turnstile-script";
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoaded&render=explicit";
+    s.async = true; s.defer = true;
+    window.onTurnstileLoaded = () => renderTurnstile();
+    document.head.appendChild(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdminFlow, step]);
+
+  function renderTurnstile() {
+    if (!window.turnstile || !turnstileMountRef.current || turnstileWidgetIdRef.current) return;
+    try {
+      turnstileWidgetIdRef.current = window.turnstile.render(turnstileMountRef.current, {
+        sitekey: TURNSTILE_SITE_KEY,
+        callback: (tk) => setTurnstileToken(tk),
+        "error-callback": () => setTurnstileToken(""),
+        "expired-callback": () => setTurnstileToken(""),
+        theme: "light",
+      });
+    } catch { /* widget may have already been mounted */ }
+  }
+
+  function resetTurnstile() {
+    setTurnstileToken("");
+    if (window.turnstile && turnstileWidgetIdRef.current) {
+      try { window.turnstile.reset(turnstileWidgetIdRef.current); } catch { /* ignore */ }
+    }
+  }
+
+  // ── OTP countdown ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (step !== "otp" || otpRemaining <= 0) return;
+    const id = setInterval(() => setOtpRemaining(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [step, otpRemaining]);
+
+  // ── Device-approval polling ────────────────────────────────────────────
+  useEffect(() => {
+    if (step !== "device-approval" || !approval) return;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const r = await fetch(`${API_BASE}/api/auth/superadmin/device-approvals/${approval.approvalToken}/status`, {
+          credentials: "include",
+        });
+        const j = await r.json().catch(() => ({}));
+        if (j?.status) setApprovalStatus(j.status);
+        if (j?.status === "approved") {
+          setInfo(t("auth.sa.deviceApprovedRetry", "تم اعتماد الجهاز. أعد إدخال كلمة المرور للمتابعة."));
+          setStep("creds");
+          stopped = true;
+        }
+        if (j?.status === "rejected" || j?.status === "expired") {
+          setError(j?.status === "rejected"
+            ? t("auth.sa.deviceRejected", "تم رفض الجهاز من جهاز موثوق آخر.")
+            : t("auth.sa.deviceExpired", "انتهت صلاحية طلب الموافقة. أعد المحاولة."));
+          setStep("creds");
+          stopped = true;
+        }
+      } catch { /* keep polling */ }
+    };
+    const id = setInterval(tick, 4000);
+    tick();
+    return () => { stopped = true; clearInterval(id); };
+  }, [step, approval, t]);
+
+  // ── Submit credentials ─────────────────────────────────────────────────
+  const submitCreds = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setError(""); setInfo("");
     setLoading(true);
     try {
-      await login(username.trim(), password);
-      setLocation("/");
+      // Try the universal login endpoint first.
+      if (!isSuperAdminFlow) {
+        try {
+          await login(username.trim(), password);
+          setLocation("/");
+          return;
+        } catch (err: any) {
+          // 409 + useSuperAdminFlow signals: this account requires the SA flow.
+          const isSAHint = err?.status === 409 && err?.data?.useSuperAdminFlow === true;
+          if (!isSAHint) {
+            setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
+            return;
+          }
+          setIsSuperAdminFlow(true);
+          setInfo(t("auth.sa.detected", "هذا حساب سوبر أدمن — أكمل خطوات التحقق الإضافية."));
+          setLoading(false);
+          // Wait for Turnstile (if configured) and second click — return now.
+          return;
+        }
+      }
+
+      // SA login proper.
+      const r = await fetch(`${API_BASE}/api/auth/superadmin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          turnstileToken: turnstileToken || undefined,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+
+      if (r.status === 403 && j.blocked) {
+        setStep("blocked");
+        setError(j.error || t("auth.sa.blocked", "تم حظر المحاولة لأسباب أمنية."));
+        return;
+      }
+      if (!r.ok) {
+        setError(j.error || t("auth.loginError", "فشل تسجيل الدخول"));
+        resetTurnstile();
+        return;
+      }
+      if (j.requiresDeviceApproval) {
+        setApproval({ approvalToken: j.approvalToken, expiresInSec: j.expiresInSec ?? 900 });
+        setApprovalStatus("pending");
+        setStep("device-approval");
+        return;
+      }
+      if (j.requiresOtp) {
+        setOtp({
+          challengeToken: j.challengeToken,
+          hint: j.hint,
+          otpExpiresInSec: j.otpExpiresInSec ?? 60,
+          riskLevel: j.riskLevel,
+          newDevice: j.newDevice,
+        });
+        setOtpRemaining(j.otpExpiresInSec ?? 60);
+        setOtpCode("");
+        setStep("otp");
+        return;
+      }
+      // Edge-case: server returned a full session immediately
+      if (j.token && j.user) {
+        setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
+        setLocation("/");
+      }
     } catch (err: any) {
-      setError(err.message ?? t("auth.loginError"));
+      setError(err?.message || t("auth.loginError", "فشل تسجيل الدخول"));
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Submit OTP ─────────────────────────────────────────────────────────
+  const submitOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otp) return;
+    setError(""); setInfo("");
+    setLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/auth/superadmin/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeToken: otp.challengeToken, code: otpCode.trim() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setError(j.error || t("auth.sa.otpInvalid", "الرمز غير صحيح"));
+        return;
+      }
+      setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
+      toast({ title: t("auth.sa.welcome", "أهلًا بعودتك") });
+      setLocation("/");
+    } catch (err: any) {
+      setError(err?.message || t("auth.sa.otpInvalid", "الرمز غير صحيح"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Resend OTP ─────────────────────────────────────────────────────────
+  const resendOtp = async () => {
+    if (!otp || otpRemaining > 0) return;
+    setError("");
+    try {
+      const r = await fetch(`${API_BASE}/api/auth/superadmin/resend-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeToken: otp.challengeToken }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(j.error || t("auth.sa.resendFailed", "فشل إعادة الإرسال")); return; }
+      setOtpRemaining(j.otpExpiresInSec ?? 60);
+      setInfo(t("auth.sa.resent", "أُرسل رمز جديد إلى بريدك."));
+    } catch (err: any) {
+      setError(err?.message || "");
+    }
+  };
+
+  // ── Submit Recovery Code ───────────────────────────────────────────────
+  const submitRecoveryCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(""); setInfo("");
+    setLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/auth/superadmin/use-recovery-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          recoveryCode: recoveryCode.trim().toUpperCase(),
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(j.error || t("auth.sa.recoveryInvalid", "الرمز غير صحيح")); return; }
+      setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
+      toast({ title: t("auth.sa.welcome", "أهلًا بعودتك") });
+      setLocation("/");
+    } catch (err: any) {
+      setError(err?.message || "");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Render helpers ─────────────────────────────────────────────────────
+  function backToCreds() {
+    setStep("creds"); setError(""); setInfo("");
+    setOtp(null); setOtpCode(""); setApproval(null); setApprovalStatus("pending");
+    setRecoveryCode("");
+    resetTurnstile();
+  }
+
+  const formatSec = (s: number) => {
+    const m = Math.floor(s / 60), ss = s % 60;
+    return `${m}:${ss.toString().padStart(2, "0")}`;
+  };
+
+  // ── Layout ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-
-        {/* Top bar with language switcher */}
         <div className="flex justify-end mb-2">
           <LanguageSwitcher variant="compact" />
         </div>
 
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-4 shadow-lg">
             Z
@@ -55,69 +345,323 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Card */}
         <div className="bg-card border border-border rounded-2xl shadow-xl p-8 space-y-6">
+          {/* Step header */}
           <div>
-            <h2 className="text-xl font-semibold text-foreground">{t("auth.login")}</h2>
-            <p className="text-sm text-muted-foreground mt-1">{t("auth.loginSubtitle")}</p>
+            <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
+              {isSuperAdminFlow && <ShieldAlert className="h-5 w-5 text-amber-600" />}
+              {step === "creds" && (isSuperAdminFlow ? t("auth.sa.title", "تسجيل دخول السوبر أدمن") : t("auth.login"))}
+              {step === "otp" && t("auth.sa.otpTitle", "إدخال رمز التحقق")}
+              {step === "device-approval" && t("auth.sa.deviceTitle", "في انتظار اعتماد الجهاز")}
+              {step === "recovery-code" && t("auth.sa.recoveryTitle", "استخدام رمز استرجاع")}
+              {step === "blocked" && t("auth.sa.blockedTitle", "تم الحظر")}
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              {step === "creds" && (isSuperAdminFlow
+                ? t("auth.sa.subtitle", "هذا حساب صلاحياته عالية، نطبق تحققًا متعدد الطبقات.")
+                : t("auth.loginSubtitle"))}
+              {step === "otp" && t("auth.sa.otpSubtitle", "أدخل الرمز المُرسل إلى بريدك المسجل.")}
+              {step === "device-approval" && t("auth.sa.deviceSubtitle", "أرسلنا رابط الموافقة إلى بريدك. اعتمد الجهاز من جهاز موثوق ثم عد إلى هنا.")}
+              {step === "recovery-code" && t("auth.sa.recoverySubtitle", "أدخل أحد رموز الاسترجاع المخزنة لديك.")}
+              {step === "blocked" && t("auth.sa.blockedSubtitle", "تواصل مع المسؤول.")}
+            </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">{t("auth.username")}</label>
-              <Input
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="admin"
-                dir="ltr"
-                className="text-left"
-                autoComplete="username"
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">{t("auth.password")}</label>
-              <div className="relative">
+          {/* ── STEP: creds ─────────────────────────────────────────── */}
+          {(step === "creds" || step === "blocked") && (
+            <form onSubmit={submitCreds} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.username")}</label>
                 <Input
-                  type={showPass ? "text" : "password"}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  placeholder="admin"
                   dir="ltr"
-                  className="text-left pl-10"
-                  autoComplete="current-password"
+                  className="text-left"
+                  autoComplete="username"
+                  required
+                  disabled={step === "blocked"}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.password")}</label>
+                <div className="relative">
+                  <Input
+                    type={showPass ? "text" : "password"}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    dir="ltr"
+                    className="text-left pl-10"
+                    autoComplete="current-password"
+                    required
+                    disabled={step === "blocked"}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass(!showPass)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Turnstile widget — only shown for SA flow when site key configured */}
+              {isSuperAdminFlow && TURNSTILE_SITE_KEY && (
+                <div className="flex justify-center"><div ref={turnstileMountRef} /></div>
+              )}
+              {isSuperAdminFlow && !TURNSTILE_SITE_KEY && (
+                <div className="text-xs text-muted-foreground bg-muted rounded-md px-3 py-2 flex items-start gap-2">
+                  <ShieldCheck className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{t("auth.sa.turnstileMissing", "لم يُفعّل Turnstile (إعداد الخادم).")}</span>
+                </div>
+              )}
+
+              {info && (
+                <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  {info}
+                </div>
+              )}
+              {error && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                  {error}
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full gap-2"
+                disabled={loading || step === "blocked"
+                  || (isSuperAdminFlow && !!TURNSTILE_SITE_KEY && !turnstileToken)}
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                {loading ? t("common.loading") : t("auth.login")}
+              </Button>
+
+              {isSuperAdminFlow && step !== "blocked" && (
+                <div className="flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => { setIsSuperAdminFlow(false); resetTurnstile(); setError(""); setInfo(""); }}
+                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <ArrowLeft className="h-3 w-3" />
+                    {t("auth.sa.notSuperAdmin", "لست سوبر أدمن")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setStep("recovery-code"); setError(""); setInfo(""); }}
+                    className="text-primary hover:underline inline-flex items-center gap-1"
+                  >
+                    <KeyRound className="h-3 w-3" />
+                    {t("auth.sa.useRecovery", "استخدام رمز استرجاع")}
+                  </button>
+                </div>
+              )}
+
+              {!isSuperAdminFlow && (
+                <div className="text-center text-xs text-muted-foreground">
+                  <button
+                    type="button"
+                    onClick={() => { setIsSuperAdminFlow(true); setError(""); setInfo(""); }}
+                    className="hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <ShieldAlert className="h-3 w-3" />
+                    {t("auth.sa.iAmSuperAdmin", "أنا سوبر أدمن — استخدم التحقق المتعدد")}
+                  </button>
+                </div>
+              )}
+            </form>
+          )}
+
+          {/* ── STEP: otp ───────────────────────────────────────────── */}
+          {step === "otp" && otp && (
+            <form onSubmit={submitOtp} className="space-y-4">
+              <div className="bg-muted rounded-lg p-3 text-sm flex items-start gap-2">
+                <Mail className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-medium">{t("auth.sa.otpSent", "أُرسل رمز التحقق إلى:")}</div>
+                  <div className="text-muted-foreground" dir="ltr">{otp.hint || "—"}</div>
+                </div>
+              </div>
+
+              {otp.newDevice && (
+                <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                  <Smartphone className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{t("auth.sa.newDeviceWarn", "هذا جهاز جديد — سنُضيفه إلى الأجهزة الموثوقة بعد التحقق.")}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.sa.code", "الرمز (٦ أرقام)")}</label>
+                <Input
+                  value={otpCode}
+                  onChange={e => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="000000"
+                  dir="ltr"
+                  className="text-center text-2xl tracking-[0.5em] font-mono"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  autoFocus
                   required
                 />
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {otpRemaining > 0
+                      ? t("auth.sa.expiresIn", "تنتهي خلال {{t}}", { t: formatSec(otpRemaining) })
+                      : t("auth.sa.expired", "انتهت الصلاحية")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={resendOtp}
+                    disabled={otpRemaining > 0}
+                    className="inline-flex items-center gap-1 text-primary disabled:text-muted-foreground"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    {t("auth.sa.resend", "إعادة إرسال")}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                  {error}
+                </div>
+              )}
+              {info && (
+                <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  {info}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={backToCreds} className="gap-1">
+                  <ArrowLeft className="h-4 w-4" />
+                  {t("common.back", "رجوع")}
+                </Button>
+                <Button type="submit" className="flex-1 gap-2" disabled={loading || otpCode.length !== 6}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  {t("auth.sa.verify", "تحقق")}
+                </Button>
+              </div>
+
+              <div className="text-center text-xs">
                 <button
                   type="button"
-                  onClick={() => setShowPass(!showPass)}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => { setStep("recovery-code"); setError(""); setInfo(""); }}
+                  className="text-primary hover:underline inline-flex items-center gap-1"
                 >
-                  {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  <KeyRound className="h-3 w-3" />
+                  {t("auth.sa.useRecoveryInstead", "تعذّر الوصول للبريد؟ استخدم رمز استرجاع")}
                 </button>
               </div>
-            </div>
+            </form>
+          )}
 
-            {error && (
-              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
-                {error}
+          {/* ── STEP: device approval ───────────────────────────────── */}
+          {step === "device-approval" && approval && (
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+                <Smartphone className="h-5 w-5 text-amber-700 mt-0.5 shrink-0" />
+                <div className="text-sm">
+                  <div className="font-medium text-amber-900">{t("auth.sa.deviceTitle", "في انتظار اعتماد الجهاز")}</div>
+                  <p className="text-amber-800 mt-1">
+                    {t("auth.sa.deviceBody", "أرسلنا رابط الموافقة إلى بريد السوبر أدمن. افتح الرابط من أي جهاز/جلسة موثوقة لاعتماد هذا الجهاز.")}
+                  </p>
+                </div>
               </div>
-            )}
 
-            <Button type="submit" className="w-full gap-2" disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-              {loading ? t("common.loading") : t("auth.login")}
-            </Button>
-          </form>
+              <div className="text-center text-sm">
+                <div className="inline-flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("auth.sa.statusLabel", "الحالة")}: <span className="font-medium">{approvalStatus}</span>
+                </div>
+              </div>
 
-          <div className="text-center text-sm text-muted-foreground border-t pt-4">
-            {t("auth.noAccount")}{" "}
-            <a href="/register" onClick={e => { e.preventDefault(); setLocation("/register"); }}
-              className="text-primary font-medium hover:underline">
-              {t("auth.createAccount")}
-            </a>
-          </div>
+              {error && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                  {error}
+                </div>
+              )}
+
+              <Button type="button" variant="outline" onClick={backToCreds} className="w-full gap-1">
+                <ArrowLeft className="h-4 w-4" />
+                {t("common.back", "رجوع")}
+              </Button>
+            </div>
+          )}
+
+          {/* ── STEP: recovery code ─────────────────────────────────── */}
+          {step === "recovery-code" && (
+            <form onSubmit={submitRecoveryCode} className="space-y-4">
+              <div className="bg-muted rounded-lg p-3 text-sm flex items-start gap-2">
+                <KeyRound className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{t("auth.sa.recoveryHint", "أدخل بيانات حسابك ورمز استرجاع لاستخدامه مرة واحدة.")}</span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.username")}</label>
+                <Input value={username} onChange={e => setUsername(e.target.value)} dir="ltr" className="text-left" required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.password")}</label>
+                <Input type="password" value={password} onChange={e => setPassword(e.target.value)} dir="ltr" className="text-left" required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">{t("auth.sa.recoveryCode", "رمز الاسترجاع")}</label>
+                <Input
+                  value={recoveryCode}
+                  onChange={e => setRecoveryCode(e.target.value.toUpperCase())}
+                  placeholder="XXXX-XXXX"
+                  dir="ltr"
+                  className="text-center text-lg tracking-widest font-mono"
+                  required
+                />
+              </div>
+
+              {error && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+                  {error}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={backToCreds} className="gap-1">
+                  <ArrowLeft className="h-4 w-4" />
+                  {t("common.back", "رجوع")}
+                </Button>
+                <Button type="submit" className="flex-1 gap-2" disabled={loading}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                  {t("auth.sa.useCode", "استخدام الرمز")}
+                </Button>
+              </div>
+
+              <div className="text-center text-xs">
+                <a
+                  href="/recover-superadmin"
+                  onClick={e => { e.preventDefault(); setLocation("/recover-superadmin"); }}
+                  className="text-primary hover:underline"
+                >
+                  {t("auth.sa.lostAll", "فقدت كل شيء؟ اطلب رابط استرجاع")}
+                </a>
+              </div>
+            </form>
+          )}
+
+          {/* Footer (hide for blocked) */}
+          {step === "creds" && !isSuperAdminFlow && (
+            <div className="text-center text-sm text-muted-foreground border-t pt-4">
+              {t("auth.noAccount")}{" "}
+              <a href="/register" onClick={e => { e.preventDefault(); setLocation("/register"); }}
+                className="text-primary font-medium hover:underline">
+                {t("auth.createAccount")}
+              </a>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">

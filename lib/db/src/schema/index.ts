@@ -24,3 +24,4 @@ export * from "./salesReps";
 export * from "./auditLog";
 export * from "./sequences";
 export * from "./systemSettings";
+export * from "./superAdminSecurity";

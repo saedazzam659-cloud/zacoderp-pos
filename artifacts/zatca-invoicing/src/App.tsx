@@ -13,6 +13,8 @@ import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
+import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
+import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
 import ReportsHub from "@/pages/admin/reports/ReportsHub";
 import CompanyPerformanceReport from "@/pages/admin/reports/CompanyPerformanceReport";
 import OperationalSummaryReport from "@/pages/admin/reports/OperationalSummaryReport";
@@ -187,6 +189,8 @@ function AppRoutes() {
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/pending-approval" component={PendingApproval} />
+      <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
+      <Route path="/recover-superadmin/:token" component={RecoverSuperAdmin} />
 
       {/* Protected routes */}
       <Route>
@@ -202,6 +206,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
+            {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}
             {isSuperAdmin && <Route path="/admin/reports" component={ReportsHub} />}
             {isSuperAdmin && <Route path="/admin/reports/company-performance" component={CompanyPerformanceReport} />}

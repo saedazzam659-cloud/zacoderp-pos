@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
 import { writeAudit } from "../middleware/permissions.js";
+import { resolveBearerToken } from "../middleware/auth.js";
 import { persistSnapshot, restoreFromSnapshotPayload } from "./backup.js";
 import { randomBytes } from "crypto";
 
@@ -15,11 +16,27 @@ const router = Router();
 // We attach the resolved superadmin user to `req.adminUser` for downstream
 // handlers via Express's request interface augmentation (see types/express.d.ts
 // in this artifact, where `Request.adminUser?: User` is declared).
+//
+// Recognises both legacy single-session tokens (users.sessionToken) AND
+// SuperAdmin multi-session tokens (sa_sessions.sessionToken) via
+// resolveBearerToken().
 async function requireSuperAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { res.status(401).json({ error: "غير مصرح" }); return; }
   const token = auth.slice(7);
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+
+  // Try legacy users.sessionToken first.
+  let [user] = await db.select().from(usersTable).where(eq(usersTable.sessionToken, token));
+
+  // Fall back to the SuperAdmin multi-session resolver.
+  if (!user) {
+    const resolved = await resolveBearerToken(token);
+    if (resolved && resolved.origin === "superadmin") {
+      const [full] = await db.select().from(usersTable).where(eq(usersTable.id, resolved.user.id));
+      if (full) user = full;
+    }
+  }
+
   if (!user || !user.isActive || user.role !== "superadmin") {
     res.status(403).json({ error: "هذه الصفحة للمشرف العام فقط" });
     return;

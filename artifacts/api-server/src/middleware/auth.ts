@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
-import { usersTable, userBranchesTable } from "@workspace/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { usersTable, userBranchesTable, superAdminSessionsTable } from "@workspace/db";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 
 export interface AuthUser {
@@ -28,42 +28,105 @@ declare global {
 }
 
 /**
+ * Resolves a Bearer token against either:
+ *   - users.sessionToken (legacy single-session for normal users), or
+ *   - sa_sessions.sessionToken (SuperAdmin multi-session, multi-factor flow).
+ *
+ * Returns the user row (subset of columns), the resolved sessionId string
+ * for client kick-detection, and an `origin` discriminator. Returns null
+ * when the token does not match either store.
+ */
+export async function resolveBearerToken(token: string): Promise<{
+  user: {
+    id: number; username: string; role: string; companyId: number | null;
+    isActive: boolean; permissions: any; viewAllBranches: boolean; email: string | null;
+    sessionId: string | null;
+  };
+  origin: "user" | "superadmin";
+  saSessionRowId?: number;
+} | null> {
+  // 1) Legacy single-session
+  const [u] = await db
+    .select({
+      id: usersTable.id, username: usersTable.username, role: usersTable.role,
+      companyId: usersTable.companyId, isActive: usersTable.isActive,
+      permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
+      email: usersTable.email, sessionId: usersTable.sessionId,
+    })
+    .from(usersTable)
+    .where(eq(usersTable.sessionToken, token));
+  if (u?.isActive) return { user: u, origin: "user" };
+
+  // 2) SuperAdmin multi-session
+  const [s] = await db
+    .select({
+      sId: superAdminSessionsTable.id,
+      userId: superAdminSessionsTable.userId,
+      revokedAt: superAdminSessionsTable.revokedAt,
+    })
+    .from(superAdminSessionsTable)
+    .where(and(eq(superAdminSessionsTable.sessionToken, token), isNull(superAdminSessionsTable.revokedAt)))
+    .limit(1);
+  if (!s) return null;
+
+  const [su] = await db
+    .select({
+      id: usersTable.id, username: usersTable.username, role: usersTable.role,
+      companyId: usersTable.companyId, isActive: usersTable.isActive,
+      permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
+      email: usersTable.email,
+    })
+    .from(usersTable)
+    .where(eq(usersTable.id, s.userId));
+  if (!su?.isActive || su.role !== "superadmin") return null;
+
+  // Use the SA session row id as the stable sessionId so the client
+  // /api/auth/me poll matches what was stored on login (multi-session safe).
+  return {
+    user: { ...su, sessionId: `sa-${s.sId}` },
+    origin: "superadmin",
+    saSessionRowId: s.sId,
+  };
+}
+
+/**
  * Extracts user from Bearer token and attaches to req.authUser.
  * Does NOT block unauthenticated requests — check req.authUser in route handlers.
+ * Recognises both regular session tokens and SuperAdmin session tokens.
  */
 export async function extractAuth(req: Request, _res: Response, next: NextFunction) {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { next(); return; }
   const token = auth.slice(7);
-  const [user] = await db
-    .select({
-      id:               usersTable.id,
-      username:         usersTable.username,
-      role:             usersTable.role,
-      companyId:        usersTable.companyId,
-      isActive:         usersTable.isActive,
-      permissions:      usersTable.permissions,
-      viewAllBranches:  usersTable.viewAllBranches,
-    })
-    .from(usersTable)
-    .where(eq(usersTable.sessionToken, token));
-  if (user?.isActive) {
-    // Load explicit branch grants (only relevant when viewAllBranches=false,
-    // but cheap enough to load always — typically a tiny list per user).
-    const links = await db
-      .select({ branchId: userBranchesTable.branchId })
-      .from(userBranchesTable)
-      .where(eq(userBranchesTable.userId, user.id));
-    req.authUser = {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      companyId: user.companyId,
-      permissions: user.permissions as any,
-      viewAllBranches: user.viewAllBranches,
-      branchIds: links.map(l => l.branchId),
-    };
+
+  const resolved = await resolveBearerToken(token);
+  if (!resolved) { next(); return; }
+  const { user } = resolved;
+
+  // Load explicit branch grants (only relevant when viewAllBranches=false,
+  // but cheap enough to load always — typically a tiny list per user).
+  const links = await db
+    .select({ branchId: userBranchesTable.branchId })
+    .from(userBranchesTable)
+    .where(eq(userBranchesTable.userId, user.id));
+  req.authUser = {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    companyId: user.companyId,
+    permissions: user.permissions as any,
+    viewAllBranches: user.viewAllBranches,
+    branchIds: links.map(l => l.branchId),
+  };
+
+  // Refresh SA session lastSeenAt (best-effort).
+  if (resolved.origin === "superadmin" && resolved.saSessionRowId) {
+    db.update(superAdminSessionsTable)
+      .set({ lastSeenAt: new Date() })
+      .where(eq(superAdminSessionsTable.id, resolved.saSessionRowId))
+      .catch(() => { /* non-fatal */ });
   }
+
   next();
 }
 

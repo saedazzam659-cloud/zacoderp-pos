@@ -87,6 +87,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
   { nameKey: "nav.securityCenter",       href: "/admin/security",           icon: ShieldCheck },
+  { nameKey: "nav.superAdminSecurity",   href: "/admin/security-superadmin", icon: ShieldCheck },
   { nameKey: "nav.reportsHub",           href: "/admin/reports",            icon: BarChart3 },
   { nameKey: "nav.subscriptions",        href: "/admin/subscriptions",      icon: Package },
   { nameKey: "nav.plans",                href: "/admin/plans",              icon: Settings2 },
