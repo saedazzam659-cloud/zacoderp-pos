@@ -13,6 +13,13 @@ export interface CheckResult {
   items?: any[];
 }
 
+/** Per-call switches. The default JSON / scheduler path stays capped at the
+ *  inline-UI sizes; CSV-export callers opt-in to the full result set. */
+export interface CheckOptions {
+  /** Drop SQL row caps so the caller (e.g. CSV export) sees every matching row. */
+  unlimited?: boolean;
+}
+
 export const MAINTENANCE_TOOL_KEYS = [
   "journal-pending",
   "broken-refs",
@@ -33,7 +40,11 @@ export function statusForCount(count: number): MaintenanceStatus {
 
 // ─── Individual checkers (read-only) ─────────────────────────────────────────
 // 1. القيود المعلقة — drafts older than `days` days.
-export async function checkJournalPending(companyId: number, days = 30): Promise<CheckResult> {
+export async function checkJournalPending(
+  companyId: number, days = 30, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  // Inline UI / scheduler stay capped (perf); CSV export passes `unlimited`.
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
   const exec = await db.execute<any>(sql`
     SELECT je.id, je.doc_number AS "docNumber", je.entry_date AS "entryDate",
            je.description, je.created_at AS "createdAt",
@@ -46,14 +57,17 @@ export async function checkJournalPending(companyId: number, days = 30): Promise
        AND je.created_at < NOW() - (${days}::int || ' days')::interval
      GROUP BY je.id, je.doc_number, je.entry_date, je.description, je.created_at
      ORDER BY je.created_at ASC
-     LIMIT 500
+     ${limitClause}
   `);
   const items = (exec as any).rows ?? [];
   return { count: items.length, items, extras: { days } };
 }
 
 // 2. مرجعيات مكسورة — posted invoices with NULL or stale journal_entry_id.
-export async function checkBrokenRefs(companyId: number): Promise<CheckResult> {
+export async function checkBrokenRefs(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
   const sExec = await db.execute<any>(sql`
     SELECT si.id, si.doc_number AS "docNumber", si.invoice_date AS "invoiceDate",
            si.total_amount AS "totalAmount", si.journal_entry_id AS "journalEntryId",
@@ -63,7 +77,7 @@ export async function checkBrokenRefs(companyId: number): Promise<CheckResult> {
        AND si.status = 'posted'
        AND (si.journal_entry_id IS NULL
             OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = si.journal_entry_id))
-     ORDER BY si.id DESC LIMIT 500
+     ORDER BY si.id DESC ${limitClause}
   `);
   const pExec = await db.execute<any>(sql`
     SELECT pi.id, pi.doc_number AS "docNumber", pi.invoice_date AS "invoiceDate",
@@ -74,7 +88,7 @@ export async function checkBrokenRefs(companyId: number): Promise<CheckResult> {
        AND pi.status = 'posted'
        AND (pi.journal_entry_id IS NULL
             OR NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.id = pi.journal_entry_id))
-     ORDER BY pi.id DESC LIMIT 500
+     ORDER BY pi.id DESC ${limitClause}
   `);
   const sales = ((sExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "sales" }));
   const purchases = ((pExec as any).rows ?? []).map((r: any) => ({ ...r, kind: "purchase" }));
@@ -87,7 +101,10 @@ export async function checkBrokenRefs(companyId: number): Promise<CheckResult> {
 }
 
 // 3. حسابات غير مربوطة — JE-line account_ids that aren't in this company's chart.
-export async function checkUnlinkedAccounts(companyId: number): Promise<CheckResult> {
+export async function checkUnlinkedAccounts(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 200`;
   const exec = await db.execute<any>(sql`
     SELECT jel.account_id AS "accountId",
            COUNT(*)::int  AS "lineCount",
@@ -103,19 +120,29 @@ export async function checkUnlinkedAccounts(companyId: number): Promise<CheckRes
        )
      GROUP BY jel.account_id
      ORDER BY "lineCount" DESC
-     LIMIT 200
+     ${limitClause}
   `);
   const items = (exec as any).rows ?? [];
   return { count: items.length, items };
 }
 
 // 4. فجوات في المسلسلات — issued numbers in [start, current-1] missing from sequence_logs.
-export async function checkSequenceGaps(companyId: number): Promise<CheckResult> {
+export async function checkSequenceGaps(
+  companyId: number, opts: CheckOptions = {},
+): Promise<CheckResult> {
   const seqs = await db.select({
     id: sequencesTable.id, code: sequencesTable.code, nameAr: sequencesTable.nameAr,
     prefix: sequencesTable.prefix, padLength: sequencesTable.padLength,
     startNumber: sequencesTable.startNumber, currentNumber: sequencesTable.currentNumber,
   }).from(sequencesTable).where(eq(sequencesTable.companyId, companyId));
+
+  // Per-sequence row cap. Inline UI stays at 200 rows; CSV export drops the
+  // cap so the operator sees every gap and the running `gapCount` reflects
+  // the true total instead of being clipped at the limit.
+  const gapLimitClause = opts.unlimited ? sql`` : sql`LIMIT 200`;
+  // Sample slice for the inline UI panel; CSV export keeps the full list so
+  // each gap can become its own CSV row in the route handler.
+  const sampleCap = opts.unlimited ? Number.POSITIVE_INFINITY : 20;
 
   const items: any[] = [];
   for (const s of seqs) {
@@ -133,16 +160,17 @@ export async function checkSequenceGaps(companyId: number): Promise<CheckResult>
         LEFT JOIN present p ON p.n = i.n
        WHERE p.n IS NULL
        ORDER BY i.n
-       LIMIT 200
+       ${gapLimitClause}
     `);
     const gapRows = (exec as any).rows ?? [];
     if (gapRows.length === 0) continue;
     const pad = Math.max(0, Number(s.padLength ?? 0));
     const fmt = (n: number) => `${s.prefix ?? ""}${pad > 0 ? String(n).padStart(pad, "0") : String(n)}`;
+    const sliced = sampleCap === Number.POSITIVE_INFINITY ? gapRows : gapRows.slice(0, sampleCap);
     items.push({
       sequenceId: s.id, code: s.code, nameAr: s.nameAr,
       gapCount: gapRows.length,
-      sampleGaps: gapRows.slice(0, 20).map((r: any) => ({ number: Number(r.n), formatted: fmt(Number(r.n)) })),
+      sampleGaps: sliced.map((r: any) => ({ number: Number(r.n), formatted: fmt(Number(r.n)) })),
     });
   }
   const total = items.reduce((s, it) => s + it.gapCount, 0);
@@ -150,7 +178,10 @@ export async function checkSequenceGaps(companyId: number): Promise<CheckResult>
 }
 
 // 5. مستخدمون خاملون — last login > N days ago or never logged in.
-export async function checkDormantUsers(companyId: number, days = 90): Promise<CheckResult> {
+export async function checkDormantUsers(
+  companyId: number, days = 90, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const limitClause = opts.unlimited ? sql`` : sql`LIMIT 500`;
   const exec = await db.execute<any>(sql`
     SELECT id, username, email, name_ar AS "nameAr", role,
            last_login_at AS "lastLoginAt", is_active AS "isActive",
@@ -161,7 +192,7 @@ export async function checkDormantUsers(companyId: number, days = 90): Promise<C
        AND is_active = true
        AND (last_login_at IS NULL OR last_login_at < NOW() - (${days}::int || ' days')::interval)
      ORDER BY COALESCE(last_login_at, created_at) ASC
-     LIMIT 500
+     ${limitClause}
   `);
   const items = (exec as any).rows ?? [];
   return { count: items.length, items, extras: { days } };

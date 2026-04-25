@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, RefreshCw, ChevronDown, ChevronUp, CheckCircle2,
-  AlertTriangle, AlertCircle, Clock,
+  AlertTriangle, AlertCircle, Clock, Download,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -111,6 +111,41 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
       qc.invalidateQueries({ queryKey });
       qc.invalidateQueries({ queryKey: ["maintenance-history"] });
       onFixed?.();
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // CSV export — calls the same check endpoint with `?format=csv`. The server
+  // streams a UTF-8 BOM CSV with Arabic headers and writes a maintenance
+  // audit-log row so the export action shows up in "سجل الإصلاحات".
+  const csvMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/${checkEndpoint}?companyId=${companyId}&format=csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      // Pull filename from Content-Disposition (server sets it per-tool with
+      // companyId + timestamp). Falls back to <toolKey>.csv if header missing.
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `${toolKey}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => {
+      toast({ title: "تم تنزيل ملف CSV" });
+      // Refresh the "سجل الإصلاحات" panel so the export entry shows up.
+      qc.invalidateQueries({ queryKey: ["maintenance-history"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -235,6 +270,19 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
             >
               {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               {open ? "إخفاء التفاصيل" : "عرض التفاصيل"}
+            </Button>
+          )}
+          {renderDetails && data && (
+            <Button
+              size="sm" variant="ghost" className="h-7 text-xs gap-1"
+              onClick={() => csvMut.mutate()}
+              disabled={count === 0 || csvMut.isPending || !companyId}
+              title="تنزيل القائمة الكاملة كملف CSV"
+            >
+              {csvMut.isPending
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <Download className="h-3 w-3" />}
+              تصدير CSV
             </Button>
           )}
           {externalCta && (

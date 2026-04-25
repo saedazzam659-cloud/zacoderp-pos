@@ -3412,6 +3412,22 @@ function clampInt(v: any, min: number, max: number, def: number): number {
   if (!Number.isFinite(n)) return def;
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
+// True when the caller wants the maintenance result rendered as a downloadable
+// CSV instead of JSON. Drives the "تصدير CSV" button on every tool card.
+function wantsCsv(req: Request): boolean {
+  return typeof req.query.format === "string" && req.query.format.toLowerCase() === "csv";
+}
+// ISO timestamp → "YYYY-MM-DD HH:mm" in UTC. Keeps CSV cells stable across
+// locales (Excel parses both forms; admins reviewing offline expect ISO-ish).
+function csvDate(v: unknown): string {
+  if (v == null || v === "") return "";
+  const s = String(v);
+  // Date-only strings (YYYY-MM-DD) come straight from Postgres date columns.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toISOString().replace("T", " ").slice(0, 16);
+}
 async function logMaint(
   req: Request, companyId: number, action: string,
   entityType: string, metadata: Record<string, any>,
@@ -3436,6 +3452,20 @@ router.get("/maintenance/journal-pending", requireSuperAdmin, async (req, res) =
   const g = maintGuard(req, res); if (!g) return;
   const days = clampInt(req.query.days, 0, 3650, 30);
   try {
+    if (wantsCsv(req)) {
+      // Bypass the inline-UI row cap so the CSV reflects every matching row.
+      const r = await checkJournalPending(g.companyId, days, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "رقم المستند", "تاريخ القيد", "الوصف", "إجمالي مدين", "إجمالي دائن", "تاريخ الإنشاء"];
+      const rows = items.map((it: any) => [
+        it.id, it.docNumber ?? "", csvDate(it.entryDate), it.description ?? "",
+        Number(it.totalDebit ?? 0).toFixed(2), Number(it.totalCredit ?? 0).toFixed(2),
+        csvDate(it.createdAt),
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "journal_pending", { count: items.length, format: "csv", days });
+      sendCsv(res, `journal-pending-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
     const r = await checkJournalPending(g.companyId, days);
     res.json({ count: r.count, days, items: r.items ?? [] });
   } catch (e: any) {
@@ -3514,6 +3544,24 @@ router.post("/maintenance/journal-pending/fix", requireSuperAdmin, async (req, r
 router.get("/maintenance/broken-refs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
+    if (wantsCsv(req)) {
+      const r = await checkBrokenRefs(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["النوع", "المعرّف", "رقم المستند", "تاريخ الفاتورة", "المبلغ", "معرّف القيد", "السبب"];
+      const rows = items.map((it: any) => [
+        it.kind === "sales" ? "مبيعات" : "مشتريات",
+        it.id, it.docNumber ?? "", csvDate(it.invoiceDate),
+        Number(it.totalAmount ?? 0).toFixed(2),
+        it.journalEntryId ?? "",
+        it.reason === "missing" ? "بدون قيد" : "قيد محذوف",
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "broken_refs", {
+        count: items.length, format: "csv",
+        salesCount: r.extras?.salesCount ?? 0, purchaseCount: r.extras?.purchaseCount ?? 0,
+      });
+      sendCsv(res, `broken-refs-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
     const r = await checkBrokenRefs(g.companyId);
     res.json({
       count: r.count,
@@ -3581,6 +3629,17 @@ router.post("/maintenance/broken-refs/fix", requireSuperAdmin, async (req, res) 
 router.get("/maintenance/unlinked-accounts", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
+    if (wantsCsv(req)) {
+      const r = await checkUnlinkedAccounts(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["معرّف الحساب", "عدد السطور", "معرّف قيد عيّنة", "رقم مستند عيّنة"];
+      const rows = items.map((it: any) => [
+        it.accountId, it.lineCount, it.sampleEntryId ?? "", it.sampleDocNumber ?? "",
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "unlinked_accounts", { count: items.length, format: "csv" });
+      sendCsv(res, `unlinked-accounts-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
     const r = await checkUnlinkedAccounts(g.companyId);
     res.json({ count: r.count, items: r.items ?? [] });
   } catch (e: any) {
@@ -3592,6 +3651,27 @@ router.get("/maintenance/unlinked-accounts", requireSuperAdmin, async (req, res)
 router.get("/maintenance/sequence-gaps", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   try {
+    if (wantsCsv(req)) {
+      // `unlimited` drops both per-sequence row caps inside the checker so
+      // `gapCount` equals the true number of missing numbers and `sampleGaps`
+      // holds every gap (not just the first 20). We then flatten one CSV row
+      // per gap so admins can audit each missing number individually.
+      const r = await checkSequenceGaps(g.companyId, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["معرّف المسلسل", "الرمز", "اسم المسلسل", "الرقم", "الرقم المنسّق"];
+      const rows: any[] = [];
+      for (const seq of items) {
+        for (const gap of (seq.sampleGaps ?? [])) {
+          rows.push([seq.sequenceId, seq.code ?? "", seq.nameAr ?? "", gap.number, gap.formatted]);
+        }
+      }
+      await logMaint(req, g.companyId, "export_csv", "sequence_gaps", {
+        count: rows.length, format: "csv",
+        sequencesAffected: r.extras?.sequencesAffected ?? 0,
+      });
+      sendCsv(res, `sequence-gaps-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
     const r = await checkSequenceGaps(g.companyId);
     res.json({
       count: r.count,
@@ -3608,6 +3688,19 @@ router.get("/maintenance/dormant-users", requireSuperAdmin, async (req, res) => 
   const g = maintGuard(req, res); if (!g) return;
   const days = clampInt(req.query.days, 1, 3650, 90);
   try {
+    if (wantsCsv(req)) {
+      const r = await checkDormantUsers(g.companyId, days, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "اسم المستخدم", "الاسم", "البريد", "الدور", "آخر دخول", "تاريخ الإنشاء"];
+      const rows = items.map((u: any) => [
+        u.id, u.username ?? "", u.nameAr ?? "", u.email ?? "", u.role ?? "",
+        u.lastLoginAt ? csvDate(u.lastLoginAt) : "لم يدخل أبداً",
+        csvDate(u.createdAt),
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "dormant_users", { count: items.length, format: "csv", days });
+      sendCsv(res, `dormant-users-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
     const r = await checkDormantUsers(g.companyId, days);
     res.json({ count: r.count, days, items: r.items ?? [] });
   } catch (e: any) {
