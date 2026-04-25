@@ -739,7 +739,28 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // Append-only email-dispatch history (last 20 attempts) — surfaces every
+  // Filters for the email-dispatch audit panel. Empty string = no filter
+  // (preserves the original "latest 20 attempts" behaviour). All four are
+  // forwarded to BOTH the JSON view (`emailHistoryQ`) and the CSV download
+  // so the file always matches what the admin saw on screen. The status
+  // bucket vocabulary (ok / failed / suppressed) mirrors the colour groups
+  // the table itself renders — see `statusClass` below.
+  const [emailHistFrom, setEmailHistFrom]       = useState<string>("");
+  const [emailHistTo, setEmailHistTo]           = useState<string>("");
+  const [emailHistTrigger, setEmailHistTrigger] = useState<string>("");
+  const [emailHistStatus, setEmailHistStatus]   = useState<string>("");
+
+  const emailHistoryFilterParams = (): string => {
+    const parts: string[] = [];
+    if (emailHistFrom)    parts.push(`from=${encodeURIComponent(emailHistFrom)}`);
+    if (emailHistTo)      parts.push(`to=${encodeURIComponent(emailHistTo)}`);
+    if (emailHistTrigger) parts.push(`trigger=${encodeURIComponent(emailHistTrigger)}`);
+    if (emailHistStatus)  parts.push(`status=${encodeURIComponent(emailHistStatus)}`);
+    return parts.length ? `&${parts.join("&")}` : "";
+  };
+
+  // Append-only email-dispatch history (last 20 attempts by default — narrow
+  // further with the filter controls above the table). Surfaces every
   // success, failure, and suppression so SuperAdmins can audit deliveries
   // without trawling server logs. Refreshed alongside the schedule card after
   // any send attempt (test, manual run-now, scheduled sweep).
@@ -747,9 +768,15 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   // a sweep was skipped (cooldown vs snooze vs no recipients) and verify
   // which critical fingerprint the dispatcher was acting on.
   const emailHistoryQ = useQuery({
-    queryKey: ["maintenance-email-history"],
+    queryKey: [
+      "maintenance-email-history",
+      emailHistFrom, emailHistTo, emailHistTrigger, emailHistStatus,
+    ],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/maintenance/email-history?limit=20`, { headers });
+      const r = await fetch(
+        `${API}/api/admin/maintenance/email-history?limit=20${emailHistoryFilterParams()}`,
+        { headers },
+      );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب سجل البريد");
       return r.json() as Promise<{
         items: Array<{
@@ -766,6 +793,37 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
       }>;
     },
     refetchOnWindowFocus: false,
+  });
+
+  // CSV export — calls the same email-history endpoint with `?format=csv`
+  // and forwards the on-screen filters so the downloaded file matches what
+  // the admin sees. The server writes a maintenance audit-log row for the
+  // export itself.
+  const emailHistoryCsvMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/email-history?format=csv${emailHistoryFilterParams()}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-email-history-${Date.now()}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
   // Wipe the cooldown anchor so the next sweep fires immediately regardless of
   // the configured cadence. Refreshes the schedule card + history so the
@@ -1070,18 +1128,109 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
         {/* ── Email dispatch history (last 20 attempts) ───────────────────
             Append-only audit table backed by maintenance_email_runs. Lives
             directly beneath the schedule card so SuperAdmins can verify
-            "was the email actually sent?" alongside the most recent status. */}
-        {emailHistoryQ.data && (
+            "was the email actually sent?" alongside the most recent status.
+            Filters (trigger / status / date range) and CSV export let admins
+            answer long-form audit questions ("show every failed send last
+            quarter", "give the auditor a CSV") without leaving the page. */}
+        {emailHistoryQ.data && (() => {
+          const hasFilters = !!(emailHistFrom || emailHistTo || emailHistTrigger || emailHistStatus);
+          return (
           <div className="border border-violet-200 rounded p-3 bg-white">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <History className="h-4 w-4 text-violet-700" />
               <span className="text-sm font-medium text-violet-900">سجل تنبيهات البريد</span>
               <span className="text-[11px] text-muted-foreground">
-                آخر {emailHistoryQ.data.items.length} محاولة إرسال (نجاح أو فشل أو متخطّاة)
+                {hasFilters
+                  ? `${emailHistoryQ.data.items.length} محاولة مطابقة للفلاتر (حتى 20)`
+                  : `آخر ${emailHistoryQ.data.items.length} محاولة إرسال (نجاح أو فشل أو متخطّاة)`}
               </span>
+              <div className="mr-auto flex items-center gap-1.5">
+                <Button
+                  size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                  onClick={() => emailHistoryCsvMut.mutate()}
+                  disabled={emailHistoryCsvMut.isPending}
+                  title="تنزيل سجل البريد الكامل كملف CSV (يحترم الفلاتر أدناه)"
+                >
+                  {emailHistoryCsvMut.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Download className="h-3 w-3" />}
+                  تصدير CSV
+                </Button>
+              </div>
+            </div>
+            {/* Lightweight filters — apply to BOTH the on-screen table and
+                the CSV export. Empty inputs preserve original behaviour. */}
+            <div className="pb-2 pt-0.5 flex flex-wrap items-end gap-2 text-[11px]">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">من تاريخ</label>
+                <Input
+                  type="date" value={emailHistFrom}
+                  onChange={(e) => setEmailHistFrom(e.target.value)}
+                  className="h-7 w-[130px] text-xs"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">إلى تاريخ</label>
+                <Input
+                  type="date" value={emailHistTo}
+                  onChange={(e) => setEmailHistTo(e.target.value)}
+                  className="h-7 w-[130px] text-xs"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">المصدر</label>
+                <Select
+                  value={emailHistTrigger || "__all"}
+                  onValueChange={(v) => setEmailHistTrigger(v === "__all" ? "" : v)}
+                >
+                  <SelectTrigger className="h-7 w-[140px] text-xs">
+                    <SelectValue placeholder="كل المصادر" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">كل المصادر</SelectItem>
+                    <SelectItem value="scheduled">تلقائي</SelectItem>
+                    <SelectItem value="manual">يدوي</SelectItem>
+                    <SelectItem value="test">تجريبي</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-muted-foreground">الحالة</label>
+                <Select
+                  value={emailHistStatus || "__all"}
+                  onValueChange={(v) => setEmailHistStatus(v === "__all" ? "" : v)}
+                >
+                  <SelectTrigger className="h-7 w-[160px] text-xs">
+                    <SelectValue placeholder="كل الحالات" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">كل الحالات</SelectItem>
+                    <SelectItem value="ok">ناجحة</SelectItem>
+                    <SelectItem value="failed">فاشلة</SelectItem>
+                    <SelectItem value="suppressed">متخطّاة</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {hasFilters && (
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 text-[11px] px-2"
+                  onClick={() => {
+                    setEmailHistFrom(""); setEmailHistTo("");
+                    setEmailHistTrigger(""); setEmailHistStatus("");
+                  }}
+                  title="مسح كل الفلاتر"
+                >
+                  مسح الفلاتر
+                </Button>
+              )}
             </div>
             {emailHistoryQ.data.items.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">لا توجد محاولات إرسال بعد.</p>
+              <p className="text-[11px] text-muted-foreground">
+                {hasFilters
+                  ? "لا توجد محاولات إرسال مطابقة للفلاتر."
+                  : "لا توجد محاولات إرسال بعد."}
+              </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -1150,7 +1299,8 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ── Broken-tool panel: latest per-(company, tool) "error" rows ──
             Surfaces silently-broken checks distinct from "critical findings"

@@ -4548,10 +4548,107 @@ function outcomeMessageAr(o: { status: string; message: string }): string {
 // `reason` and `criticalSignature` were added so SuperAdmins can distinguish
 // "skipped because cooldown" from "skipped because snoozed" and verify which
 // critical fingerprint the dispatcher acted on for each attempt.
+//
+// Query params (all optional, applied identically to JSON & CSV branches so
+// the downloaded file always matches what the admin saw on screen):
+//   ?limit=20             (1..100; ignored when ?format=csv → unlimited)
+//   ?from=YYYY-MM-DD      (inclusive lower bound on ranAt)
+//   ?to=YYYY-MM-DD        (inclusive end-of-day on ranAt)
+//   ?trigger=scheduled|manual|test
+//   ?status=ok|failed|suppressed
+//        ok        → ("ok", "no_critical")
+//        failed    → ("failed", "no_recipients", "no_transport")
+//        suppressed→ ("skipped", "snoozed", "rate_limited")
+//   ?format=csv           (downloads the filtered set as CSV)
+//
+// The status buckets mirror the colour groups the UI already uses (green /
+// red / amber) so admins filter by the same vocabulary the table renders.
+const EMAIL_HISTORY_TRIGGERS = new Set(["scheduled", "manual", "test"]);
+const EMAIL_HISTORY_STATUS_BUCKETS: Record<string, string[]> = {
+  ok:         ["ok", "no_critical"],
+  failed:     ["failed", "no_recipients", "no_transport"],
+  suppressed: ["skipped", "snoozed", "rate_limited"],
+};
 router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => {
+  const isCsv = wantsCsv(req);
+  const limit = clampInt(req.query.limit, 1, 100, 20);
+
+  const fromRaw = typeof req.query.from === "string" ? req.query.from.trim() : "";
+  const toRaw   = typeof req.query.to   === "string" ? req.query.to.trim()   : "";
+  if (fromRaw && !isValidISODate(fromRaw)) {
+    res.status(400).json({ error: "from يجب أن يكون بصيغة YYYY-MM-DD" }); return;
+  }
+  if (toRaw && !isValidISODate(toRaw)) {
+    res.status(400).json({ error: "to يجب أن يكون بصيغة YYYY-MM-DD" }); return;
+  }
+  // `to` is inclusive of the whole calendar day → use the start of the next
+  // day with `lt` so events recorded at 23:59 still match.
+  const fromDate = fromRaw ? new Date(`${fromRaw}T00:00:00.000Z`) : null;
+  const toDate   = toRaw
+    ? new Date(new Date(`${toRaw}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000)
+    : null;
+
+  const triggerRaw = typeof req.query.trigger === "string" ? req.query.trigger.trim() : "";
+  if (triggerRaw && !EMAIL_HISTORY_TRIGGERS.has(triggerRaw)) {
+    res.status(400).json({ error: "trigger يجب أن يكون scheduled أو manual أو test" }); return;
+  }
+  const statusRaw = typeof req.query.status === "string" ? req.query.status.trim() : "";
+  if (statusRaw && !(statusRaw in EMAIL_HISTORY_STATUS_BUCKETS)) {
+    res.status(400).json({ error: "status يجب أن يكون ok أو failed أو suppressed" }); return;
+  }
+
+  const conds: SQL[] = [];
+  if (fromDate)   conds.push(gte(maintenanceEmailRunsTable.ranAt, fromDate));
+  if (toDate)     conds.push(lt(maintenanceEmailRunsTable.ranAt, toDate));
+  if (triggerRaw) conds.push(eq(maintenanceEmailRunsTable.trigger, triggerRaw));
+  if (statusRaw)  conds.push(inArray(maintenanceEmailRunsTable.status, EMAIL_HISTORY_STATUS_BUCKETS[statusRaw]));
+  const where = conds.length ? and(...conds) : undefined;
+
   try {
-    const limit = clampInt(req.query.limit, 1, 100, 20);
-    const rows = await db.select().from(maintenanceEmailRunsTable)
+    if (isCsv) {
+      // CSV branch — full filtered history (no limit) so admins can archive
+      // it for compliance review. Columns mirror the on-screen table 1:1.
+      const q = db.select().from(maintenanceEmailRunsTable);
+      const rows = await (where ? q.where(where) : q).orderBy(desc(maintenanceEmailRunsTable.ranAt));
+      const headers = ["الوقت", "المصدر", "الحالة", "السبب", "المستلمون", "صفوف حرجة", "بصمة القائمة الحرجة", "الخطأ"];
+      const csvRows = rows.map((r) => [
+        csvDate(r.ranAt),
+        r.trigger ?? "",
+        r.status ?? "",
+        r.reason ?? "",
+        r.recipients ?? 0,
+        r.criticalCount ?? 0,
+        r.criticalSignature ?? "",
+        r.error ?? "",
+      ]);
+      // maintenance_email_runs is global (no companyId); audit the export
+      // against companyId=null so the SuperAdmin trail still records who
+      // pulled the file and which filters were applied.
+      await writeAudit({
+        userId:    req.adminUser?.id ?? null,
+        username:  req.adminUser?.username ?? null,
+        role:      "superadmin",
+        companyId: null,
+        module:    "maintenance",
+        action:    "export_csv",
+        method:    req.method,
+        path:      req.originalUrl,
+        entityType: "maintenance_email_history",
+        entityId:   null,
+        metadata: {
+          count: rows.length, format: "csv",
+          filters: {
+            from: fromRaw || null, to: toRaw || null,
+            trigger: triggerRaw || null, status: statusRaw || null,
+          },
+        },
+      });
+      sendCsv(res, `maintenance-email-history-${Date.now()}.csv`, headers, csvRows);
+      return;
+    }
+
+    const q = db.select().from(maintenanceEmailRunsTable);
+    const rows = await (where ? q.where(where) : q)
       .orderBy(desc(maintenanceEmailRunsTable.ranAt))
       .limit(limit);
     res.json({
