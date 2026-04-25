@@ -111,6 +111,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [currencyCode,setCurrencyCode]  = useState("");
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
+  const [salesRepId, setSalesRepId]     = useState("");
   const [priceIncludesVat, setPriceIncludesVat] = useState(false);
   const [docDiscount, setDocDiscount]   = useState("0");
   const [lines,     setLines]           = useState<DocLine[]>(() => {
@@ -208,6 +209,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: async () => { const r = await fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+  const { data: salesReps = [] } = useQuery<any[]>({
+    queryKey: ["sales-reps", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/sales-reps?companyId=${cid}` : `${API}/api/sales-reps`;
+      const r = await fetch(url, { headers: authH });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!user && isInvoice,
+  });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
   useEffect(() => {
     if (!isNew || !defaultBranch || branchId) return;
@@ -276,6 +287,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
+    if (isInvoice) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
     setDocDiscount(String(existing.discountAmount ?? "0"));
     if (isInvoice) {
@@ -328,6 +340,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         setCurrencyCode(src.currencyCode ?? "SAR");
         setExchangeRate(String(src.exchangeRate ?? "1"));
         setNotes(src.notes ?? "");
+        if (isInvoice) setSalesRepId(src.salesRepId ? String(src.salesRepId) : "");
         setPriceIncludesVat(!!src.priceIncludesVat);
         setDocDiscount(String(src.discountAmount ?? "0"));
         if (isInvoice) {
@@ -496,6 +509,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.bankAccountId = paymentType === "bank" ? (bankAccountId || null) : null;
       base.branchId = branchId || null;
+      base.salesRepId         = salesRepId         ? Number(salesRepId)         : null;
       base.cogsAccountId      = cogsAccountId      ? Number(cogsAccountId)      : null;
       base.inventoryAccountId = inventoryAccountId ? Number(inventoryAccountId) : null;
       base.salesAccountId     = salesAccountId     ? Number(salesAccountId)     : null;
@@ -513,6 +527,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const customerComboItems = [
     { value: "", label: t("salesDocForm.noCustomer") },
     ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` })),
+  ];
+  const salesRepComboItems = [
+    { value: "", label: t("salesDocForm.noSalesRep") },
+    ...(salesReps as any[])
+      .filter((r: any) => r.isActive !== false)
+      .map((r: any) => ({
+        value: String(r.id),
+        label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
+      })),
   ];
   const itemComboItems = [
     { value: "", label: t("salesDocForm.selectItem") },
@@ -823,6 +846,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
+                {isInvoice && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("salesDocForm.salesRep")}</Label>
+                    <SearchCombobox
+                      items={salesRepComboItems}
+                      value={salesRepId}
+                      onValueChange={setSalesRepId}
+                      placeholder={t("salesDocForm.salesRepPlaceholder")}
+                    />
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.notes")}</Label>
                   <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />

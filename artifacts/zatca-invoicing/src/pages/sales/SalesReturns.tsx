@@ -55,7 +55,7 @@ function newLine(): ReturnLine {
 const EMPTY = {
   docNumber: "", returnDate: today(), customerId: "", branchId: "", invoiceId: "",
   paymentType: "credit", cashBoxId: "", bankAccountId: "",
-  currencyCode: "", exchangeRate: "1", notes: "",
+  currencyCode: "", exchangeRate: "1", notes: "", salesRepId: "",
   priceIncludesVat: false,
   cogsAccountId: "", inventoryAccountId: "", salesAccountId: "", taxAccountId: "", discountAccountId: "",
   discountAmount: "0",
@@ -160,6 +160,17 @@ export default function SalesReturns() {
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["units", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/inventory/units?companyId=${cid}` : `${API}/api/inventory/units`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  const { data: salesReps = [] } = useQuery<any[]>({
+    queryKey: ["sales-reps", cid],
+    queryFn: async () => {
+      const url = cid ? `${API}/api/sales-reps?companyId=${cid}` : `${API}/api/sales-reps`;
+      const r = await fetch(url, { headers: authH });
+      if (!r.ok) return [];
+      return r.json();
+    },
     enabled: !!user,
   });
 
@@ -334,6 +345,7 @@ export default function SalesReturns() {
         bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "",
         discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
         notes: r.notes ?? "",
+        salesRepId: r.salesRepId ? String(r.salesRepId) : "",
         priceIncludesVat: !!r.priceIncludesVat,
         salesAccountId:     r.salesAccountId     ? String(r.salesAccountId)     : "",
         cogsAccountId:      r.cogsAccountId      ? String(r.cogsAccountId)      : "",
@@ -384,6 +396,7 @@ export default function SalesReturns() {
         bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "",
         discountAmount: r.discountAmount != null ? String(r.discountAmount) : "0",
         notes: r.notes ?? "",
+        salesRepId: r.salesRepId ? String(r.salesRepId) : "",
         priceIncludesVat: !!r.priceIncludesVat,
         salesAccountId:     r.salesAccountId     ? String(r.salesAccountId)     : "",
         cogsAccountId:      r.cogsAccountId      ? String(r.cogsAccountId)      : "",
@@ -431,6 +444,7 @@ export default function SalesReturns() {
         currencyCode: inv.currencyCode ?? prev.currencyCode ?? defaultCurrency?.code ?? "",
         exchangeRate: inv.exchangeRate ? String(inv.exchangeRate) : "1",
         notes: t("salesReturns.fromInvoiceNote", { number: inv.docNumber ?? `SI-${inv.id}` }),
+        salesRepId: inv.salesRepId ? String(inv.salesRepId) : prev.salesRepId,
         priceIncludesVat: !!inv.priceIncludesVat,
         cogsAccountId:      inv.cogsAccountId      ? String(inv.cogsAccountId)      : prev.cogsAccountId,
         inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : prev.inventoryAccountId,
@@ -575,6 +589,7 @@ export default function SalesReturns() {
       customerId: form.customerId || null,
       branchId:   form.branchId   || null,
       invoiceId:  form.invoiceId  || null,
+      salesRepId: form.salesRepId ? Number(form.salesRepId) : null,
       paymentType: form.paymentType || "credit",
       cashBoxId:  form.paymentType === "cash" ? (form.cashBoxId || null) : null,
       bankAccountId: form.paymentType === "bank" ? (form.bankAccountId || null) : null,
@@ -587,6 +602,15 @@ export default function SalesReturns() {
 
   const customerItems = [{ value: "", label: t("salesReturns.noCustomer") }, ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` }))];
   const invoiceItems  = [{ value: "", label: t("salesReturns.noInvoice") }, ...invoices.map((i: any) => ({ value: String(i.id), label: i.docNumber ?? `SI-${i.id}` }))];
+  const salesRepItems = [
+    { value: "", label: t("salesReturns.noSalesRep") },
+    ...(salesReps as any[])
+      .filter((r: any) => r.isActive !== false)
+      .map((r: any) => ({
+        value: String(r.id),
+        label: r.code ? `${r.code} — ${r.nameAr ?? r.nameEn ?? `#${r.id}`}` : (r.nameAr ?? r.nameEn ?? `#${r.id}`),
+      })),
+  ];
   const itemComboItems = [{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr }))];
   const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
 
@@ -703,6 +727,14 @@ export default function SalesReturns() {
                   </Select>
                 </Field>
               )}
+              <Field label={t("salesReturns.salesRep")}>
+                <SearchCombobox
+                  items={salesRepItems}
+                  value={form.salesRepId}
+                  onValueChange={v => setForm((p: any) => ({ ...p, salesRepId: v }))}
+                  placeholder={t("salesReturns.salesRepPlaceholder")}
+                />
+              </Field>
               <Field label={t("salesReturns.notes")} className="col-span-2 lg:col-span-4"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
             </TabsContent>

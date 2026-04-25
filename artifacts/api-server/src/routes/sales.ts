@@ -749,9 +749,19 @@ router.post("/sales-returns", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { docNumber, returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
+            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Validate sales rep belongs to current tenant (prevents cross-tenant FK assignment).
+    let resolvedRepId: number | null = null;
+    if (salesRepId) {
+      const ridNum = Number(salesRepId);
+      if (Number.isFinite(ridNum)) {
+        const [rep] = await db.select({ id: salesRepsTable.id }).from(salesRepsTable)
+          .where(and(eq(salesRepsTable.id, ridNum), eq(salesRepsTable.companyId, cid)));
+        resolvedRepId = rep ? rep.id : null;
+      }
+    }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
@@ -789,6 +799,7 @@ router.post("/sales-returns", async (req, res) => {
       discountAmount: discR.toFixed(2),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft", notes: notes || null,
+      salesRepId:         resolvedRepId,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,
@@ -826,9 +837,27 @@ router.put("/sales-returns/:id", async (req, res) => {
 
     // docNumber is intentionally not destructured — immutable on edit.
     const { returnDate, customerId, branchId, invoiceId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
-            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat,
+            totalAmount, vatAmount, discountAmount, notes, lines, priceIncludesVat, salesRepId,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId } = req.body;
     if (!returnDate) { res.status(400).json({ error: "تاريخ المرتجع مطلوب" }); return; }
+    // Patch-safe rep update: only touch salesRepId when the client explicitly
+    // sent the key. Validate company scope when present (cross-tenant guard).
+    const hasRepKey = Object.prototype.hasOwnProperty.call(req.body ?? {}, "salesRepId");
+    let resolvedRepIdPatch: number | null | undefined = undefined;
+    if (hasRepKey) {
+      if (!salesRepId) {
+        resolvedRepIdPatch = null;
+      } else {
+        const ridNum = Number(salesRepId);
+        if (Number.isFinite(ridNum)) {
+          const [rep] = await db.select({ id: salesRepsTable.id }).from(salesRepsTable)
+            .where(and(eq(salesRepsTable.id, ridNum), eq(salesRepsTable.companyId, cid)));
+          resolvedRepIdPatch = rep ? rep.id : null;
+        } else {
+          resolvedRepIdPatch = null;
+        }
+      }
+    }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند ردّ المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند ردّ المبلغ بنكياً" }); return; }
@@ -852,6 +881,7 @@ router.put("/sales-returns/:id", async (req, res) => {
       discountAmount: discR2.toFixed(2),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       notes: notes || null,
+      ...(hasRepKey ? { salesRepId: resolvedRepIdPatch as number | null } : {}),
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
       salesAccountId:     salesAccountId     ? Number(salesAccountId)     : null,

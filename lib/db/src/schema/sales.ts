@@ -4,6 +4,7 @@ import {
 import { companiesTable } from "./companies";
 import { customersTable } from "./customers";
 import { accountsTable } from "./accounts";
+import { salesRepsTable } from "./salesReps";
 
 // ─── Sales Invoices ──────────────────────────────────────────────────────────
 export const salesInvoiceStatusEnum = pgEnum("sales_invoice_status", [
@@ -94,6 +95,7 @@ export const salesReturnsTable = pgTable("sales_returns", {
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
+  salesRepId:         integer("sales_rep_id").references(() => salesRepsTable.id),
   cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),
   inventoryAccountId: integer("inventory_account_id").references(() => accountsTable.id),
   salesAccountId:     integer("sales_account_id").references(() => accountsTable.id),
