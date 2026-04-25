@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
   User, Lock, Eye, EyeOff, CheckCircle2, Shield,
@@ -66,26 +69,41 @@ export default function Settings() {
     onError: (err: any) => toast({ title: err.message, variant: "destructive" }),
   });
 
-  // SuperAdmin opt-out for the maintenance critical-digest email. The flag is
-  // stored on the users row (notifyMaintenanceEmail) and surfaced via /api/auth/me.
-  // The toggle hits a dedicated lightweight endpoint that doesn't require a
-  // password re-confirmation — it's a low-stakes notification preference.
+  // SuperAdmin opt-out + severity threshold for the maintenance critical-digest
+  // email. Both fields are stored on the users row and surfaced via
+  // /api/auth/me. The PATCH endpoint accepts either field independently so a
+  // toggle change and a threshold change don't have to ship together.
   const notifyMaintenanceEmail = (user as any)?.notifyMaintenanceEmail ?? true;
+  const notifyMaintenanceSeverity: "critical" | "warning" | "all" =
+    ((user as any)?.notifyMaintenanceSeverity as any) ?? "critical";
+  type NotificationsPatch = {
+    notifyMaintenanceEmail?: boolean;
+    notifyMaintenanceSeverity?: "critical" | "warning" | "all";
+  };
   const notificationsMutation = useMutation({
-    mutationFn: async (next: boolean) => {
+    mutationFn: async (patch: NotificationsPatch) => {
       const res = await fetch(`${API}/api/auth/me/notifications`, {
         method: "PUT", headers,
-        body: JSON.stringify({ notifyMaintenanceEmail: next }),
+        body: JSON.stringify(patch),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "تعذّر تحديث تفضيلات التنبيه");
-      return data as { ok: boolean; notifyMaintenanceEmail: boolean; message: string };
+      return data as {
+        ok: boolean;
+        notifyMaintenanceEmail: boolean;
+        notifyMaintenanceSeverity: "critical" | "warning" | "all";
+        message: string;
+      };
     },
     // Update the cached user immediately so the switch reflects the new state
     // without waiting for a /me round-trip.
     onSuccess: (data) => {
       toast({ title: "✓ " + data.message });
-      if (setUser) setUser((u: any) => (u ? { ...u, notifyMaintenanceEmail: data.notifyMaintenanceEmail } : u));
+      if (setUser) setUser((u: any) => (u ? {
+        ...u,
+        notifyMaintenanceEmail:    data.notifyMaintenanceEmail,
+        notifyMaintenanceSeverity: data.notifyMaintenanceSeverity,
+      } : u));
     },
     onError: (err: any) => toast({ title: err.message, variant: "destructive" }),
   });
@@ -216,8 +234,45 @@ export default function Settings() {
               id="notify-maint-email"
               checked={notifyMaintenanceEmail}
               disabled={notificationsMutation.isPending}
-              onCheckedChange={(v) => notificationsMutation.mutate(v)}
+              onCheckedChange={(v) => notificationsMutation.mutate({ notifyMaintenanceEmail: v })}
             />
+          </div>
+          {/* Severity threshold — narrows or widens which sweeps actually email
+              this SuperAdmin without touching the global toggle above. Disabled
+              while the toggle is off so the choice doesn't look "live" when
+              nothing would be sent anyway. */}
+          <div className="flex items-start justify-between gap-4 pt-3 border-t">
+            <div className="space-y-1">
+              <Label htmlFor="notify-maint-severity" className="text-sm font-medium">
+                مستوى التنبيهات
+              </Label>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                اختر أدنى مستوى للنتائج التي تستحق إرسال إيميل لك. مثلاً «حرجة فقط» يكتم تحذيرات الفحص اليومي،
+                و«جميع الإشعارات» يضيف الأدوات المعطّلة (status=error) إلى التنبيهات.
+              </p>
+            </div>
+            <Select
+              value={notifyMaintenanceSeverity}
+              disabled={!notifyMaintenanceEmail || notificationsMutation.isPending}
+              onValueChange={(v) =>
+                notificationsMutation.mutate({
+                  notifyMaintenanceSeverity: v as "critical" | "warning" | "all",
+                })
+              }
+            >
+              <SelectTrigger
+                id="notify-maint-severity"
+                className="w-44 shrink-0"
+                aria-label="مستوى التنبيهات"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="critical">حرجة فقط</SelectItem>
+                <SelectItem value="warning">حرجة وتحذيرات</SelectItem>
+                <SelectItem value="all">جميع الإشعارات</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
       )}

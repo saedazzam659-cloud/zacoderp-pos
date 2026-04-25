@@ -28,6 +28,16 @@ export const usersTable = pgTable("users", {
   // Defaults to true so existing recipients keep getting alerts; only meaningful
   // for users with role='superadmin' (other roles are never on the digest list).
   notifyMaintenanceEmail: boolean("notify_maintenance_email").notNull().default(true),
+  // Per-SuperAdmin severity threshold for the maintenance digest. Combined
+  // with notifyMaintenanceEmail above so opt-outs still suppress everything.
+  // Allowed values:
+  //   "critical" — receive only when the sweep surfaced at least one critical
+  //                finding (the historical default — preserves prior behaviour).
+  //   "warning"  — receive when the sweep surfaced critical OR warn findings.
+  //   "all"      — receive on any non-OK signal, including silently-broken
+  //                tools (status = 'error') with no critical/warn rows.
+  // Other roles never reach the digest list, so this column is harmless on them.
+  notifyMaintenanceSeverity: text("notify_maintenance_severity").notNull().default("critical"),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
   lastLoginAt: timestamp("last_login_at"),

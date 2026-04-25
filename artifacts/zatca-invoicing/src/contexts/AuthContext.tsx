@@ -27,6 +27,14 @@ export interface AuthUser {
    * for users with role='superadmin'; other roles are never on the recipient list.
    */
   notifyMaintenanceEmail?: boolean;
+  /**
+   * Per-SuperAdmin severity threshold for the same digest. Combined with the
+   * opt-in above (`notifyMaintenanceEmail` false suppresses everything).
+   *   - "critical": receive only when at least one critical finding exists (default).
+   *   - "warning":  receive when warnings or criticals exist.
+   *   - "all":      receive on any non-OK signal, including silently-broken tools.
+   */
+  notifyMaintenanceSeverity?: "critical" | "warning" | "all";
   company?: any;
   subscription?: any;
 }

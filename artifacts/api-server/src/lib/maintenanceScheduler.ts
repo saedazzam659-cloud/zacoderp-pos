@@ -139,7 +139,7 @@ export async function runMaintenanceSweep(
     updatedAt: new Date(),
   }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
   // Dispatch the SuperAdmin email digest if this *scheduled* sweep surfaced any
-  // critical findings. We deliberately exclude `trigger === "manual"` here —
+  // non-OK signal. We deliberately exclude `trigger === "manual"` here —
   // an admin clicking "Run now" gets immediate on-screen results and shouldn't
   // surprise other SuperAdmins with an alert email; the spec ties the digest
   // specifically to the scheduled sweep. The digest is best-effort and never
@@ -148,7 +148,13 @@ export async function runMaintenanceSweep(
   // snooze check sees the pre-sweep state. Otherwise an active snooze would be
   // silently overridden and the email would go out anyway, which contradicts
   // the "alerts not snoozed" requirement.
-  if (criticalCount > 0 && trigger === "scheduled") {
+  //
+  // Trigger condition is widened from "criticalCount > 0" to also include
+  // warnings and errors so per-recipient severity thresholds (warning / all)
+  // can actually fire. The dispatch path itself filters recipients by their
+  // configured threshold, so threshold='critical' SuperAdmins still only
+  // receive emails when at least one critical finding is present.
+  if ((criticalCount > 0 || warnCount > 0 || errorCount > 0) && trigger === "scheduled") {
     try {
       await dispatchCriticalDigest({ publicBaseUrl: opts.publicBaseUrl, trigger: "scheduled" });
     } catch (e: any) {
@@ -179,19 +185,61 @@ export interface EmailDispatchOutcome {
   rows: number;
 }
 
-// Stable hash of the current critical set, used to bypass the cooldown when
-// a new critical (or a count change on an existing one) appears. Sorted so the
+// Stable hash of the current alert set, used to bypass the cooldown when a new
+// row appears or an existing one shifts (count or severity). Sorted so the
 // hash is order-independent. Extracted (and exported) so the unit tests can
 // pin the rate-limit decision deterministically.
+//
+// Severity is part of the payload so that a (company, tool, count) row that
+// flips warn ↔ critical produces a NEW signature — otherwise a sweep that
+// promoted a warning to critical would be suppressed by the cooldown even
+// though it now meets the per-recipient `critical` threshold and should
+// re-arm the digest. When severity is omitted we treat it as "critical" so
+// the historical caller shape (pre-severity) hashes identically and the
+// existing test fixtures keep passing.
 export function computeCriticalSignature(
-  rows: ReadonlyArray<{ companyId: number; toolKey: string; count: number }>,
+  rows: ReadonlyArray<{ companyId: number; toolKey: string; count: number; severity?: AlertSeverity }>,
 ): string {
   if (rows.length === 0) return "";
   const sorted = [...rows].sort((a, b) =>
     a.companyId - b.companyId || a.toolKey.localeCompare(b.toolKey)
   );
-  const payload = sorted.map((r) => `${r.companyId}:${r.toolKey}:${r.count}`).join("|");
+  const payload = sorted
+    .map((r) => `${r.companyId}:${r.toolKey}:${r.count}:${r.severity ?? "critical"}`)
+    .join("|");
   return createHash("sha1").update(payload).digest("hex");
+}
+
+// ─── Severity threshold ──────────────────────────────────────────────────────
+// Tools surface three non-OK signals: `critical`, `warn`, and `error`
+// (latter is an execution failure, not a finding). Each SuperAdmin can pick a
+// per-account threshold ("critical" / "warning" / "all") that controls which
+// sweeps actually email them. The dispatch trigger is widened to fire on any
+// non-OK signal — recipient filtering then decides who actually gets the mail.
+export type AlertSeverity = "critical" | "warn" | "error";
+export type SeverityThreshold = "critical" | "warning" | "all";
+export const SEVERITY_THRESHOLDS: ReadonlyArray<SeverityThreshold> = ["critical", "warning", "all"];
+
+// True when the sweep's present severity set satisfies the recipient's
+// threshold. Pure / dependency-free so the unit tests can pin every
+// combination without spinning up a DB.
+//   - "critical" recipients require at least one critical row.
+//   - "warning"  recipients accept critical OR warn rows.
+//   - "all"      recipients accept any non-OK signal — including a sweep
+//                whose only signal is a silently-broken (`error`) tool.
+// Unknown thresholds (defensive: bad row in DB) fall back to "critical" so
+// the more conservative default wins and we never accidentally over-page.
+export function severityMeetsThreshold(
+  present: ReadonlySet<AlertSeverity>,
+  threshold: SeverityThreshold | string | null | undefined,
+): boolean {
+  const t: SeverityThreshold =
+    threshold === "warning" || threshold === "all" || threshold === "critical"
+      ? threshold
+      : "critical";
+  if (t === "all") return present.size > 0;
+  if (t === "warning") return present.has("critical") || present.has("warn");
+  return present.has("critical");
 }
 
 // Pure decision function: should this scheduled dispatch be skipped due to the
@@ -235,19 +283,39 @@ function resolvePublicBaseUrl(explicit?: string): string {
   return candidate ? candidate.replace(/\/+$/, "") : "";
 }
 
-async function getSuperAdminRecipients(): Promise<string[]> {
+// Fetch the SuperAdmins eligible for THIS sweep's digest. A recipient is
+// included only when (a) they're an active SuperAdmin with a usable email,
+// (b) `notifyMaintenanceEmail` is on (the all-or-nothing kill switch), AND
+// (c) the sweep's present severity set meets their per-account
+// `notifyMaintenanceSeverity` threshold. Callers pass `presentSeverities`
+// derived from the rows actually included in the digest (criticals + warns,
+// and `error` when at least one tool is silently broken). When the set is
+// empty no one is eligible — the dispatch path short-circuits earlier in
+// that case but we belt-and-brace it here too.
+//
+// Returns de-duplicated emails so a SuperAdmin who somehow appears twice
+// (e.g. legacy rows) doesn't get the digest twice.
+async function getSuperAdminRecipients(
+  presentSeverities: ReadonlySet<AlertSeverity>,
+): Promise<string[]> {
   // notifyMaintenanceEmail = false is an explicit per-SuperAdmin opt-out
   // (set from their account settings). Users who flip it off are silently
   // excluded from the recipient list — same effect as having no email on file.
-  const rows = await db.select({ email: usersTable.email })
+  const rows = await db.select({
+    email: usersTable.email,
+    severityThreshold: usersTable.notifyMaintenanceSeverity,
+  })
     .from(usersTable)
     .where(and(
       eq(usersTable.role, "superadmin"),
       eq(usersTable.isActive, true),
       eq(usersTable.notifyMaintenanceEmail, true),
     ));
+  const eligible = rows.filter((r) =>
+    severityMeetsThreshold(presentSeverities, r.severityThreshold),
+  );
   // De-dupe + drop blanks; SuperAdmins without a configured email simply opt out.
-  return Array.from(new Set(rows.map((r) => (r.email ?? "").trim()).filter((e) => e.length > 0)));
+  return Array.from(new Set(eligible.map((r) => (r.email ?? "").trim()).filter((e) => e.length > 0)));
 }
 
 export async function dispatchCriticalDigest(
@@ -272,8 +340,11 @@ export async function dispatchCriticalDigest(
   // Cap rows so a stuck tenant can't generate a multi-megabyte email, but make
   // the cap generous (every tool × every active company would be well under
   // this in practice) and explicitly note truncation if it ever fires.
+  // The body now includes BOTH critical and warning rows so threshold='warning'
+  // SuperAdmins see what actually fired their alert. Recipient filtering still
+  // gates which severities a given user receives — see getSuperAdminRecipients.
   const ROW_CAP = 500;
-  const alerts = await getCriticalAlerts(ROW_CAP + 1);
+  const alerts = await getMaintenanceAlerts(["critical", "warn"], ROW_CAP + 1);
   const truncated = alerts.length > ROW_CAP;
   const visibleAlerts = truncated ? alerts.slice(0, ROW_CAP) : alerts;
   // For test sends we still want to deliver something even if everything is OK
@@ -288,12 +359,8 @@ export async function dispatchCriticalDigest(
       toolLabelAr: "اختبار",
       count: 0,
       runAt: new Date(),
+      severity: "critical",
     }];
-  } else if (visibleAlerts.length === 0) {
-    return recordEmailOutcome(
-      { status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 },
-      { trigger, criticalSignature: "" },
-    );
   } else {
     rows = visibleAlerts.map((a) => ({
       companyId: a.companyId,
@@ -302,7 +369,55 @@ export async function dispatchCriticalDigest(
       toolLabelAr: toolLabelAr(a.toolKey),
       count: a.count,
       runAt: a.runAt,
+      severity: a.severity,
     }));
+  }
+
+  // Tools that errored within the recency window — surfaced alongside the
+  // critical findings so SuperAdmins notice silently-broken checks. Errors
+  // contribute to the present-severities set so threshold='all' recipients
+  // can be notified even on a sweep whose only signal is a wedged tool, but
+  // a sweep with ZERO warn/critical/error rows still short-circuits to
+  // "no_critical" below (see the note on naming there).
+  const ERROR_ROW_CAP = 50;
+  let errorDigestRows: MaintenanceErrorDigestRow[] = [];
+  try {
+    const errs = await getRecentToolErrors(ERROR_ROW_CAP);
+    errorDigestRows = errs.map((e) => ({
+      companyId:   e.companyId,
+      companyName: e.companyName,
+      toolKey:     e.toolKey,
+      toolLabelAr: toolLabelAr(e.toolKey),
+      error:       e.error,
+      runAt:       e.runAt,
+    }));
+  } catch (err) {
+    // Best-effort — never fail the dispatch because the error-rows query
+    // hiccupped; the SuperAdmin still wants the critical digest to land.
+    logger.error({ err }, "maintenance-scheduler: failed to fetch tool errors for digest");
+  }
+
+  // Build the severity set actually present in this dispatch payload so
+  // recipient filtering matches what the email shows. Test sends with the
+  // placeholder row count as 'critical' (the only audience for a test is the
+  // operator triggering it).
+  const presentSeverities = new Set<AlertSeverity>();
+  for (const r of rows) presentSeverities.add(r.severity);
+  if (errorDigestRows.length > 0) presentSeverities.add("error");
+
+  // Short-circuit: nothing of any non-OK severity (no critical, no warn, no
+  // recent error) AND no test-placeholder seat. We still record the schedule
+  // row as `no_critical` for back-compat with the existing status taxonomy
+  // (UI banners, audit history, /api/admin/maintenance dashboard all read
+  // this enum) — but the inline message reflects the widened semantics so
+  // operators auditing logs aren't misled into thinking only criticals were
+  // checked. A future cleanup could rename the enum value end-to-end; doing
+  // it here would touch UI/history without changing behaviour.
+  if (!isTest && rows.length === 0 && errorDigestRows.length === 0) {
+    return recordEmailOutcome(
+      { status: "no_critical", message: "no_alerting_findings", recipients: 0, rows: 0 },
+      { trigger, criticalSignature: "" },
+    );
   }
 
   // Cooldown / rate-limit gate. Skipped for test sends (admins explicitly want
@@ -310,6 +425,10 @@ export async function dispatchCriticalDigest(
   // dispatches with an unchanged critical set inside the configured window are
   // suppressed and surfaced in the UI as "rate_limited" so operators see *why*
   // the email didn't go out.
+  //
+  // Signature now includes severity per row so a sweep that promotes warn →
+  // critical (or vice versa) bypasses the cooldown — threshold-sensitive
+  // recipients need to see the change immediately.
   const signature = computeCriticalSignature(visibleAlerts);
   if (!isTest) {
     const skip = shouldSkipForRateLimit(new Date(), {
@@ -331,7 +450,14 @@ export async function dispatchCriticalDigest(
     }
   }
 
-  const recipients = await getSuperAdminRecipients();
+  // Test sends always go to every opted-in SuperAdmin (regardless of their
+  // threshold) so an operator hitting "Send test email" gets confirmation
+  // even if the live sweep is currently quiet. Real dispatches are
+  // threshold-filtered by the present severity set.
+  const recipientSeverities: ReadonlySet<AlertSeverity> = isTest
+    ? new Set<AlertSeverity>(["critical", "warn", "error"])
+    : presentSeverities;
+  const recipients = await getSuperAdminRecipients(recipientSeverities);
   if (recipients.length === 0) {
     return recordEmailOutcome({
       status: "no_recipients",
@@ -345,29 +471,6 @@ export async function dispatchCriticalDigest(
       message: "email_transport_unconfigured",
       recipients: recipients.length, rows: rows.length,
     }, { trigger, criticalSignature: signature });
-  }
-
-  // Tools that errored within the recency window — surfaced alongside the
-  // critical findings so SuperAdmins notice silently-broken checks. These
-  // never trigger a send on their own (a sweep with errors but no criticals
-  // doesn't email — the existing semantic) but they piggyback on a digest
-  // that is going out anyway. Capped to keep the email scannable.
-  const ERROR_ROW_CAP = 50;
-  let errorDigestRows: MaintenanceErrorDigestRow[] = [];
-  try {
-    const errs = await getRecentToolErrors(ERROR_ROW_CAP);
-    errorDigestRows = errs.map((e) => ({
-      companyId:   e.companyId,
-      companyName: e.companyName,
-      toolKey:     e.toolKey,
-      toolLabelAr: toolLabelAr(e.toolKey),
-      error:       e.error,
-      runAt:       e.runAt,
-    }));
-  } catch (err) {
-    // Best-effort — never fail the dispatch because the error-rows query
-    // hiccupped; the SuperAdmin still wants the critical digest to land.
-    logger.error({ err }, "maintenance-scheduler: failed to fetch tool errors for digest");
   }
 
   const sendRes = await sendMaintenanceCriticalDigest({
@@ -560,6 +663,13 @@ export interface CriticalAlertRow {
   toolKey: string;
   count: number;
   runAt: Date;
+  // Always populated. The dashboard banner uses 'critical' rows exclusively
+  // (existing behaviour); the digest dispatch path uses the same shape with
+  // 'warn' mixed in so threshold='warning' recipients see what actually fired.
+  // Narrower than `AlertSeverity` because the SQL behind every producer of
+  // this row only ever selects critical/warn — `error` is delivered separately
+  // via `getRecentToolErrors`/`MaintenanceErrorDigestRow`.
+  severity: "critical" | "warn";
 }
 
 export async function getCriticalAlerts(limit = 20): Promise<CriticalAlertRow[]> {
@@ -577,12 +687,52 @@ export async function getCriticalAlerts(limit = 20): Promise<CriticalAlertRow[]>
            c.name_ar    AS "companyName",
            l.tool_key   AS "toolKey",
            l.count,
-           l.run_at     AS "runAt"
+           l.run_at     AS "runAt",
+           l.status     AS "severity"
       FROM latest l
       JOIN companies c ON c.id = l.company_id
      WHERE l.status = 'critical'
        AND c.status = 'active'
      ORDER BY l.run_at DESC
+     LIMIT ${limit}
+  `);
+  return ((exec as any).rows ?? []) as CriticalAlertRow[];
+}
+
+// Same per-(company, tool) latest projection as `getCriticalAlerts`, but
+// scoped to a caller-supplied set of statuses. Used by the digest path to pull
+// in `warn` rows alongside the criticals so threshold='warning' recipients get
+// a body that actually shows what triggered their alert. Critical rows are
+// listed first (so the email leads with the most severe items) and warns
+// follow within their respective recency order.
+//
+// We stay in `getCriticalAlerts`-shape rather than introducing a parallel
+// type so the digest dispatch only has to think about one row format.
+export async function getMaintenanceAlerts(
+  severities: ReadonlyArray<"critical" | "warn">,
+  limit = 20,
+): Promise<CriticalAlertRow[]> {
+  if (severities.length === 0) return [];
+  const list = sql.join(severities.map((s) => sql`${s}`), sql`, `);
+  const exec = await db.execute<any>(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (company_id, tool_key)
+             company_id, tool_key, status, count, run_at
+        FROM maintenance_runs
+       ORDER BY company_id, tool_key, run_at DESC
+    )
+    SELECT l.company_id AS "companyId",
+           c.name_ar    AS "companyName",
+           l.tool_key   AS "toolKey",
+           l.count,
+           l.run_at     AS "runAt",
+           l.status     AS "severity"
+      FROM latest l
+      JOIN companies c ON c.id = l.company_id
+     WHERE l.status IN (${list})
+       AND c.status = 'active'
+     ORDER BY CASE l.status WHEN 'critical' THEN 0 ELSE 1 END,
+              l.run_at DESC
      LIMIT ${limit}
   `);
   return ((exec as any).rows ?? []) as CriticalAlertRow[];

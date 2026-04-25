@@ -251,8 +251,11 @@ export async function sendReportsDigest(opts: {
 }
 
 // ─── Maintenance critical-findings digest ────────────────────────────────────
-// Sent by the daily sweep when criticalCount > 0 and alerts aren't snoozed.
-// Each row is one (company, tool) pair so SuperAdmins can triage from inbox.
+// Sent by the daily sweep when at least one non-OK finding exists and alerts
+// aren't snoozed. Each row is one (company, tool) pair so SuperAdmins can
+// triage from inbox. `severity` is 'critical' (red) or 'warn' (amber); both
+// can appear in the same email — recipient filtering by per-account severity
+// threshold happens in the scheduler before send.
 export interface MaintenanceDigestRow {
   companyId:   number;
   companyName: string;
@@ -260,6 +263,7 @@ export interface MaintenanceDigestRow {
   toolLabelAr: string;
   count:       number;
   runAt:       Date | string;
+  severity:    "critical" | "warn";
 }
 
 // Companion shape for the second (errored-tool) section appended to the
@@ -294,27 +298,50 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
   const link = `${base}/admin/ai-fix`;
   const distinctCompanies = new Set(opts.rows.map((r) => r.companyId)).size;
   const truncSuffix = opts.truncated ? " (تم اقتطاع القائمة)" : "";
+  // Per-severity counters drive both the subject line and the row colouring
+  // so threshold='warning' SuperAdmins see at a glance whether the alert is
+  // led by criticals, warnings, or a mix.
+  const criticalRowCount = opts.rows.filter((r) => r.severity === "critical").length;
+  const warnRowCount     = opts.rows.filter((r) => r.severity === "warn").length;
+  const subjectParts: string[] = [];
+  if (criticalRowCount > 0) subjectParts.push(`${criticalRowCount} حرجة`);
+  if (warnRowCount > 0)     subjectParts.push(`${warnRowCount} تحذير`);
+  const subjectBody = subjectParts.length > 0
+    ? subjectParts.join(" و ")
+    : `${opts.rows.length} نتيجة`;
   const subjectBase = opts.isTest
     ? "اختبار: تنبيه فحص الصيانة"
-    : `تنبيه صيانة: ${opts.rows.length} نتيجة حرجة في ${distinctCompanies} شركة${truncSuffix}`;
+    : `تنبيه صيانة: ${subjectBody} في ${distinctCompanies} شركة${truncSuffix}`;
   const rowsHtml = opts.rows
     .map((r) => {
       const when = (r.runAt instanceof Date ? r.runAt : new Date(r.runAt)).toLocaleString("ar-SA");
       const escName = String(r.companyName ?? "").replace(/[<>&]/g, (c) =>
         c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;",
       );
+      // Critical rows stay red (#b91c1c) — preserves the prior visual idiom for
+      // existing readers. Warn rows render in amber (#b45309) so the two are
+      // distinguishable at a glance without needing a separate column.
+      const sevLabel = r.severity === "critical" ? "حرجة" : "تحذير";
+      const sevColor = r.severity === "critical" ? "#b91c1c" : "#b45309";
+      const sevBg    = r.severity === "critical" ? "#fee2e2" : "#fef3c7";
       return `
         <tr>
           <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9;">${escName}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9;">${r.toolLabelAr}</td>
-          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9; color:#b91c1c; font-weight:600;">${r.count}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9;">
+            <span style="display:inline-block; padding:1px 8px; border-radius:9999px; background:${sevBg}; color:${sevColor}; font-size:11px; font-weight:600;">${sevLabel}</span>
+          </td>
+          <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9; color:${sevColor}; font-weight:600;">${r.count}</td>
           <td style="padding:6px 8px; border-bottom:1px solid #f1f5f9; color:#64748b; font-size:12px;">${when}</td>
         </tr>`;
     })
     .join("");
+  const introCounts: string[] = [];
+  if (criticalRowCount > 0) introCounts.push(`<strong>${criticalRowCount}</strong> حرجة`);
+  if (warnRowCount > 0)     introCounts.push(`<strong>${warnRowCount}</strong> تحذير`);
   const intro = opts.isTest
     ? `<p>هذه رسالة <strong>تجريبية</strong> أُرسلت من صفحة جدولة الصيانة للتأكد من وصول التنبيهات.</p>`
-    : `<p>اكتشف الفحص التلقائي الأخير <strong>${opts.rows.length}</strong> نتيجة حرجة في <strong>${distinctCompanies}</strong> شركة. تفاصيل أدناه:</p>`;
+    : `<p>اكتشف الفحص التلقائي الأخير ${introCounts.join(" و ")} في <strong>${distinctCompanies}</strong> شركة. تفاصيل أدناه:</p>`;
   // Optional second section: tools whose latest run threw within the recency
   // window. We HTML-escape the dynamic strings (company name, error text) here
   // because they originate from the DB / runtime exceptions and would otherwise
@@ -361,6 +388,7 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
         <tr style="background:#f8fafc; color:#0f172a;">
           <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">الشركة</th>
           <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">الأداة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">الخطورة</th>
           <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">العدد</th>
           <th style="padding:8px; text-align:right; border-bottom:2px solid #e2e8f0;">وقت الفحص</th>
         </tr>

@@ -272,6 +272,10 @@ router.get("/me", async (req, res) => {
     // Surfaced here so the Settings page can render the toggle without an
     // extra round-trip. Defaults to true when null/undefined for safety.
     notifyMaintenanceEmail: (user as any).notifyMaintenanceEmail ?? true,
+    // Per-SuperAdmin severity threshold for the same digest. Read alongside
+    // the toggle so the Settings page can render the dropdown without a
+    // second round-trip. Defaults to "critical" — the historical behaviour.
+    notifyMaintenanceSeverity: (user as any).notifyMaintenanceSeverity ?? "critical",
     branchIds: branchLinks.map(l => l.branchId),
     company,
     subscription,
@@ -297,24 +301,64 @@ router.put("/me/notifications", async (req, res) => {
   }
   if (!user || !user.isActive) { res.status(401).json({ error: "الجلسة منتهية" }); return; }
 
-  const { notifyMaintenanceEmail } = req.body ?? {};
-  if (typeof notifyMaintenanceEmail !== "boolean") {
-    res.status(400).json({ error: "notifyMaintenanceEmail يجب أن يكون قيمة منطقية" }); return;
+  // Both fields are optional — the Settings UI can flip just the toggle, just
+  // the threshold, or both in a single PATCH. We validate each independently
+  // so a malformed threshold doesn't poison a legitimate toggle change.
+  const body = req.body ?? {};
+  const hasToggle    = Object.prototype.hasOwnProperty.call(body, "notifyMaintenanceEmail");
+  const hasThreshold = Object.prototype.hasOwnProperty.call(body, "notifyMaintenanceSeverity");
+  if (!hasToggle && !hasThreshold) {
+    res.status(400).json({ error: "لم يتم إرسال أي تفضيل لتحديثه" }); return;
+  }
+  const patch: Record<string, any> = { updatedAt: new Date() };
+  if (hasToggle) {
+    if (typeof body.notifyMaintenanceEmail !== "boolean") {
+      res.status(400).json({ error: "notifyMaintenanceEmail يجب أن يكون قيمة منطقية" }); return;
+    }
+    patch.notifyMaintenanceEmail = body.notifyMaintenanceEmail;
+  }
+  if (hasThreshold) {
+    const allowed = ["critical", "warning", "all"] as const;
+    if (typeof body.notifyMaintenanceSeverity !== "string"
+        || !(allowed as readonly string[]).includes(body.notifyMaintenanceSeverity)) {
+      res.status(400).json({
+        error: "notifyMaintenanceSeverity يجب أن يكون أحد القيم: critical, warning, all",
+      }); return;
+    }
+    patch.notifyMaintenanceSeverity = body.notifyMaintenanceSeverity;
   }
   // Only SuperAdmins are ever on the digest list, so the toggle is a no-op
   // (but harmless) for other roles. We still accept it without a 403 so the
   // future shape — multiple notification preferences — can include flags
   // that *do* apply to non-SuperAdmins.
   const [updated] = await db.update(usersTable)
-    .set({ notifyMaintenanceEmail, updatedAt: new Date() })
+    .set(patch)
     .where(eq(usersTable.id, user.id))
     .returning();
+  // Compose the toast message based on what actually changed. When both
+  // fields are present we lead with the toggle change and append a short
+  // note about the threshold so the SuperAdmin sees confirmation of both.
+  const finalToggle    = (updated as any).notifyMaintenanceEmail ?? patch.notifyMaintenanceEmail ?? true;
+  const finalThreshold = (updated as any).notifyMaintenanceSeverity ?? patch.notifyMaintenanceSeverity ?? "critical";
+  const messages: string[] = [];
+  if (hasToggle) {
+    messages.push(finalToggle
+      ? "تم تفعيل تنبيهات صيانة النظام"
+      : "تم إيقاف تنبيهات صيانة النظام");
+  }
+  if (hasThreshold) {
+    const labelMap: Record<string, string> = {
+      critical: "حرجة فقط",
+      warning:  "حرجة وتحذيرات",
+      all:      "جميع الإشعارات",
+    };
+    messages.push(`مستوى التنبيهات: ${labelMap[finalThreshold] ?? finalThreshold}`);
+  }
   res.json({
     ok: true,
-    notifyMaintenanceEmail: (updated as any).notifyMaintenanceEmail ?? notifyMaintenanceEmail,
-    message: notifyMaintenanceEmail
-      ? "تم تفعيل تنبيهات صيانة النظام"
-      : "تم إيقاف تنبيهات صيانة النظام",
+    notifyMaintenanceEmail:    finalToggle,
+    notifyMaintenanceSeverity: finalThreshold,
+    message: messages.join(" — "),
   });
 });
 

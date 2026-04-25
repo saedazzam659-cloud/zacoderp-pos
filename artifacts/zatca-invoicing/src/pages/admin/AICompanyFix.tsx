@@ -71,6 +71,10 @@ function emailReasonLabelAr(reason: string | null): string {
   switch (reason) {
     case "digest_sent":                   return "أُرسل التنبيه";
     case "test_sent":                     return "بريد تجريبي أُرسل";
+    case "no_alerting_findings":          return "لا توجد نتائج تستدعي إشعاراً";
+    // Legacy label — kept so historical schedule rows still localise. Newer
+    // dispatches use `no_alerting_findings` to reflect that warn/error
+    // sweeps are now also considered before short-circuiting.
     case "no_critical_findings":          return "لا توجد نتائج حرجة";
     case "no_superadmin_email_configured":return "لا يوجد سوبر أدمن لديه بريد مفعّل";
     case "email_transport_unconfigured":  return "إعدادات البريد غير مهيأة (SMTP/Outlook)";

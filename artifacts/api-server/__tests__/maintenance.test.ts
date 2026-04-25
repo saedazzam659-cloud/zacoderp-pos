@@ -88,6 +88,8 @@ import {
   shouldSkipForRateLimit,
   getRecentToolErrors,
   TOOL_ERROR_WINDOW_DAYS,
+  severityMeetsThreshold,
+  type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
 
 // ─── Test scoping ───────────────────────────────────────────────────────────
@@ -711,6 +713,71 @@ test("computeCriticalSignature: changes when a new (company, tool) appears", () 
     { companyId: 4, toolKey: "broken-refs",     count: 1 },
   ]);
   assert.notEqual(before, after);
+});
+
+test("computeCriticalSignature: severity change flips the hash even when count is identical", () => {
+  // Regression for the per-recipient threshold feature: a (company, tool, count)
+  // row promoted from warn → critical now meets threshold='critical' recipients,
+  // so the signature MUST change to bypass the cooldown and re-arm dispatch.
+  const asWarn = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5, severity: "warn" },
+  ]);
+  const asCritical = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5, severity: "critical" },
+  ]);
+  assert.notEqual(asWarn, asCritical);
+  assert.notEqual(asWarn, "");
+});
+
+test("computeCriticalSignature: omitted severity hashes as 'critical' (back-compat)", () => {
+  // Pre-severity callers (and older audit rows) use the legacy shape; that
+  // shape must keep producing the same hash as an explicit critical row so
+  // existing cooldown anchors aren't accidentally invalidated.
+  const legacy = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5 },
+  ]);
+  const explicit = computeCriticalSignature([
+    { companyId: 3, toolKey: "journal-pending", count: 5, severity: "critical" },
+  ]);
+  assert.equal(legacy, explicit);
+});
+
+test("severityMeetsThreshold: 'critical' threshold requires a critical row", () => {
+  // The conservative default — only a present 'critical' should trigger.
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["critical"]), "critical"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["warn"]),     "critical"), false);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["error"]),    "critical"), false);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(),             "critical"), false);
+});
+
+test("severityMeetsThreshold: 'warning' threshold accepts critical OR warn (but not error-only)", () => {
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["critical"]),       "warning"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["warn"]),           "warning"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["critical", "warn"]),"warning"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["error"]),          "warning"), false);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(),                   "warning"), false);
+});
+
+test("severityMeetsThreshold: 'all' threshold fires on any non-OK signal — including error-only sweeps", () => {
+  // The motivating case: a silently-broken tool (status='error') with no
+  // warn/critical findings still pages 'all'-threshold SuperAdmins so wedged
+  // checks don't go unnoticed for weeks.
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["error"]),    "all"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["warn"]),     "all"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(["critical"]), "all"), true);
+  assert.equal(severityMeetsThreshold(new Set<AlertSeverity>(),             "all"), false);
+});
+
+test("severityMeetsThreshold: unknown / null / legacy values fall back to the conservative 'critical'", () => {
+  // Defensive: a hand-edited row, a stale client, or a future enum value must
+  // not accidentally over-page. Falling back to 'critical' matches the safest
+  // default and the historical behaviour pre-feature.
+  const onlyWarn = new Set<AlertSeverity>(["warn"]);
+  const onlyCrit = new Set<AlertSeverity>(["critical"]);
+  for (const t of [null, undefined, "", "verbose", "VERBOSE", "ALL"]) {
+    assert.equal(severityMeetsThreshold(onlyWarn, t as any), false);
+    assert.equal(severityMeetsThreshold(onlyCrit, t as any), true);
+  }
 });
 
 test("shouldSkipForRateLimit: cadence=0 → never skips (legacy fire-every-sweep)", () => {
