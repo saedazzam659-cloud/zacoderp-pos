@@ -262,6 +262,21 @@ export interface MaintenanceDigestRow {
   runAt:       Date | string;
 }
 
+// Companion shape for the second (errored-tool) section appended to the
+// digest when at least one tool's latest run threw within the recency window.
+// Rendered alongside criticals so SuperAdmins notice silently-broken checks
+// — without those, a wedged tool can stay invisible (its 0-count "error" row
+// never lifts criticalCount, which is what triggers the alert in the first
+// place).
+export interface MaintenanceErrorDigestRow {
+  companyId:   number;
+  companyName: string;
+  toolKey:     string;
+  toolLabelAr: string;
+  error:       string | null;
+  runAt:       Date | string;
+}
+
 export interface SendMaintenanceDigestOpts {
   to: string[];
   rows: MaintenanceDigestRow[];
@@ -270,6 +285,8 @@ export interface SendMaintenanceDigestOpts {
   isTest?: boolean;
   /** True when more critical findings exist than rows shown — caller is responsible for capping. */
   truncated?: boolean;
+  /** Tools whose latest run errored within the recency window (last 7d). Optional. */
+  errorRows?: MaintenanceErrorDigestRow[];
 }
 
 export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestOpts) {
@@ -298,6 +315,45 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
   const intro = opts.isTest
     ? `<p>هذه رسالة <strong>تجريبية</strong> أُرسلت من صفحة جدولة الصيانة للتأكد من وصول التنبيهات.</p>`
     : `<p>اكتشف الفحص التلقائي الأخير <strong>${opts.rows.length}</strong> نتيجة حرجة في <strong>${distinctCompanies}</strong> شركة. تفاصيل أدناه:</p>`;
+  // Optional second section: tools whose latest run threw within the recency
+  // window. We HTML-escape the dynamic strings (company name, error text) here
+  // because they originate from the DB / runtime exceptions and would otherwise
+  // poison the email body. Limited rendering to keep the email scannable.
+  const escHtml = (s: string) =>
+    String(s ?? "").replace(/[&<>]/g, (c) =>
+      c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;",
+    );
+  const errorRowsList = opts.errorRows ?? [];
+  const distinctErrorCompanies = new Set(errorRowsList.map((r) => r.companyId)).size;
+  const errorRowsHtml = errorRowsList.length === 0 ? "" : `
+    <h3 style="font-size:14px; color:#92400e; margin-top:22px; margin-bottom:6px;">
+      أدوات صيانة تعطّلت آخر 7 أيام (${errorRowsList.length} في ${distinctErrorCompanies} شركة)
+    </h3>
+    <p style="font-size:12px; color:#64748b; margin:0 0 6px 0;">
+      هذه الفحوصات لم تكتمل بسبب خطأ — تحتاج مراجعة فنية لأن نتائجها لا تدخل في عدّ النتائج الحرجة.
+    </p>
+    <table style="width:100%; border-collapse:collapse; margin-top:6px; font-size:13px;">
+      <thead>
+        <tr style="background:#fffbeb; color:#78350f;">
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #fde68a;">الشركة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #fde68a;">الأداة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #fde68a;">رسالة الخطأ</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #fde68a;">وقت الفحص</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${errorRowsList.map((r) => {
+          const when = (r.runAt instanceof Date ? r.runAt : new Date(r.runAt)).toLocaleString("ar-SA");
+          return `
+            <tr>
+              <td style="padding:6px 8px; border-bottom:1px solid #fef3c7;">${escHtml(r.companyName)}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #fef3c7;">${escHtml(r.toolLabelAr)}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #fef3c7; color:#92400e; font-family:monospace; font-size:12px;">${escHtml(r.error ?? "")}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #fef3c7; color:#64748b; font-size:12px;">${when}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
   const body = `
     ${intro}
     <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;">
@@ -311,6 +367,7 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
       </thead>
       <tbody>${rowsHtml}</tbody>
     </table>
+    ${errorRowsHtml}
     <p style="margin-top:18px;">
       <a href="${link}" style="display:inline-block; background:#7c3aed; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">
         فتح صفحة الإصلاح بالذكاء الاصطناعي

@@ -675,6 +675,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
       qc.invalidateQueries({ queryKey: ["maintenance-trend"] });
       qc.invalidateQueries({ queryKey: ["maintenance-trend-fleet"] });
       qc.invalidateQueries({ queryKey: ["maintenance-email-history"] });
+      // Errored-tool panel reflects the latest per-(company, tool) status,
+      // so a manual sweep that recovers (or newly breaks) a tool must
+      // refresh it too — otherwise the panel keeps showing stale rows.
+      qc.invalidateQueries({ queryKey: ["maintenance-error-summary"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -758,6 +762,26 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
   const trendForTool = (toolKey: string) => ({
     days: trendDays,
     points: trendByTool.get(toolKey) ?? [],
+  });
+
+  // Tools whose latest run threw within the recency window (default 7 days).
+  // A tool that errors silently doesn't lift criticalCount and would otherwise
+  // stay invisible behind a green "no critical findings" banner — this panel
+  // surfaces it explicitly so admins notice when a check stops working. The
+  // window is server-defined (TOOL_ERROR_WINDOW_DAYS) and returned in the
+  // payload so the panel can label its retention policy honestly.
+  const errorSummaryQ = useQuery({
+    queryKey: ["maintenance-error-summary"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/error-summary?limit=50`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب أخطاء الأدوات");
+      return r.json() as Promise<{
+        count: number;
+        windowDays: number;
+        items: Array<{ companyId: number; companyName: string; toolKey: string; error: string | null; runAt: string }>;
+      }>;
+    },
+    refetchOnWindowFocus: false,
   });
 
   // Fleet view — top 5 active companies with the most critical findings in
@@ -1000,6 +1024,67 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Broken-tool panel: latest per-(company, tool) "error" rows ──
+            Surfaces silently-broken checks distinct from "critical findings"
+            so a tool whose latest run threw — and therefore contributes 0 to
+            criticalCount — still gets noticed. The 7-day window matches the
+            server's TOOL_ERROR_WINDOW_DAYS so a transient failure that has
+            since recovered (any non-error run later wins) drops off
+            automatically. */}
+        {errorSummaryQ.data && errorSummaryQ.data.items.length > 0 && (
+          <div className="border border-amber-200 rounded p-3 bg-amber-50/40">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="h-4 w-4 text-amber-700" />
+              <span className="text-sm font-medium text-amber-900">
+                أدوات صيانة تعطّلت آخر {errorSummaryQ.data.windowDays} أيام
+                <span className="font-normal text-amber-800/80 mr-1">
+                  ({errorSummaryQ.data.items.length} حالة)
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground mr-auto">
+                هذه الفحوصات لم تكتمل بسبب خطأ — لا تظهر ضمن النتائج الحرجة وتحتاج مراجعة فنية. تُحفظ آخر {errorSummaryQ.data.windowDays} أيام فقط.
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-amber-100/60 text-amber-900">
+                  <tr>
+                    <th className="px-2 py-1 text-right">الشركة</th>
+                    <th className="px-2 py-1 text-right">الأداة</th>
+                    <th className="px-2 py-1 text-right">رسالة الخطأ</th>
+                    <th className="px-2 py-1 text-right">وقت آخر فشل</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100">
+                  {errorSummaryQ.data.items.map((row) => (
+                    <tr key={`${row.companyId}:${row.toolKey}`}>
+                      <td className="px-2 py-1">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline font-medium"
+                          onClick={() => onSelectCompany(row.companyId)}
+                          title={`اختيار ${row.companyName} (#${row.companyId})`}
+                        >
+                          {row.companyName || `#${row.companyId}`}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[11px]">{row.toolKey}</td>
+                      <td className="px-2 py-1 text-amber-900 font-mono text-[11px]" title={row.error ?? ""}>
+                        {row.error
+                          ? (row.error.length > 80 ? `${row.error.slice(0, 80)}…` : row.error)
+                          : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                        {new Date(row.runAt).toLocaleString("ar-SA")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

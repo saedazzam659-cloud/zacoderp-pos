@@ -13,6 +13,7 @@ import {
 } from "../lib/maintenanceChecks.js";
 import {
   ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
+  getRecentToolErrors, TOOL_ERROR_WINDOW_DAYS,
   runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
 } from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
@@ -939,6 +940,29 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
       }
     } catch (e: any) {
       console.error("[admin/dashboard] maintenance critical summary failed:", e?.message ?? e);
+    }
+
+    // Maintenance: tools whose latest run threw within the recency window.
+    // A separate (amber) indicator from the critical banner — a wedged check
+    // doesn't lift the critical count, so without this surface a broken tool
+    // can stay invisible for weeks while the dashboard reads green. Always
+    // shown (snooze targets critical-finding noise; a broken tool means the
+    // scan itself is unreliable, which operators should always notice).
+    try {
+      const errors = await getRecentToolErrors(50);
+      if (errors.length > 0) {
+        const distinctCompanies = new Set(errors.map((e) => e.companyId)).size;
+        const distinctTools     = new Set(errors.map((e) => e.toolKey)).size;
+        health.push({
+          level: "amber",
+          message:
+            `${errors.length} أداة صيانة تعطّلت آخر ${TOOL_ERROR_WINDOW_DAYS} أيام ` +
+            `(${distinctTools} أداة في ${distinctCompanies} شركة) — يحتاج فحص فني`,
+          href: "/admin/ai-fix",
+        });
+      }
+    } catch (e: any) {
+      console.error("[admin/dashboard] maintenance error summary failed:", e?.message ?? e);
     }
 
     if (health.length === 0) {
@@ -4358,6 +4382,25 @@ router.get("/maintenance/critical-summary", requireSuperAdmin, async (req, res) 
     res.json({ count: items.length, items });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب التنبيهات الحرجة" });
+  }
+});
+
+// GET /maintenance/error-summary — tools whose latest run threw an error
+// within the recency window (default 7 days). Drives the distinct error
+// indicator on the SuperAdmin dashboard and the "broken tools" panel on the
+// maintenance page. Distinct from /critical-summary because errored runs
+// don't lift the critical count and would otherwise stay invisible.
+router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => {
+  const limit = clampInt(req.query.limit, 1, 200, 50);
+  try {
+    const items = await getRecentToolErrors(limit);
+    res.json({
+      count: items.length,
+      windowDays: TOOL_ERROR_WINDOW_DAYS,
+      items,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب أخطاء أدوات الصيانة" });
   }
 });
 

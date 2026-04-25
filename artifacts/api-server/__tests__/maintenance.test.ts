@@ -86,6 +86,8 @@ import {
   MAINTENANCE_SCHEDULE_ID,
   computeCriticalSignature,
   shouldSkipForRateLimit,
+  getRecentToolErrors,
+  TOOL_ERROR_WINDOW_DAYS,
 } from "../src/lib/maintenanceScheduler.ts";
 
 // ─── Test scoping ───────────────────────────────────────────────────────────
@@ -1512,6 +1514,96 @@ test("schema-pin: checkOldMaintenanceRuns items expose every documented field + 
     "extras.oldest must be set when count>0");
   assert.ok((r.extras as { newest: unknown }).newest != null,
     "extras.newest must be set when count>0");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  getRecentToolErrors — per-(company, tool) latest error within window
+// ════════════════════════════════════════════════════════════════════════════
+test("getRecentToolErrors: returns latest error per (company,tool); recovered tools drop out; old rows excluded", async () => {
+  const now      = Date.now();
+  const inWindow = new Date(now - 2 * 86_400_000); // 2 days ago — inside window
+  const stale    = new Date(now - (TOOL_ERROR_WINDOW_DAYS + 2) * 86_400_000); // outside
+
+  // Tool A on dirtyCompanyId: an error inside the window, then a later OK
+  // (recovered) → must NOT appear.
+  const recoveredErr = await db.insert(maintenanceRunsTable).values({
+    companyId:  dirtyCompanyId,
+    toolKey:    "tt-tool-recovered",
+    status:     "error",
+    count:      0,
+    trigger:    "scheduled",
+    runAt:      new Date(now - 3 * 86_400_000),
+    durationMs: 1,
+    error:      "boom",
+    details:    null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const recoveredOk = await db.insert(maintenanceRunsTable).values({
+    companyId:  dirtyCompanyId,
+    toolKey:    "tt-tool-recovered",
+    status:     "ok",
+    count:      0,
+    trigger:    "scheduled",
+    runAt:      new Date(now - 1 * 86_400_000),
+    durationMs: 1,
+    error:      null,
+    details:    null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  // Tool B on dirtyCompanyId: still-broken — latest row is an error.
+  const stillBrokenErr = await db.insert(maintenanceRunsTable).values({
+    companyId:  dirtyCompanyId,
+    toolKey:    "tt-tool-broken",
+    status:     "error",
+    count:      0,
+    trigger:    "scheduled",
+    runAt:      inWindow,
+    durationMs: 1,
+    error:      "kaboom",
+    details:    null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  // Tool C on cleanCompanyId: an error OUTSIDE the window → must NOT appear.
+  const oldErr = await db.insert(maintenanceRunsTable).values({
+    companyId:  cleanCompanyId,
+    toolKey:    "tt-tool-stale",
+    status:     "error",
+    count:      0,
+    trigger:    "scheduled",
+    runAt:      stale,
+    durationMs: 1,
+    error:      "ancient",
+    details:    null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  insertedMaintenanceRunIds.push(
+    recoveredErr[0].id, recoveredOk[0].id, stillBrokenErr[0].id, oldErr[0].id,
+  );
+
+  const items = await getRecentToolErrors(50, TOOL_ERROR_WINDOW_DAYS);
+  const ids   = new Set(items.map(it => it.id));
+
+  assert.ok(ids.has(stillBrokenErr[0].id),
+    "still-broken tool's latest error must be returned");
+  assert.ok(!ids.has(recoveredErr[0].id),
+    "recovered tool's older error row must NOT appear (newer ok wins)");
+  assert.ok(!ids.has(recoveredOk[0].id),
+    "the recovery 'ok' row itself must never appear (status must be 'error')");
+  assert.ok(!ids.has(oldErr[0].id),
+    "errors outside the retention window must NOT appear");
+
+  // Shape contract: callers (dashboard banner + UI panel) read these fields.
+  const row = items.find(it => it.id === stillBrokenErr[0].id)!;
+  assert.equal(row.companyId, dirtyCompanyId);
+  assert.equal(row.toolKey, "tt-tool-broken");
+  assert.equal(row.status, "error");
+  assert.equal(row.error, "kaboom");
+  assert.ok(row.runAt instanceof Date || typeof row.runAt === "string",
+    "runAt must be a Date or ISO string");
+});
+
+test("getRecentToolErrors: respects the limit argument", async () => {
+  const items = await getRecentToolErrors(1, TOOL_ERROR_WINDOW_DAYS);
+  assert.ok(items.length <= 1, `limit=1 must cap rows, got ${items.length}`);
 });
 
 // ════════════════════════════════════════════════════════════════════════════

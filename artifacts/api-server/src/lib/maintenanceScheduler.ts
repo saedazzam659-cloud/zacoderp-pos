@@ -4,7 +4,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { logger } from "./logger.js";
 import { runAllChecks, MAINTENANCE_TOOL_KEYS, type ToolRunOutcome } from "./maintenanceChecks.js";
-import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow } from "./email.js";
+import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow, type MaintenanceErrorDigestRow } from "./email.js";
 
 // Arabic display labels for each tool — kept here (and not in the React UI) so
 // the email digest reads naturally for SuperAdmins. Mirrors the labels rendered
@@ -339,12 +339,36 @@ export async function dispatchCriticalDigest(
     }, { trigger });
   }
 
+  // Tools that errored within the recency window — surfaced alongside the
+  // critical findings so SuperAdmins notice silently-broken checks. These
+  // never trigger a send on their own (a sweep with errors but no criticals
+  // doesn't email — the existing semantic) but they piggyback on a digest
+  // that is going out anyway. Capped to keep the email scannable.
+  const ERROR_ROW_CAP = 50;
+  let errorDigestRows: MaintenanceErrorDigestRow[] = [];
+  try {
+    const errs = await getRecentToolErrors(ERROR_ROW_CAP);
+    errorDigestRows = errs.map((e) => ({
+      companyId:   e.companyId,
+      companyName: e.companyName,
+      toolKey:     e.toolKey,
+      toolLabelAr: toolLabelAr(e.toolKey),
+      error:       e.error,
+      runAt:       e.runAt,
+    }));
+  } catch (err) {
+    // Best-effort — never fail the dispatch because the error-rows query
+    // hiccupped; the SuperAdmin still wants the critical digest to land.
+    logger.error({ err }, "maintenance-scheduler: failed to fetch tool errors for digest");
+  }
+
   const sendRes = await sendMaintenanceCriticalDigest({
     to: recipients,
     rows,
     publicBaseUrl: resolvePublicBaseUrl(opts.publicBaseUrl),
     isTest,
     truncated,
+    errorRows: errorDigestRows,
   });
   if (!sendRes.ok) {
     return recordEmailOutcome({
@@ -490,6 +514,63 @@ export async function getCriticalAlerts(limit = 20): Promise<CriticalAlertRow[]>
      LIMIT ${limit}
   `);
   return ((exec as any).rows ?? []) as CriticalAlertRow[];
+}
+
+// ─── Recent tool-error indicator — latest per-(company, tool) "error" rows ───
+// A tool whose latest run threw is silently broken: it contributes nothing to
+// `criticalCount` (the digest/banner trigger) so an operator can stay green
+// for weeks while a check is wedged. We surface it explicitly via this helper
+// so the dashboard can show a distinct indicator and the maintenance page can
+// list which tools/companies need attention.
+//
+// Recency window — `windowDays` (default 7) — bounds the surface so a transient
+// failure that has since recovered (any non-error run later wins via the
+// per-(company, tool) latest projection) AND historical errors before the
+// window simply drop off. Operators investigate "what broke this week", not
+// "what broke 3 months ago".
+export const TOOL_ERROR_WINDOW_DAYS = 7;
+
+export interface ToolErrorRow {
+  id: number;
+  companyId: number;
+  companyName: string;
+  toolKey: string;
+  status: "error";
+  error: string | null;
+  runAt: Date;
+}
+
+export async function getRecentToolErrors(
+  limit = 50,
+  windowDays: number = TOOL_ERROR_WINDOW_DAYS,
+): Promise<ToolErrorRow[]> {
+  // Same per-(company, tool) latest projection as getCriticalAlerts so a
+  // recovered tool can't keep flagging — its latest row will be ok/warn/
+  // critical, not 'error'. Bound by the recency window so operators see only
+  // currently-broken tools.
+  const exec = await db.execute<any>(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (company_id, tool_key)
+             id, company_id, tool_key, status, error, run_at
+        FROM maintenance_runs
+       ORDER BY company_id, tool_key, run_at DESC
+    )
+    SELECT l.id         AS "id",
+           l.company_id AS "companyId",
+           c.name_ar    AS "companyName",
+           l.tool_key   AS "toolKey",
+           l.status     AS "status",
+           l.error      AS "error",
+           l.run_at     AS "runAt"
+      FROM latest l
+      JOIN companies c ON c.id = l.company_id
+     WHERE l.status  = 'error'
+       AND c.status  = 'active'
+       AND l.run_at >= now() - ((${windowDays})::int || ' days')::interval
+     ORDER BY l.run_at DESC
+     LIMIT ${limit}
+  `);
+  return ((exec as any).rows ?? []) as ToolErrorRow[];
 }
 
 // ─── Scheduler boot (called once from index.ts) ──────────────────────────────
