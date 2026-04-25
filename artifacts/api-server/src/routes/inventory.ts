@@ -473,6 +473,9 @@ router.post("/stock-transfers", async (req, res) => {
     const fromSeq = await nextSequenceNumber(cid, "stock_transfer", {
       userId:   (req as any).authUser?.id ?? null,
       refTable: "stock_transfers",
+      // Stock transfers are warehouse-scoped (not branch-scoped) — use the
+      // company-wide counter (branchId=null → sentinel 0).
+      branchId: null,
     });
     num = fromSeq ?? ((transferNumber && String(transferNumber).trim()) || `TRF-${Date.now()}`);
   } catch (seqErr: any) {
@@ -633,6 +636,9 @@ router.post("/stock-adjustments", async (req, res) => {
     const fromSeq = await nextSequenceNumber(cid, "stock_adjustment", {
       userId:   (req as any).authUser?.id ?? null,
       refTable: "stock_adjustments",
+      // Stock adjustments are warehouse-scoped (not branch-scoped) — use the
+      // company-wide counter (branchId=null → sentinel 0).
+      branchId: null,
     });
     num = fromSeq ?? ((adjustmentNumber && String(adjustmentNumber).trim()) || `ADJ-${Date.now()}`);
   } catch (seqErr: any) {
@@ -790,6 +796,9 @@ router.post("/stock-counts", async (req, res) => {
     const fromSeq = await nextSequenceNumber(cid, "stock_count", {
       userId:   (req as any).authUser?.id ?? null,
       refTable: "stock_counts",
+      // Stock counts are warehouse-scoped (not branch-scoped) — use the
+      // company-wide counter (branchId=null → sentinel 0).
+      branchId: null,
     });
     num = fromSeq ?? ((countNumber && String(countNumber).trim()) || `CNT-${Date.now()}`);
   } catch (seqErr: any) {

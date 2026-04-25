@@ -379,6 +379,7 @@ router.post("/purchase-invoices", async (req, res) => {
         resolvedDocNumber = await nextSequenceNumber(cid, "purchase_invoice", {
           userId:   (req as any).authUser?.id ?? null,
           refTable: "purchase_invoices",
+          branchId: branchId ? Number(branchId) : null,
         });
       } catch (seqErr: any) {
         res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
@@ -781,6 +782,7 @@ router.post("/purchase-returns", async (req, res) => {
       const fromSeq = await nextSequenceNumber(cid, "purchase_return", {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "purchase_returns",
+        branchId: branchId ? Number(branchId) : null,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {

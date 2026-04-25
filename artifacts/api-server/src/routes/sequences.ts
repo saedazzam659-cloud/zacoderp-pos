@@ -32,11 +32,24 @@ function fmt(prefix: string | null | undefined, n: number, padLength: number | n
 }
 
 // ─── Public (authenticated) peek endpoint ──────────────────────────────────
-// GET /api/sequences/peek/:txType
+// GET /api/sequences/peek/:txType?branchId=N
 // Returns the formatted NEXT number for the active sequence bound to the
 // given transaction type, WITHOUT incrementing the counter. If no active
 // sequence is configured the response is { number: null, hasSequence: false }
 // so callers can fall back to a free-typed input.
+//
+// Branch-aware: the preview must reflect the per-branch counter that
+// `nextSequenceNumber` would actually issue for this (sequence, branch)
+// pair. When `?branchId` is omitted (or 0), the company-wide sentinel
+// counter is previewed — this is the correct preview for warehouse-scoped
+// flows (stock_transfer / stock_adjustment / stock_count).
+//
+// Crucially: when no counter row exists yet for this (sequence, branch),
+// the preview applies the SAME seeding rules as the issuance helper so the
+// number the user sees on the form matches the number that will actually
+// be persisted on submit:
+//   - first counter on this sequence  → MAX(start_number, master.current_number)
+//   - any later (new) branch counter  → start_number
 //
 // Available to any authenticated user (line operators need this to render
 // the read-only document-number field on every form), but the response is
@@ -45,11 +58,17 @@ router.get("/peek/:txType", async (req: any, res) => {
   const cid = guard(req, res); if (!cid) return;
   const txType = String(req.params.txType ?? "");
   if (!TX_SET.has(txType)) { res.status(400).json({ error: "نوع حركة غير معروف" }); return; }
+
+  const rawBranch = req.query?.branchId;
+  const parsedBranch = rawBranch != null && rawBranch !== "" ? Number(rawBranch) : 0;
+  const branchKey = Number.isFinite(parsedBranch) && parsedBranch > 0 ? parsedBranch : 0;
+
   const rows = await db.execute<{
-    prefix: string | null; current_number: number;
+    id: number;
+    prefix: string | null; start_number: number; current_number: number;
     end_number: number; pad_length: number | null; code: string;
   }>(sql`
-    SELECT prefix, current_number, end_number, pad_length, code
+    SELECT id, prefix, start_number, current_number, end_number, pad_length, code
     FROM sequences
     WHERE company_id = ${cid}
       AND is_active = true
@@ -59,11 +78,32 @@ router.get("/peek/:txType", async (req: any, res) => {
   `);
   const seq = rows.rows?.[0];
   if (!seq) { res.json({ number: null, hasSequence: false }); return; }
-  const exhausted = seq.current_number > seq.end_number;
+
+  // Pull the per-branch counter (if any) and an "any counter exists?" flag in
+  // a single round-trip. The flag drives the seeding heuristic for the case
+  // where this branch has no counter yet.
+  const counterRows = await db.execute<{
+    branch_current: number | null; any_exists: boolean;
+  }>(sql`
+    SELECT
+      (SELECT current_number FROM sequence_counters
+        WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}) AS branch_current,
+      EXISTS(SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}) AS any_exists
+  `);
+  const cRow = counterRows.rows?.[0];
+  const branchCurrent = cRow?.branch_current ?? null;
+  const anyExists     = !!cRow?.any_exists;
+
+  const previewNumber = branchCurrent != null
+    ? branchCurrent
+    : (anyExists ? seq.start_number : Math.max(seq.start_number, seq.current_number));
+
+  const exhausted = previewNumber > seq.end_number;
   res.json({
-    number: exhausted ? null : fmt(seq.prefix, seq.current_number, seq.pad_length),
+    number: exhausted ? null : fmt(seq.prefix, previewNumber, seq.pad_length),
     hasSequence: true,
     sequenceCode: seq.code,
+    branchId: branchKey,
     exhausted,
   });
 });
@@ -283,14 +323,37 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
       const err = validatePayload(merged);
       if (err) return { status: 400, body: { error: err } };
 
-      // ── Integrity guard: once a sequence has issued at least one number
-      // (currentNumber != startNumber), the fields that determine the SHAPE
-      // of every issued document number become immutable. Allowing edits
-      // here would let an admin re-issue a previously-used number — a
-      // business-critical violation of audit/numbering integrity.
+      // ── Integrity guard: once a sequence has issued at least one number,
+      // the fields that determine the SHAPE of every issued document number
+      // become immutable. Allowing edits here would let an admin re-issue a
+      // previously-used number — a business-critical violation of audit /
+      // numbering integrity.
+      //
+      // Post per-branch upgrade: the master `currentNumber` is no longer
+      // moved during issuance (each branch has its own counter). The
+      // canonical "has this sequence ever issued?" signal is therefore
+      // `sequence_logs` — an append-only audit row is written for every
+      // issuance regardless of which branch counter advanced.
+      //
+      // We also derive `highWaterMark` = MAX(per-branch currentNumber) so
+      // raise-only checks on currentNumber/endNumber still protect against
+      // shrinking past any branch's issued number.
       // Mutable while in use: name, isActive, endNumber (raise only),
       //                       currentNumber (raise only), transactionTypes.
-      const isUsed = existing.currentNumber !== existing.startNumber;
+      const usedRows = await tx.execute<{ used: boolean; high: number | null }>(sql`
+        SELECT
+          EXISTS(
+            SELECT 1 FROM sequence_logs
+            WHERE sequence_id = ${id} AND transaction_type <> '__reset__'
+          ) AS used,
+          (SELECT MAX(current_number) FROM sequence_counters WHERE sequence_id = ${id}) AS high
+      `);
+      const isUsed = !!usedRows.rows?.[0]?.used;
+      // Per-branch counter holds the NEXT number to issue, so the highest
+      // already-issued number is `high - 1`. Fall back to the master's
+      // currentNumber for the legacy/no-counters path so the comparison is
+      // never against NULL.
+      const highWaterMark = (usedRows.rows?.[0]?.high ?? Number(existing.currentNumber)) - 1;
       if (isUsed) {
         if (Number(merged.startNumber) !== existing.startNumber) {
           return { status: 409, body: { error: "لا يمكن تعديل رقم البداية لمسلسل تم استخدامه" } };
@@ -301,10 +364,13 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
         if (Number(merged.padLength) !== existing.padLength) {
           return { status: 409, body: { error: "لا يمكن تعديل طول التعبئة بالأصفار لمسلسل تم استخدامه" } };
         }
-        if (Number(merged.currentNumber) < existing.currentNumber) {
+        // currentNumber on master is now a display-only seed for new branch
+        // counters; we still forbid lowering it below any branch's high
+        // water mark to prevent surprise reuse on a freshly-created branch.
+        if (Number(merged.currentNumber) <= highWaterMark) {
           return { status: 409, body: { error: "لا يمكن تخفيض الرقم الحالي لمسلسل مُستخدم — قد يؤدي إلى تكرار أرقام صادرة سابقاً" } };
         }
-        if (Number(merged.endNumber) < existing.currentNumber - 1) {
+        if (Number(merged.endNumber) < highWaterMark) {
           return { status: 409, body: { error: "رقم النهاية يجب أن يكون أكبر من أو يساوي آخر رقم صادر" } };
         }
       }
@@ -341,11 +407,20 @@ router.patch("/:id", audit("sequences", "edit"), async (req, res) => {
 });
 
 // ─── RESET ────────────────────────────────────────────────────────────────────
-// Resets currentNumber back to startNumber. Destructive — would allow number
-// reuse — so it requires both admin role AND, if the sequence has already
-// issued numbers, an explicit `acknowledgeReuse: true` flag in the body so
-// the operator opts in to the reuse risk. Logged as a synthetic __reset__
-// event and audit-tagged.
+// Resets the sequence back to startNumber. Destructive — would allow number
+// reuse — so it requires both admin role AND, if the sequence has ever
+// issued a number (per `sequence_logs`), an explicit `acknowledgeReuse: true`
+// flag in the body so the operator opts in to the reuse risk.
+//
+// Per-branch model: issuance lives in `sequence_counters`, not in
+// `sequences.current_number`. Resetting therefore wipes ALL per-branch
+// counter rows for this sequence, so each branch will re-seed at
+// `start_number` on its next issuance (matching a "factory reset" of the
+// numbering stream). Master `sequences.current_number` is also rewound to
+// `start_number` to keep the legacy/preview field aligned and to preserve
+// the migration-seed heuristic for branches added after the reset.
+//
+// Logged as a synthetic __reset__ event and audit-tagged.
 router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
@@ -353,12 +428,12 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
 
     // All work runs inside one transaction so:
     //   (a) `SELECT ... FOR UPDATE` blocks any concurrent issuance from
-    //       transitioning unused→used after we read `isUsed` but before we
-    //       write — without this lock, a concurrent journal-entry POST could
-    //       slip in and bypass the acknowledgeReuse opt-in;
-    //   (b) the synthetic __reset__ log row is committed atomically with the
-    //       counter rewind, so we never have a numbering change without an
-    //       audit entry.
+    //       slipping a new number in after we read `isUsed` but before we
+    //       wipe the counters — without this lock, a concurrent POST could
+    //       bypass the acknowledgeReuse opt-in;
+    //   (b) the synthetic __reset__ log row is committed atomically with
+    //       the counter wipe, so we never have a numbering change without
+    //       a paired audit entry.
     const result = await db.transaction(async (tx) => {
       const lockedRows = await tx.execute(sql`
         SELECT * FROM sequences
@@ -369,10 +444,21 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
       const lockedArr = (Array.isArray(lockedValue) ? lockedValue : []) as Array<Record<string, unknown>>;
       const existing = lockedArr[0];
       if (!existing) return { status: 404, body: { error: "المسلسل غير موجود" } };
-      const startNumber   = existing.start_number   ?? existing.startNumber;
-      const currentNumber = existing.current_number ?? existing.currentNumber;
+      const startNumber = Number(existing.start_number ?? existing.startNumber);
 
-      const isUsed = currentNumber !== startNumber;
+      // "Used" is now driven by audit history (real issuance footprint),
+      // not by master.current_number — which under the per-branch model is
+      // never bumped during issuance and would always look "unused".
+      // Filter out our own __reset__ rows so a previous reset doesn't
+      // permanently force the acknowledgeReuse prompt on every later reset.
+      const usedRows = await tx.execute<{ used: boolean }>(sql`
+        SELECT EXISTS(
+          SELECT 1 FROM sequence_logs
+          WHERE sequence_id = ${id}
+            AND transaction_type <> '__reset__'
+        ) AS used
+      `);
+      const isUsed = !!usedRows.rows?.[0]?.used;
       if (isUsed && req.body?.acknowledgeReuse !== true) {
         return {
           status: 409,
@@ -383,6 +469,13 @@ router.post("/:id/reset", audit("sequences", "edit"), async (req, res) => {
         };
       }
 
+      // Wipe per-branch counters so every branch re-seeds at start_number on
+      // its next issuance (independent streams, factory-reset semantics).
+      await tx.execute(sql`DELETE FROM sequence_counters WHERE sequence_id = ${id}`);
+
+      // Rewind master too. Keeps the displayed currentNumber aligned and
+      // resets the migration-seed heuristic so the FIRST counter created
+      // after the reset starts from start_number (not from a stale value).
       const [row] = await tx.update(sequencesTable).set({
         currentNumber: startNumber,
         updatedAt:     new Date(),

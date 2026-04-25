@@ -71,9 +71,34 @@ export const sequenceLogsTable = pgTable("sequence_logs", {
   byCompanyTime: index("sequence_logs_company_time_idx").on(t.companyId, t.createdAt),
 }));
 
+// ─── Per-branch counter ─────────────────────────────────────────────────────
+// Each (sequenceId, branchId) pair gets its OWN running counter. This makes
+// branch numbering streams independent: branch A may issue INV-0001..0050
+// while branch B is still on INV-0001..0010, with no collision within a branch.
+// The master `sequences.currentNumber` field is preserved for legacy reasons
+// (UI display + initial seed for existing tenants on first issue) but is no
+// longer touched on issuance — the per-branch counter is the source of truth.
+//
+// `branchId = 0` is the sentinel used for company-wide / non-branched
+// operations (e.g. stock_transfer, stock_adjustment, stock_count) so the
+// composite uniqueness can stay a plain b-tree index without partial-index
+// gymnastics. Real branches are always > 0 (branches.id is serial starting at 1).
+export const sequenceCountersTable = pgTable("sequence_counters", {
+  id:            serial("id").primaryKey(),
+  sequenceId:    integer("sequence_id").notNull(),
+  branchId:      integer("branch_id").notNull().default(0),
+  currentNumber: integer("current_number").notNull(),
+  createdAt:     timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:     timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  seqBranchUnique: uniqueIndex("sequence_counters_seq_branch_unq").on(t.sequenceId, t.branchId),
+  bySequence:      index("sequence_counters_sequence_idx").on(t.sequenceId),
+}));
+
 export const insertSequenceSchema = createInsertSchema(sequencesTable).omit({
   id: true, createdAt: true, updatedAt: true,
 });
 export type InsertSequence = z.infer<typeof insertSequenceSchema>;
 export type Sequence = typeof sequencesTable.$inferSelect;
 export type SequenceLog = typeof sequenceLogsTable.$inferSelect;
+export type SequenceCounter = typeof sequenceCountersTable.$inferSelect;

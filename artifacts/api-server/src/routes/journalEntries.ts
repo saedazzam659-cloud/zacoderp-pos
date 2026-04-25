@@ -80,6 +80,7 @@ router.post("/", async (req, res) => {
       const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "journal_entries",
+        branchId: branchId ? Number(branchId) : null,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {

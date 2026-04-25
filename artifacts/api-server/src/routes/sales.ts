@@ -312,6 +312,7 @@ router.post("/sales-invoices", async (req, res) => {
       const fromSeq = await nextSequenceNumber(cid, "sales_invoice", {
         userId:   req.authUser?.id ?? null,
         refTable: "sales_invoices",
+        branchId: branchId ? Number(branchId) : null,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
@@ -766,6 +767,7 @@ router.post("/sales-returns", async (req, res) => {
       const fromSeq = await nextSequenceNumber(cid, "sales_return", {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "sales_returns",
+        branchId: branchId ? Number(branchId) : null,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {

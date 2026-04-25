@@ -1,15 +1,37 @@
-// Centralized document-number generator (مسلسل الحركات).
+// Centralized document-number generator (مسلسل الحركات) — branch-aware.
 //
 // Every operational route that needs a business document number (sales
-// invoice, purchase invoice, journal entry, etc.) calls `nextSequenceNumber`.
-// The helper:
-//   1. Locks the FIRST active sequence bound to the requested transaction
-//      type (lowest id) using SELECT … FOR UPDATE — guarantees no two
-//      concurrent requests get the same number.
-//   2. Validates the sequence still has capacity (currentNumber <= endNumber).
-//   3. Formats the number as `${prefix}${pad(currentNumber, padLength)}`.
-//   4. Increments `currentNumber` and writes a row to `sequence_logs`.
-//   5. Returns the formatted string.
+// invoice, purchase invoice, journal entry, etc.) calls `nextSequenceNumber`
+// with the active branch in `ctx.branchId`. Each (sequence, branch) pair
+// gets its OWN independent counter row in `sequence_counters`, so two
+// branches running on the same sequence config produce two completely
+// independent number streams (e.g. branch A: INV-0001..0050 while branch B
+// is still on INV-0001..0010).
+//
+// Flow inside one short-lived transaction:
+//   1. Lock the master sequence row (FOR UPDATE) — keeps the existing
+//      serialization story intact and prevents the PATCH endpoint from
+//      racing with issuance.
+//   2. Validate the sequence still has capacity (issuedNumber <= endNumber).
+//   3. Look up `sequence_counters` by (sequenceId, branchId) FOR UPDATE.
+//      • If absent: seed a NEW row.
+//          - If NO counter exists yet for this sequence (first issuance ever
+//            after the per-branch upgrade), seed at MAX(start_number,
+//            sequences.current_number) so existing tenants never re-issue
+//            a number their old single-counter system already consumed.
+//          - Otherwise seed at sequences.start_number (per spec).
+//      • If present: use its current_number directly.
+//   4. Format the number as `${prefix}${pad(currentNumber, padLength)}`.
+//   5. Increment the per-branch counter (NOT the master) and write the
+//      sequence_logs row. The master `sequences.current_number` is NEVER
+//      modified during issuance — per spec ("لا يتم تعديل Sequence Master").
+//
+// `branchId` resolution: callers should pass the active branch id from the
+// request body (or the user's session). When the operation is not branch-
+// scoped (e.g. stock_transfer / stock_adjustment / stock_count, which target
+// warehouses rather than branches), pass `null` — the helper coalesces to
+// the sentinel value 0 to keep the unique index on (sequenceId, branchId)
+// usable as a plain b-tree.
 //
 // If NO active sequence is configured for the given type the helper returns
 // `null` so callers can fall back to their legacy auto-numbering. This makes
@@ -21,13 +43,16 @@
 // rewind a sequence — gaps in business numbering are acceptable and far
 // safer than reusing a previously-issued number.
 
-import { db, sequencesTable, sequenceLogsTable } from "@workspace/db";
+import { db, sequencesTable, sequenceLogsTable, sequenceCountersTable } from "@workspace/db";
 import { sql, and, eq } from "drizzle-orm";
 
 export type NextSequenceCtx = {
   userId?: number | null;
   refTable?: string | null;
   refId?: string | number | null;
+  /** Active branch for this operation. `null`/`undefined` → company-wide
+   *  counter (sentinel branchId = 0 in the table). */
+  branchId?: number | null;
 };
 
 export class SequenceCapacityExceededError extends Error {
@@ -43,29 +68,38 @@ function format(prefix: string, n: number, padLength: number): string {
 }
 
 /**
- * Generate the next business document number for the given transaction type.
+ * Generate the next business document number for the given transaction type
+ * scoped to `ctx.branchId`. Each (sequence, branch) pair has its own counter.
  *
  * @returns The formatted number string (e.g. "INV-0023") or `null` when no
  *          active sequence is configured — the caller MUST fall back to its
  *          legacy numbering in that case.
  * @throws  SequenceCapacityExceededError when the sequence is configured but
- *          its currentNumber has reached endNumber. Surface this to the user
- *          so an admin can extend or rotate the sequence.
+ *          the per-branch counter has reached endNumber. Surface this to the
+ *          user so an admin can extend or rotate the sequence.
  */
 export async function nextSequenceNumber(
   companyId: number,
   transactionType: string,
   ctx: NextSequenceCtx = {},
 ): Promise<string | null> {
+  // Coalesce missing branch to the company-wide sentinel (0). Real branches
+  // are always > 0 (branches.id is serial). Negative values are coerced to 0
+  // defensively — the index treats them as a single bucket regardless.
+  const branchKey = ctx.branchId != null && Number(ctx.branchId) > 0
+    ? Number(ctx.branchId)
+    : 0;
+
   return await db.transaction(async (tx) => {
-    // Lock the candidate row. We match on companyId + isActive + the type
-    // being present in the JSONB array. Order by id so the choice is
-    // deterministic and concurrent callers wait on the SAME row.
-    const rows = await tx.execute<{
-      id: number; prefix: string; current_number: number;
+    // 1. Lock the candidate master sequence row. We match on companyId +
+    //    isActive + the type being present in the JSONB array. Order by id
+    //    so the choice is deterministic and concurrent callers wait on the
+    //    SAME row.
+    const seqRows = await tx.execute<{
+      id: number; prefix: string; start_number: number; current_number: number;
       end_number: number; pad_length: number; code: string;
     }>(sql`
-      SELECT id, prefix, current_number, end_number, pad_length, code
+      SELECT id, prefix, start_number, current_number, end_number, pad_length, code
       FROM sequences
       WHERE company_id = ${companyId}
         AND is_active = true
@@ -75,22 +109,69 @@ export async function nextSequenceNumber(
       FOR UPDATE
     `);
 
-    const seq = rows.rows?.[0];
+    const seq = seqRows.rows?.[0];
     if (!seq) return null;
 
-    if (seq.current_number > seq.end_number) {
+    // 2. Look up (or create) the per-branch counter row, locking it so two
+    //    concurrent issuances on the SAME (sequence, branch) serialize.
+    const counterRows = await tx.execute<{ id: number; current_number: number }>(sql`
+      SELECT id, current_number
+      FROM sequence_counters
+      WHERE sequence_id = ${seq.id} AND branch_id = ${branchKey}
+      FOR UPDATE
+    `);
+
+    let counterId: number;
+    let issuedNumber: number;
+
+    const existingCounter = counterRows.rows?.[0];
+    if (existingCounter) {
+      counterId    = existingCounter.id;
+      issuedNumber = existingCounter.current_number;
+    } else {
+      // No counter yet for this (sequence, branch). Decide the seed value:
+      //   • If this sequence has NO counters at all → first issuance ever
+      //     after the per-branch upgrade. Inherit the master's currentNumber
+      //     to avoid re-issuing numbers an existing tenant already used.
+      //   • Otherwise → fresh per-branch start, seed at start_number per spec.
+      const anyExisting = await tx.execute<{ exists_flag: boolean }>(sql`
+        SELECT EXISTS(
+          SELECT 1 FROM sequence_counters WHERE sequence_id = ${seq.id}
+        ) AS exists_flag
+      `);
+      const hasAnyCounter = !!anyExisting.rows?.[0]?.exists_flag;
+      const seed = hasAnyCounter
+        ? seq.start_number
+        : Math.max(seq.start_number, seq.current_number);
+
+      const inserted = await tx.execute<{ id: number; current_number: number }>(sql`
+        INSERT INTO sequence_counters (sequence_id, branch_id, current_number, created_at, updated_at)
+        VALUES (${seq.id}, ${branchKey}, ${seed}, NOW(), NOW())
+        RETURNING id, current_number
+      `);
+      const newRow = inserted.rows?.[0];
+      if (!newRow) throw new Error("تعذر إنشاء عداد فرع للمسلسل");
+      counterId    = newRow.id;
+      issuedNumber = newRow.current_number;
+    }
+
+    // 3. Capacity check uses the PER-BRANCH counter against the master cap.
+    if (issuedNumber > seq.end_number) {
       throw new SequenceCapacityExceededError(seq.code);
     }
 
-    const generated = format(seq.prefix ?? "", seq.current_number, seq.pad_length ?? 0);
+    const generated = format(seq.prefix ?? "", issuedNumber, seq.pad_length ?? 0);
 
-    await tx.update(sequencesTable)
+    // 4. Bump the per-branch counter only. Master sequences row is NEVER
+    //    written to during issuance (per spec).
+    await tx.update(sequenceCountersTable)
       .set({
-        currentNumber: seq.current_number + 1,
-        updatedAt: new Date(),
+        currentNumber: issuedNumber + 1,
+        updatedAt:     new Date(),
       })
-      .where(eq(sequencesTable.id, seq.id));
+      .where(eq(sequenceCountersTable.id, counterId));
 
+    // 5. Append-only audit row.
     await tx.insert(sequenceLogsTable).values({
       sequenceId:      seq.id,
       companyId,
