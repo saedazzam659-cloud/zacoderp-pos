@@ -770,9 +770,24 @@ router.post("/purchase-returns", async (req, res) => {
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند استرداد المبلغ نقداً" }); return; }
     if (pType === "bank" && !bankAccountId) { res.status(400).json({ error: "يجب اختيار الحساب البنكي عند استرداد المبلغ بنكياً" }); return; }
     if (pType === "credit" && !supplierId) { res.status(400).json({ error: "يجب اختيار المورد عند تسوية المرتجع على الحساب" }); return; }
+    // Central sequence engine is authoritative when an active sequence
+    // exists for "purchase_return"; otherwise fall back to client-supplied
+    // value or null. Server allocation is atomic so concurrent submits
+    // can never persist the same number.
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "purchase_return", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "purchase_returns",
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
+      return;
+    }
     const [ret] = await db.insert(purchaseReturnsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
+      docNumber: resolvedDocNumber, supplierInvoiceNumber: supplierInvoiceNumber || null, returnDate,
       supplierId: supplierId ? Number(supplierId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,

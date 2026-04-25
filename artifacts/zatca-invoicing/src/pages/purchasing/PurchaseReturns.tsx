@@ -5,6 +5,7 @@ import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +71,16 @@ export default function PurchaseReturns() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
+
+  // Auto-load next return number from the central sequence engine when
+  // creating new. Only fires while the form is open + not editing.
+  const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null);
+  useEffect(() => {
+    if (!showForm || editingId != null) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setForm((p: any) => (p.docNumber === seqPeek.number ? p : { ...p, docNumber: seqPeek.number }));
+    }
+  }, [showForm, editingId, seqPeek.hasSequence, seqPeek.number]);
   const [focusLineId, setFocusLineId] = useState<string>(() => "");
   useEffect(() => {
     if (lines.length > 0 && !lines.some(l => l._id === focusLineId)) {
@@ -633,7 +644,16 @@ export default function PurchaseReturns() {
 
             <TabsContent value="header" className="mt-0 space-y-4">
             <FormGrid cols={4}>
-              <Field label="رقم المرتجع"><Input ref={docNumberRef} placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
+              <Field label="رقم المرتجع"><Input
+                ref={docNumberRef}
+                placeholder={seqPeek.loading ? "…" : "تلقائي"}
+                dir="ltr"
+                className={cn("text-left", editingId == null && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                value={form.docNumber}
+                onChange={e => { if (editingId != null || !seqPeek.hasSequence) setForm((p: any) => ({ ...p, docNumber: e.target.value })); }}
+                readOnly={editingId == null && seqPeek.hasSequence}
+                title={editingId == null && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+              /></Field>
               <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label="المورد">
                 <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />

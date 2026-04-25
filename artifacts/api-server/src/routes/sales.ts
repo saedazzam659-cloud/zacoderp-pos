@@ -301,20 +301,22 @@ router.post("/sales-invoices", async (req, res) => {
     // their commission even if the rep's % changes later.
     const repInfo = await resolveRepCommission(cid, salesRepId, totals.totalAmount);
 
-    // Auto-allocate from the central sequence engine when the client did not
-    // supply a docNumber. Fallback to legacy null when no active sequence is
-    // configured for "sales_invoice" (i.e. no central numbering yet).
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "sales_invoice", {
-          userId:   req.authUser?.id ?? null,
-          refTable: "sales_invoices",
-        });
-      } catch (seqErr: any) {
-        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
-        return;
-      }
+    // The central sequence engine is authoritative whenever an active
+    // sequence exists for "sales_invoice" — we always allocate server-side
+    // (atomic, FOR UPDATE) and ignore any client-supplied number so two
+    // simultaneous submissions can never persist the same docNumber. When
+    // no active sequence is configured, we fall back to the client-supplied
+    // value or null (legacy free-numbering behaviour).
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "sales_invoice", {
+        userId:   req.authUser?.id ?? null,
+        refTable: "sales_invoices",
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الفاتورة" });
+      return;
     }
 
     const [inv] = await db.insert(salesInvoicesTable).values({
@@ -749,9 +751,24 @@ router.post("/sales-returns", async (req, res) => {
     const grossR    = (lines || []).reduce((s: number, l: any) => s + Number(l.lineTotal || 0), 0);
     const discR     = Math.max(0, Math.min(grossR, Number(discountAmount) || 0));
     const totalR    = grossR - discR;
+    // Central sequence engine is authoritative when an active sequence
+    // exists for "sales_return"; otherwise fall back to client-supplied
+    // value or null. Server allocation is atomic so concurrent submits
+    // can never persist the same number.
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "sales_return", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "sales_returns",
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم المرتجع" });
+      return;
+    }
     const [ret] = await db.insert(salesReturnsTable).values({
       companyId: cid, branchId: branchId ? Number(branchId) : null,
-      docNumber: docNumber || null, returnDate,
+      docNumber: resolvedDocNumber, returnDate,
       customerId: customerId ? Number(customerId) : null,
       invoiceId: invoiceId ? Number(invoiceId) : null,
       paymentType: pType,

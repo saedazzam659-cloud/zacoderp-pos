@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -252,6 +253,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     },
     enabled: !!editId,
   });
+
+  // Pull the next number from the central sequence engine for new INVOICES
+  // only (quotations don't have a sequence type). When no active sequence
+  // exists, the field falls back to the legacy free-typed input.
+  const seqPeek = useNextSequenceNumber("sales_invoice", isInvoice && !editId);
+  useEffect(() => {
+    if (!isInvoice || editId) return;
+    if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
+  }, [isInvoice, editId, seqPeek.hasSequence, seqPeek.number]);
 
   useEffect(() => {
     if (!existing) return;
@@ -708,7 +718,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
-                  <Input ref={docNumberRef} className="h-9 text-sm" placeholder={t("common.auto")} dir="ltr" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                  <Input
+                    ref={docNumberRef}
+                    className={cn("h-9 text-sm", isInvoice && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                    placeholder={isInvoice && seqPeek.loading ? "…" : t("common.auto")}
+                    dir="ltr"
+                    value={docNumber}
+                    onChange={e => { if (!(isInvoice && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
+                    readOnly={isInvoice && seqPeek.hasSequence}
+                    title={isInvoice && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t("salesDocForm.date")}</Label>

@@ -71,20 +71,20 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // If client didn't supply a docNumber, ask the central sequence engine.
-    // Returns null when no active sequence is configured for "journal_entry"
-    // — we keep the legacy "save with null docNumber" behavior in that case.
-    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
-    if (!resolvedDocNumber) {
-      try {
-        resolvedDocNumber = await nextSequenceNumber(cid, "journal_entry", {
-          userId:   (req as any).authUser?.id ?? null,
-          refTable: "journal_entries",
-        });
-      } catch (seqErr: any) {
-        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم القيد" });
-        return;
-      }
+    // Central sequence engine is authoritative when an active sequence
+    // exists for "journal_entry"; otherwise fall back to client-supplied
+    // value or null (legacy behavior). Server allocation is atomic so
+    // concurrent submits can never persist the same number.
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "journal_entries",
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم القيد" });
+      return;
     }
 
     const [entry] = await db.insert(journalEntriesTable).values({

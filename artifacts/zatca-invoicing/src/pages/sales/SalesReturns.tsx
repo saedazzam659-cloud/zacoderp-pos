@@ -7,6 +7,7 @@ import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,6 +82,17 @@ export default function SalesReturns() {
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [printData, setPrintData] = useState<any>(null);
+
+  // Pull next return number from the central sequence engine while creating
+  // a new return. Skip when editing an existing record (its number is fixed)
+  // or when the form panel is closed.
+  const seqPeek = useNextSequenceNumber("sales_return", showForm && editingId == null);
+  useEffect(() => {
+    if (!showForm || editingId != null) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setForm((p: any) => (p.docNumber === seqPeek.number ? p : { ...p, docNumber: seqPeek.number }));
+    }
+  }, [showForm, editingId, seqPeek.hasSequence, seqPeek.number]);
 
   async function openPrint(r: any) {
     try {
@@ -618,7 +630,16 @@ export default function SalesReturns() {
 
             <TabsContent value="header" className="mt-0 space-y-5">
             <FormGrid cols={4}>
-              <Field label={t("salesReturns.returnNumber")}><Input ref={docNumberRef} placeholder={t("common.auto")} dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
+              <Field label={t("salesReturns.returnNumber")}><Input
+                ref={docNumberRef}
+                placeholder={seqPeek.loading ? "…" : t("common.auto")}
+                dir="ltr"
+                className={cn("text-left", editingId == null && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                value={form.docNumber}
+                onChange={e => { if (editingId != null || !seqPeek.hasSequence) setForm((p: any) => ({ ...p, docNumber: e.target.value })); }}
+                readOnly={editingId == null && seqPeek.hasSequence}
+                title={editingId == null && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+              /></Field>
               <Field label={t("salesReturns.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
               <Field label={t("salesReturns.customer")}><SearchCombobox items={customerItems} value={form.customerId} onValueChange={v => setForm((p: any) => ({ ...p, customerId: v }))} placeholder={t("salesReturns.customerPlaceholder")} /></Field>
               <CustomerVatControl customers={customers} customerId={form.customerId} onCustomerChange={v => setForm((p: any) => ({ ...p, customerId: v }))} />

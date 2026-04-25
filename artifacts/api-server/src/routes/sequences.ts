@@ -13,9 +13,6 @@ import { requireAdminRole, audit } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
-// Sequences management is admin-only at every level (sidebar, route, perm).
-router.use(requireAdminRole);
-router.use(audit("sequences", "view"));
 
 const TX_SET = new Set<string>(SEQUENCE_TX_TYPES);
 
@@ -27,6 +24,54 @@ function guard(req: any, res: any): number | null {
 function getCid(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
 }
+
+function fmt(prefix: string | null | undefined, n: number, padLength: number | null | undefined): string {
+  const pad = padLength ?? 0;
+  const padded = pad > 0 ? String(n).padStart(pad, "0") : String(n);
+  return `${prefix ?? ""}${padded}`;
+}
+
+// ─── Public (authenticated) peek endpoint ──────────────────────────────────
+// GET /api/sequences/peek/:txType
+// Returns the formatted NEXT number for the active sequence bound to the
+// given transaction type, WITHOUT incrementing the counter. If no active
+// sequence is configured the response is { number: null, hasSequence: false }
+// so callers can fall back to a free-typed input.
+//
+// Available to any authenticated user (line operators need this to render
+// the read-only document-number field on every form), but the response is
+// scoped to the caller's company — no cross-tenant leakage.
+router.get("/peek/:txType", async (req: any, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const txType = String(req.params.txType ?? "");
+  if (!TX_SET.has(txType)) { res.status(400).json({ error: "نوع حركة غير معروف" }); return; }
+  const rows = await db.execute<{
+    prefix: string | null; current_number: number;
+    end_number: number; pad_length: number | null; code: string;
+  }>(sql`
+    SELECT prefix, current_number, end_number, pad_length, code
+    FROM sequences
+    WHERE company_id = ${cid}
+      AND is_active = true
+      AND transaction_types ? ${txType}
+    ORDER BY id ASC
+    LIMIT 1
+  `);
+  const seq = rows.rows?.[0];
+  if (!seq) { res.json({ number: null, hasSequence: false }); return; }
+  const exhausted = seq.current_number > seq.end_number;
+  res.json({
+    number: exhausted ? null : fmt(seq.prefix, seq.current_number, seq.pad_length),
+    hasSequence: true,
+    sequenceCode: seq.code,
+    exhausted,
+  });
+});
+
+// ─── Admin-only management endpoints ───────────────────────────────────────
+// Sequences management is admin-only at every level (sidebar, route, perm).
+router.use(requireAdminRole);
+router.use(audit("sequences", "view"));
 
 // Validate the body for create/edit. Returns null on success or an error
 // message string. Centralized so create + edit stay in sync.

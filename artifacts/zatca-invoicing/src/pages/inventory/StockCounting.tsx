@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Plus, Trash2, ClipboardList, Search, Send, ChevronDown, ChevronUp, Save, Sparkles } from "lucide-react";
 import * as XLSX from "xlsx";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
@@ -30,6 +31,14 @@ export default function StockCounting() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<any>({ countNumber: "", countDate: new Date().toISOString().slice(0, 10), warehouseId: "", notes: "" });
   const [showForm, setShowForm] = useState(false);
+
+  const seqPeek = useNextSequenceNumber("stock_count", showForm);
+  useEffect(() => {
+    if (!showForm) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setForm((p: any) => (p.countNumber === seqPeek.number ? p : { ...p, countNumber: seqPeek.number }));
+    }
+  }, [showForm, seqPeek.hasSequence, seqPeek.number]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editedLines, setEditedLines] = useState<Record<number, string>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -170,7 +179,15 @@ export default function StockCounting() {
           saveLabel="إنشاء ورقة الجرد"
         >
           <FormGrid>
-            <Field label="رقم الجرد"><Input placeholder="CNT-001 (تلقائي)" dir="ltr" className="text-left" value={form.countNumber} onChange={e => setForm((p: any) => ({ ...p, countNumber: e.target.value }))} /></Field>
+            <Field label="رقم الجرد"><Input
+              placeholder={seqPeek.loading ? "…" : "CNT-001 (تلقائي)"}
+              dir="ltr"
+              className={cn("text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+              value={form.countNumber}
+              onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, countNumber: e.target.value })); }}
+              readOnly={seqPeek.hasSequence}
+              title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+            /></Field>
             <Field label="التاريخ" required><Input type="date" value={form.countDate} onChange={e => setForm((p: any) => ({ ...p, countDate: e.target.value }))} /></Field>
             <Field label="المخزن" required className="md:col-span-2">
               <SearchCombobox

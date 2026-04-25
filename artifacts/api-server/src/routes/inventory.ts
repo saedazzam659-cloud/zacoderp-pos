@@ -12,6 +12,7 @@ import {
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -462,8 +463,22 @@ router.post("/stock-transfers", async (req, res) => {
       accounts:   [accountId, fromAccountId, toAccountId].map(Number).filter(Boolean) as number[],
     });
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
-  // Auto-number if not provided
-  const num = transferNumber || `TRF-${Date.now()}`;
+  // Central sequence engine is authoritative when an active sequence is
+  // configured for "stock_transfer"; otherwise fall back to the caller-
+  // supplied value, then to the legacy timestamp scheme. Sequence errors
+  // (e.g. capacity exceeded) surface to the user — never silently bypass
+  // central numbering when it is configured.
+  let num: string;
+  try {
+    const fromSeq = await nextSequenceNumber(cid, "stock_transfer", {
+      userId:   (req as any).authUser?.id ?? null,
+      refTable: "stock_transfers",
+    });
+    num = fromSeq ?? ((transferNumber && String(transferNumber).trim()) || `TRF-${Date.now()}`);
+  } catch (seqErr: any) {
+    res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم التحويل" });
+    return;
+  }
   const [tr] = await db.insert(stockTransfersTable).values({
     companyId: cid, transferNumber: num, transferDate, fromWarehouseId, toWarehouseId,
     accountId: accountId || null,
@@ -609,7 +624,21 @@ router.post("/stock-adjustments", async (req, res) => {
       accounts:   [accountId, inventoryAccountId, adjustmentAccountId].map(Number).filter(Boolean) as number[],
     });
   } catch (e: any) { res.status(400).json({ error: e.message }); return; }
-  const num = adjustmentNumber || `ADJ-${Date.now()}`;
+  // Central sequence engine is authoritative when an active sequence is
+  // configured for "stock_adjustment"; otherwise fall back to the caller-
+  // supplied value, then to the legacy timestamp scheme. Sequence errors
+  // surface to the user — never silently bypass central numbering.
+  let num: string;
+  try {
+    const fromSeq = await nextSequenceNumber(cid, "stock_adjustment", {
+      userId:   (req as any).authUser?.id ?? null,
+      refTable: "stock_adjustments",
+    });
+    num = fromSeq ?? ((adjustmentNumber && String(adjustmentNumber).trim()) || `ADJ-${Date.now()}`);
+  } catch (seqErr: any) {
+    res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم التسوية" });
+    return;
+  }
   const [adj] = await db.insert(stockAdjustmentsTable).values({
     companyId: cid, adjustmentNumber: num, adjustmentDate, warehouseId,
     accountId: accountId || null,
@@ -752,7 +781,21 @@ router.post("/stock-counts", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const { countNumber, countDate, warehouseId, notes } = req.body;
   if (!countDate || !warehouseId) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
-  const num = countNumber || `CNT-${Date.now()}`;
+  // Central sequence engine is authoritative when an active sequence is
+  // configured for "stock_count"; otherwise fall back to the caller-
+  // supplied value, then to the legacy timestamp scheme. Sequence errors
+  // surface to the user — never silently bypass central numbering.
+  let num: string;
+  try {
+    const fromSeq = await nextSequenceNumber(cid, "stock_count", {
+      userId:   (req as any).authUser?.id ?? null,
+      refTable: "stock_counts",
+    });
+    num = fromSeq ?? ((countNumber && String(countNumber).trim()) || `CNT-${Date.now()}`);
+  } catch (seqErr: any) {
+    res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الجرد" });
+    return;
+  }
   // Auto-load current system balances for this warehouse
   const balances = await db.select({ bal: stockBalanceTable, item: itemsTable })
     .from(stockBalanceTable)

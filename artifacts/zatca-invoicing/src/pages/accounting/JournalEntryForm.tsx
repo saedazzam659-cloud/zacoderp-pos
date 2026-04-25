@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Sparkles, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -151,6 +152,15 @@ export default function JournalEntryForm() {
     queryFn:  () => journalEntriesApi.get(editId!, cid),
     enabled:  !!editId,
   });
+
+  // Pull next entry number from the central sequence engine (مسلسل الحركات)
+  // when creating new. Falls back to free-typed input when no sequence is
+  // configured for "journal_entry".
+  const seqPeek = useNextSequenceNumber("journal_entry", isNew);
+  useEffect(() => {
+    if (!isNew) return;
+    if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
+  }, [isNew, seqPeek.hasSequence, seqPeek.number]);
 
   const { data: accountsList = [] } = useQuery<any[]>({
     queryKey: ["accounts-flat", cid],
@@ -580,9 +590,11 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   <Label className="text-xs font-medium">رقم المستند</Label>
                   <Input
                     value={docNumber}
-                    onChange={e => setDocNumber(e.target.value)}
-                    placeholder="تلقائي"
-                    className="h-9 text-sm"
+                    onChange={e => { if (!(isNew && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
+                    placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                    className={cn("h-9 text-sm", isNew && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                    readOnly={isNew && seqPeek.hasSequence}
+                    title={isNew && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
                   />
                 </div>
                 <div className="space-y-1.5">

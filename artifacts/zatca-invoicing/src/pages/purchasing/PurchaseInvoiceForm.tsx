@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,6 +82,8 @@ export default function PurchaseInvoiceForm() {
   const [matchEdit, params] = useRoute("/purchasing/invoices/:id");
   const isNew  = !!matchNew;
   const editId = matchEdit ? Number((params as any).id) : null;
+
+  const seqPeek = useNextSequenceNumber("purchase_invoice", isNew);
 
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
@@ -270,6 +273,12 @@ export default function PurchaseInvoiceForm() {
     },
     enabled: !!editId,
   });
+
+  // Auto-populate from the central sequence engine when creating new.
+  useEffect(() => {
+    if (!isNew) return;
+    if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
+  }, [isNew, seqPeek.hasSequence, seqPeek.number]);
 
   useEffect(() => {
     if (!existing) return;
@@ -610,7 +619,15 @@ export default function PurchaseInvoiceForm() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">رقم الفاتورة</Label>
-                  <Input ref={docNumberRef} className="h-9 text-sm" placeholder="تلقائي" value={docNumber} onChange={e => setDocNumber(e.target.value)} />
+                  <Input
+                    ref={docNumberRef}
+                    className={cn("h-9 text-sm", isNew && seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                    placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                    value={docNumber}
+                    onChange={e => { if (!(isNew && seqPeek.hasSequence)) setDocNumber(e.target.value); }}
+                    readOnly={isNew && seqPeek.hasSequence}
+                    title={isNew && seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">التاريخ *</Label>

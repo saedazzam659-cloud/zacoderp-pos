@@ -1,4 +1,4 @@
-import { useState, Fragment } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import {
   Plus, Trash2, ArrowRightLeft, Search, X,
   CheckCircle2, Send, ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
@@ -47,6 +48,14 @@ export default function StockTransfer() {
   const [form, setForm] = useState<any>(EMPTY_FORM);
   const [lines, setLines] = useState<any[]>([newLine()]);
   const [showForm, setShowForm] = useState(false);
+
+  const seqPeek = useNextSequenceNumber("stock_transfer", showForm);
+  useEffect(() => {
+    if (!showForm) return;
+    if (seqPeek.hasSequence && seqPeek.number) {
+      setForm((p: any) => (p.transferNumber === seqPeek.number ? p : { ...p, transferNumber: seqPeek.number }));
+    }
+  }, [showForm, seqPeek.hasSequence, seqPeek.number]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // itemUnitsMap: itemId → array of unit-price rows (cached after first fetch)
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
@@ -276,7 +285,15 @@ export default function StockTransfer() {
             <TabsContent value="info" className="space-y-5 mt-0">
             <FormSection title="معلومات الحركة">
               <FormGrid cols={2}>
-                <Field label="رقم الحركة"><Input placeholder="TRF-001 (تلقائي)" dir="ltr" className="text-left" value={form.transferNumber} onChange={e => setForm((p: any) => ({ ...p, transferNumber: e.target.value }))} /></Field>
+                <Field label="رقم الحركة"><Input
+                  placeholder={seqPeek.loading ? "…" : "TRF-001 (تلقائي)"}
+                  dir="ltr"
+                  className={cn("text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                  value={form.transferNumber}
+                  onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
+                  readOnly={seqPeek.hasSequence}
+                  title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                /></Field>
                 <Field label="التاريخ" required><Input type="date" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} /></Field>
                 <Field label="من مخزن" required>
                   <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder="— اختر مخزن المصدر —" />
