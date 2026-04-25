@@ -128,7 +128,11 @@ router.post("/", async (req, res) => {
 const LOCKED_ENTRY_TYPES = [
   "purchase_invoice", "purchase_return",
   "sales_invoice", "sales_return",
-  "receipt_voucher", "payment_voucher",
+  // Voucher routes today emit the legacy bare strings "receipt" /
+  // "payment" (see receipt-vouchers.ts / payment-vouchers.ts). The
+  // canonical names are kept here for forward compatibility once
+  // those routes are normalized.
+  "receipt_voucher", "payment_voucher", "receipt", "payment",
   "stock_transfer", "stock_adjustment",
   "supplier_settlement", "customer_settlement",
   "payroll_run", "employee_loan", "eos_payment",
