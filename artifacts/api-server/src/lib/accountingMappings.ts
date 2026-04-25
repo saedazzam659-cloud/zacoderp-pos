@@ -64,6 +64,7 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "purchase_return",  roleKey: "payable",            accountCode: "21011" },
   { documentType: "purchase_return",  roleKey: "inventory",          accountCode: "11051" },
   { documentType: "purchase_return",  roleKey: "vat_input",          accountCode: "11071" },
+  { documentType: "purchase_return",  roleKey: "discount",           accountCode: "4103"  },
 
   // فواتير المبيعات
   { documentType: "sales_invoice",    roleKey: "receivable",         accountCode: "11031" },

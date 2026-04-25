@@ -34,6 +34,7 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
       { key: "payable",   label: "حساب الموردين (مدين)", description: "الحساب المدين - تخفيض رصيد المورد.", defaultHintCode: "2110", accountType: "liability" },
       { key: "inventory", label: "المخزون (دائن)", description: "الحساب الدائن - تخفيض المخزون.", defaultHintCode: "1220", accountType: "asset" },
       { key: "vat_input", label: "ضريبة المدخلات (دائن)", description: "عكس ضريبة المدخلات على المرتجع.", defaultHintCode: "1240", accountType: "asset" },
+      { key: "discount",  label: "خصم (مدين)", description: "نفس حساب الخصم المكتسب في فاتورة الشراء — يُعكس في طرف المدين لإلغاء الخصم على البضاعة المرتجعة.", defaultHintCode: "4103", accountType: "revenue" },
     ],
   },
   {
