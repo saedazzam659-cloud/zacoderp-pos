@@ -63,5 +63,32 @@ export const maintenanceScheduleTable = pgTable("maintenance_schedule", {
   updatedAt:    timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// Append-only history of every critical-digest email *attempt* (success,
+// failure, suppression). Mirrors the `report_email_schedule_runs` pattern so
+// SuperAdmins can audit deliveries and debug "why didn't I get the email last
+// week?" without losing prior data the way the single-row last_email_* fields
+// on maintenance_schedule do (each new attempt overwrites the previous one).
+export const maintenanceEmailRunsTable = pgTable("maintenance_email_runs", {
+  id:            serial("id").primaryKey(),
+  ranAt:         timestamp("ran_at", { withTimezone: true }).defaultNow().notNull(),
+  // What caused the dispatch:
+  //   "scheduled" — fired by the daily sweep
+  //   "manual"    — reserved for future on-demand sends from the UI
+  //   "test"      — operator clicked "Send test email"
+  trigger:       text("trigger").notNull(),
+  // Mirrors the EmailDispatchOutcome.status values produced by
+  // dispatchCriticalDigest: ok | failed | no_recipients | no_transport |
+  // snoozed | no_critical | rate_limited | skipped.
+  status:        text("status").notNull(),
+  recipients:    integer("recipients").notNull().default(0),
+  criticalCount: integer("critical_count").notNull().default(0),
+  // Populated only when status indicates a problem (e.g. "failed",
+  // "no_transport") — null for successful or successfully-suppressed runs.
+  error:         text("error"),
+}, (t) => ({
+  byRanAt: index("maintenance_email_runs_ran_at_idx").on(t.ranAt),
+}));
+
 export type MaintenanceRun = typeof maintenanceRunsTable.$inferSelect;
 export type MaintenanceSchedule = typeof maintenanceScheduleTable.$inferSelect;
+export type MaintenanceEmailRun = typeof maintenanceEmailRunsTable.$inferSelect;

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
 import {
@@ -4293,6 +4293,7 @@ router.post("/maintenance/schedule/test-email", requireSuperAdmin, async (req, r
     const outcome = await dispatchCriticalDigest({
       publicBaseUrl: publicBaseUrlFromReq(req),
       isTest: true,
+      trigger: "test",
     });
     await writeAudit({
       userId: req.adminUser?.id ?? null, username: req.adminUser?.username ?? null,
@@ -4326,6 +4327,33 @@ function outcomeMessageAr(o: { status: string; message: string }): string {
     default:               return o.message || "حدث خطأ غير معروف";
   }
 }
+
+// GET /maintenance/email-history — last N append-only critical-digest dispatch
+// attempts (success, failure, suppression). Backs the small audit table on the
+// AI Company Fix screen so SuperAdmins can answer "did the email actually go
+// out yesterday?" without trawling server logs. Default limit is 20 to match
+// the report-digest history panel; clamp upper-bound to keep payloads small.
+router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => {
+  try {
+    const limit = clampInt(req.query.limit, 1, 100, 20);
+    const rows = await db.select().from(maintenanceEmailRunsTable)
+      .orderBy(desc(maintenanceEmailRunsTable.ranAt))
+      .limit(limit);
+    res.json({
+      items: rows.map((r) => ({
+        id:            r.id,
+        ranAt:         r.ranAt.toISOString(),
+        trigger:       r.trigger,
+        status:        r.status,
+        recipients:    r.recipients,
+        criticalCount: r.criticalCount,
+        error:         r.error,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب سجل تنبيهات البريد" });
+  }
+});
 
 // POST /maintenance/critical-summary/snooze — mute the dashboard banner until
 // the next scheduled run lifts the count back up. Body: { hours? } default 24.

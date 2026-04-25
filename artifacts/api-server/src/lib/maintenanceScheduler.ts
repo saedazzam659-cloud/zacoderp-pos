@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, usersTable } from "@workspace/db";
+import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, usersTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { logger } from "./logger.js";
@@ -150,7 +150,7 @@ export async function runMaintenanceSweep(
   // the "alerts not snoozed" requirement.
   if (criticalCount > 0 && trigger === "scheduled") {
     try {
-      await dispatchCriticalDigest({ publicBaseUrl: opts.publicBaseUrl });
+      await dispatchCriticalDigest({ publicBaseUrl: opts.publicBaseUrl, trigger: "scheduled" });
     } catch (e: any) {
       logger.error({ err: e }, "maintenance-sweep: digest dispatch failed");
     }
@@ -251,13 +251,19 @@ async function getSuperAdminRecipients(): Promise<string[]> {
 }
 
 export async function dispatchCriticalDigest(
-  opts: { publicBaseUrl?: string; isTest?: boolean } = {},
+  opts: { publicBaseUrl?: string; isTest?: boolean; trigger?: "scheduled" | "manual" | "test" } = {},
 ): Promise<EmailDispatchOutcome> {
   const cfg = await ensureMaintenanceScheduleRow();
+  // Resolve the trigger label written to the audit history. Callers can be
+  // explicit (`trigger`) or imply it via the legacy `isTest` flag; default
+  // to "scheduled" since that's the only auto-firing path.
+  const trigger: "scheduled" | "manual" | "test" =
+    opts.trigger ?? (opts.isTest ? "test" : "scheduled");
+  const isTest = opts.isTest === true || trigger === "test";
   const muted = cfg.alertsMutedUntil && new Date(cfg.alertsMutedUntil).getTime() > Date.now();
   // Real (non-test) sends respect the snooze. Test sends bypass it intentionally.
-  if (muted && !opts.isTest) {
-    return recordEmailOutcome({ status: "snoozed", message: "alerts_snoozed", recipients: 0, rows: 0 });
+  if (muted && !isTest) {
+    return recordEmailOutcome({ status: "snoozed", message: "alerts_snoozed", recipients: 0, rows: 0 }, { trigger });
   }
 
   // Cap rows so a stuck tenant can't generate a multi-megabyte email, but make
@@ -271,7 +277,7 @@ export async function dispatchCriticalDigest(
   // — the SuperAdmin only wants to verify their inbox actually receives the
   // template. We slot in a single placeholder row so the email isn't blank.
   let rows: MaintenanceDigestRow[];
-  if (opts.isTest && visibleAlerts.length === 0) {
+  if (isTest && visibleAlerts.length === 0) {
     rows = [{
       companyId: 0,
       companyName: "(لا توجد نتائج حرجة حالياً — هذه رسالة تجريبية)",
@@ -281,7 +287,7 @@ export async function dispatchCriticalDigest(
       runAt: new Date(),
     }];
   } else if (visibleAlerts.length === 0) {
-    return recordEmailOutcome({ status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 });
+    return recordEmailOutcome({ status: "no_critical", message: "no_critical_findings", recipients: 0, rows: 0 }, { trigger });
   } else {
     rows = visibleAlerts.map((a) => ({
       companyId: a.companyId,
@@ -299,7 +305,7 @@ export async function dispatchCriticalDigest(
   // suppressed and surfaced in the UI as "rate_limited" so operators see *why*
   // the email didn't go out.
   const signature = computeCriticalSignature(visibleAlerts);
-  if (!opts.isTest) {
+  if (!isTest) {
     const skip = shouldSkipForRateLimit(new Date(), {
       emailMinIntervalHours: cfg.emailMinIntervalHours ?? 24,
       lastSuccessfulEmailAt: cfg.lastSuccessfulEmailAt,
@@ -313,7 +319,7 @@ export async function dispatchCriticalDigest(
         status: "rate_limited",
         message: `cooldown_active_${cfg.emailMinIntervalHours ?? 24}h`,
         recipients: 0, rows: rows.length,
-      });
+      }, { trigger });
     }
   }
 
@@ -323,21 +329,21 @@ export async function dispatchCriticalDigest(
       status: "no_recipients",
       message: "no_superadmin_email_configured",
       recipients: 0, rows: rows.length,
-    });
+    }, { trigger });
   }
   if (!emailConfigured()) {
     return recordEmailOutcome({
       status: "no_transport",
       message: "email_transport_unconfigured",
       recipients: recipients.length, rows: rows.length,
-    });
+    }, { trigger });
   }
 
   const sendRes = await sendMaintenanceCriticalDigest({
     to: recipients,
     rows,
     publicBaseUrl: resolvePublicBaseUrl(opts.publicBaseUrl),
-    isTest: !!opts.isTest,
+    isTest,
     truncated,
   });
   if (!sendRes.ok) {
@@ -345,7 +351,7 @@ export async function dispatchCriticalDigest(
       status: "failed",
       message: sendRes.reason ?? "send_failed",
       recipients: recipients.length, rows: rows.length,
-    });
+    }, { trigger });
   }
   // Persist the signature ONLY for real successful sends. Test sends keep the
   // existing signature so they don't accidentally arm the cooldown against
@@ -354,19 +360,23 @@ export async function dispatchCriticalDigest(
   return recordEmailOutcome(
     {
       status: "ok",
-      message: opts.isTest ? "test_sent" : "digest_sent",
+      message: isTest ? "test_sent" : "digest_sent",
       recipients: recipients.length, rows: rows.length,
     },
     // Real "ok" sends advance both the cooldown anchor and the signature.
     // Test sends keep the existing anchor/signature so they don't accidentally
     // arm (or rearm) the cooldown against the next real dispatch.
-    opts.isTest ? {} : { criticalSignature: signature, advanceCooldownAnchor: true },
+    isTest ? { trigger } : { criticalSignature: signature, advanceCooldownAnchor: true, trigger },
   );
 }
 
 async function recordEmailOutcome(
   o: EmailDispatchOutcome,
-  extras: { criticalSignature?: string; advanceCooldownAnchor?: boolean } = {},
+  extras: {
+    criticalSignature?: string;
+    advanceCooldownAnchor?: boolean;
+    trigger?: "scheduled" | "manual" | "test";
+  } = {},
 ): Promise<EmailDispatchOutcome> {
   // Always stamp lastEmailAt so the UI shows the most recent attempt regardless
   // of outcome — operators need to know "we tried and SMTP rejected" just as
@@ -395,6 +405,21 @@ async function recordEmailOutcome(
       .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
   } catch (err) {
     logger.error({ err }, "maintenance-scheduler: failed to record email outcome");
+  }
+  // Append-only audit row — preserved across attempts so SuperAdmins can
+  // explain "why didn't I get the email last week?" without having to dig in
+  // server logs. Failure to insert here is logged but never propagated, so a
+  // history-table outage cannot block the actual send/UI update path.
+  try {
+    await db.insert(maintenanceEmailRunsTable).values({
+      trigger:       extras.trigger ?? "scheduled",
+      status:        o.status,
+      recipients:    o.recipients,
+      criticalCount: o.rows,
+      error:         successful ? null : o.message,
+    });
+  } catch (err) {
+    logger.error({ err }, "maintenance-scheduler: failed to append email-run history");
   }
   return o;
 }

@@ -644,11 +644,16 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
         description: `إلى ${data.outcome.recipients} مستلم • ${data.outcome.rows} صف`,
       });
       qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-email-history"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
-    // Always refresh the schedule card so the new lastEmailStatus shows up,
-    // even when the send failed (no recipients, no SMTP, etc.).
-    onSettled: () => qc.invalidateQueries({ queryKey: ["maintenance-schedule"] }),
+    // Always refresh the schedule card + history so the new lastEmailStatus
+    // and the new history row show up, even when the send failed (no
+    // recipients, no SMTP, etc.).
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["maintenance-schedule"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-email-history"] });
+    },
   });
   const runNowMut = useMutation({
     mutationFn: async (scope: "all" | "one") => {
@@ -669,8 +674,33 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
       qc.invalidateQueries({ queryKey: ["maintenance-tool"] });
       qc.invalidateQueries({ queryKey: ["maintenance-trend"] });
       qc.invalidateQueries({ queryKey: ["maintenance-trend-fleet"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-email-history"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // Append-only email-dispatch history (last 20 attempts) — surfaces every
+  // success, failure, and suppression so SuperAdmins can audit deliveries
+  // without trawling server logs. Refreshed alongside the schedule card after
+  // any send attempt (test, manual run-now, scheduled sweep).
+  const emailHistoryQ = useQuery({
+    queryKey: ["maintenance-email-history"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/email-history?limit=20`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب سجل البريد");
+      return r.json() as Promise<{
+        items: Array<{
+          id: number;
+          ranAt: string;
+          trigger: "scheduled" | "manual" | "test";
+          status: string;
+          recipients: number;
+          criticalCount: number;
+          error: string | null;
+        }>;
+      }>;
+    },
+    refetchOnWindowFocus: false,
   });
 
   // Latest scheduled-scan result per tool — drives the small badge in each card.
@@ -898,6 +928,68 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             </div>
           );
         })()}
+
+        {/* ── Email dispatch history (last 20 attempts) ───────────────────
+            Append-only audit table backed by maintenance_email_runs. Lives
+            directly beneath the schedule card so SuperAdmins can verify
+            "was the email actually sent?" alongside the most recent status. */}
+        {emailHistoryQ.data && (
+          <div className="border border-violet-200 rounded p-3 bg-white">
+            <div className="flex items-center gap-2 mb-2">
+              <History className="h-4 w-4 text-violet-700" />
+              <span className="text-sm font-medium text-violet-900">سجل تنبيهات البريد</span>
+              <span className="text-[11px] text-muted-foreground">
+                آخر {emailHistoryQ.data.items.length} محاولة إرسال (نجاح أو فشل أو متخطّاة)
+              </span>
+            </div>
+            {emailHistoryQ.data.items.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">لا توجد محاولات إرسال بعد.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-violet-50 text-violet-900">
+                    <tr>
+                      <th className="px-2 py-1 text-right">الوقت</th>
+                      <th className="px-2 py-1 text-right">المصدر</th>
+                      <th className="px-2 py-1 text-right">الحالة</th>
+                      <th className="px-2 py-1 text-right">المستلمون</th>
+                      <th className="px-2 py-1 text-right">صفوف حرجة</th>
+                      <th className="px-2 py-1 text-right">تفاصيل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-violet-100">
+                    {emailHistoryQ.data.items.map((row) => {
+                      const triggerLabel =
+                        row.trigger === "scheduled" ? "تلقائي" :
+                        row.trigger === "manual"    ? "يدوي" :
+                        row.trigger === "test"      ? "تجريبي" :
+                        row.trigger;
+                      const statusClass =
+                        row.status === "ok" ? "text-emerald-700 font-medium" :
+                        row.status === "no_critical" ? "text-emerald-700" :
+                        row.status === "skipped" || row.status === "snoozed" || row.status === "rate_limited" ? "text-amber-800" :
+                        "text-red-700 font-medium";
+                      return (
+                        <tr key={row.id}>
+                          <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                            {new Date(row.ranAt).toLocaleString("ar-SA")}
+                          </td>
+                          <td className="px-2 py-1">{triggerLabel}</td>
+                          <td className={`px-2 py-1 ${statusClass}`}>{emailStatusLabelAr(row.status)}</td>
+                          <td className="px-2 py-1 font-mono">{row.recipients}</td>
+                          <td className="px-2 py-1 font-mono">{row.criticalCount}</td>
+                          <td className="px-2 py-1 text-muted-foreground" title={row.error ?? ""}>
+                            {row.error ? <span className="text-red-700">{row.error}</span> : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Fleet view: top 5 companies with most critical findings ───── */}
         {fleetQ.data && fleetQ.data.fleet.length > 0 && (
