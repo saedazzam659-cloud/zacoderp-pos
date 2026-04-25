@@ -47,19 +47,30 @@ async function getOutlookConnector() {
   }
 }
 
+function toBase64(buf: string | Buffer): string {
+  if (Buffer.isBuffer(buf)) return buf.toString("base64");
+  return Buffer.from(buf, "utf-8").toString("base64");
+}
+
 async function sendViaOutlook(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
   const connectors = await getOutlookConnector();
   if (!connectors) return { ok: false, reason: "outlook_sdk_unavailable" };
   const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to])
     .map((e) => ({ emailAddress: { address: e } }));
-  const payload = {
-    message: {
-      subject: opts.subject,
-      body: { contentType: "HTML", content: opts.html },
-      toRecipients: recipients,
-    },
-    saveToSentItems: "true",
+  const message: Record<string, unknown> = {
+    subject: opts.subject,
+    body: { contentType: "HTML", content: opts.html },
+    toRecipients: recipients,
   };
+  if (opts.attachments?.length) {
+    message.attachments = opts.attachments.map((a) => ({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: a.filename,
+      contentType: a.contentType ?? "text/csv; charset=utf-8",
+      contentBytes: toBase64(a.content),
+    }));
+  }
+  const payload = { message, saveToSentItems: true };
   try {
     const resp: any = await connectors.proxy("outlook", "/v1.0/me/sendMail", {
       method: "POST",
@@ -99,6 +110,7 @@ export interface SendOpts {
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
   const transporter = getTransporter();
+  let smtpReason: string | null = null;
   if (transporter) {
     try {
       await transporter.sendMail({
@@ -115,8 +127,8 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
       });
       return { ok: true };
     } catch (err: any) {
-      console.error("[email] SMTP send failed", err?.message ?? err);
-      return { ok: false, reason: err?.message ?? "send_failed" };
+      smtpReason = err?.message ?? "send_failed";
+      console.error("[email] SMTP send failed; will try Outlook fallback if available", smtpReason);
     }
   }
   if (outlookEnabled()) {
@@ -126,8 +138,9 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
       return r;
     }
     console.error("[email] Outlook send failed", r.reason);
-    return r;
+    return { ok: false, reason: smtpReason ? `smtp:${smtpReason}|${r.reason}` : r.reason };
   }
+  if (smtpReason) return { ok: false, reason: smtpReason };
   console.warn("[email] No transport configured — skipping send", { to: opts.to, subject: opts.subject });
   return { ok: false, reason: "no_transport_configured" };
 }

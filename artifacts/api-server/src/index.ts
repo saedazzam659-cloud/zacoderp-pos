@@ -89,20 +89,20 @@ async function seedSuperAdmin() {
       const newPassword = process.env.BOOTSTRAP_SA_PASSWORD;
       const newEmail = process.env.BOOTSTRAP_SA_EMAIL;
       if (!newPassword) {
-        logger.warn("[BOOTSTRAP_SA_RESET] enabled but BOOTSTRAP_SA_PASSWORD missing; skipping.");
+        logger.warn("[BOOTSTRAP_SA_RESET] enabled but BOOTSTRAP_SA_PASSWORD missing; aborting reset (no side effects). Either set BOOTSTRAP_SA_PASSWORD or remove BOOTSTRAP_SA_RESET.");
       } else {
         const passwordHash = await bcrypt.hash(newPassword, 12);
         const updates: Record<string, unknown> = { passwordHash, updatedAt: new Date() };
         if (newEmail) updates.email = newEmail;
         await db.update(usersTable).set(updates).where(eq(usersTable.role, "superadmin"));
         logger.warn({ emailUpdated: !!newEmail }, "[BOOTSTRAP_SA_RESET] SuperAdmin password reset (and email if provided).");
-      }
-      try {
-        const { superAdminLoginAttemptsTable } = await import("@workspace/db");
-        await db.delete(superAdminLoginAttemptsTable);
-        logger.warn("[BOOTSTRAP_SA_RESET] Cleared SuperAdmin login attempts (risk-score history). REMOVE BOOTSTRAP_SA_RESET env var now.");
-      } catch (clearErr) {
-        logger.error({ err: clearErr }, "[BOOTSTRAP_SA_RESET] Failed to clear login attempts");
+        try {
+          const { superAdminLoginAttemptsTable } = await import("@workspace/db");
+          await db.delete(superAdminLoginAttemptsTable);
+          logger.warn("[BOOTSTRAP_SA_RESET] Cleared SuperAdmin login attempts (risk-score history). REMOVE BOOTSTRAP_SA_RESET env var now to avoid repeated resets.");
+        } catch (clearErr) {
+          logger.error({ err: clearErr }, "[BOOTSTRAP_SA_RESET] Failed to clear login attempts");
+        }
       }
     }
   } catch (err) {
