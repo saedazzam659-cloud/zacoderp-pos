@@ -5,8 +5,10 @@ import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable,  salesReturnLinesTable,
   receiptVouchersTable,
+  salesRepsTable,
+  branchesTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc, desc } from "drizzle-orm";
+import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
@@ -481,5 +483,367 @@ router.get("/returns-by-customer", async (req, res) => {
     }).sort((a, b) => b.totalAmount - a.totalAmount));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+/**
+ * Daily Sales Report — full detailed snapshot for a single day.
+ *
+ * Query: ?date=YYYY-MM-DD (default: today)  &branchId=N
+ *
+ * Returns:
+ *   {
+ *     date,
+ *     summary: { invoiceCount, customerCount, subtotal, discount, vatAmount, totalAmount,
+ *                cashCount, cashAmount, creditCount, creditAmount, bankCount, bankAmount,
+ *                returnCount, returnAmount, returnVat, netSales,
+ *                receiptsCount, receiptsAmount, avgInvoice, lineCount, totalQty },
+ *     invoices:      [{ id, docNumber, time, customerId, customerNameAr, customerNameEn,
+ *                       salesRepNameAr, salesRepNameEn, branchNameAr, branchNameEn,
+ *                       lineCount, subtotal, discount, vatAmount, totalAmount,
+ *                       paymentType, status, zatcaStatus }],
+ *     topItems:      [{ itemId, itemCode, itemName, qty, totalSales, invoiceCount }],
+ *     topCustomers:  [{ customerId, customerNameAr, customerNameEn, invoiceCount, totalSales }],
+ *     byRep:         [{ salesRepId, salesRepNameAr, salesRepNameEn, invoiceCount, totalSales }],
+ *     byBranch:      [{ branchId, branchNameAr, branchNameEn, invoiceCount, totalSales }],
+ *     byHour:        [{ hour, invoiceCount, totalAmount }],   // 0..23, only hours with activity
+ *     receipts:      [{ id, code, time, entityName, paymentType, amount }],
+ *   }
+ *
+ * Notes:
+ *   - "invoices" includes posted + cancelled (so the report shows everything that
+ *     happened on the day). Aggregates (summary, top*, by*) only count posted.
+ *   - "returns" come from sales_returns posted on the same day.
+ *   - "receipts" are receipt_vouchers posted on the day with entity_type='customer'.
+ */
+router.get("/daily-report", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) {
+      res.json({
+        date: req.query.date || new Date().toISOString().slice(0, 10),
+        summary: emptyDailySummary(),
+        invoices: [], topItems: [], topCustomers: [],
+        byRep: [], byBranch: [], byHour: [], receipts: [],
+      });
+      return;
+    }
+    const bid = getBid(req);
+    const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+
+    // ── 1. Invoices on the day (any status — show what happened).
+    // Time string is built in SQL with to_char so the bucket reflects the
+    // timestamp's stored representation consistently (no UTC drift from JS Date.toISOString).
+    const allInvoices = await db
+      .select({
+        id:            salesInvoicesTable.id,
+        docNumber:     salesInvoicesTable.docNumber,
+        invoiceDate:   salesInvoicesTable.invoiceDate,
+        createdTime:   sql<string>`to_char(${salesInvoicesTable.createdAt}, 'HH24:MI')`,
+        customerId:    salesInvoicesTable.customerId,
+        salesRepId:    salesInvoicesTable.salesRepId,
+        branchId:      salesInvoicesTable.branchId,
+        subtotal:      salesInvoicesTable.subtotal,
+        discountAmount: salesInvoicesTable.discountAmount,
+        vatAmount:     salesInvoicesTable.vatAmount,
+        totalAmount:   salesInvoicesTable.totalAmount,
+        paymentType:   salesInvoicesTable.paymentType,
+        status:        salesInvoicesTable.status,
+        zatcaStatus:   salesInvoicesTable.zatcaStatus,
+      })
+      .from(salesInvoicesTable)
+      .where(and(
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.invoiceDate, date),
+        ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+      ));
+
+    const invIds = allInvoices.map(i => i.id);
+    const postedInvIds = allInvoices.filter(i => i.status === "posted").map(i => i.id);
+
+    // ── 2. Resolve customer / sales-rep / branch names in batch
+    const customerIds = Array.from(new Set(allInvoices.map(i => i.customerId).filter((x): x is number => !!x)));
+    const repIds      = Array.from(new Set(allInvoices.map(i => i.salesRepId).filter((x): x is number => !!x)));
+    const branchIds   = Array.from(new Set(allInvoices.map(i => i.branchId  ).filter((x): x is number => !!x)));
+
+    // SECURITY: All metadata lookups are scoped to the current company so a
+    // poisoned cross-company FK on an invoice row cannot leak another tenant's
+    // customer / sales-rep / branch names. Rows that fail the tenant check
+    // simply fall through to the "—" / "بدون مندوب" defaults below.
+    const [customers, reps, branches] = await Promise.all([
+      customerIds.length
+        ? db.select({ id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn })
+            .from(customersTable)
+            .where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, customerIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+      repIds.length
+        ? db.select({ id: salesRepsTable.id, nameAr: salesRepsTable.nameAr, nameEn: salesRepsTable.nameEn })
+            .from(salesRepsTable)
+            .where(and(eq(salesRepsTable.companyId, cid), inArray(salesRepsTable.id, repIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+      branchIds.length
+        ? db.select({ id: branchesTable.id, nameAr: branchesTable.nameAr, nameEn: branchesTable.nameEn })
+            .from(branchesTable)
+            .where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, branchIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+    ]);
+    const cmap = new Map(customers.map(c => [c.id, c]));
+    const rmap = new Map(reps.map(r => [r.id, r]));
+    const bmap = new Map(branches.map(b => [b.id, b]));
+
+    // ── 3. Line counts per invoice (one query)
+    const lineCountRows = invIds.length
+      ? await db
+          .select({
+            invoiceId: salesInvoiceLinesTable.invoiceId,
+            lineCount: sql<number>`count(*)::int`,
+            totalQty:  sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}), 0)`,
+          })
+          .from(salesInvoiceLinesTable)
+          .where(inArray(salesInvoiceLinesTable.invoiceId, invIds))
+          .groupBy(salesInvoiceLinesTable.invoiceId)
+      : [];
+    const lineCountMap = new Map<number, { lineCount: number; totalQty: number }>();
+    for (const r of lineCountRows) {
+      lineCountMap.set(r.invoiceId, { lineCount: r.lineCount, totalQty: Number(r.totalQty) });
+    }
+
+    // ── 4. Top items + per-line totals (posted only)
+    const linesAgg = postedInvIds.length
+      ? await db
+          .select({
+            itemId:       salesInvoiceLinesTable.itemId,
+            itemCode:     salesInvoiceLinesTable.itemCode,
+            itemName:     salesInvoiceLinesTable.itemName,
+            qty:          sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}), 0)`,
+            totalSales:   sql<string>`coalesce(sum(${salesInvoiceLinesTable.lineTotal}), 0)`,
+            invoiceCount: sql<number>`count(distinct ${salesInvoiceLinesTable.invoiceId})::int`,
+          })
+          .from(salesInvoiceLinesTable)
+          .where(inArray(salesInvoiceLinesTable.invoiceId, postedInvIds))
+          .groupBy(salesInvoiceLinesTable.itemId, salesInvoiceLinesTable.itemCode, salesInvoiceLinesTable.itemName)
+      : [];
+    const topItems = linesAgg
+      .map(r => ({
+        itemId:       r.itemId,
+        itemCode:     r.itemCode,
+        itemName:     r.itemName,
+        qty:          Number(r.qty),
+        totalSales:   Number(r.totalSales),
+        invoiceCount: r.invoiceCount,
+      }))
+      .sort((a, b) => b.totalSales - a.totalSales)
+      .slice(0, 20);
+
+    // ── 5. Returns on the day (posted only)
+    const returnsAgg = await db
+      .select({
+        count:  sql<number>`count(*)::int`,
+        amount: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)`,
+        vat:    sql<string>`coalesce(sum(${salesReturnsTable.vatAmount}), 0)`,
+      })
+      .from(salesReturnsTable)
+      .where(and(
+        eq(salesReturnsTable.companyId, cid),
+        eq(salesReturnsTable.returnDate, date),
+        eq(salesReturnsTable.status, "posted"),
+        ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
+      ));
+
+    // ── 6. Customer cash receipts on the day (posted only, entity_type=customer)
+    const receiptRows = await db
+      .select({
+        id:           receiptVouchersTable.id,
+        code:         receiptVouchersTable.code,
+        createdTime:  sql<string>`to_char(${receiptVouchersTable.createdAt}, 'HH24:MI')`,
+        entityName:   receiptVouchersTable.entityName,
+        paymentType:  receiptVouchersTable.paymentType,
+        amount:       receiptVouchersTable.amount,
+      })
+      .from(receiptVouchersTable)
+      .where(and(
+        eq(receiptVouchersTable.companyId, cid),
+        eq(receiptVouchersTable.date, date),
+        eq(receiptVouchersTable.status, "posted"),
+        eq(receiptVouchersTable.entityType, "customer"),
+        ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+      ))
+      .orderBy(asc(receiptVouchersTable.id));
+
+    // ── 7. Build per-invoice rows (display)
+    const invoiceRows = allInvoices
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map(i => {
+        const c = i.customerId ? cmap.get(i.customerId) : null;
+        const r = i.salesRepId ? rmap.get(i.salesRepId) : null;
+        const b = i.branchId   ? bmap.get(i.branchId)   : null;
+        const lc = lineCountMap.get(i.id) ?? { lineCount: 0, totalQty: 0 };
+        return {
+          id:             i.id,
+          docNumber:      i.docNumber,
+          time:           i.createdTime ?? "",
+          customerId:     i.customerId,
+          customerNameAr: c?.nameAr ?? "عميل نقدي",
+          customerNameEn: c?.nameEn ?? "Cash Customer",
+          salesRepId:     i.salesRepId,
+          salesRepNameAr: r?.nameAr ?? null,
+          salesRepNameEn: r?.nameEn ?? null,
+          branchId:       i.branchId,
+          branchNameAr:   b?.nameAr ?? null,
+          branchNameEn:   b?.nameEn ?? null,
+          lineCount:      lc.lineCount,
+          totalQty:       lc.totalQty,
+          subtotal:       Number(i.subtotal),
+          discount:       Number(i.discountAmount),
+          vatAmount:      Number(i.vatAmount),
+          totalAmount:    Number(i.totalAmount),
+          paymentType:    i.paymentType,
+          status:         i.status,
+          zatcaStatus:    i.zatcaStatus,
+        };
+      });
+
+    // ── 8. Aggregate computations (posted only)
+    const postedRows = invoiceRows.filter(i => i.status === "posted");
+    const summary = {
+      invoiceCount:   postedRows.length,
+      customerCount:  new Set(postedRows.map(r => r.customerId).filter(Boolean)).size,
+      lineCount:      postedRows.reduce((s, r) => s + r.lineCount, 0),
+      totalQty:       postedRows.reduce((s, r) => s + r.totalQty,  0),
+      subtotal:       postedRows.reduce((s, r) => s + r.subtotal,  0),
+      discount:       postedRows.reduce((s, r) => s + r.discount,  0),
+      vatAmount:      postedRows.reduce((s, r) => s + r.vatAmount, 0),
+      totalAmount:    postedRows.reduce((s, r) => s + r.totalAmount, 0),
+      avgInvoice:     postedRows.length > 0
+                        ? postedRows.reduce((s, r) => s + r.totalAmount, 0) / postedRows.length
+                        : 0,
+      cashCount:      postedRows.filter(r => r.paymentType === "cash").length,
+      cashAmount:     postedRows.filter(r => r.paymentType === "cash").reduce((s, r) => s + r.totalAmount, 0),
+      bankCount:      postedRows.filter(r => r.paymentType === "bank").length,
+      bankAmount:     postedRows.filter(r => r.paymentType === "bank").reduce((s, r) => s + r.totalAmount, 0),
+      creditCount:    postedRows.filter(r => r.paymentType === "credit").length,
+      creditAmount:   postedRows.filter(r => r.paymentType === "credit").reduce((s, r) => s + r.totalAmount, 0),
+      returnCount:    Number(returnsAgg[0]?.count  ?? 0),
+      returnAmount:   Number(returnsAgg[0]?.amount ?? 0),
+      returnVat:      Number(returnsAgg[0]?.vat    ?? 0),
+      netSales:       postedRows.reduce((s, r) => s + r.totalAmount, 0)
+                        - Number(returnsAgg[0]?.amount ?? 0),
+      receiptsCount:  receiptRows.length,
+      receiptsAmount: receiptRows.reduce((s, r) => s + Number(r.amount), 0),
+    };
+
+    // ── 9. Top customers (posted only)
+    const customerAggMap = new Map<string, { customerId: number | null; invoiceCount: number; totalSales: number }>();
+    for (const r of postedRows) {
+      const key = String(r.customerId ?? "_none");
+      const cur = customerAggMap.get(key) ?? { customerId: r.customerId, invoiceCount: 0, totalSales: 0 };
+      cur.invoiceCount += 1;
+      cur.totalSales   += r.totalAmount;
+      customerAggMap.set(key, cur);
+    }
+    const topCustomers = Array.from(customerAggMap.values())
+      .map(v => {
+        const c = v.customerId ? cmap.get(v.customerId) : null;
+        return {
+          customerId:     v.customerId,
+          customerNameAr: c?.nameAr ?? "عميل نقدي",
+          customerNameEn: c?.nameEn ?? "Cash Customer",
+          invoiceCount:   v.invoiceCount,
+          totalSales:     v.totalSales,
+        };
+      })
+      .sort((a, b) => b.totalSales - a.totalSales)
+      .slice(0, 20);
+
+    // ── 10. By Sales Rep (posted only)
+    const repAggMap = new Map<string, { salesRepId: number | null; invoiceCount: number; totalSales: number }>();
+    for (const r of postedRows) {
+      const key = String(r.salesRepId ?? "_none");
+      const cur = repAggMap.get(key) ?? { salesRepId: r.salesRepId, invoiceCount: 0, totalSales: 0 };
+      cur.invoiceCount += 1;
+      cur.totalSales   += r.totalAmount;
+      repAggMap.set(key, cur);
+    }
+    const byRep = Array.from(repAggMap.values())
+      .map(v => {
+        const r = v.salesRepId ? rmap.get(v.salesRepId) : null;
+        return {
+          salesRepId:     v.salesRepId,
+          salesRepNameAr: r?.nameAr ?? "بدون مندوب",
+          salesRepNameEn: r?.nameEn ?? "No Rep",
+          invoiceCount:   v.invoiceCount,
+          totalSales:     v.totalSales,
+        };
+      })
+      .sort((a, b) => b.totalSales - a.totalSales);
+
+    // ── 11. By Branch (posted only)
+    const branchAggMap = new Map<string, { branchId: number | null; invoiceCount: number; totalSales: number }>();
+    for (const r of postedRows) {
+      const key = String(r.branchId ?? "_none");
+      const cur = branchAggMap.get(key) ?? { branchId: r.branchId, invoiceCount: 0, totalSales: 0 };
+      cur.invoiceCount += 1;
+      cur.totalSales   += r.totalAmount;
+      branchAggMap.set(key, cur);
+    }
+    const byBranch = Array.from(branchAggMap.values())
+      .map(v => {
+        const b = v.branchId ? bmap.get(v.branchId) : null;
+        return {
+          branchId:     v.branchId,
+          branchNameAr: b?.nameAr ?? "—",
+          branchNameEn: b?.nameEn ?? "—",
+          invoiceCount: v.invoiceCount,
+          totalSales:   v.totalSales,
+        };
+      })
+      .sort((a, b) => b.totalSales - a.totalSales);
+
+    // ── 12. By Hour (posted only). Hours derived from createdAt (server time).
+    const hourAggMap = new Map<number, { invoiceCount: number; totalAmount: number }>();
+    for (const r of postedRows) {
+      const h = Number(r.time.slice(0, 2));
+      if (!Number.isFinite(h)) continue;
+      const cur = hourAggMap.get(h) ?? { invoiceCount: 0, totalAmount: 0 };
+      cur.invoiceCount += 1;
+      cur.totalAmount  += r.totalAmount;
+      hourAggMap.set(h, cur);
+    }
+    const byHour = Array.from(hourAggMap.entries())
+      .map(([hour, v]) => ({ hour, ...v }))
+      .sort((a, b) => a.hour - b.hour);
+
+    // ── 13. Receipts (display rows)
+    const receipts = receiptRows.map(r => ({
+      id:          r.id,
+      code:        r.code,
+      time:        r.createdTime ?? "",
+      entityName:  r.entityName,
+      paymentType: r.paymentType,
+      amount:      Number(r.amount),
+    }));
+
+    res.json({
+      date,
+      summary,
+      invoices: invoiceRows,
+      topItems,
+      topCustomers,
+      byRep,
+      byBranch,
+      byHour,
+      receipts,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+function emptyDailySummary() {
+  return {
+    invoiceCount: 0, customerCount: 0, lineCount: 0, totalQty: 0,
+    subtotal: 0, discount: 0, vatAmount: 0, totalAmount: 0, avgInvoice: 0,
+    cashCount: 0, cashAmount: 0, bankCount: 0, bankAmount: 0,
+    creditCount: 0, creditAmount: 0,
+    returnCount: 0, returnAmount: 0, returnVat: 0, netSales: 0,
+    receiptsCount: 0, receiptsAmount: 0,
+  };
+}
 
 export default router;

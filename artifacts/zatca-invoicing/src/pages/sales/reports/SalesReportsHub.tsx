@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Users, Package,
-  CalendarRange, TrendingUp, RotateCcw, Receipt,
+  CalendarRange, TrendingUp, RotateCcw, Receipt, Sun,
 } from "lucide-react";
 
 export default function SalesReportsHub() {
@@ -12,6 +12,13 @@ export default function SalesReportsHub() {
   const ChevronIcon = isRtl ? ChevronLeft : ChevronRight;
 
   const REPORTS = [
+    {
+      href: "/sales/reports/daily",
+      title: tr("dailyTitle"),
+      desc: tr("dailyDesc"),
+      icon: Sun,
+      color: "from-yellow-50 to-yellow-100/40 text-yellow-700 border-yellow-200",
+    },
     {
       href: "/sales/reports/customer-statement",
       title: tr("customerStatementTitle"),

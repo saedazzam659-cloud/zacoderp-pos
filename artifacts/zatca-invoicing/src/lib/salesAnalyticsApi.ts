@@ -84,6 +84,65 @@ export type ReturnsByCustomerRow = {
   totalVat: number;
 };
 
+export type DailyReportSummary = {
+  invoiceCount: number; customerCount: number; lineCount: number; totalQty: number;
+  subtotal: number; discount: number; vatAmount: number; totalAmount: number; avgInvoice: number;
+  cashCount: number; cashAmount: number;
+  bankCount: number; bankAmount: number;
+  creditCount: number; creditAmount: number;
+  returnCount: number; returnAmount: number; returnVat: number; netSales: number;
+  receiptsCount: number; receiptsAmount: number;
+};
+
+export type DailyReportInvoice = {
+  id: number; docNumber: string | null; time: string;
+  customerId: number | null; customerNameAr: string; customerNameEn: string | null;
+  salesRepId: number | null; salesRepNameAr: string | null; salesRepNameEn: string | null;
+  branchId: number | null;   branchNameAr: string | null;   branchNameEn: string | null;
+  lineCount: number; totalQty: number;
+  subtotal: number; discount: number; vatAmount: number; totalAmount: number;
+  paymentType: string; status: string; zatcaStatus: string | null;
+};
+
+export type DailyReportTopItem = {
+  itemId: number | null; itemCode: string | null; itemName: string;
+  qty: number; totalSales: number; invoiceCount: number;
+};
+
+export type DailyReportTopCustomer = {
+  customerId: number | null; customerNameAr: string; customerNameEn: string | null;
+  invoiceCount: number; totalSales: number;
+};
+
+export type DailyReportByRep = {
+  salesRepId: number | null; salesRepNameAr: string; salesRepNameEn: string | null;
+  invoiceCount: number; totalSales: number;
+};
+
+export type DailyReportByBranch = {
+  branchId: number | null; branchNameAr: string; branchNameEn: string | null;
+  invoiceCount: number; totalSales: number;
+};
+
+export type DailyReportByHour = { hour: number; invoiceCount: number; totalAmount: number };
+
+export type DailyReportReceipt = {
+  id: number; code: string; time: string;
+  entityName: string | null; paymentType: string; amount: number;
+};
+
+export type DailyReport = {
+  date: string;
+  summary: DailyReportSummary;
+  invoices:     DailyReportInvoice[];
+  topItems:     DailyReportTopItem[];
+  topCustomers: DailyReportTopCustomer[];
+  byRep:        DailyReportByRep[];
+  byBranch:     DailyReportByBranch[];
+  byHour:       DailyReportByHour[];
+  receipts:     DailyReportReceipt[];
+};
+
 export const salesAnalyticsApi = {
   byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId })}`),
@@ -97,4 +156,6 @@ export const salesAnalyticsApi = {
     get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId })}`),
+  dailyReport:       (cid?: number, date?: string, branchId?: number) =>
+    get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId })}`),
 };

@@ -3311,7 +3311,9 @@
       "topCustomersTitle": "Top Customers",
       "topCustomersDesc": "Highest-value customers ranking for the selected period",
       "returnsTitle": "Sales Returns Report",
-      "returnsDesc": "Sales returns summary per customer"
+      "returnsDesc": "Sales returns summary per customer",
+      "dailyTitle": "Daily Sales Report",
+      "dailyDesc": "Full snapshot of a single day: invoices, items, customers, branches, and cash collection"
     },
     "customerStatement": {
       "title": "Customer Statement",
@@ -3535,6 +3537,85 @@
       "exportColReturnCount": "Returns Count",
       "exportColVat": "VAT",
       "exportColTotalAmount": "Total Returns"
+    },
+    "dailyReport": {
+      "title": "Daily Sales Report",
+      "subtitle": "Detailed sales activity for the selected day",
+      "date": "Date",
+      "backToToday": "Back to today",
+      "exportFilename": "daily-sales-report",
+      "exportTitle": "Daily Sales Report",
+      "exportSubtitle": "Date {{date}} — Total {{value}}",
+      "footerLabel": "Day total",
+      "kpi": {
+        "invoices": "Invoices",
+        "customersCount": "{{n}} unique customers",
+        "totalSales": "Total Sales",
+        "netAfterReturns": "Net after returns: {{v}}",
+        "vat": "VAT",
+        "subtotalLabel": "Subtotal: {{v}}",
+        "returns": "Returns",
+        "returnsCount": "{{n}} return(s)",
+        "cashSales": "Cash Sales",
+        "bankSales": "Bank/Card Sales",
+        "creditSales": "Credit Sales",
+        "receipts": "Cash Receipts",
+        "receiptsCount": "{{n}} receipt(s)",
+        "invoicesCount": "{{n}} invoice(s)"
+      },
+      "mini": {
+        "avgInvoice": "Avg invoice value",
+        "discount": "Total discount",
+        "totalLines": "Total lines",
+        "totalQty": "Total quantity"
+      },
+      "sections": {
+        "byHour": "Sales by hour",
+        "topItems": "Top selling items",
+        "topCustomers": "Top customers",
+        "byRep": "By sales rep",
+        "byBranch": "By branch",
+        "receipts": "Cash receipts collected today",
+        "invoices": "All invoices for the day"
+      },
+      "empty": {
+        "noActivity": "No sales activity in this day",
+        "noItems": "No items sold",
+        "noCustomers": "No customers",
+        "noReps": "No sales-rep activity",
+        "noBranches": "No branch activity",
+        "noReceipts": "No cash receipts",
+        "noInvoices": "No invoices on this day"
+      },
+      "rank": {
+        "qtyHint": "Qty {{qty}} — {{n}} invoice(s)",
+        "invoicesHint": "{{n}} invoice(s)"
+      },
+      "payment": {
+        "cash": "Cash",
+        "bank": "Bank/Card",
+        "credit": "Credit"
+      },
+      "status": {
+        "draft": "Draft",
+        "posted": "Posted",
+        "cancelled": "Cancelled"
+      },
+      "colInvoice": "Invoice #",
+      "colTime": "Time",
+      "colCustomer": "Customer",
+      "colRep": "Sales rep",
+      "colBranch": "Branch",
+      "colLines": "Lines",
+      "colSubtotal": "Subtotal",
+      "colDiscount": "Discount",
+      "colVat": "VAT",
+      "colTotal": "Total",
+      "colPayment": "Payment",
+      "colStatus": "Status",
+      "colReceiptCode": "Receipt #",
+      "colEntity": "Customer",
+      "colAmount": "Amount"
     }
   },
   "hrPages": {

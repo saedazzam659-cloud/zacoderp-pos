@@ -3417,7 +3417,9 @@
       "topCustomersTitle": "أفضل العملاء",
       "topCustomersDesc": "ترتيب أعلى العملاء قيمةً خلال الفترة المحددة",
       "returnsTitle": "تقرير مرتجعات المبيعات",
-      "returnsDesc": "ملخص مرتجعات المبيعات لكل عميل"
+      "returnsDesc": "ملخص مرتجعات المبيعات لكل عميل",
+      "dailyTitle": "تقرير المبيعات اليومي",
+      "dailyDesc": "لقطة كاملة عن يوم واحد: الفواتير، الأصناف، العملاء، الفروع وتحصيلات الخزينة"
     },
     "customerStatement": {
       "title": "كشف حساب عميل",
@@ -3641,6 +3643,85 @@
       "exportColReturnCount": "عدد المرتجعات",
       "exportColVat": "ض.ق.م",
       "exportColTotalAmount": "إجمالي المرتجعات"
+    },
+    "dailyReport": {
+      "title": "تقرير المبيعات اليومي",
+      "subtitle": "نشاط المبيعات بالتفصيل لليوم المحدد",
+      "date": "التاريخ",
+      "backToToday": "العودة لليوم",
+      "exportFilename": "تقرير-المبيعات-اليومي",
+      "exportTitle": "تقرير المبيعات اليومي",
+      "exportSubtitle": "تاريخ {{date}} — الإجمالي {{value}}",
+      "footerLabel": "إجمالي اليوم",
+      "kpi": {
+        "invoices": "الفواتير",
+        "customersCount": "{{n}} عميل مختلف",
+        "totalSales": "إجمالي المبيعات",
+        "netAfterReturns": "الصافي بعد المرتجعات: {{v}}",
+        "vat": "ضريبة القيمة المضافة",
+        "subtotalLabel": "بدون الضريبة: {{v}}",
+        "returns": "المرتجعات",
+        "returnsCount": "{{n}} مرتجع",
+        "cashSales": "مبيعات نقدية",
+        "bankSales": "مبيعات بنكي/شبكة",
+        "creditSales": "مبيعات آجلة",
+        "receipts": "تحصيلات الخزينة",
+        "receiptsCount": "{{n}} سند قبض",
+        "invoicesCount": "{{n}} فاتورة"
+      },
+      "mini": {
+        "avgInvoice": "متوسط قيمة الفاتورة",
+        "discount": "إجمالي الخصم",
+        "totalLines": "إجمالي البنود",
+        "totalQty": "إجمالي الكمية"
+      },
+      "sections": {
+        "byHour": "المبيعات بالساعة",
+        "topItems": "أعلى الأصناف مبيعًا",
+        "topCustomers": "أعلى العملاء",
+        "byRep": "حسب المندوب",
+        "byBranch": "حسب الفرع",
+        "receipts": "سندات القبض المحصلة اليوم",
+        "invoices": "جميع فواتير اليوم"
+      },
+      "empty": {
+        "noActivity": "لا يوجد نشاط مبيعات في هذا اليوم",
+        "noItems": "لا توجد أصناف مباعة",
+        "noCustomers": "لا يوجد عملاء",
+        "noReps": "لا يوجد نشاط للمندوبين",
+        "noBranches": "لا يوجد نشاط للفروع",
+        "noReceipts": "لا توجد سندات قبض",
+        "noInvoices": "لا توجد فواتير في هذا اليوم"
+      },
+      "rank": {
+        "qtyHint": "الكمية {{qty}} — {{n}} فاتورة",
+        "invoicesHint": "{{n}} فاتورة"
+      },
+      "payment": {
+        "cash": "نقدي",
+        "bank": "بنك/شبكة",
+        "credit": "آجل"
+      },
+      "status": {
+        "draft": "مسودة",
+        "posted": "مرحّلة",
+        "cancelled": "ملغاة"
+      },
+      "colInvoice": "رقم الفاتورة",
+      "colTime": "الوقت",
+      "colCustomer": "العميل",
+      "colRep": "المندوب",
+      "colBranch": "الفرع",
+      "colLines": "البنود",
+      "colSubtotal": "بدون الضريبة",
+      "colDiscount": "الخصم",
+      "colVat": "الضريبة",
+      "colTotal": "الإجمالي",
+      "colPayment": "الدفع",
+      "colStatus": "الحالة",
+      "colReceiptCode": "رقم السند",
+      "colEntity": "العميل",
+      "colAmount": "المبلغ"
     }
   },
   "hrPages": {
