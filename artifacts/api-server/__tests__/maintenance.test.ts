@@ -3151,6 +3151,234 @@ test("POST /maintenance/old-audit-logs/fix: honors persisted retention when body
   }
 });
 
+// The same "preview → tightened retention → no rows pruned → loosened
+// retention → rows pruned" assertion runs once per remaining cleanup tool.
+// They share the audit-log test's structure but exercise different tables:
+//
+//   • old-maintenance-runs       → maintenance_runs (per-company DELETE)
+//   • old-maintenance-email-runs → maintenance_email_runs (GLOBAL DELETE)
+//   • old-report-email-runs      → report_email_schedule_runs (GLOBAL DELETE)
+//
+// Without per-tool coverage a refactor that diverges retention plumbing for
+// just one tool (e.g. forgetting to thread the persisted setting through the
+// new fix handler, or hard-coding `req.body.days ?? 90` instead of going
+// through `resolveRetentionDays`) would only surface as a silent prune
+// regression in production. Each test scopes its mutations strictly to
+// rows it inserted (by primary key) and resets the retention row in
+// `finally` so a crash mid-test cannot bleed state into other tests.
+
+test("GET /maintenance/old-maintenance-runs + POST fix: persisted retention drives both preview and prune behavior", async () => {
+  await resetRetention("old-maintenance-runs");
+  // Seed two unambiguously-old maintenance_runs rows on dirtyCompanyId so
+  // the assertions are scoped to a known tenant and we can verify by id
+  // that the rows survive/are deleted under the two retention windows.
+  const oldAt = new Date(Date.now() - 120 * 86_400_000);
+  const seeded = await db.insert(maintenanceRunsTable).values([
+    { companyId: dirtyCompanyId, toolKey: "journal-pending", status: "ok",
+      count: 0, trigger: "scheduled", runAt: oldAt, durationMs: 5,
+      error: null, details: null },
+    { companyId: dirtyCompanyId, toolKey: "broken-refs", status: "warn",
+      count: 1, trigger: "scheduled", runAt: oldAt, durationMs: 7,
+      error: null, details: null },
+  ]).returning({ id: maintenanceRunsTable.id });
+  const seededIds = seeded.map(r => r.id);
+  insertedMaintenanceRunIds.push(...seededIds);
+
+  try {
+    // Tighten retention so the 120-day-old rows are INSIDE the safe window.
+    await api("/api/admin/maintenance/retention-settings/old-maintenance-runs", "PUT",
+      { token: saToken, body: { days: 3000 } });
+
+    const tightPreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-maintenance-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(tightPreview.status, 200);
+    assert.equal(tightPreview.body.days, 3000,
+      "GET preview must echo the persisted retention as the resolved `days`");
+
+    const fixSafe = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-maintenance-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixSafe.status, 200);
+    const stillThereSafe = await db.select({ id: maintenanceRunsTable.id })
+      .from(maintenanceRunsTable)
+      .where(inArray(maintenanceRunsTable.id, seededIds));
+    assert.equal(stillThereSafe.length, 2,
+      "rows must survive a prune that uses the persisted 3000d retention");
+
+    // Loosen retention to 30d → the 120-day-old rows now exit the safe window.
+    await api("/api/admin/maintenance/retention-settings/old-maintenance-runs", "PUT",
+      { token: saToken, body: { days: 30 } });
+
+    const loosePreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-maintenance-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(loosePreview.status, 200);
+    assert.equal(loosePreview.body.days, 30);
+    assert.ok(loosePreview.body.count >= tightPreview.body.count + 2,
+      `loosened preview count must include the seeded rows; tight=${tightPreview.body.count} loose=${loosePreview.body.count}`);
+
+    const fixAggressive = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-maintenance-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixAggressive.status, 200);
+    const stillThereAggressive = await db.select({ id: maintenanceRunsTable.id })
+      .from(maintenanceRunsTable)
+      .where(inArray(maintenanceRunsTable.id, seededIds));
+    assert.equal(stillThereAggressive.length, 0,
+      "seeded rows must be deleted once the retention is lowered to 30d");
+  } finally {
+    await resetRetention("old-maintenance-runs");
+  }
+});
+
+test("GET /maintenance/old-maintenance-email-runs + POST fix: persisted retention drives both preview and prune behavior", async () => {
+  await resetRetention("old-maintenance-email-runs");
+  // The maintenance_email_runs table is GLOBAL — there is no company_id
+  // column. We seed by id and assert pre/post fix purely through id-based
+  // DB selects so concurrent test rows on a shared DB cannot perturb the
+  // assertion. The companyId in the request is required by maintGuard but
+  // does not narrow either the SELECT or the DELETE in admin.ts.
+  const oldAt = new Date(Date.now() - 120 * 86_400_000);
+  const seeded = await db.insert(maintenanceEmailRunsTable).values([
+    { ranAt: oldAt, trigger: "scheduled", status: "ok",
+      recipients: 1, criticalCount: 0,
+      error: null, reason: "digest_sent",
+      criticalSignature: `${TEST_TAG}_old_maint_ret_a` },
+    { ranAt: oldAt, trigger: "scheduled", status: "ok",
+      recipients: 1, criticalCount: 0,
+      error: null, reason: "digest_sent",
+      criticalSignature: `${TEST_TAG}_old_maint_ret_b` },
+  ]).returning({ id: maintenanceEmailRunsTable.id });
+  const seededIds = seeded.map(r => r.id);
+  insertedMaintenanceEmailRunIds.push(...seededIds);
+
+  try {
+    await api("/api/admin/maintenance/retention-settings/old-maintenance-email-runs", "PUT",
+      { token: saToken, body: { days: 3000 } });
+
+    const tightPreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-maintenance-email-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(tightPreview.status, 200);
+    assert.equal(tightPreview.body.days, 3000,
+      "GET preview must echo the persisted retention as the resolved `days`");
+
+    const fixSafe = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-maintenance-email-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixSafe.status, 200);
+    const stillThereSafe = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(inArray(maintenanceEmailRunsTable.id, seededIds));
+    assert.equal(stillThereSafe.length, 2,
+      "rows must survive a prune that uses the persisted 3000d retention");
+
+    await api("/api/admin/maintenance/retention-settings/old-maintenance-email-runs", "PUT",
+      { token: saToken, body: { days: 30 } });
+
+    const loosePreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-maintenance-email-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(loosePreview.status, 200);
+    assert.equal(loosePreview.body.days, 30);
+    assert.ok(loosePreview.body.count >= tightPreview.body.count + 2,
+      `loosened preview count must include the seeded rows; tight=${tightPreview.body.count} loose=${loosePreview.body.count}`);
+
+    const fixAggressive = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-maintenance-email-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixAggressive.status, 200);
+    const stillThereAggressive = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(inArray(maintenanceEmailRunsTable.id, seededIds));
+    assert.equal(stillThereAggressive.length, 0,
+      "seeded rows must be deleted once the retention is lowered to 30d");
+  } finally {
+    await resetRetention("old-maintenance-email-runs");
+  }
+});
+
+test("GET /maintenance/old-report-email-runs + POST fix: persisted retention drives both preview and prune behavior", async () => {
+  await resetRetention("old-report-email-runs");
+  // The report_email_schedule_runs table is GLOBAL — there is no company_id
+  // column AND the test fixture has no `insertedReportEmailRunIds` cleanup
+  // array. We delete the seeded rows manually in `finally` so any survivors
+  // (under the tight-retention prune) don't leak into other tests on a
+  // shared DB.
+  const oldAt = new Date(Date.now() - 120 * 86_400_000);
+  const seeded = await db.insert(reportEmailScheduleRunsTable).values([
+    { ranAt: oldAt, trigger: "scheduled", status: "ok",
+      reports: ["operational-summary"], recipients: 1,
+      message: `${TEST_TAG}_old_report_ret_a` },
+    { ranAt: oldAt, trigger: "scheduled", status: "ok",
+      reports: ["operational-summary"], recipients: 1,
+      message: `${TEST_TAG}_old_report_ret_b` },
+  ]).returning({ id: reportEmailScheduleRunsTable.id });
+  const seededIds = seeded.map(r => r.id);
+
+  try {
+    await api("/api/admin/maintenance/retention-settings/old-report-email-runs", "PUT",
+      { token: saToken, body: { days: 3000 } });
+
+    const tightPreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-report-email-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(tightPreview.status, 200);
+    assert.equal(tightPreview.body.days, 3000,
+      "GET preview must echo the persisted retention as the resolved `days`");
+
+    const fixSafe = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-report-email-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixSafe.status, 200);
+    const stillThereSafe = await db.select({ id: reportEmailScheduleRunsTable.id })
+      .from(reportEmailScheduleRunsTable)
+      .where(inArray(reportEmailScheduleRunsTable.id, seededIds));
+    assert.equal(stillThereSafe.length, 2,
+      "rows must survive a prune that uses the persisted 3000d retention");
+
+    await api("/api/admin/maintenance/retention-settings/old-report-email-runs", "PUT",
+      { token: saToken, body: { days: 30 } });
+
+    const loosePreview = await api<{ count: number; days: number }>(
+      `/api/admin/maintenance/old-report-email-runs?companyId=${dirtyCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(loosePreview.status, 200);
+    assert.equal(loosePreview.body.days, 30);
+    assert.ok(loosePreview.body.count >= tightPreview.body.count + 2,
+      `loosened preview count must include the seeded rows; tight=${tightPreview.body.count} loose=${loosePreview.body.count}`);
+
+    const fixAggressive = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-report-email-runs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixAggressive.status, 200);
+    const stillThereAggressive = await db.select({ id: reportEmailScheduleRunsTable.id })
+      .from(reportEmailScheduleRunsTable)
+      .where(inArray(reportEmailScheduleRunsTable.id, seededIds));
+    assert.equal(stillThereAggressive.length, 0,
+      "seeded rows must be deleted once the retention is lowered to 30d");
+  } finally {
+    await resetRetention("old-report-email-runs");
+    // Belt-and-brace: any survivors from the tight-retention pass must be
+    // removed by id so they don't bleed into other tests on a shared DB.
+    await db.delete(reportEmailScheduleRunsTable)
+      .where(inArray(reportEmailScheduleRunsTable.id, seededIds));
+  }
+});
+
 test("PUT /maintenance/retention-settings: writes an audit-log row with action=edit_retention", async () => {
   await resetRetention("old-maintenance-runs");
   // Capture the highest existing id BEFORE the PUT so we only inspect rows
