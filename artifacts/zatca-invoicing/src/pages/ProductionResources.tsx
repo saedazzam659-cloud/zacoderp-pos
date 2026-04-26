@@ -1,0 +1,271 @@
+import { useEffect, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { Plus, Trash2, Pencil, Cog } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
+import ProductionAIAssistant from "@/components/ProductionAIAssistant";
+
+const API = import.meta.env.VITE_API_URL || "";
+const TYPES = ["machine", "line", "station"] as const;
+const STATUSES = ["available", "busy", "maintenance", "offline"] as const;
+
+type Resource = {
+  id: number;
+  name: string;
+  type: string;
+  status: string;
+  capacityPerHour: string | null;
+  notes: string | null;
+};
+
+const STATUS_TONES: Record<string, string> = {
+  available: "bg-emerald-100 text-emerald-700",
+  busy: "bg-amber-100 text-amber-800",
+  maintenance: "bg-blue-100 text-blue-700",
+  offline: "bg-slate-100 text-slate-700",
+};
+
+export default function ProductionResources() {
+  const { t } = useTranslation();
+  const { token } = useAuth() as any;
+  const { toast } = useToast();
+  const [rows, setRows] = useState<Resource[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<Resource | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    type: "machine",
+    status: "available",
+    capacityPerHour: "",
+    notes: "",
+  });
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/production/resources`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRows(await r.json());
+    } catch (e: any) {
+      toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [token, t, toast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  function openCreate() {
+    setEditing(null);
+    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", notes: "" });
+    setOpen(true);
+  }
+  function openEdit(r: Resource) {
+    setEditing(r);
+    setForm({
+      name: r.name,
+      type: r.type,
+      status: r.status,
+      capacityPerHour: r.capacityPerHour ?? "",
+      notes: r.notes ?? "",
+    });
+    setOpen(true);
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) {
+      toast({ title: t("production.errorOccurred"), description: t("production.resourceName"), variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = {
+        name: form.name.trim(),
+        type: form.type,
+        status: form.status,
+        capacityPerHour: Number(form.capacityPerHour) || 0,
+        notes: form.notes || null,
+      };
+      const r = await fetch(
+        editing ? `${API}/api/production/resources/${editing.id}` : `${API}/api/production/resources`,
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      toast({ title: `✓ ${t("production.saved")}` });
+      setOpen(false);
+      void load();
+    } catch (e: any) {
+      toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function del(id: number) {
+    if (!confirm(t("production.confirmDelete"))) return;
+    try {
+      const r = await fetch(`${API}/api/production/resources/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || `HTTP ${r.status}`);
+      }
+      toast({ title: `✓ ${t("production.deleted")}` });
+      void load();
+    } catch (e: any) {
+      toast({ title: t("production.errorOccurred"), description: e?.message, variant: "destructive" });
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-gradient-to-br from-indigo-500 to-blue-500 p-2 text-white shadow">
+            <Cog className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">{t("production.resources")}</h1>
+            <p className="text-sm text-slate-500">{t("production.subtitle")}</p>
+          </div>
+        </div>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={openCreate} data-testid="btn-new-resource">
+              <Plus className="h-4 w-4 me-1" />
+              {t("production.addResource")}
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editing ? t("common.edit") : t("production.addResource")}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={save} className="space-y-3">
+              <div>
+                <Label>{t("production.resourceName")}</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required data-testid="input-res-name" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>{t("production.resourceType")}</Label>
+                  <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {TYPES.map((tp) => (
+                        <SelectItem key={tp} value={tp}>{t(`production.type_${tp}`)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>{t("production.status")}</Label>
+                  <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>{t(`production.resourceStatus_${s}`)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label>{t("production.capacityPerHour")}</Label>
+                <Input
+                  type="number" step="0.01"
+                  value={form.capacityPerHour}
+                  onChange={(e) => setForm({ ...form, capacityPerHour: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>{t("production.notes")}</Label>
+                <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>{t("common.cancel")}</Button>
+                <Button type="submit" disabled={saving} data-testid="btn-save-res">
+                  {saving ? t("common.loading") : t("common.save")}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <div className="rounded-lg border bg-white dark:bg-slate-900">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-800">
+                <tr>
+                  <th className="text-start p-3">{t("production.resourceName")}</th>
+                  <th className="text-start p-3">{t("production.resourceType")}</th>
+                  <th className="text-start p-3">{t("production.status")}</th>
+                  <th className="text-end p-3">{t("production.capacityPerHour")}</th>
+                  <th className="p-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && rows === null && (
+                  <tr><td colSpan={5} className="p-3"><Skeleton className="h-6 w-full" /></td></tr>
+                )}
+                {!loading && (rows ?? []).length === 0 && (
+                  <tr><td colSpan={5} className="p-8 text-center text-slate-500">{t("production.noResources")}</td></tr>
+                )}
+                {(rows ?? []).map((r) => (
+                  <tr key={r.id} className="border-t" data-testid={`row-res-${r.id}`}>
+                    <td className="p-3 font-medium">{r.name}</td>
+                    <td className="p-3 text-xs">{t(`production.type_${r.type}`)}</td>
+                    <td className="p-3">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_TONES[r.status] ?? "bg-slate-100"}`}>
+                        {t(`production.resourceStatus_${r.status}`)}
+                      </span>
+                    </td>
+                    <td className="p-3 text-end">{Number(r.capacityPerHour ?? 0).toLocaleString()}</td>
+                    <td className="p-3 text-end space-x-1 rtl:space-x-reverse">
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(r)} data-testid={`btn-edit-res-${r.id}`}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => del(r.id)} data-testid={`btn-del-res-${r.id}`}>
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <ProductionAIAssistant
+            screenContext="production.resources"
+            currentAction="managing machines and resources"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

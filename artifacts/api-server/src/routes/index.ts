@@ -47,6 +47,7 @@ import auditLogRouter from "./audit-log";
 import sequencesRouter from "./sequences";
 import offersRouter from "./offers";
 import adminModulesRouter from "./adminModules";
+import productionRouter from "./production";
 
 const router: IRouter = Router();
 
@@ -78,6 +79,7 @@ router.use("/payment-vouchers",   paymentVouchersRouter);
 router.use("/cash-transfers",     cashTransfersRouter);
 router.use("/cash-analytics",     cashAnalyticsRouter);
 router.use("/ai",                 aiRouter);
+router.use("/production",         productionRouter);
 router.use("/users",              usersRouter);
 router.use("/fiscal",             fiscalPeriodsRouter);
 router.use("/cost-centers",       costCentersRouter);

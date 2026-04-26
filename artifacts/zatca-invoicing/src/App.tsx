@@ -56,6 +56,10 @@ import EmployeeLoans from "@/pages/hr/EmployeeLoans";
 import Payroll from "@/pages/hr/Payroll";
 import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
+import ProductionDashboard from "@/pages/ProductionDashboard";
+import ProductionOrders from "@/pages/ProductionOrders";
+import ProductionOrderDetail from "@/pages/ProductionOrderDetail";
+import ProductionResources from "@/pages/ProductionResources";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -276,6 +280,11 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
             {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}
             {!isSuperAdmin && <PermRoute path="/hr/settings"                module="hr_settings"    component={HRSettings} />}
+
+            {!isSuperAdmin && <PermRoute path="/production"                  module="production"     component={ProductionDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/production/orders"           module="production"     component={ProductionOrders} />}
+            {!isSuperAdmin && <PermRoute path="/production/orders/:id"       module="production"     component={ProductionOrderDetail} />}
+            {!isSuperAdmin && <PermRoute path="/production/resources"        module="production"     component={ProductionResources} />}
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

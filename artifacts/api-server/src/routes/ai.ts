@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, warehousesTable, customersTable, suppliersTable } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import {
+  accountsTable, warehousesTable, customersTable, suppliersTable,
+  productionOrdersTable, productionOrderItemsTable, productionEventsTable,
+  productionResourcesTable,
+} from "@workspace/db";
+import { and, eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
@@ -1827,6 +1831,206 @@ ${JSON.stringify(lines.map((l, i) => ({ row: i + 1, ...l })), null, 2)}
     } catch { res.json(fallback()); }
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// PRODUCTION ASSISTANT — context-aware screen explainer & action suggester.
+//
+// Accepts a screen_context tag (e.g. "production.orders.list") plus an
+// optional natural-language user message and an optional order_id. When
+// an order_id is provided, the endpoint loads a compact snapshot of the
+// order, its items, and recent events to give the model rich context.
+// Always responds with a strict JSON shape so the client can render the
+// 4 sections deterministically. Falls back to a deterministic explanation
+// when the AI service is unavailable, so the UI is never empty.
+// ─────────────────────────────────────────────────────────────────────────
+router.post("/assist", async (req, res) => {
+  try {
+    const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
+    const userMessage = String(req.body?.user_message ?? "").slice(0, 1000);
+    const screenContext = String(req.body?.screen_context ?? "").slice(0, 200);
+    const currentAction = String(req.body?.current_action ?? "").slice(0, 200);
+    const orderId = req.body?.order_id ? Number(req.body.order_id) : null;
+    const lang = String(req.body?.lang ?? "ar");
+
+    // Load order snapshot if requested AND user is allowed to see it.
+    let snapshot: any = null;
+    if (cid && orderId) {
+      const [order] = await db
+        .select()
+        .from(productionOrdersTable)
+        .where(
+          and(
+            eq(productionOrdersTable.id, orderId),
+            eq(productionOrdersTable.companyId, cid),
+          ),
+        );
+      if (order) {
+        const items = await db
+          .select()
+          .from(productionOrderItemsTable)
+          .where(eq(productionOrderItemsTable.orderId, orderId));
+        const events = await db
+          .select()
+          .from(productionEventsTable)
+          .where(eq(productionEventsTable.orderId, orderId))
+          .orderBy(desc(productionEventsTable.createdAt))
+          .limit(15);
+        let resourceName: string | null = null;
+        if (order.resourceId) {
+          // HIGH fix #3 — enforce companyId on the resource lookup so a
+          // tampered/foreign resourceId can NEVER leak another tenant's name.
+          const [r] = await db
+            .select({ name: productionResourcesTable.name })
+            .from(productionResourcesTable)
+            .where(
+              and(
+                eq(productionResourcesTable.id, order.resourceId),
+                eq(productionResourcesTable.companyId, cid),
+              ),
+            );
+          resourceName = r?.name ?? null;
+        }
+        snapshot = {
+          orderNumber: order.orderNumber,
+          title: order.title,
+          status: order.status,
+          plannedQty: order.plannedQty,
+          producedQty: order.producedQty,
+          wasteQty: order.wasteQty,
+          unitCode: order.unitCode,
+          estimatedCost: order.estimatedCost,
+          actualCost: order.actualCost,
+          resourceName,
+          itemCount: items.length,
+          itemsBreakdown: items.reduce<Record<string, number>>((acc, it) => {
+            acc[it.kind] = (acc[it.kind] ?? 0) + 1;
+            return acc;
+          }, {}),
+          recentEvents: events.map((e) => ({
+            type: e.eventType,
+            at: e.createdAt,
+            byAi: e.byAi,
+          })),
+        };
+      }
+    }
+
+    // Deterministic fallback used when AI is unavailable OR raises an error.
+    const screenLabels: Record<string, { ar: string; en: string }> = {
+      "production.orders.list": {
+        ar: "قائمة أوامر الإنتاج",
+        en: "Production orders list",
+      },
+      "production.orders.detail": {
+        ar: "تفاصيل أمر الإنتاج",
+        en: "Production order detail",
+      },
+      "production.resources": {
+        ar: "موارد الإنتاج (الماكينات والخطوط)",
+        en: "Production resources (machines & lines)",
+      },
+      "production.dashboard": {
+        ar: "لوحة معلومات الإنتاج",
+        en: "Production dashboard",
+      },
+    };
+    const label = screenLabels[screenContext] ?? {
+      ar: "هذه الشاشة",
+      en: "this screen",
+    };
+    const fallback = () => {
+      if (lang === "en") {
+        return {
+          explanation: `${label.en} lets you manage production work end-to-end: create an order, add raw materials, assign a machine, then move the order through the workflow (draft → approved → in production → quality check → completed).`,
+          suggestion: snapshot
+            ? `Order ${snapshot.orderNumber} is currently in "${snapshot.status}". Make sure all raw materials are listed and a resource is assigned before approving.`
+            : "Start by creating a new order with the planned quantity, then add the raw materials it consumes.",
+          next_step:
+            "Click the status button on the right to advance the order to the next stage when ready.",
+          warning_if_any:
+            snapshot && Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
+              ? "Waste was recorded but no produced quantity yet — double-check the run."
+              : "",
+          source: "fallback" as const,
+        };
+      }
+      return {
+        explanation: `${label.ar} يتيح لك إدارة دورة الإنتاج كاملةً: إنشاء أمر، إضافة الخامات، تخصيص الماكينة، ثم تمرير الأمر بين الحالات (مسودة ← معتمد ← قيد الإنتاج ← فحص الجودة ← مكتمل).`,
+        suggestion: snapshot
+          ? `الأمر ${snapshot.orderNumber} حالته الآن "${snapshot.status}". تأكد من إدراج كل الخامات وتخصيص مورد قبل الاعتماد.`
+          : "ابدأ بإنشاء أمر إنتاج جديد مع الكمية المخططة، ثم أضف الخامات التي يستهلكها.",
+        next_step:
+          "اضغط زر الحالة على اليسار لتمرير الأمر إلى المرحلة التالية عندما يصبح جاهزاً.",
+        warning_if_any:
+          snapshot && Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
+            ? "تم تسجيل كمية هالك بدون أي إنتاج فعلي — راجع التشغيلة."
+            : "",
+        source: "fallback" as const,
+      };
+    };
+
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.json(fallback());
+      return;
+    }
+
+    const sysPrompt =
+      lang === "en"
+        ? "You are an embedded assistant inside a Saudi ERP's manufacturing module. You explain the screen the user is on, suggest the next concrete step, and flag risks. Always reply with a JSON object containing exactly these fields: explanation, suggestion, next_step, warning_if_any. Be concise (2-3 sentences per field max). Use practical, business-friendly language — no jargon."
+        : "أنت مساعد ذكي مدمج داخل وحدة التصنيع في نظام ERP سعودي. مهمتك شرح الشاشة التي يقف عندها المستخدم، اقتراح الخطوة التالية الملموسة، وتنبيهه من أي مخاطرة. ترد دائماً بـ JSON بهذا الشكل بالضبط: explanation, suggestion, next_step, warning_if_any. كن مختصراً (٢-٣ جمل لكل حقل كحد أقصى) واستخدم لغة عملية مفهومة بدون مصطلحات تقنية.";
+
+    const userPrompt = JSON.stringify(
+      {
+        screen_context: screenContext,
+        current_action: currentAction,
+        user_message: userMessage,
+        order_snapshot: snapshot,
+      },
+      null,
+      2,
+    );
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 1024,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!r.ok) {
+      res.json(fallback());
+      return;
+    }
+    const data = await r.json();
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+    } catch {
+      res.json(fallback());
+      return;
+    }
+    const fb = fallback();
+    res.json({
+      explanation: String(parsed.explanation ?? fb.explanation),
+      suggestion: String(parsed.suggestion ?? fb.suggestion),
+      next_step: String(parsed.next_step ?? fb.next_step),
+      warning_if_any: String(parsed.warning_if_any ?? fb.warning_if_any ?? ""),
+      source: "ai" as const,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "AI assistant error" });
   }
 });
 

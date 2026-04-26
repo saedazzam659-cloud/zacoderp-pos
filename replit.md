@@ -34,6 +34,7 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 - **Backup Operations:** SuperAdmin screen for backup health, manual/scheduled backups, and restore functionality.
 - **Cross-Company Report Email Scheduling:** SuperAdmin Reports Hub allows weekly/monthly auto-emailing of selected cross-company CSV reports.
 - **AI-Powered Features:** Voucher suggestions, data import/export with AI mapping, system auto-discovery for analysis, and a maintenance scheduler with 11 checks.
+    - **Production / Manufacturing:** Multi-tenant, branch-scoped manufacturing module with production orders (status workflow: draft → approved → in_production → quality_check → completed/cancelled), order line items (raw / product / byproduct), production resources (machines/lines/stations), and a full event timeline (`production_events`). Includes an embedded **AI Production Assistant** (`/api/ai/assist`) that explains screens, suggests next actions, and surfaces warnings; uses the existing OpenAI proxy with a deterministic AR/EN fallback so the panel always renders.
 
 **System Design Choices:**
 - **Modular Monorepo:** Promotes code reusability and separation of concerns.

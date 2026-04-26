@@ -13,6 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
+  Factory, Cog,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,16 @@ const HR_GROUP_PERMS = [
   "hr_employees", "hr_attendance", "hr_loans", "hr_payroll",
   "hr_eos", "hr_calculators", "hr_settings",
 ];
+// ── Production / Manufacturing submenu ──────────────────────────────────
+// Sub-items live under the "نظام الإنتاج والتصنيع" collapsible group. The
+// group uses a single `production` permission key — admins/superadmins
+// always see it; tenant users need permissions.production.view = true.
+const productionSubNav: NavDef[] = [
+  { nameKey: "nav.productionDashboard", href: "/production",           icon: BarChart3, permKey: "production", exact: true },
+  { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, permKey: "production" },
+  { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
+];
+const PRODUCTION_GROUP_PERMS = ["production"];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
@@ -803,6 +814,42 @@ function HrNavGroup({
   );
 }
 
+// ─── ProductionNavGroup ──────────────────────────────────────────────────────
+// Collapsible "نظام الإنتاج والتصنيع" group — mirrors HrNavGroup but gated
+// by a single `production` permission key. Visible to all admins/superadmins.
+function ProductionNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, PRODUCTION_GROUP_PERMS)) return null;
+  const isOnSub = productionSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <button onClick={onToggle} className={cn(
+        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        isOnSub && !open
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}>
+        <Factory className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-start">{t("nav.productionGroup")}</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {productionSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -834,6 +881,8 @@ function SidebarInner({
   onAccountingToggle,
   hrOpen,
   onHrToggle,
+  productionOpen,
+  onProductionToggle,
   onNavigate,
   onLogout,
 }: {
@@ -865,6 +914,8 @@ function SidebarInner({
   onAccountingToggle: () => void;
   hrOpen: boolean;
   onHrToggle: () => void;
+  productionOpen: boolean;
+  onProductionToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -1038,6 +1089,15 @@ function SidebarInner({
             )}
 
             <div className="space-y-0.5">
+              <ProductionNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={productionOpen}
+                onToggle={onProductionToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
               <ReportsNavGroup
                 location={location}
                 onNavigate={onNavigate}
@@ -1180,6 +1240,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...inventoryReportsSubNav.map(i => ({ ...i, parent: "/inventory/reports" })),
     ...companyBusinessNav,
     ...hrSubNav,
+    ...productionSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -1395,6 +1456,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [cashReportsOpen, setCashReportsOpen] = useState(() => location.startsWith("/cash/reports"));
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
+  const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -1411,6 +1473,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleCashReportsToggle = () => setCashReportsOpen(v => !v);
   const handleAccountingToggle = () => setAccountingOpen(v => !v);
   const handleHrToggle         = () => setHrOpen(v => !v);
+  const handleProductionToggle = () => setProductionOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -1442,6 +1505,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onAccountingToggle: handleAccountingToggle,
     hrOpen,
     onHrToggle: handleHrToggle,
+    productionOpen,
+    onProductionToggle: handleProductionToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };
