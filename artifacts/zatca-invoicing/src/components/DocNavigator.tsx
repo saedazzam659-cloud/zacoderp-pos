@@ -57,6 +57,16 @@ export function DocNavigator({
   const navIndex = Number.isFinite(cur) ? sorted.findIndex(it => Number(it.id) === cur) : -1;
   const prev = navIndex >= 0 && navIndex < sorted.length - 1 ? sorted[navIndex + 1] : null;
   const next = navIndex > 0 ? sorted[navIndex - 1] : null;
+  // Position counter: "5 / 23" when on a known doc, else just the total "23"
+  // (locale-aware digits — Arabic-Indic in RTL, ASCII in English).
+  const totalCount = sorted.length;
+  const posLocale = isRtl ? "ar-SA" : "en-US";
+  const positionLabel = navIndex >= 0
+    ? t("docNavigator.position", {
+        current: (navIndex + 1).toLocaleString(posLocale),
+        total: totalCount.toLocaleString(posLocale),
+      })
+    : t("docNavigator.total", { total: totalCount.toLocaleString(posLocale) });
 
   const comboItems = sorted.map(it => ({
     value: String(it.id),
@@ -85,6 +95,13 @@ export function DocNavigator({
         {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
         <span className="text-xs">{t("docNavigator.prev")}</span>
       </Button>
+      <span
+        className="text-xs text-muted-foreground tabular-nums whitespace-nowrap select-none"
+        title={positionLabel}
+        data-testid="doc-navigator-counter"
+      >
+        {positionLabel}
+      </span>
       <div className="w-64 max-w-[60vw]">
         <SearchCombobox
           items={comboItems}

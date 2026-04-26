@@ -4732,6 +4732,8 @@
     "prev": "السابق",
     "next": "التالي",
     "prevDisabled": "أنت في أقدم مستند",
-    "nextDisabled": "أنت في أحدث مستند"
+    "nextDisabled": "أنت في أحدث مستند",
+    "position": "{{current}} / {{total}}",
+    "total": "{{total}} مستند"
   }
 }

@@ -4626,6 +4626,8 @@
     "prev": "Previous",
     "next": "Next",
     "prevDisabled": "You're at the oldest document",
-    "nextDisabled": "You're at the newest document"
+    "nextDisabled": "You're at the newest document",
+    "position": "{{current}} / {{total}}",
+    "total": "{{total}} docs"
   }
 }
