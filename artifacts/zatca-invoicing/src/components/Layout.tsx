@@ -1451,12 +1451,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [dashboardOpen, setDashboardOpen]     = useState(() =>
     ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
   );
-  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/reports"));
+  // Reports are nested INSIDE the inventory group, so any /inventory/* route
+  // (including /inventory/reports/*) auto-expands the parent.
+  const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
   const [purchasingOpen, setPurchasingOpen]   = useState(() => (location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
   const [purchasingReportsOpen, setPurchasingReportsOpen] = useState(() => location.startsWith("/purchasing/reports"));
-  const [salesOpen,      setSalesOpen]        = useState(() => (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers"));
+  // Sales reports are nested INSIDE the sales group, so any /sales/* route
+  // (including /sales/reports/*) auto-expands the parent.
+  const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
   const [salesReportsOpen, setSalesReportsOpen] = useState(() => location.startsWith("/sales/reports"));
   const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash") && !location.startsWith("/cash/reports"));
   const [cashReportsOpen, setCashReportsOpen] = useState(() => location.startsWith("/cash/reports"));
