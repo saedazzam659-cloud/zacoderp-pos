@@ -4896,6 +4896,17 @@ test("GET /maintenance/history: ?format=csv pins content-type, exact Arabic head
   assert.equal(csvA.status, 200, `expected 200, got ${csvA.status}: ${csvA.text.slice(0, 200)}`);
   assert.match(csvA.headers.get("content-type") ?? "", /text\/csv/i, "Content-Type must be text/csv");
 
+  // Content-Disposition filename starts with the documented prefix so the
+  // file an SA hands engineering can be matched by name back to the exact
+  // company it was exported from. Mirrors the tool-history CSV test's pin
+  // — drop the companyId or rename the prefix and this trips.
+  const dispositionA = csvA.headers.get("content-disposition") ?? "";
+  assert.match(
+    dispositionA,
+    new RegExp(`attachment;\\s*filename="maintenance-history-${historyCompanyId}-`),
+    `Content-Disposition must start with the documented prefix, got: ${dispositionA}`,
+  );
+
   // EXACT header row, in the documented order. Captures both a column
   // rename AND a column reorder in a single assertion. The route prepends
   // a UTF-8 BOM (Excel needs it for Arabic) — strip it before splitting.
