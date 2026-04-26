@@ -389,12 +389,15 @@ router.get("/customer-statement-detailed", async (req, res) => {
     }
     const opening = await sumPriorTo(from);
 
-    // Header rows in date range.
+    // Header rows in date range. Unlike the simple /customer-statement (A/R-only),
+    // the DETAILED report shows EVERY posted invoice/return — cash, bank and credit —
+    // because users want to audit all movement for the customer, not just open A/R.
+    // Cash/bank documents are rendered with equal debit & credit so the running
+    // balance still tracks A/R correctly (they self-settle at point of sale).
     const invConds: any[] = [
       eq(salesInvoicesTable.companyId, cid),
       eq(salesInvoicesTable.customerId, ccid),
       eq(salesInvoicesTable.status, "posted"),
-      eq(salesInvoicesTable.paymentType, "credit"),
     ];
     pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
     if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
@@ -405,13 +408,13 @@ router.get("/customer-statement-detailed", async (req, res) => {
       subtotal: salesInvoicesTable.subtotal, vatAmount: salesInvoicesTable.vatAmount,
       discountAmount: salesInvoicesTable.discountAmount,
       priceIncludesVat: salesInvoicesTable.priceIncludesVat,
+      paymentType: salesInvoicesTable.paymentType,
     }).from(salesInvoicesTable).where(and(...invConds));
 
     const retConds: any[] = [
       eq(salesReturnsTable.companyId, cid),
       eq(salesReturnsTable.customerId, ccid),
       eq(salesReturnsTable.status, "posted"),
-      eq(salesReturnsTable.paymentType, "credit"),
     ];
     pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
     if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
@@ -421,6 +424,7 @@ router.get("/customer-statement-detailed", async (req, res) => {
       docNumber: salesReturnsTable.docNumber, total: salesReturnsTable.totalAmount,
       vatAmount: salesReturnsTable.vatAmount, discountAmount: salesReturnsTable.discountAmount,
       priceIncludesVat: salesReturnsTable.priceIncludesVat,
+      paymentType: salesReturnsTable.paymentType,
     }).from(salesReturnsTable).where(and(...retConds));
 
     const recConds: any[] = [
@@ -479,16 +483,18 @@ router.get("/customer-statement-detailed", async (req, res) => {
     // Cash boxes / bank accounts referenced by receipts (for friendly names).
     const cbIds  = Array.from(new Set(recs.map(r => r.cashBoxId).filter((x): x is number => !!x)));
     const baIds  = Array.from(new Set(recs.map(r => r.bankAccountId).filter((x): x is number => !!x)));
+    // cash_boxes / bank_accounts store names in name_ar / name_en (no plain `name`).
+    // Prefer Arabic, fall back to English so legacy rows always render.
     const cbRows = cbIds.length
-      ? await db.select({ id: cashBoxesTable.id, name: cashBoxesTable.name })
+      ? await db.select({ id: cashBoxesTable.id, nameAr: cashBoxesTable.nameAr, nameEn: cashBoxesTable.nameEn })
           .from(cashBoxesTable).where(inArray(cashBoxesTable.id, cbIds))
       : [];
     const baRows = baIds.length
-      ? await db.select({ id: bankAccountsTable.id, name: bankAccountsTable.name })
+      ? await db.select({ id: bankAccountsTable.id, nameAr: bankAccountsTable.nameAr, nameEn: bankAccountsTable.nameEn })
           .from(bankAccountsTable).where(inArray(bankAccountsTable.id, baIds))
       : [];
-    const cbName = new Map(cbRows.map(r => [r.id, r.name]));
-    const baName = new Map(baRows.map(r => [r.id, r.name]));
+    const cbName = new Map(cbRows.map(r => [r.id, r.nameAr || r.nameEn || ""]));
+    const baName = new Map(baRows.map(r => [r.id, r.nameAr || r.nameEn || ""]));
 
     // Group child lines by parent id and compute per-line VAT honouring
     // the parent's price_includes_vat flag.
@@ -531,28 +537,56 @@ router.get("/customer-statement-detailed", async (req, res) => {
     type DetailedLine = {
       id: number; date: string; type: string; docNumber: string | null;
       debit: number; credit: number; description: string;
+      paymentType?: string | null;
       // Embedded drilldown payload (lines for invoice/return, meta for receipt).
       lines?: any[]; meta?: any;
       vatAmount?: number; discountAmount?: number;
     };
+    // Customer ledger sign convention: invoice = debit, return/receipt = credit.
+    // For cash/bank invoices and returns, we set debit = credit = total so the
+    // running A/R balance is unchanged (these documents self-settle), but the
+    // user still sees the full transaction with line-item drilldown.
+    const invDesc = (pt: string | null) =>
+      pt === "credit" ? "فاتورة مبيعات آجلة"
+      : pt === "bank" ? "فاتورة مبيعات (تحويل بنكي)"
+      : "فاتورة مبيعات نقدية";
+    const retDesc = (pt: string | null) =>
+      pt === "credit" ? "مرتجع مبيعات آجل"
+      : pt === "bank" ? "مرتجع مبيعات (مرتجع بنكياً)"
+      : "مرتجع مبيعات نقدي";
     const lines: DetailedLine[] = [
-      ...invs.map(i => ({
-        id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
-        debit: Number(i.total), credit: 0, description: "فاتورة مبيعات آجلة",
-        vatAmount: Number(i.vatAmount || 0),
-        discountAmount: Number(i.discountAmount || 0),
-        lines: invLineMap.get(i.id) ?? [],
-      })),
-      ...rets.map(r => ({
-        id: r.id, date: r.date, type: "return", docNumber: r.docNumber,
-        debit: 0, credit: Number(r.total), description: "مرتجع مبيعات",
-        vatAmount: Number(r.vatAmount || 0),
-        discountAmount: Number(r.discountAmount || 0),
-        lines: retLineMap.get(r.id) ?? [],
-      })),
+      ...invs.map(i => {
+        const total = Number(i.total);
+        const isCredit = i.paymentType === "credit";
+        return {
+          id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
+          debit: total,
+          credit: isCredit ? 0 : total,
+          description: invDesc(i.paymentType),
+          paymentType: i.paymentType,
+          vatAmount: Number(i.vatAmount || 0),
+          discountAmount: Number(i.discountAmount || 0),
+          lines: invLineMap.get(i.id) ?? [],
+        };
+      }),
+      ...rets.map(r => {
+        const total = Number(r.total);
+        const isCredit = r.paymentType === "credit";
+        return {
+          id: r.id, date: r.date, type: "return", docNumber: r.docNumber,
+          debit: isCredit ? 0 : total,
+          credit: total,
+          description: retDesc(r.paymentType),
+          paymentType: r.paymentType,
+          vatAmount: Number(r.vatAmount || 0),
+          discountAmount: Number(r.discountAmount || 0),
+          lines: retLineMap.get(r.id) ?? [],
+        };
+      }),
       ...recs.map(r => ({
         id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber,
         debit: 0, credit: Number(r.amount), description: "سند قبض",
+        paymentType: r.paymentType,
         meta: {
           paymentType: r.paymentType,
           cashBoxName: r.cashBoxId ? (cbName.get(r.cashBoxId) ?? null) : null,

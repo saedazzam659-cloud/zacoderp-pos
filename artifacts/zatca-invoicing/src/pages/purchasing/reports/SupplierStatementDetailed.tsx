@@ -51,6 +51,25 @@ export default function SupplierStatementDetailed() {
     payment: tr("type.payment"),
   };
 
+  // Tiny inline badge that flags the source document's payment method
+  // (cash / bank / credit). Only shown for invoice/return rows so users
+  // can immediately tell which transactions are A/P-affecting and which
+  // self-settled at point of purchase.
+  const PaymentBadge = ({ pt }: { pt: string | null | undefined }) => {
+    if (!pt) return null;
+    const label = pt === "credit" ? tr("payCredit") : pt === "bank" ? tr("payBank") : tr("payCash");
+    const cls   = pt === "credit"
+      ? "bg-orange-50 text-orange-700 border-orange-200"
+      : pt === "bank"
+        ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+        : "bg-slate-100 text-slate-700 border-slate-200";
+    return (
+      <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold ${cls} ${isRtl ? "mr-2" : "ml-2"}`}>
+        {label}
+      </span>
+    );
+  };
+
   const EXPORT_COLS = [
     { key: "date",        header: tr("colDate"),        width: 14 },
     { key: "type",        header: tr("colType"),        width: 14 },
@@ -336,7 +355,10 @@ export default function SupplierStatementDetailed() {
                           <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{l.date}</td>
                           <td className="px-4 py-3 text-xs">{TYPE_LABEL[l.type] ?? l.type}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground font-mono">{l.docNumber ?? "—"}</td>
-                          <td className="px-4 py-3 text-xs">{l.description}</td>
+                          <td className="px-4 py-3 text-xs">
+                            {l.description}
+                            {(l.type === "invoice" || l.type === "return") && <PaymentBadge pt={l.paymentType} />}
+                          </td>
                           <td className="px-4 py-3 text-center tabular-nums text-sm font-bold text-blue-600">{l.debit ? fmt(l.debit) : "—"}</td>
                           <td className="px-4 py-3 text-center tabular-nums text-sm font-bold text-emerald-600">{l.credit ? fmt(l.credit) : "—"}</td>
                           <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmt(l.balance)}</td>

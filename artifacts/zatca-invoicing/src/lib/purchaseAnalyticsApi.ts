@@ -114,6 +114,10 @@ export type SupplierStatementDetailedRow = {
   debit: number;
   credit: number;
   description: string;
+  // Payment method of the source document. For invoices/returns this is
+  // 'credit' | 'cash' | 'bank'; for payments it mirrors meta.paymentType.
+  // Cash/bank invoices and returns have debit == credit (self-settled).
+  paymentType?: string | null;
   vatAmount?: number;
   discountAmount?: number;
   lines?: SupplierStatementDetailedLineItem[];
