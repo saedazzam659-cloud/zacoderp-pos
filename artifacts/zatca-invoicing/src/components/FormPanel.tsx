@@ -1,5 +1,6 @@
 import React from "react";
 import { X, Save } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -54,13 +55,18 @@ export function FormPanel({
   onSave,
   saving,
   saveDisabled,
-  saveLabel = "حفظ",
-  cancelLabel = "إلغاء",
+  saveLabel,
+  cancelLabel,
   hideFooter,
   footer,
   className,
   children,
 }: FormPanelProps) {
+  const { t } = useTranslation();
+  const _saveLabel = saveLabel ?? (t("common.save") as string);
+  const _cancelLabel = cancelLabel ?? (t("common.cancel") as string);
+  const _savingLabel = t("common.loading") as string;
+  const _closeLabel = t("common.close") as string;
   return (
     <div className={cn("mx-auto w-full", widthMap[width])}>
       <div className={cn("rounded-xl border bg-card shadow-sm overflow-hidden", className)}>
@@ -81,7 +87,7 @@ export function FormPanel({
             size="icon"
             onClick={onClose}
             className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label="إغلاق"
+            aria-label={_closeLabel}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -94,7 +100,7 @@ export function FormPanel({
             {footer}
             <Button variant="outline" size="sm" className="gap-1.5" onClick={onClose}>
               <X className="h-4 w-4" />
-              {cancelLabel}
+              {_cancelLabel}
             </Button>
             {onSave && (
               <Button
@@ -104,7 +110,7 @@ export function FormPanel({
                 disabled={saving || saveDisabled}
               >
                 <Save className="h-4 w-4" />
-                {saving ? "جاري الحفظ..." : saveLabel}
+                {saving ? _savingLabel : _saveLabel}
               </Button>
             )}
           </div>

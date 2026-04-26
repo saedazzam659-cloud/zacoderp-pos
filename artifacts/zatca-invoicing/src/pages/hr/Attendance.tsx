@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { employeesApi } from "@/lib/employeesApi";
 import { parseError } from "@/lib/parseError";
@@ -12,19 +13,24 @@ import { CalendarClock, Save, Trash2, Loader2, CheckCircle2, XCircle, Clock, Spa
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 
-const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
-  present:  { label: "حاضر",   cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
-  absent:   { label: "غائب",   cls: "bg-rose-50 text-rose-700 border-rose-200", icon: XCircle },
-  leave:    { label: "إجازة",  cls: "bg-sky-50 text-sky-700 border-sky-200", icon: CalendarClock },
-  late:     { label: "متأخر",  cls: "bg-amber-50 text-amber-700 border-amber-200", icon: Clock },
-  weekend:  { label: "إجازة أسبوعية", cls: "bg-slate-50 text-slate-600 border-slate-200", icon: CalendarClock },
-};
-
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Attendance() {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`hrPages.attendance.${k}`, opts) as string;
+  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+
+  const STATUS: Record<string, { label: string; cls: string; icon: any }> = {
+    present:  { label: tr("statusPresent"), cls: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
+    absent:   { label: tr("statusAbsent"),  cls: "bg-rose-50 text-rose-700 border-rose-200",          icon: XCircle },
+    leave:    { label: tr("statusLeave"),   cls: "bg-sky-50 text-sky-700 border-sky-200",             icon: CalendarClock },
+    late:     { label: tr("statusLate"),    cls: "bg-amber-50 text-amber-700 border-amber-200",       icon: Clock },
+    weekend:  { label: tr("statusWeekend"), cls: "bg-slate-50 text-slate-600 border-slate-200",       icon: CalendarClock },
+  };
+
   const [date, setDate] = useState(today());
   const [tab, setTab] = useState("daily");
 
@@ -50,9 +56,9 @@ export default function Attendance() {
     onSuccess: (r: any) => {
       setAiPreview(r.records || []);
       setAiSummary(r.summary || "");
-      if (!r.records?.length) toast({ variant: "destructive", title: "لم نستطع استخراج أي سجل من النص" });
+      if (!r.records?.length) toast({ variant: "destructive", title: tr("toastNoRecords") });
     },
-    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+    onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
   function applyAiPreview() {
@@ -67,7 +73,7 @@ export default function Attendance() {
       };
     }
     setDraft(next);
-    toast({ title: `تم تطبيق ${aiPreview.length} سجل`, description: "راجع البيانات ثم اضغط حفظ الكل" });
+    toast({ title: tr("toastApplied", { count: aiPreview.length }), description: tr("toastAppliedDesc") });
     setAiOpen(false); setAiText(""); setAiPreview(null); setAiSummary("");
   }
 
@@ -111,15 +117,15 @@ export default function Attendance() {
     onSuccess: (r: any) => {
       qc.invalidateQueries({ queryKey: ["attendance"] });
       setDraft({});
-      toast({ title: `تم حفظ ${r.saved} سجل حضور`, description: date });
+      toast({ title: tr("toastSaved", { count: r.saved }), description: date });
     },
-    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+    onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
   const delAtt = useMutation({
     mutationFn: (id: number) => employeesApi.deleteAttendance(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["attendance"] }); toast({ title: "تم الحذف" }); },
-    onError: (e) => toast({ variant: "destructive", title: "خطأ", description: parseError(e) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["attendance"] }); toast({ title: tr("toastDeleted") }); },
+    onError: (e) => toast({ variant: "destructive", title: tr("toastErrorTitle"), description: parseError(e) }),
   });
 
   function markAll(status: string, ci: string = "08:00", co: string = "17:00") {
@@ -133,7 +139,7 @@ export default function Attendance() {
       };
     }
     setDraft(next);
-    toast({ title: status === "present" ? "تم تعليم الجميع كحاضرين" : status === "weekend" ? "تم تعليم الجميع كإجازة أسبوعية" : "تم تعليم الجميع كغائبين" });
+    toast({ title: status === "present" ? tr("toastMarkedPresent") : status === "weekend" ? tr("toastMarkedWeekend") : tr("toastMarkedAbsent") });
   }
 
   // Monthly summary
@@ -160,11 +166,11 @@ export default function Attendance() {
   const STATUS_AI: any = STATUS;
 
   return (
-    <div className="space-y-4 p-2 md:p-4" data-testid="page-attendance">
+    <div className="space-y-4 p-2 md:p-4" data-testid="page-attendance" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <CalendarClock className="size-6 text-primary" />
-          <h1 className="text-xl font-semibold">الحضور والانصراف</h1>
+          <h1 className="text-xl font-semibold">{tr("title")}</h1>
         </div>
         <div className="flex items-center gap-2">
           <Input type="date" value={date} onChange={e => { setDate(e.target.value); setDraft({}); }} className="w-40" data-testid="input-date" />
@@ -173,31 +179,31 @@ export default function Attendance() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="daily" data-testid="tab-daily">إدخال يومي</TabsTrigger>
-          <TabsTrigger value="monthly" data-testid="tab-monthly">ملخص شهري</TabsTrigger>
+          <TabsTrigger value="daily" data-testid="tab-daily">{tr("tabDaily")}</TabsTrigger>
+          <TabsTrigger value="monthly" data-testid="tab-monthly">{tr("tabMonthly")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="daily" className="space-y-3">
           <div className="rounded-lg border bg-card p-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-muted-foreground">إجراءات سريعة:</span>
+            <span className="text-sm font-medium text-muted-foreground">{tr("quickActions")}</span>
             <Button variant="outline" size="sm" onClick={() => markAll("present")} data-testid="btn-mark-all-present">
-              <CheckCircle2 className="size-3.5 me-1" /> تعليم الجميع حاضر
+              <CheckCircle2 className="size-3.5 me-1" /> {tr("markAllPresent")}
             </Button>
             <Button variant="outline" size="sm" onClick={() => markAll("weekend", "", "")} data-testid="btn-mark-weekend">
-              <CalendarClock className="size-3.5 me-1" /> إجازة أسبوعية
+              <CalendarClock className="size-3.5 me-1" /> {tr("markWeekend")}
             </Button>
             <Button variant="outline" size="sm" onClick={() => markAll("absent", "", "")} data-testid="btn-mark-absent">
-              <XCircle className="size-3.5 me-1" /> الكل غائب
+              <XCircle className="size-3.5 me-1" /> {tr("markAllAbsent")}
             </Button>
             <Button variant="outline" size="sm" onClick={() => setAiOpen(true)}
-              className="bg-gradient-to-l from-violet-50 to-blue-50 border-violet-200 text-violet-700 hover:bg-violet-100"
+              className={`${isRtl ? "bg-gradient-to-l" : "bg-gradient-to-r"} from-violet-50 to-blue-50 border-violet-200 text-violet-700 hover:bg-violet-100`}
               data-testid="btn-ai-attendance">
-              <Wand2 className="size-3.5 me-1" /> إدخال ذكي بالـ AI
+              <Wand2 className="size-3.5 me-1" /> {tr("aiInput")}
             </Button>
             <div className="ms-auto">
               <Button onClick={() => bulkSave.mutate()} disabled={bulkSave.isPending} data-testid="btn-save-attendance">
                 {bulkSave.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Save className="size-4 me-1" />}
-                حفظ الكل
+                {tr("saveAll")}
               </Button>
             </div>
           </div>
@@ -206,13 +212,13 @@ export default function Attendance() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs uppercase">
                 <tr>
-                  <th className="p-2 text-start">الموظف</th>
-                  <th className="p-2">الحالة</th>
-                  <th className="p-2">حضور</th>
-                  <th className="p-2">انصراف</th>
-                  <th className="p-2">ساعات</th>
-                  <th className="p-2">إضافي</th>
-                  <th className="p-2 text-start">ملاحظات</th>
+                  <th className="p-2 text-start">{tr("colEmployee")}</th>
+                  <th className="p-2">{tr("colStatus")}</th>
+                  <th className="p-2">{tr("colCheckIn")}</th>
+                  <th className="p-2">{tr("colCheckOut")}</th>
+                  <th className="p-2">{tr("colHours")}</th>
+                  <th className="p-2">{tr("colOvertime")}</th>
+                  <th className="p-2 text-start">{tr("colNotes")}</th>
                   <th className="p-2"></th>
                 </tr>
               </thead>
@@ -220,7 +226,7 @@ export default function Attendance() {
                 {isLoading ? (
                   <tr><td colSpan={8} className="p-4"><Skeleton className="h-12" /></td></tr>
                 ) : activeEmps.length === 0 ? (
-                  <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">لا يوجد موظفون نشطون</td></tr>
+                  <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">{tr("noActiveEmployees")}</td></tr>
                 ) : activeEmps.map((e: any) => {
                   const r = merged[e.id];
                   const st = STATUS[r.status] || STATUS.present;
@@ -228,8 +234,8 @@ export default function Attendance() {
                   return (
                     <tr key={e.id} className="border-t" data-testid={`row-att-${e.id}`}>
                       <td className="p-2">
-                        <div className="font-medium">{e.nameAr}</div>
-                        <div className="text-xs text-muted-foreground">{e.code} · {e.jobTitle || "—"}</div>
+                        <div className="font-medium">{pickName(e.nameAr, e.nameEn)}</div>
+                        <div className="text-xs text-muted-foreground">{e.code} · {pickName(e.jobTitle, e.jobTitleEn) || "—"}</div>
                       </td>
                       <td className="p-2">
                         <select value={r.status} onChange={ev => setEmpField(e.id, "status", ev.target.value)}
@@ -255,7 +261,7 @@ export default function Attendance() {
                       <td className="p-2">
                         <Badge variant="outline" className={st.cls}><Icon className="size-3 me-1" />{st.label}</Badge>
                         {r.existingId && (
-                          <button onClick={() => delAtt.mutate(r.existingId)} className="ms-2 text-rose-500 hover:text-rose-700" title="حذف">
+                          <button onClick={() => delAtt.mutate(r.existingId)} className="ms-2 text-rose-500 hover:text-rose-700" title={tr("deleteTooltip")}>
                             <Trash2 className="size-3.5 inline" />
                           </button>
                         )}
@@ -270,7 +276,7 @@ export default function Attendance() {
           <div className="text-xs text-muted-foreground bg-blue-50/50 border border-blue-200 rounded p-2 flex items-start gap-2">
             <Sparkles className="size-3.5 text-blue-600 mt-0.5" />
             <div>
-              <strong>تلميح ذكي:</strong> يتم احتساب ساعات العمل تلقائياً من وقت الحضور والانصراف. أي ساعات تزيد عن 8 تُعتبر <strong>وقتاً إضافياً</strong> ويتم احتساب أجرها 1.5× في مسير الرواتب وفق المادة 107 من نظام العمل.
+              <strong>{tr("smartTipTitle")}</strong> <span dangerouslySetInnerHTML={{ __html: tr("smartTipBody") }} />
             </div>
           </div>
         </TabsContent>
@@ -280,22 +286,22 @@ export default function Attendance() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs uppercase">
                 <tr>
-                  <th className="p-2 text-start">الموظف</th>
-                  <th className="p-2">حضور</th>
-                  <th className="p-2">غياب</th>
-                  <th className="p-2">إجازة</th>
-                  <th className="p-2">إجازة أسبوعية</th>
-                  <th className="p-2">إجمالي ساعات</th>
-                  <th className="p-2">ساعات إضافية</th>
+                  <th className="p-2 text-start">{tr("colEmployee")}</th>
+                  <th className="p-2">{tr("monthlyColPresent")}</th>
+                  <th className="p-2">{tr("monthlyColAbsent")}</th>
+                  <th className="p-2">{tr("monthlyColLeave")}</th>
+                  <th className="p-2">{tr("monthlyColWeekend")}</th>
+                  <th className="p-2">{tr("monthlyColTotalHours")}</th>
+                  <th className="p-2">{tr("monthlyColOvertimeHours")}</th>
                 </tr>
               </thead>
               <tbody>
                 {monthSummary.length === 0 ? (
-                  <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">لا توجد بيانات</td></tr>
+                  <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{tr("noData")}</td></tr>
                 ) : monthSummary.map((s: any) => (
                   <tr key={s.emp.id} className="border-t" data-testid={`row-month-${s.emp.id}`}>
                     <td className="p-2">
-                      <div className="font-medium">{s.emp.nameAr}</div>
+                      <div className="font-medium">{pickName(s.emp.nameAr, s.emp.nameEn)}</div>
                       <div className="text-xs text-muted-foreground">{s.emp.code}</div>
                     </td>
                     <td className="p-2 text-center font-semibold text-emerald-700">{s.present}</td>
@@ -313,21 +319,21 @@ export default function Attendance() {
       </Tabs>
 
       <Dialog open={aiOpen} onOpenChange={(o) => { setAiOpen(o); if (!o) { setAiText(""); setAiPreview(null); setAiSummary(""); } }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" dir={isRtl ? "rtl" : "ltr"}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Wand2 className="size-5 text-violet-600" /> إدخال الحضور بالذكاء الاصطناعي
+              <Wand2 className="size-5 text-violet-600" /> {tr("aiDialogTitle")}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">
             <div className="rounded border bg-violet-50/40 border-violet-200 p-3 text-xs space-y-1">
-              <div className="font-semibold text-violet-900">اكتب أو الصق ملخص الحضور بلغتك العادية. أمثلة:</div>
+              <div className="font-semibold text-violet-900">{tr("aiInstructionsTitle")}</div>
               <ul className="list-disc list-inside text-violet-800 space-y-0.5">
-                <li>"كل الموظفين حضروا 8 صباحاً وانصرفوا 5 مساءً"</li>
-                <li>"محمد متأخر 9:30، أحمد غايب، سارة إجازة، الباقي عادي"</li>
-                <li>"حسن من 8 إلى 7" (سيُحسب الإضافي تلقائياً بعد 8 ساعات عمل)</li>
-                <li>"الجميع إجازة أسبوعية" (يوم جمعة مثلاً)</li>
+                <li>{tr("aiExample1")}</li>
+                <li>{tr("aiExample2")}</li>
+                <li>{tr("aiExample3")}</li>
+                <li>{tr("aiExample4")}</li>
               </ul>
             </div>
 
@@ -335,16 +341,16 @@ export default function Attendance() {
               value={aiText}
               onChange={(e) => setAiText(e.target.value)}
               rows={5}
-              placeholder="اكتب هنا… مثال: كل الموظفين 8 إلى 5 ما عدا حسن متأخر 9 ومحمد غايب"
+              placeholder={tr("aiPlaceholder")}
               className="text-sm"
               data-testid="ai-attendance-text"
-              dir="rtl"
+              dir={isRtl ? "rtl" : "ltr"}
             />
 
             <div className="flex items-center gap-2">
               <Button onClick={() => aiParse.mutate()} disabled={!aiText.trim() || aiParse.isPending} data-testid="btn-ai-parse">
                 {aiParse.isPending ? <Loader2 className="size-4 me-1 animate-spin" /> : <Sparkles className="size-4 me-1" />}
-                تحليل بالذكاء الاصطناعي
+                {tr("aiAnalyze")}
               </Button>
               {aiSummary && <span className="text-xs text-muted-foreground">{aiSummary}</span>}
             </div>
@@ -353,17 +359,17 @@ export default function Attendance() {
               <div className="space-y-2">
                 <div className="text-sm font-semibold flex items-center gap-2">
                   <CheckCircle2 className="size-4 text-emerald-600" />
-                  معاينة ({aiPreview.length} سجل) — راجع ثم طبّق:
+                  {tr("aiPreviewHeading", { count: aiPreview.length })}
                 </div>
                 <div className="rounded border overflow-hidden max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/40 sticky top-0">
                       <tr>
-                        <th className="p-1.5 text-start">الموظف</th>
-                        <th className="p-1.5">الحالة</th>
-                        <th className="p-1.5">حضور</th>
-                        <th className="p-1.5">انصراف</th>
-                        <th className="p-1.5 text-start">ملاحظات</th>
+                        <th className="p-1.5 text-start">{tr("aiPreviewColEmployee")}</th>
+                        <th className="p-1.5">{tr("aiPreviewColStatus")}</th>
+                        <th className="p-1.5">{tr("aiPreviewColCheckIn")}</th>
+                        <th className="p-1.5">{tr("aiPreviewColCheckOut")}</th>
+                        <th className="p-1.5 text-start">{tr("aiPreviewColNotes")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -372,7 +378,7 @@ export default function Attendance() {
                         const Icon = st.icon;
                         return (
                           <tr key={i} className="border-t">
-                            <td className="p-1.5 font-medium">{rec.empNameAr}</td>
+                            <td className="p-1.5 font-medium">{pickName(rec.empNameAr, rec.empNameEn)}</td>
                             <td className="p-1.5">
                               <Badge variant="outline" className={st.cls}><Icon className="size-3 me-1" />{st.label}</Badge>
                             </td>
@@ -390,9 +396,9 @@ export default function Attendance() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAiOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setAiOpen(false)}>{tr("cancel")}</Button>
             <Button onClick={applyAiPreview} disabled={!aiPreview || aiPreview.length === 0} data-testid="btn-ai-apply">
-              <CheckCircle2 className="size-4 me-1" /> تطبيق على الجدول
+              <CheckCircle2 className="size-4 me-1" /> {tr("aiApply")}
             </Button>
           </DialogFooter>
         </DialogContent>
