@@ -2323,6 +2323,81 @@ test("GET /maintenance/tool-history: honours ?limit and clamps to [1, 50]", asyn
   }
 });
 
+// ─── /maintenance/notification-preview ─────────────────────────────────────
+// Backs the Settings → Notifications hint that tells SuperAdmins how many of
+// the recent scheduled sweeps would have actually emailed them at each
+// threshold. Pin the auth gate, the response shape, and the per-threshold
+// monotonicity so the UI's "X of Y" line can never claim more matches than
+// total sweeps or fewer for a wider threshold than a stricter one.
+interface NotificationPreviewResponse {
+  windowDays: number;
+  totalSweeps: number;
+  matchingByThreshold: { critical: number; warning: number; all: number };
+}
+
+test("GET /maintenance/notification-preview: 401 without bearer token", async () => {
+  const r = await api("/api/admin/maintenance/notification-preview", "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/notification-preview: 403 for non-superadmin", async () => {
+  const r = await api("/api/admin/maintenance/notification-preview", "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/notification-preview: returns coherent per-threshold counts", async () => {
+  // Default window (30 days) — easy to assert against.
+  const r = await api<NotificationPreviewResponse>(
+    "/api/admin/maintenance/notification-preview",
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+  assert.equal(r.body.windowDays, 30);
+  assert.ok(Number.isInteger(r.body.totalSweeps) && r.body.totalSweeps >= 0,
+    `totalSweeps must be a non-negative int, got ${r.body.totalSweeps}`);
+  // Every threshold must be present and bounded by totalSweeps — the UI
+  // renders "X of Y" verbatim and a count > totalSweeps would be nonsense.
+  for (const t of ["critical", "warning", "all"] as const) {
+    const v = r.body.matchingByThreshold[t];
+    assert.ok(Number.isInteger(v) && v >= 0 && v <= r.body.totalSweeps,
+      `matchingByThreshold.${t}=${v} must be in [0, ${r.body.totalSweeps}]`);
+  }
+  // Monotonicity: a stricter threshold can only match a subset of what a
+  // wider threshold matches. critical ⊆ warning ⊆ all by definition of
+  // severityMeetsThreshold — pin it here so future tweaks don't regress.
+  assert.ok(r.body.matchingByThreshold.critical <= r.body.matchingByThreshold.warning,
+    "critical must be <= warning (a stricter threshold can't match more sweeps)");
+  assert.ok(r.body.matchingByThreshold.warning <= r.body.matchingByThreshold.all,
+    "warning must be <= all (any error-only sweep also satisfies 'all')");
+});
+
+test("GET /maintenance/notification-preview: clamps ?days into [7, 90]", async () => {
+  const tooHigh = await api<NotificationPreviewResponse>(
+    "/api/admin/maintenance/notification-preview?days=9999",
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(tooHigh.status, 200);
+  assert.equal(tooHigh.body.windowDays, 90, "days=9999 must clamp to ceiling 90");
+
+  const tooLow = await api<NotificationPreviewResponse>(
+    "/api/admin/maintenance/notification-preview?days=0",
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(tooLow.status, 200);
+  assert.equal(tooLow.body.windowDays, 7, "days=0 must clamp to floor 7");
+
+  const garbage = await api<NotificationPreviewResponse>(
+    "/api/admin/maintenance/notification-preview?days=not-a-number",
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(garbage.status, 200);
+  assert.equal(garbage.body.windowDays, 30, "non-numeric days must fall back to default 30");
+});
+
 // Pin the contract that statusForCount agrees with the runs table: every row
 // inserted for the clean company by the sweep above should be status='ok'
 // because the company has no findings.

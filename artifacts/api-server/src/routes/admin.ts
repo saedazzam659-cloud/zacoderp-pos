@@ -16,6 +16,7 @@ import {
   getRecentToolErrors, TOOL_ERROR_WINDOW_DAYS,
   runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
   clearCriticalDigestCooldown,
+  severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
 } from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
 import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
@@ -4783,6 +4784,91 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب سجل تنبيهات البريد" });
+  }
+});
+
+// GET /maintenance/notification-preview — per-threshold count of how many of
+// the recent scheduled sweeps would have actually emailed the calling
+// SuperAdmin. Powers the live "آخر N يوم: X من Y تنبيهات تطابق هذا المستوى"
+// hint next to the severity-threshold dropdown in Settings → Notifications,
+// so admins can see at a glance whether narrowing from `all` to `critical`
+// would have silenced recent runs.
+//
+// A "sweep" here is any KSA-local day on which the scheduler wrote at least
+// one maintenance_runs row with trigger='scheduled'. Days with no scheduled
+// activity (scheduler off, container down, etc.) are NOT counted — the
+// denominator reflects sweeps that actually happened, not calendar days,
+// otherwise the ratio would scare operators after planned downtime.
+//
+// The per-day severity set is derived from the maintenance_runs rows of that
+// day, then SEVERITY_THRESHOLDS is fed through the same `severityMeetsThreshold`
+// helper used by the live dispatch path — so this preview can never disagree
+// with what the dispatcher would actually do for a sweep with the same set.
+//
+// Per-recipient personalization is intentionally NOT applied here: the result
+// is identical for every SuperAdmin and reflects "what would my threshold
+// have done", regardless of whether `notifyMaintenanceEmail` is currently on.
+// The Settings UI already gates the hint behind that toggle.
+//
+// Read-only, no audit log entry — this is a UI hint, not an admin action.
+router.get("/maintenance/notification-preview", requireSuperAdmin, async (req, res) => {
+  // Window is small (single dropdown hint); 7..90 days covers tuning use-cases
+  // without letting a curious operator pull the entire history through this
+  // endpoint. Default 30 matches the example wording in the spec.
+  const days = clampInt(req.query.days, 7, 90, 30);
+  try {
+    // Group by KSA-local day (UTC+3, no DST) so a sweep that finishes at
+    // 03:05 KSA isn't bucketed into the previous UTC day. We use BOOL_OR
+    // per-status so a single sweep with 200 OK rows + 1 critical still
+    // counts as "had a critical".
+    const exec = await db.execute<any>(sql`
+      WITH sweep_signals AS (
+        SELECT
+          date_trunc('day', run_at + interval '3 hours') AS sweep_date,
+          BOOL_OR(status = 'critical') AS has_critical,
+          BOOL_OR(status = 'warn')     AS has_warn,
+          BOOL_OR(status = 'error')    AS has_error
+        FROM maintenance_runs
+        WHERE trigger = 'scheduled'
+          AND run_at >= now() - ((${days})::int || ' days')::interval
+        GROUP BY sweep_date
+      )
+      SELECT sweep_date     AS "sweepDate",
+             has_critical   AS "hasCritical",
+             has_warn       AS "hasWarn",
+             has_error      AS "hasError"
+        FROM sweep_signals
+       ORDER BY sweep_date DESC
+    `);
+    const sweeps = ((exec as any).rows ?? []) as Array<{
+      sweepDate: Date;
+      hasCritical: boolean;
+      hasWarn: boolean;
+      hasError: boolean;
+    }>;
+
+    // Apply severityMeetsThreshold per sweep so the count reflects the same
+    // gating logic the live dispatcher uses — no risk of drift if the helper
+    // ever changes (e.g. a new "warn-or-error" threshold).
+    const matchingByThreshold: Record<string, number> = {};
+    for (const t of SEVERITY_THRESHOLDS) matchingByThreshold[t] = 0;
+    for (const row of sweeps) {
+      const present = new Set<AlertSeverity>();
+      if (row.hasCritical) present.add("critical");
+      if (row.hasWarn)     present.add("warn");
+      if (row.hasError)    present.add("error");
+      for (const t of SEVERITY_THRESHOLDS) {
+        if (severityMeetsThreshold(present, t)) matchingByThreshold[t] += 1;
+      }
+    }
+
+    res.json({
+      windowDays:          days,
+      totalSweeps:         sweeps.length,
+      matchingByThreshold,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب معاينة التنبيهات" });
   }
 });
 

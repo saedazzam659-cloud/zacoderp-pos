@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,6 +80,31 @@ export default function Settings() {
     notifyMaintenanceEmail?: boolean;
     notifyMaintenanceSeverity?: "critical" | "warning" | "all";
   };
+  // Live "would-have-notified" preview — counts how many of the last 30
+  // scheduled sweeps each threshold (critical / warning / all) would have
+  // emailed. The hint reacts immediately when the SuperAdmin picks a different
+  // threshold because we read off the cached preview using the *currently
+  // selected* threshold below; no round-trip is needed for the dropdown swap.
+  // Only fired for SuperAdmins (the dropdown is gated the same way) and the
+  // 5-minute staleTime keeps re-renders cheap when toggling between settings.
+  const previewQuery = useQuery({
+    enabled: isSuperAdmin,
+    queryKey: ["maintenance-notification-preview"],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/admin/maintenance/notification-preview?days=30`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "تعذّر تحميل المعاينة");
+      return data as {
+        windowDays: number;
+        totalSweeps: number;
+        matchingByThreshold: Record<"critical" | "warning" | "all", number>;
+      };
+    },
+    staleTime: 5 * 60_000,
+  });
+
   const notificationsMutation = useMutation({
     mutationFn: async (patch: NotificationsPatch) => {
       const res = await fetch(`${API}/api/auth/me/notifications`, {
@@ -95,17 +120,36 @@ export default function Settings() {
         message: string;
       };
     },
-    // Update the cached user immediately so the switch reflects the new state
-    // without waiting for a /me round-trip.
+    // Optimistic update — flip the cached user immediately so both the
+    // dropdown/switch AND the threshold-preview hint below ("X من Y تنبيهات
+    // تطابق هذا المستوى") react live, without waiting for the PUT to land.
+    // Snapshot the prior values into the mutation context so onError can
+    // roll back cleanly if the server rejects the change.
+    onMutate: (patch) => {
+      const prev = {
+        notifyMaintenanceEmail:    (user as any)?.notifyMaintenanceEmail    ?? true,
+        notifyMaintenanceSeverity: (user as any)?.notifyMaintenanceSeverity ?? "critical",
+      };
+      if (setUser) setUser((u: any) => (u ? { ...u, ...patch } : u));
+      return prev;
+    },
     onSuccess: (data) => {
       toast({ title: "✓ " + data.message });
+      // Reconcile against the server's authoritative response — handles the
+      // edge case where the server clamped/normalised a value (currently
+      // none, but cheap insurance against future validation tightening).
       if (setUser) setUser((u: any) => (u ? {
         ...u,
         notifyMaintenanceEmail:    data.notifyMaintenanceEmail,
         notifyMaintenanceSeverity: data.notifyMaintenanceSeverity,
       } : u));
     },
-    onError: (err: any) => toast({ title: err.message, variant: "destructive" }),
+    onError: (err: any, _patch, context) => {
+      toast({ title: err.message, variant: "destructive" });
+      // Roll the optimistic change back so the UI doesn't lie about a
+      // setting the server refused to persist.
+      if (setUser && context) setUser((u: any) => (u ? { ...u, ...context } : u));
+    },
   });
 
   const handleUsernameSubmit = (e: React.FormEvent) => {
@@ -274,6 +318,23 @@ export default function Settings() {
               </SelectContent>
             </Select>
           </div>
+          {/* Live preview — "of the last N scheduled sweeps, M would have
+              actually emailed you at the currently selected threshold". Reads
+              off the cached query so the count flips instantly when the
+              dropdown changes (no extra request needed). Hidden if the email
+              toggle is off (nothing would be sent anyway) or while the
+              preview hasn't loaded yet — failures degrade silently rather
+              than show a noisy error in a settings card. */}
+          {notifyMaintenanceEmail && previewQuery.data && (
+            <p
+              className="text-xs text-muted-foreground leading-relaxed pt-1"
+              data-testid="text-notification-preview"
+            >
+              {previewQuery.data.totalSweeps === 0
+                ? `لا توجد فحوصات تلقائية مسجَّلة خلال آخر ${previewQuery.data.windowDays} يوم.`
+                : `آخر ${previewQuery.data.windowDays} يوم: ${previewQuery.data.matchingByThreshold[notifyMaintenanceSeverity] ?? 0} من ${previewQuery.data.totalSweeps} تنبيهات تطابق هذا المستوى`}
+            </p>
+          )}
         </div>
       )}
 
