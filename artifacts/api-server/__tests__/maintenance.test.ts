@@ -91,12 +91,14 @@ import {
   shouldSkipForRateLimit,
   getRecentToolErrors,
   getRecentToolRecoveries,
+  getMaintenanceAlerts,
   TOOL_ERROR_WINDOW_DAYS,
   severityMeetsThreshold,
   getSuperAdminRecipients,
   dispatchCriticalDigest,
   type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
+import nodemailer from "nodemailer";
 
 // ─── Test scoping ───────────────────────────────────────────────────────────
 const TEST_TAG = `tt_maint_${randomBytes(4).toString("hex")}`;
@@ -2625,6 +2627,315 @@ test("dispatchCriticalDigest: per-threshold recipient routing for warn/error/cri
     for (const [k, v] of Object.entries(envSnapshot)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
+    }
+    if (previouslyOnIds.length) {
+      await db.update(usersTable)
+        .set({ notifyMaintenanceEmail: true })
+        .where(inArray(usersTable.id, previouslyOnIds));
+    }
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  dispatchCriticalDigest — recoveryRows wiring + invariants (end-to-end)
+// ════════════════════════════════════════════════════════════════════════════
+// `getRecentToolRecoveries` is pinned in isolation above, but no test exercises
+// the FULL dispatch path that has to wire those rows into the actual
+// `sendMaintenanceCriticalDigest` payload. A regression that drops the
+// `recoveryRows` parameter at the call site (e.g. someone refactoring the
+// dispatch function) would silently strip the green "recovered tools" section
+// from real digests with no test failure.
+//
+// What this guards:
+//   1. `recoveryRows` reaches `sendMaintenanceCriticalDigest` with the seeded
+//      (companyId, toolKey, currentStatus) entry — asserted by intercepting
+//      the SMTP send and grepping the rendered HTML for the recovery section
+//      heading + the seeded tool's marker.
+//   2. The presence of recoveries does NOT contribute to `presentSeverities`
+//      — asserted by re-deriving the expected recipient set from
+//      `getMaintenanceAlerts` + `getRecentToolErrors` (the only inputs that
+//      legitimately drive severities) and confirming the dispatch's actual
+//      `recipients` count matches.
+//   3. The presence of recoveries does NOT change the cooldown signature
+//      — asserted by computing `computeCriticalSignature` from the
+//      warn/critical alerts alone and confirming the audit row's
+//      `criticalSignature` matches.
+//
+// Mechanics: nodemailer is a CJS package whose default-export object is
+// directly mutable. We patch `nodemailer.createTransport` to return a stub
+// that records the rendered HTML, then call `dispatchCriticalDigest` so the
+// real send path executes end-to-end. Env vars and the patched function are
+// restored in `finally` so subsequent tests are unaffected.
+test("dispatchCriticalDigest: recoveryRows reach sendMaintenanceCriticalDigest + don't affect severities/signature", async () => {
+  // Mute every other opted-in SuperAdmin so only our seeded recipient is
+  // eligible, then put them back in `finally`. Same pattern as the per-
+  // threshold routing test above.
+  const otherSAs = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.role, "superadmin"),
+      eq(usersTable.notifyMaintenanceEmail, true),
+    ));
+  const previouslyOnIds = otherSAs.map((r) => r.id);
+  if (previouslyOnIds.length) {
+    await db.update(usersTable)
+      .set({ notifyMaintenanceEmail: false })
+      .where(inArray(usersTable.id, previouslyOnIds));
+  }
+
+  // Snapshot SMTP env + Outlook env. We FORCE SMTP on (with bogus host/user/
+  // pass values) so `getTransporter()` returns a transporter at all — then
+  // patch `nodemailer.createTransport` so that "transporter" is actually our
+  // stub. Outlook is unset so `sendEmail` only attempts the SMTP path.
+  const envSnapshot: Record<string, string | undefined> = {
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_PORT: process.env.SMTP_PORT,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASS: process.env.SMTP_PASS,
+    REPLIT_CONNECTORS_HOSTNAME: process.env.REPLIT_CONNECTORS_HOSTNAME,
+  };
+  process.env.SMTP_HOST = "smtp.test.invalid";
+  process.env.SMTP_PORT = "587";
+  process.env.SMTP_USER = `${TEST_TAG}@example.test`;
+  process.env.SMTP_PASS = "ignored-test-pw";
+  delete process.env.REPLIT_CONNECTORS_HOSTNAME;
+
+  // Stub the transport. nodemailer is a CJS module — its default export's
+  // properties are mutable, so we can replace `createTransport` for the
+  // duration of this test. `getTransporter()` caches the first non-null
+  // result; we reset that cache via the env-snapshot teardown below by
+  // ensuring no later test can re-enter the SMTP branch (env is restored,
+  // and no remaining test in this file dispatches email).
+  let captured: { to: unknown; subject: string; html: string } | null = null;
+  const origCreateTransport = nodemailer.createTransport;
+  (nodemailer as { createTransport: unknown }).createTransport = (() => ({
+    sendMail: async (opts: { to: unknown; subject: string; html: string }) => {
+      captured = { to: opts.to, subject: opts.subject, html: opts.html };
+      return { messageId: `${TEST_TAG}-test` };
+    },
+    verify: async () => true,
+    close: () => undefined,
+  })) as typeof nodemailer.createTransport;
+
+  // Snapshot the schedule row's cooldown anchors so we can restore them — we
+  // need a clean state so `shouldSkipForRateLimit` doesn't suppress this
+  // dispatch on a shared DB where a prior successful send already advanced
+  // the anchor.
+  const [cfgBefore] = await db.select().from(maintenanceScheduleTable)
+    .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+  await db.update(maintenanceScheduleTable)
+    .set({ lastSuccessfulEmailAt: null, lastEmailCriticalSignature: null })
+    .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+
+  // Watermark maintenance_email_runs so we capture only the audit row this
+  // dispatch writes (recordEmailOutcome doesn't return the inserted id).
+  const beforeMaxExec = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM maintenance_email_runs
+  `);
+  const beforeMax = Number(
+    ((beforeMaxExec as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0,
+  );
+
+  try {
+    // Seed one threshold='all' SA so the dispatch has exactly one recipient
+    // regardless of which severities are present in the digest payload.
+    const hash = await bcrypt.hash("ignored-test-pw", 4);
+    const recipientEmail = `${TEST_TAG}-rec-sa@example.test`;
+    const [seeded] = await db.insert(usersTable).values({
+      username: `${TEST_TAG}_rec_sa`,
+      email: recipientEmail,
+      passwordHash: hash,
+      role: "superadmin",
+      isActive: true,
+      sessionToken: null,
+      sessionId: null,
+      companyId: null,
+      notifyMaintenanceEmail: true,
+      notifyMaintenanceSeverity: "all",
+    }).returning({ id: usersTable.id });
+    insertedUserIds.push(seeded.id);
+
+    // Seed a fresh critical alert so dispatch fires (rows.length > 0).
+    // ToolKey is unique to this test so its severity/count contribution to
+    // the cooldown signature is unambiguous.
+    const now = Date.now();
+    const critRun = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-disp-rec-crit",
+      status: "critical",
+      count: 73,
+      trigger: "scheduled",
+      runAt: new Date(now - 1_000),
+      durationMs: 1,
+      error: null,
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    insertedMaintenanceRunIds.push(critRun[0].id);
+
+    // Seed a recovery: error → ok within the 7-day window for tool
+    // "tt-disp-rec-recovered". `getRecentToolRecoveries` will return this.
+    const recErr = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-disp-rec-recovered",
+      status: "error",
+      count: 0,
+      trigger: "scheduled",
+      runAt: new Date(now - 3 * 86_400_000),
+      durationMs: 1,
+      error: "boom-from-dispatch-test",
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    const recOk = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-disp-rec-recovered",
+      status: "ok",
+      count: 0,
+      trigger: "scheduled",
+      runAt: new Date(now - 1 * 86_400_000),
+      durationMs: 1,
+      error: null,
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    insertedMaintenanceRunIds.push(recErr[0].id, recOk[0].id);
+
+    // Sanity-check the seed before dispatching: the recovery helper must
+    // surface the seeded (company, tool) pair, otherwise the assertions
+    // below would all pass vacuously when the seed is silently broken.
+    const recsBefore = await getRecentToolRecoveries(50, TOOL_ERROR_WINDOW_DAYS);
+    const seededRec = recsBefore.find((r) =>
+      r.companyId === dirtyCompanyId && r.toolKey === "tt-disp-rec-recovered",
+    );
+    assert.ok(seededRec, "seed must produce at least one recovery row before dispatch");
+    assert.equal(seededRec!.currentStatus, "ok",
+      "seeded recovery's currentStatus must be 'ok' (it's the recovery row's status)");
+
+    // Pre-compute the expected signature & recipient count from the SAME
+    // helpers the dispatch uses — but DELIBERATELY excluding the recoveries.
+    // The invariant under test is "recoveries don't affect signature or
+    // severities" — if dispatch silently included them, these expected
+    // values would diverge from the recorded ones.
+    const expectedAlerts = await getMaintenanceAlerts(["critical", "warn"], 501);
+    const expectedSignature = computeCriticalSignature(expectedAlerts);
+    const expectedSeverities = new Set<AlertSeverity>(
+      expectedAlerts.map((a) => a.severity),
+    );
+    const expectedErrs = await getRecentToolErrors(50);
+    if (expectedErrs.length > 0) expectedSeverities.add("error");
+    const expectedRecipients = await getSuperAdminRecipients(expectedSeverities);
+
+    // Fire the dispatch end-to-end. trigger="scheduled" exercises the same
+    // code path the daily tick uses — not a test send (which would bypass
+    // recipient filtering and the cooldown signature check).
+    const outcome = await dispatchCriticalDigest({ trigger: "scheduled" });
+
+    // Capture the audit row for cleanup AND for the signature assertion.
+    const newEmailRuns = await db.select({
+      id: maintenanceEmailRunsTable.id,
+      criticalSignature: maintenanceEmailRunsTable.criticalSignature,
+      status: maintenanceEmailRunsTable.status,
+    })
+      .from(maintenanceEmailRunsTable)
+      .where(sql`${maintenanceEmailRunsTable.id} > ${beforeMax}`);
+    for (const r of newEmailRuns) insertedMaintenanceEmailRunIds.push(r.id);
+
+    // 1. Dispatch reached the send path successfully (proves the SMTP stub
+    //    was invoked and the wiring under test was actually exercised).
+    assert.equal(
+      outcome.status, "ok",
+      `expected ok dispatch, got ${outcome.status}: ${outcome.message}`,
+    );
+    assert.ok(captured, "sendMail must have been invoked — the SMTP stub was not reached");
+
+    // 2. The rendered HTML carries the green "recovered tools" section AND
+    //    the seeded recovery row's (companyId, toolKey, currentStatus)
+    //    triple — every field in `MaintenanceRecoveryDigestRow` must reach
+    //    the email payload, otherwise the dispatch silently strips data.
+    //
+    //    We scope the assertions to a substring of the HTML that contains
+    //    only the recovery <table> so a stray pre-existing critical row
+    //    that happens to share a name with our seed can't make these
+    //    assertions pass vacuously.
+    const html = captured!.html;
+    const recHeadingIdx = html.indexOf("أدوات صيانة تعافت");
+    assert.notEqual(
+      recHeadingIdx, -1,
+      "digest HTML must include the 'recovered tools' section heading — proves recoveryRows reached sendMaintenanceCriticalDigest",
+    );
+    // The recovery section is one <table>...</table>; bound the scoped
+    // substring at the next </table> so we only inspect rows the renderer
+    // generated from `opts.recoveryRows`, not from `opts.rows` or
+    // `opts.errorRows`.
+    const recTableEnd = html.indexOf("</table>", recHeadingIdx);
+    assert.notEqual(recTableEnd, -1,
+      "recovery section must be a complete <table> — heading without table means the renderer broke");
+    const recoverySection = html.slice(recHeadingIdx, recTableEnd);
+
+    // (a) companyId — verified via the dirty company's `nameAr`. The
+    //     renderer reads the recovery row's `companyName`, which is the
+    //     SQL projection of `companies.name_ar` keyed off `companyId`.
+    //     The seeded dirty company's name follows the
+    //     `${TEST_TAG} شركة الاختبار D` pattern from before(), unique to
+    //     this test run.
+    const dirtyCompanyNameAr = `${TEST_TAG} شركة الاختبار D`;
+    assert.ok(
+      recoverySection.includes(dirtyCompanyNameAr),
+      `recovery section must reference the seeded dirty company's nameAr ("${dirtyCompanyNameAr}") — proves companyId routed to the right row`,
+    );
+
+    // (b) toolKey — the seeded tool key has no MAINTENANCE_TOOL_LABELS_AR
+    //     entry, so `toolLabelAr` falls back to the raw key. This makes
+    //     "tt-disp-rec-recovered" an unambiguous fingerprint inside the
+    //     recovery section.
+    assert.ok(
+      recoverySection.includes("tt-disp-rec-recovered"),
+      "recovery section must list the seeded toolKey — proves toolKey reached the email payload",
+    );
+
+    // (c) currentStatus — the seeded recovery's `currentStatus` is "ok",
+    //     which the renderer maps to the Arabic badge label "سليم". A
+    //     payload that dropped/altered currentStatus would render a
+    //     different label (or fall through to the raw status string), so
+    //     this pins the field end-to-end.
+    assert.ok(
+      recoverySection.includes("سليم"),
+      "recovery section must render the 'سليم' badge for currentStatus='ok' — proves currentStatus reached the email payload",
+    );
+
+    // 3. Recoveries did not contribute to `presentSeverities`. The dispatch's
+    //    actual recipient count must match what the warn/critical alerts +
+    //    errors alone would route to. If recoveries had silently been added
+    //    to the present-severity set, recipient filtering could include or
+    //    exclude additional users and this would diverge.
+    assert.equal(
+      outcome.recipients, expectedRecipients.length,
+      `recipients count must equal expected (${expectedRecipients.length}) — got ${outcome.recipients}; recoveries must NOT promote presentSeverities`,
+    );
+
+    // 4. Recoveries did not change the cooldown signature. The audit row's
+    //    `criticalSignature` is built from `visibleAlerts` (warn/critical
+    //    only). Compute the expected signature from the same source and
+    //    compare; if dispatch ever folded recoveries into the signature
+    //    payload, this would diverge.
+    assert.equal(newEmailRuns.length, 1,
+      `expected exactly one new maintenance_email_runs row, got ${newEmailRuns.length}`);
+    assert.equal(
+      newEmailRuns[0].criticalSignature, expectedSignature,
+      "criticalSignature must equal computeCriticalSignature(visibleAlerts) — recoveries must not enter the signature",
+    );
+  } finally {
+    // Restore in reverse-acquisition order: nodemailer first (so a future
+    // sendEmail call can't accidentally use our stale stub), then env, then
+    // the schedule-row anchors, then the SA opt-in flags.
+    (nodemailer as { createTransport: unknown }).createTransport = origCreateTransport;
+    for (const [k, v] of Object.entries(envSnapshot)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    if (cfgBefore) {
+      await db.update(maintenanceScheduleTable).set({
+        lastSuccessfulEmailAt: cfgBefore.lastSuccessfulEmailAt,
+        lastEmailCriticalSignature: cfgBefore.lastEmailCriticalSignature,
+      }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
     }
     if (previouslyOnIds.length) {
       await db.update(usersTable)
