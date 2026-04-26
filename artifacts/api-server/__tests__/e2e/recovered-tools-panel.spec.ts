@@ -51,13 +51,14 @@
 
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, like } from "drizzle-orm";
 import {
   db,
   usersTable,
   companiesTable,
   maintenanceRunsTable,
   superAdminSessionsTable,
+  auditLogTable,
 } from "@workspace/db";
 
 // ─── Fixtures / state shared across both tests in this file ────────────────
@@ -74,6 +75,14 @@ let saSessionRowId: number | null = null;
 let saSessionToken: string | null = null;
 let testCompanyId: number | null = null;
 const seededRunIds: number[] = [];
+// audit_log row id(s) the maintenance/recent-recoveries CSV export writes
+// during the third test below. Tracked so afterAll can strip them by PK
+// and the dev DB doesn't accumulate test-only audit rows over time.
+const seededAuditIds: number[] = [];
+// Anchor moment captured before the CSV export click so the audit-row
+// lookup can scope its query to this test run instead of relying on a
+// LIKE pattern (the export helper doesn't accept caller-supplied tags).
+let recoveryAuditAnchor: Date | null = null;
 
 // ─── Setup: create company, sa_session, and a recovery scenario ────────────
 test.beforeAll(async () => {
@@ -181,6 +190,15 @@ test.beforeAll(async () => {
 // We deliberately do NOT call `pool.end()` — see the matching note in
 // email-history-pagination.spec.ts.
 test.afterAll(async () => {
+  if (seededAuditIds.length) {
+    // Strip the export_csv audit row(s) the third test triggered. Done
+    // before the maintenance_runs / companies cleanup because audit rows
+    // hold no FK back to those tables — but ordering this first keeps the
+    // teardown narrative ("test artefacts → fixtures") readable.
+    await db
+      .delete(auditLogTable)
+      .where(inArray(auditLogTable.id, seededAuditIds));
+  }
   if (seededRunIds.length) {
     await db
       .delete(maintenanceRunsTable)
@@ -291,4 +309,126 @@ test("recovered-tools panel: renders the seeded recovery with the four columns a
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("آخر تشغيلات الأداة")).toBeVisible();
   await expect(dialog.getByText(TOOL_KEY)).toBeVisible();
+});
+
+test("recovered-tools panel: 'تنزيل CSV' downloads the recovered-tools list with the five Arabic headers, BOM, and the seeded row", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Capture the CSV bytes the user would have saved. The mutation in
+  // AICompanyFix.tsx (recoverySummaryCsvMut) does fetch → .blob() → anchor
+  // click, which drains Playwright's response body before we can read it
+  // — so we intercept the network round-trip, refetch upstream, snapshot
+  // the bytes + headers, then forward the same response to the page.
+  // Mirrors the email-history CSV spec's capture pattern.
+  const csvCaptures: {
+    body: Buffer;
+    contentType: string;
+    contentDisposition: string;
+  }[] = [];
+  await page.route("**/api/admin/maintenance/recent-recoveries**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    const upstream = await route.fetch();
+    const body     = await upstream.body();
+    const headers  = upstream.headers();
+    csvCaptures.push({
+      body,
+      contentType:        headers["content-type"] ?? "",
+      contentDisposition: headers["content-disposition"] ?? "",
+    });
+    await route.fulfill({ response: upstream, body });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+
+  // Wait for the SPA + the green panel to render before clicking the
+  // export button — the button only exists inside the panel, which is
+  // gated on `recoverySummaryQ.data.items.length > 0`.
+  await expect(page.getByRole("heading", { name: PAGE_HEADING_RE })).toBeVisible();
+  const panel = page.locator("div", { hasText: PANEL_HEADER_PREFIX }).filter({
+    has: page.locator("table"),
+  }).first();
+  await expect(panel).toBeVisible();
+  // Stable handle on the seeded row so we know the recovery scenario is on
+  // screen before exporting (the server pulls all rows via the same helper,
+  // but waiting here guarantees the test isn't racing the initial query).
+  await expect(panel.locator("tbody tr", { hasText: TOOL_KEY })).toHaveCount(1);
+
+  // Anchor a wall-clock moment just before the export so the audit-row
+  // lookup below can scope itself to this run; writeAudit() uses defaultNow
+  // for created_at so a >= filter on this anchor will only match rows the
+  // export we triggered (or a concurrent test run, which is impossible
+  // here because workers=1).
+  recoveryAuditAnchor = new Date(Date.now() - 1_000); // 1s slack for clock skew
+
+  // Click the CSV export button by its data-testid (added in task #73 for
+  // exactly this hook). page.route() above will record the bytes.
+  await page.locator('[data-testid="recent-recoveries-csv-button"]').click();
+  await expect.poll(() => csvCaptures.length, { timeout: 15_000 }).toBe(1);
+  const csvCapture = csvCaptures[0];
+
+  // ─── Response headers — Content-Type and the filename pattern ───────────
+  // sendCsv() sets `text/csv; charset=utf-8`; the substring check tolerates
+  // case differences in the charset clause without depending on order.
+  expect(csvCapture.contentType.toLowerCase()).toContain("text/csv");
+  // Filename advertised to the browser must follow the
+  // `maintenance-recent-recoveries-<unix-ms>.csv` pattern — the same
+  // identifier the page-side mutation falls back to and that operators
+  // recognise when reviewing downloads.
+  expect(csvCapture.contentDisposition).toMatch(
+    /filename="maintenance-recent-recoveries-\d+\.csv"/,
+  );
+
+  // ─── Body bytes — UTF-8 BOM, header row, seeded row ─────────────────────
+  // Excel needs the BOM to render Arabic correctly; assert on the raw
+  // bytes before any decoder strips the signature.
+  const csvBuf = csvCapture.body;
+  expect(csvBuf.length).toBeGreaterThan(3);
+  expect(csvBuf[0]).toBe(0xEF);
+  expect(csvBuf[1]).toBe(0xBB);
+  expect(csvBuf[2]).toBe(0xBF);
+
+  const csvText = csvBuf.toString("utf8").replace(/^\uFEFF/, "");
+  const csvLines = csvText.split("\r\n").filter(Boolean);
+  // Header line carries the five documented Arabic columns in order.
+  // Asserting each column individually gives a clearer failure message
+  // than a single combined-string check if a header is renamed.
+  const headerCells = csvLines[0].split(",");
+  for (const col of ["الشركة", "الأداة", "آخر خطأ", "وقت التعافي", "حالة الفحص الحالي"]) {
+    expect(headerCells).toContain(col);
+  }
+  expect(headerCells).toHaveLength(5);
+
+  // The seeded recovery must be in the body. We don't assert on total row
+  // count because the dev DB may carry other recent recoveries — only on
+  // the presence of *our* (company, tool) pair, identified by the unique
+  // TOOL_KEY plus the company's Arabic name on the same line.
+  const seededLine = csvLines.slice(1).find(
+    (line) => line.includes(TOOL_KEY) && line.includes("شركة الاختبار للتعافي"),
+  );
+  expect(seededLine, `expected a CSV row containing TOOL_KEY=${TOOL_KEY} and the seeded company name`).toBeDefined();
+
+  // ─── Audit assertion — exactly one export_csv row was written ─────────
+  // Mirrors the server-side comment on /maintenance/recent-recoveries:
+  // the export must record an audit entry under module='maintenance' /
+  // action='export_csv' / entityType='maintenance_recent_recoveries'
+  // with companyId=null (recoveries are global). Scoping the lookup by
+  // createdAt >= our anchor avoids LIKE-style matches against the JSON
+  // metadata column and keeps the assertion stable on a shared dev DB.
+  const auditRows = await db
+    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_recent_recoveries"),
+      isNull(auditLogTable.companyId),
+      gte(auditLogTable.createdAt, recoveryAuditAnchor!),
+    ));
+  expect(auditRows).toHaveLength(1);
+  // Track the id so afterAll can strip it by PK and the dev DB doesn't
+  // accumulate test-only audit rows over time.
+  for (const r of auditRows) seededAuditIds.push(r.id);
 });
