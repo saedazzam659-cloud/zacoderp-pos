@@ -80,7 +80,10 @@ const INVENTORY_GROUP_PERMS     = ["items","warehouses","stock_transfers","stock
 // group should mirror that exactly — a user with only `warehouses.view` has
 // nothing accessible inside this group.
 const INVENTORY_REPORTS_PERMS   = ["items"];
-const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries"];
+// Includes "accounting_reports" so users who only have the reports
+// permission still see the (now-parent) Accounting menu, since the
+// accounting reports section is nested INSIDE this group.
+const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries","accounting_reports"];
 const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
@@ -224,13 +227,19 @@ const inventoryReportsSubNav: NavDef[] = [
 ];
 
 // ─── CashNavGroup ──────────────────────────────────────────────────────────────
+// Cash & bank reports are nested INSIDE this group (per the user's request).
 function CashNavGroup({
-  location, onNavigate, open, onToggle,
-}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  location, onNavigate, open, onToggle, reportsOpen, onReportsToggle,
+}: {
+  location: string; onNavigate: () => void; open: boolean; onToggle: () => void;
+  reportsOpen: boolean; onReportsToggle: () => void;
+}) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   if (!groupVisible(user, CASH_GROUP_PERMS)) return null;
-  const isOnCash = location.startsWith("/cash") && !location.startsWith("/cash/reports");
+  // Treat /cash/reports as part of the parent group so the parent stays
+  // highlighted while the user is browsing inside its nested reports.
+  const isOnCash = location.startsWith("/cash");
   return (
     <div>
       <button onClick={onToggle} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isOnCash && !open ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
@@ -244,6 +253,12 @@ function CashNavGroup({
           {cashSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
+          <CashReportsNavGroup
+            location={location}
+            onNavigate={onNavigate}
+            open={reportsOpen}
+            onToggle={onReportsToggle}
+          />
         </div>
       )}
     </div>
@@ -365,18 +380,24 @@ function NavItem({
 }
 
 // ─── PurchasingNavGroup ────────────────────────────────────────────────────────
+// Suppliers/purchasing reports are nested INSIDE this group (per the user's
+// request) — they no longer live as a sibling top-level item.
 function PurchasingNavGroup({
-  location, onNavigate, open, onToggle,
+  location, onNavigate, open, onToggle, reportsOpen, onReportsToggle,
 }: {
   location: string;
   onNavigate: () => void;
   open: boolean;
   onToggle: () => void;
+  reportsOpen: boolean;
+  onReportsToggle: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   if (!groupVisible(user, PURCHASING_GROUP_PERMS)) return null;
-  const isOnPurchasing = ((location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
+  // Treat /purchasing/reports as part of the parent group so the parent stays
+  // highlighted while the user is browsing inside its nested reports.
+  const isOnPurchasing = (location.startsWith("/purchasing") || location.startsWith("/suppliers"));
   return (
     <div>
       <button
@@ -401,6 +422,12 @@ function PurchasingNavGroup({
           {purchasingSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
+          <PurchasingReportsNavGroup
+            location={location}
+            onNavigate={onNavigate}
+            open={reportsOpen}
+            onToggle={onReportsToggle}
+          />
         </div>
       )}
     </div>
@@ -765,13 +792,20 @@ function DashboardNavGroup({
 }
 
 // ─── AccountingNavGroup ───────────────────────────────────────────────────────
+// Accounting reports are nested INSIDE this group (per the user's request) —
+// they no longer live as a sibling top-level item.
 function AccountingNavGroup({
-  location, onNavigate, open, onToggle,
-}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  location, onNavigate, open, onToggle, reportsOpen, onReportsToggle,
+}: {
+  location: string; onNavigate: () => void; open: boolean; onToggle: () => void;
+  reportsOpen: boolean; onReportsToggle: () => void;
+}) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   if (!groupVisible(user, ACCOUNTING_GROUP_PERMS)) return null;
-  const isOnSub = accountingSubNav.some(i => location.startsWith(i.href));
+  // Treat /accounting/reports as part of the parent group so the parent stays
+  // highlighted while the user is browsing inside its nested reports.
+  const isOnSub = accountingSubNav.some(i => location.startsWith(i.href)) || location.startsWith("/accounting/reports");
   return (
     <div>
       <button onClick={onToggle} className={cn(
@@ -792,6 +826,12 @@ function AccountingNavGroup({
           {accountingSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
+          <ReportsNavGroup
+            location={location}
+            onNavigate={onNavigate}
+            open={reportsOpen}
+            onToggle={onReportsToggle}
+          />
         </div>
       )}
     </div>
@@ -1045,15 +1085,8 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={purchasingOpen}
                 onToggle={onPurchasingToggle}
-              />
-            </div>
-
-            <div className="space-y-0.5">
-              <PurchasingReportsNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={purchasingReportsOpen}
-                onToggle={onPurchasingReportsToggle}
+                reportsOpen={purchasingReportsOpen}
+                onReportsToggle={onPurchasingReportsToggle}
               />
             </div>
 
@@ -1063,15 +1096,8 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={cashOpen}
                 onToggle={onCashToggle}
-              />
-            </div>
-
-            <div className="space-y-0.5">
-              <CashReportsNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={cashReportsOpen}
-                onToggle={onCashReportsToggle}
+                reportsOpen={cashReportsOpen}
+                onReportsToggle={onCashReportsToggle}
               />
             </div>
 
@@ -1081,6 +1107,8 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={accountingOpen}
                 onToggle={onAccountingToggle}
+                reportsOpen={reportsOpen}
+                onReportsToggle={onReportsToggle}
               />
             </div>
 
@@ -1101,15 +1129,6 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={productionOpen}
                 onToggle={onProductionToggle}
-              />
-            </div>
-
-            <div className="space-y-0.5">
-              <ReportsNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={reportsOpen}
-                onToggle={onReportsToggle}
               />
             </div>
 
@@ -1456,15 +1475,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory"));
   const [invReportsOpen, setInvReportsOpen]   = useState(() => location.startsWith("/inventory/reports"));
   const [reportsOpen, setReportsOpen]         = useState(() => location.startsWith("/accounting/reports"));
-  const [purchasingOpen, setPurchasingOpen]   = useState(() => (location.startsWith("/purchasing") && !location.startsWith("/purchasing/reports")) || location.startsWith("/suppliers"));
+  // Reports are nested INSIDE the purchasing group, so any /purchasing/* route
+  // (including /purchasing/reports/*) auto-expands the parent.
+  const [purchasingOpen, setPurchasingOpen]   = useState(() => location.startsWith("/purchasing") || location.startsWith("/suppliers"));
   const [purchasingReportsOpen, setPurchasingReportsOpen] = useState(() => location.startsWith("/purchasing/reports"));
   // Sales reports are nested INSIDE the sales group, so any /sales/* route
   // (including /sales/reports/*) auto-expands the parent.
   const [salesOpen,      setSalesOpen]        = useState(() => location.startsWith("/sales") || location.startsWith("/customers"));
   const [salesReportsOpen, setSalesReportsOpen] = useState(() => location.startsWith("/sales/reports"));
-  const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash") && !location.startsWith("/cash/reports"));
+  // Reports are nested INSIDE the cash group, so any /cash/* route
+  // (including /cash/reports/*) auto-expands the parent.
+  const [cashOpen,       setCashOpen]         = useState(() => location.startsWith("/cash"));
   const [cashReportsOpen, setCashReportsOpen] = useState(() => location.startsWith("/cash/reports"));
-  const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals"));
+  // Reports are nested INSIDE the accounting group, so /accounting/reports/*
+  // (in addition to accounts/journals) auto-expands the parent.
+  const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals") || location.startsWith("/accounting/reports"));
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
 
