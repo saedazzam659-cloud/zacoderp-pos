@@ -1129,6 +1129,38 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
     refetchInterval: 30_000,
   });
 
+  // CSV export for the green recovery panel — calls the same endpoint with
+  // `?format=csv` so SuperAdmins can lift the "what got fixed this week" list
+  // straight into a status report without copy-pasting rows. The server
+  // bypasses the on-screen 50-row cap and writes a maintenance audit row for
+  // the export itself, mirroring the email-history CSV pattern.
+  const recoverySummaryCsvMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/recent-recoveries?format=csv`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-recent-recoveries-${Date.now()}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   // Fleet view — top 5 active companies with the most critical findings in
   // the same window. Always available to SuperAdmins regardless of which
   // company is currently selected, so they can spot recurring offenders.
@@ -1852,7 +1884,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
             periods. */}
         {recoverySummaryQ.data && recoverySummaryQ.data.items.length > 0 && (
           <div className="border border-emerald-200 rounded p-3 bg-emerald-50/40">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <CheckCircle2 className="h-4 w-4 text-emerald-700" />
               <span className="text-sm font-medium text-emerald-900">
                 أدوات صيانة تعافت آخر {recoverySummaryQ.data.windowDays} أيام
@@ -1863,6 +1895,22 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               <span className="text-[11px] text-muted-foreground mr-auto">
                 هذه الفحوصات كانت معطّلة وعادت للعمل — تختفي تلقائياً بعد {recoverySummaryQ.data.windowDays} أيام.
               </span>
+              {/* CSV export — pulls every recovery in the window (not just the
+                  on-screen 50) so SuperAdmins can attach the "what got fixed
+                  this week" list to a status report. Mirrors the email-history
+                  CSV button pattern; server writes an export_csv audit row. */}
+              <Button
+                size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                onClick={() => recoverySummaryCsvMut.mutate()}
+                disabled={recoverySummaryCsvMut.isPending}
+                title={`تنزيل قائمة الأدوات المتعافية في آخر ${recoverySummaryQ.data.windowDays} أيام كملف CSV`}
+                data-testid="recent-recoveries-csv-button"
+              >
+                {recoverySummaryCsvMut.isPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Download className="h-3 w-3" />}
+                تنزيل CSV
+              </Button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">

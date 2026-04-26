@@ -4927,9 +4927,50 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
 // matching panel on the AI Company Fix page so operators get on-screen
 // confirmation that a fix landed without having to wait for the next digest
 // email. Empty `items` means the UI hides the panel entirely.
+//
+// `?format=csv` returns the same rows as a UTF-8 BOM CSV download so
+// SuperAdmins can paste "what got fixed this week" into a status report
+// without copying rows by hand. The CSV branch bypasses the on-screen row
+// cap (uses RECOVERY_CSV_ROW_CAP) so the file reflects every recovery in
+// the recency window — same pattern the email-history CSV uses. Mirrors
+// the broken-tool helper's audit pattern: writes a single export_csv row
+// against companyId=null because recoveries are global (no companyId on
+// the helper output).
+const RECOVERY_CSV_ROW_CAP = 1000;
 router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res) => {
+  const isCsv = wantsCsv(req);
   const limit = clampInt(req.query.limit, 1, 200, 50);
   try {
+    if (isCsv) {
+      const rows = await getRecentToolRecoveries(RECOVERY_CSV_ROW_CAP);
+      const headers = ["الشركة", "الأداة", "آخر خطأ", "وقت التعافي", "حالة الفحص الحالي"];
+      const csvRows = rows.map((r) => [
+        r.companyName || `#${r.companyId}`,
+        r.toolKey,
+        csvDate(r.previousErrorAt),
+        csvDate(r.recoveredAt),
+        r.currentStatus ?? "",
+      ]);
+      await writeAudit({
+        userId:    req.adminUser?.id ?? null,
+        username:  req.adminUser?.username ?? null,
+        role:      "superadmin",
+        companyId: null,
+        module:    "maintenance",
+        action:    "export_csv",
+        method:    req.method,
+        path:      req.originalUrl,
+        entityType: "maintenance_recent_recoveries",
+        entityId:   null,
+        metadata: {
+          count: rows.length,
+          format: "csv",
+          windowDays: TOOL_ERROR_WINDOW_DAYS,
+        },
+      });
+      sendCsv(res, `maintenance-recent-recoveries-${Date.now()}.csv`, headers, csvRows);
+      return;
+    }
     const items = await getRecentToolRecoveries(limit);
     res.json({
       count: items.length,
