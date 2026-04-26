@@ -70,4 +70,3 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.production]
-SA_EMERGENCY_BYPASS = "1"
