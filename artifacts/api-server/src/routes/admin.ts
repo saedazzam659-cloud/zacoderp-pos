@@ -9,6 +9,7 @@ import {
   // Toolbox expansion (F): inventory / accounting / logs categories.
   checkNegativeStock, checkStockBalanceDrift, checkUnbalancedEntries,
   checkOldAuditLogs, checkOldMaintenanceRuns, checkOldMaintenanceEmailRuns,
+  checkOldReportEmailRuns,
   MAINTENANCE_TOOL_KEYS,
 } from "../lib/maintenanceChecks.js";
 import {
@@ -4097,6 +4098,63 @@ router.post("/maintenance/old-maintenance-email-runs/fix", requireSuperAdmin, as
     `);
     const deleted = ((exec as any).rows ?? []).length;
     await logMaint(req, g.companyId, "fix", "old_maintenance_email_runs", { deleted, days });
+    res.json({ ok: true, deleted, days });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// 13. سجلات بريد التقارير القديمة — count of report_email_schedule_runs older
+// than `days`. Fix: delete those rows. Default 90d mirrors the
+// old-maintenance-email-runs retention window and keeps the SuperAdmin
+// reports-hub email-history audit panel snappy.
+//
+// NOTE: report_email_schedule_runs is a *global* table (no company_id) —
+// every SuperAdmin sees the same rows regardless of which company they're
+// inspecting. The check still requires a `companyId` so the action shows up
+// under the correct company's "سجل الإصلاحات" audit trail and so CSV
+// filenames stay consistent with the rest of the toolbox.
+router.get("/maintenance/old-report-email-runs", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.query.days, 7, 3650, 90);
+  try {
+    if (wantsCsv(req)) {
+      const r = await checkOldReportEmailRuns(g.companyId, days, { unlimited: true });
+      const items = r.items ?? [];
+      const headers = ["المعرّف", "تاريخ التشغيل", "المصدر", "الحالة", "التقارير", "المستلمون", "الرسالة"];
+      const rows = items.map((it: any) => [
+        it.id, csvDate(it.ranAt), it.trigger ?? "", it.status ?? "",
+        Array.isArray(it.reports) ? it.reports.join("|") : "",
+        it.recipients ?? 0, it.message ?? "",
+      ]);
+      await logMaint(req, g.companyId, "export_csv", "old_report_email_runs", { count: items.length, format: "csv", days });
+      sendCsv(res, `old-report-email-runs-${g.companyId}-${Date.now()}.csv`, headers, rows);
+      return;
+    }
+    const r = await checkOldReportEmailRuns(g.companyId, days);
+    res.json({
+      count: r.count, days,
+      oldest: r.extras?.oldest ?? null,
+      newest: r.extras?.newest ?? null,
+      items: r.items ?? [],
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل الفحص" });
+  }
+});
+
+router.post("/maintenance/old-report-email-runs/fix", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  const days = clampInt(req.body?.days, 7, 3650, 90);
+  try {
+    // Re-evaluate cutoff server-side at fix time so a stale UI cannot widen it.
+    const exec = await db.execute<{ id: number }>(sql`
+      DELETE FROM report_email_schedule_runs
+       WHERE ran_at < NOW() - (${days}::int || ' days')::interval
+       RETURNING id
+    `);
+    const deleted = ((exec as any).rows ?? []).length;
+    await logMaint(req, g.companyId, "fix", "old_report_email_runs", { deleted, days });
     res.json({ ok: true, deleted, days });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل التنفيذ" });

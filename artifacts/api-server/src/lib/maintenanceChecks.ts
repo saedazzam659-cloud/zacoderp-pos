@@ -453,6 +453,46 @@ export async function checkOldMaintenanceEmailRuns(
   };
 }
 
+// 13. سجلات بريد التقارير القديمة — count of report_email_schedule_runs older
+// than `days`. Mirrors `checkOldMaintenanceEmailRuns`: the table is the
+// parallel append-only history for the cross-company "Reports Hub" scheduler
+// — every weekly/monthly auto-send and every "Send Now" appends a row, so
+// without retention the audit panel slows down and storage grows forever.
+// Default 90 days mirrors the maintenance-email-runs window. Like that table
+// it is global (no company_id), but the companyId arg is accepted to match
+// the per-tool check signature and keep audit-log attribution correct.
+export async function checkOldReportEmailRuns(
+  _companyId: number, days = 90, opts: CheckOptions = {},
+): Promise<CheckResult> {
+  const exec = await db.execute<any>(sql`
+    SELECT COUNT(*)::int AS n,
+           MIN(ran_at)               AS "oldest",
+           MAX(ran_at)               AS "newest"
+      FROM report_email_schedule_runs
+     WHERE ran_at < NOW() - (${days}::int || ' days')::interval
+  `);
+  const row = ((exec as any).rows ?? [{}])[0] ?? {};
+  const n = Number(row.n ?? 0);
+  const previewLimit = opts.unlimited ? sql`LIMIT 5000` : sql`LIMIT 50`;
+  let items: any[] = [];
+  if (n > 0) {
+    const exec2 = await db.execute<any>(sql`
+      SELECT id, ran_at AS "ranAt", trigger, status, reports,
+             recipients, message
+        FROM report_email_schedule_runs
+       WHERE ran_at < NOW() - (${days}::int || ' days')::interval
+       ORDER BY ran_at ASC
+       ${previewLimit}
+    `);
+    items = (exec2 as any).rows ?? [];
+  }
+  return {
+    count: n,
+    items,
+    extras: { days, oldest: row.oldest ?? null, newest: row.newest ?? null },
+  };
+}
+
 // ─── Aggregator used by the scheduler + the run-now endpoint ─────────────────
 export interface ToolRunOutcome {
   toolKey: MaintenanceToolKey;

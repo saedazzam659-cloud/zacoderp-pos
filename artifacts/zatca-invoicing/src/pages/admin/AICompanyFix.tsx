@@ -2211,6 +2211,71 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
               );
             }}
           />
+
+          {/* سجل بريد التقارير القديم — fix deletes. The
+              report_email_schedule_runs table is the parallel append-only
+              history for the cross-company "Reports Hub" scheduler. Like
+              maintenance_email_runs it is global (no company_id), so the
+              count is the same regardless of the selected company; rendering
+              under each company keeps the audit-log entry attributed to the
+              SuperAdmin who pruned. No latestScan/trend because this tool
+              isn't part of the per-company sweep. */}
+          <MaintenanceTool
+            toolKey="old-report-email-runs"
+            label="سجل بريد التقارير القديم"
+            description="محاولات إرسال تقارير الـSuperAdmin (report_email_schedule_runs) أقدم من 90 يوماً — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
+            icon={Trash2}
+            checkEndpoint="maintenance/old-report-email-runs"
+            fixEndpoint="maintenance/old-report-email-runs/fix"
+            companyId={companyId}
+            onFixed={onFixed}
+            destructive
+            latestScan={null}
+            trend={undefined}
+            confirmTitle="حذف سجل بريد التقارير القديم"
+            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال أقدم من 90 يوماً نهائياً (سجل عام لكل الشركات). متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            renderDetails={({ data }) => {
+              const items = data.items ?? [];
+              return (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground px-1">
+                    أقدم محاولة: {data.oldest ? String(data.oldest).slice(0, 16).replace("T", " ") : "—"} ·
+                    أحدث ضمن النطاق: {data.newest ? String(data.newest).slice(0, 16).replace("T", " ") : "—"}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-1 text-right">#</th>
+                          <th className="px-2 py-1 text-right">المصدر</th>
+                          <th className="px-2 py-1 text-right">الحالة</th>
+                          <th className="px-2 py-1 text-right">المستلمون</th>
+                          <th className="px-2 py-1 text-right">التقارير</th>
+                          <th className="px-2 py-1 text-right">الرسالة</th>
+                          <th className="px-2 py-1 text-right">التاريخ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {items.slice(0, 30).map((it: any) => (
+                          <tr key={it.id}>
+                            <td className="px-2 py-1 text-muted-foreground">{it.id}</td>
+                            <td className="px-2 py-1">{it.trigger}</td>
+                            <td className="px-2 py-1">{it.status}</td>
+                            <td className="px-2 py-1 font-mono">{it.recipients ?? 0}</td>
+                            <td className="px-2 py-1 font-mono text-[10px] truncate max-w-[160px]" title={Array.isArray(it.reports) ? it.reports.join(", ") : ""}>{Array.isArray(it.reports) && it.reports.length ? it.reports.join(", ") : "—"}</td>
+                            <td className="px-2 py-1 font-mono text-[10px] truncate max-w-[180px]" title={it.message ?? ""}>{it.message || "—"}</td>
+                            <td className="px-2 py-1">{String(it.ranAt ?? "").slice(0, 16).replace("T", " ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {items.length > 30 && <p className="text-[11px] text-muted-foreground p-1">عرض أول 30 من {items.length} نتيجة.</p>}
+                  </div>
+                </div>
+              );
+            }}
+          />
         </div>
 
         {/* History panel — last 50 maintenance actions for the selected company */}
