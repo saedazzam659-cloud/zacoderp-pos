@@ -3447,3 +3447,324 @@ test("GET /maintenance/email-history: ?format=csv returns text/csv with the docu
   // cleanup() but explicit tracking matches the rest of the suite).
   insertedAuditLogIds.push(audit.id);
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/maintenance/history — JSON branch / paging / filters
+// ════════════════════════════════════════════════════════════════════════════
+// Backs the "سجل الإصلاحات" accordion on the SuperAdmin AI Company Fix page.
+// The route reads `audit_log` rows where module='maintenance' for the
+// requested company, ordered DESC by createdAt, paginated via ?offset/?limit,
+// and narrowable via ?from/?to/?action/?entityType. The CSV branch is
+// already covered (and ignores ?offset by design), so this block targets:
+//   • Auth gates (401 without bearer, 403 for non-superadmin).
+//   • The documented response shape (`items`, `hasMore`, `offset`, `limit`,
+//     `nextOffset`).
+//   • ?offset paging across multiple pages with NO overlap between pages.
+//   • hasMore = false once the offset passes the filtered total.
+//   • from / to / action / entityType filters narrow `items` AND `hasMore`.
+//   • Bad inputs: from=not-a-date → 400; negative ?offset is clamped to 0.
+//
+// Determinism:
+//   - All seeded rows live on a dedicated `historyCompanyId` so other tests
+//     that fire writeAudit/logMaint against the existing test companies can
+//     never inflate counts here.
+//   - Rows carry distinct, far-past createdAt timestamps (2010-04-* @ 03:00
+//     UTC, one row per day) so DESC ordering is stable and the date filter
+//     can pick exact subsets.
+//   - The seeded mix of (action, entityType) values yields the exact filter
+//     counts the assertions hard-code below.
+
+interface HistoryItem {
+  id: number;
+  action: string;
+  entityType: string | null;
+  username: string | null;
+  metadata: unknown;
+  createdAt: string;
+}
+interface HistoryResponse {
+  count: number;
+  items: HistoryItem[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+interface HistorySeedRow {
+  createdAt: Date;
+  action: string;
+  entityType: string;
+  metadata: Record<string, unknown>;
+}
+
+// 8 rows spanning a far-past 8-day window. The (action, entityType) mix is
+// chosen so each filter assertion below has a unique expected count:
+//   action=fix             → 3 rows (days 1, 2, 3)
+//   action=export_csv      → 3 rows (days 4, 5, 6)
+//   action=edit_retention  → 2 rows (days 7, 8)
+//   entityType=journal_pending     → 2 rows (days 1, 4)
+//   entityType=broken_refs         → 2 rows (days 2, 5)
+//   entityType=dormant_users       → 1 row  (day 3)
+//   entityType=maintenance_history → 1 row  (day 6)
+//   entityType=retention_settings  → 2 rows (days 7, 8)
+//   action=fix & entityType=journal_pending → 1 row (day 1)
+const HISTORY_SEED: HistorySeedRow[] = [
+  { createdAt: new Date("2010-04-01T03:00:00.000Z"), action: "fix",            entityType: "journal_pending",     metadata: { day: 1, fixed: 2 } },
+  { createdAt: new Date("2010-04-02T03:00:00.000Z"), action: "fix",            entityType: "broken_refs",         metadata: { day: 2, fixed: 1 } },
+  { createdAt: new Date("2010-04-03T03:00:00.000Z"), action: "fix",            entityType: "dormant_users",       metadata: { day: 3, deactivated: 4 } },
+  { createdAt: new Date("2010-04-04T03:00:00.000Z"), action: "export_csv",     entityType: "journal_pending",     metadata: { day: 4, count: 17, format: "csv" } },
+  { createdAt: new Date("2010-04-05T03:00:00.000Z"), action: "export_csv",     entityType: "broken_refs",         metadata: { day: 5, count: 9, format: "csv" } },
+  { createdAt: new Date("2010-04-06T03:00:00.000Z"), action: "export_csv",     entityType: "maintenance_history", metadata: { day: 6, count: 50, format: "csv" } },
+  { createdAt: new Date("2010-04-07T03:00:00.000Z"), action: "edit_retention", entityType: "retention_settings",  metadata: { day: 7, toolKey: "old-audit-logs", days: 365 } },
+  { createdAt: new Date("2010-04-08T03:00:00.000Z"), action: "edit_retention", entityType: "retention_settings",  metadata: { day: 8, toolKey: "old-maintenance-runs", days: 90 } },
+];
+
+let historyCompanyId: number | undefined;
+let historySeeded = false;
+
+async function seedHistoryOnce(): Promise<void> {
+  if (historySeeded) return;
+  // Dedicated tenant: a fresh company seeded once and torn down by the
+  // existing insertedCompanyIds cleanup. Using a fresh company means our
+  // exact-count assertions never have to compete with audit_log rows the
+  // run-now / retention / digest tests above wrote against the shared
+  // dirty/clean companies.
+  const [co] = await db.insert(companiesTable).values({
+    nameAr:         `${TEST_TAG} شركة سجل الصيانة H`,
+    nameEn:         `${TEST_TAG} Maint History Co H`,
+    vatNumber:      `300000000000${"H".charCodeAt(0) % 10}`,
+    crNumber:       `CR_${TEST_TAG}_H`,
+    city:           "Riyadh",
+    street:         "Test St",
+    buildingNumber: "1",
+    postalCode:     "12345",
+    country:        "SA",
+    invoiceType:    "both",
+    status:         "active",
+  }).returning({ id: companiesTable.id });
+  historyCompanyId = co.id;
+  insertedCompanyIds.push(historyCompanyId);
+
+  const rows = await db.insert(auditLogTable).values(
+    HISTORY_SEED.map((r) => ({
+      userId:     saUserId,
+      username:   `${TEST_TAG}_sa`,
+      role:       "superadmin",
+      companyId:  historyCompanyId!,
+      module:     "maintenance",
+      action:     r.action,
+      method:     "POST",
+      path:       "/api/admin/maintenance/seed",
+      entityType: r.entityType,
+      entityId:   null,
+      statusCode: 200,
+      ip:         "127.0.0.1",
+      metadata:   r.metadata,
+      createdAt:  r.createdAt,
+    })),
+  ).returning({ id: auditLogTable.id });
+  for (const r of rows) insertedAuditLogIds.push(r.id);
+  historySeeded = true;
+}
+
+const HIST_PATH = (qs: string = "") =>
+  `/api/admin/maintenance/history?companyId=${historyCompanyId}${qs ? `&${qs}` : ""}`;
+
+test("GET /maintenance/history (JSON): 401 without bearer token", async () => {
+  // Auth gate fires before maintGuard, so this also doesn't need companyId
+  // — but pass one anyway to make the URL realistic.
+  await seedHistoryOnce();
+  const r = await api(HIST_PATH(), "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/history (JSON): 403 for non-superadmin", async () => {
+  await seedHistoryOnce();
+  const r = await api(HIST_PATH(), "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/history (JSON): default response shape returns all seeded rows DESC, hasMore=false", async () => {
+  await seedHistoryOnce();
+  const r = await api<HistoryResponse>(HIST_PATH(), "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 300)}`);
+  // Documented response shape — every key the UI accordion reads.
+  assert.ok(Array.isArray(r.body.items), "items must be an array");
+  assert.equal(typeof r.body.count, "number");
+  assert.equal(typeof r.body.offset, "number");
+  assert.equal(typeof r.body.limit, "number");
+  assert.equal(typeof r.body.hasMore, "boolean");
+  // 8 seeded rows fit comfortably under the default limit (50) → hasMore=false.
+  assert.equal(r.body.offset, 0);
+  assert.equal(r.body.limit, 50, "default limit should be 50");
+  assert.equal(r.body.count, HISTORY_SEED.length);
+  assert.equal(r.body.items.length, HISTORY_SEED.length);
+  assert.equal(r.body.hasMore, false);
+  assert.equal(r.body.nextOffset, null, "nextOffset must be null when hasMore=false");
+  // DESC by createdAt → most recent seeded row (day 8) is first, day 1 is last.
+  assert.equal(r.body.items[0].createdAt, "2010-04-08T03:00:00.000Z");
+  assert.equal(r.body.items[r.body.items.length - 1].createdAt, "2010-04-01T03:00:00.000Z");
+  for (let i = 1; i < r.body.items.length; i++) {
+    assert.ok(
+      new Date(r.body.items[i - 1].createdAt).getTime() >= new Date(r.body.items[i].createdAt).getTime(),
+      "items must be sorted by createdAt DESC",
+    );
+  }
+  // Spot-check that the row carries the expected columns the UI renders.
+  const first = r.body.items[0];
+  assert.equal(first.action, "edit_retention");
+  assert.equal(first.entityType, "retention_settings");
+  assert.equal(first.username, `${TEST_TAG}_sa`);
+  assert.ok(isObject(first.metadata), "metadata must be a JSON object");
+});
+
+test("GET /maintenance/history (JSON): ?offset paginates without overlap and exposes nextOffset", async () => {
+  await seedHistoryOnce();
+  // limit=3 → 3 pages of (3, 3, 2) rows. Walk all three pages and prove
+  // (a) no row id appears in two different pages, (b) hasMore flips to
+  // false on the final page, and (c) nextOffset is exactly offset+items.length
+  // until the cursor exhausts the filtered total.
+  const seenIds = new Set<number>();
+  // Page 1: offset=0
+  const p1 = await api<HistoryResponse>(HIST_PATH("limit=3&offset=0"), "GET", { token: saToken });
+  assert.equal(p1.status, 200);
+  assert.equal(p1.body.offset, 0);
+  assert.equal(p1.body.limit, 3);
+  assert.equal(p1.body.items.length, 3);
+  assert.equal(p1.body.hasMore, true, "8 rows / limit 3 → page 1 must report hasMore=true");
+  assert.equal(p1.body.nextOffset, 3);
+  for (const it of p1.body.items) {
+    assert.ok(!seenIds.has(it.id), `page 1 returned duplicate row ${it.id}`);
+    seenIds.add(it.id);
+  }
+  // Page 2: offset=nextOffset from page 1
+  const p2 = await api<HistoryResponse>(HIST_PATH(`limit=3&offset=${p1.body.nextOffset}`), "GET", { token: saToken });
+  assert.equal(p2.status, 200);
+  assert.equal(p2.body.offset, 3);
+  assert.equal(p2.body.items.length, 3);
+  assert.equal(p2.body.hasMore, true, "page 2 still has the final 2 rows behind it");
+  assert.equal(p2.body.nextOffset, 6);
+  for (const it of p2.body.items) {
+    assert.ok(!seenIds.has(it.id), `page 2 overlaps page 1 on row ${it.id}`);
+    seenIds.add(it.id);
+  }
+  // Page 3: final, partial
+  const p3 = await api<HistoryResponse>(HIST_PATH(`limit=3&offset=${p2.body.nextOffset}`), "GET", { token: saToken });
+  assert.equal(p3.status, 200);
+  assert.equal(p3.body.offset, 6);
+  assert.equal(p3.body.items.length, 2, "final page should contain the trailing 2 rows");
+  assert.equal(p3.body.hasMore, false, "no rows remain past the trailing page → hasMore=false");
+  assert.equal(p3.body.nextOffset, null, "nextOffset must be null on the final page");
+  for (const it of p3.body.items) {
+    assert.ok(!seenIds.has(it.id), `page 3 overlaps an earlier page on row ${it.id}`);
+    seenIds.add(it.id);
+  }
+  // Walked every seeded row exactly once across the three pages.
+  assert.equal(seenIds.size, HISTORY_SEED.length,
+    `pagination must visit each row exactly once; saw ${seenIds.size} of ${HISTORY_SEED.length}`);
+});
+
+test("GET /maintenance/history (JSON): hasMore=false once the offset passes the filtered total", async () => {
+  await seedHistoryOnce();
+  // offset === total → empty page, hasMore=false.
+  const atEnd = await api<HistoryResponse>(HIST_PATH(`limit=3&offset=${HISTORY_SEED.length}`), "GET", { token: saToken });
+  assert.equal(atEnd.status, 200);
+  assert.equal(atEnd.body.offset, HISTORY_SEED.length);
+  assert.equal(atEnd.body.items.length, 0, "offset==total must return zero items");
+  assert.equal(atEnd.body.hasMore, false);
+  assert.equal(atEnd.body.nextOffset, null);
+  // offset > total → also empty + hasMore=false (idempotent past the end).
+  const past = await api<HistoryResponse>(HIST_PATH(`limit=3&offset=${HISTORY_SEED.length + 50}`), "GET", { token: saToken });
+  assert.equal(past.status, 200);
+  assert.equal(past.body.items.length, 0);
+  assert.equal(past.body.hasMore, false);
+  assert.equal(past.body.nextOffset, null);
+});
+
+test("GET /maintenance/history (JSON): ?action / ?entityType filters narrow items AND hasMore", async () => {
+  await seedHistoryOnce();
+  // action=fix → 3 seeded rows.
+  const byAction = await api<HistoryResponse>(HIST_PATH("action=fix"), "GET", { token: saToken });
+  assert.equal(byAction.status, 200);
+  assert.equal(byAction.body.count, 3);
+  assert.equal(byAction.body.items.length, 3);
+  assert.equal(byAction.body.hasMore, false);
+  for (const it of byAction.body.items) {
+    assert.equal(it.action, "fix", `action filter leaked an action='${it.action}' row`);
+  }
+  // entityType=journal_pending → 2 seeded rows.
+  const byEntity = await api<HistoryResponse>(HIST_PATH("entityType=journal_pending"), "GET", { token: saToken });
+  assert.equal(byEntity.status, 200);
+  assert.equal(byEntity.body.count, 2);
+  assert.equal(byEntity.body.items.length, 2);
+  for (const it of byEntity.body.items) {
+    assert.equal(it.entityType, "journal_pending");
+  }
+  // Combined action + entityType (AND semantics) → 1 row only (day 1).
+  const both = await api<HistoryResponse>(HIST_PATH("action=fix&entityType=journal_pending"), "GET", { token: saToken });
+  assert.equal(both.status, 200);
+  assert.equal(both.body.count, 1);
+  assert.equal(both.body.items[0].createdAt, "2010-04-01T03:00:00.000Z");
+  // Filter narrows hasMore too: action=export_csv has 3 rows; with limit=2
+  // the first page must still report hasMore=true and nextOffset=2.
+  const filteredPaged = await api<HistoryResponse>(HIST_PATH("action=export_csv&limit=2&offset=0"), "GET", { token: saToken });
+  assert.equal(filteredPaged.status, 200);
+  assert.equal(filteredPaged.body.items.length, 2);
+  assert.equal(filteredPaged.body.hasMore, true,
+    "filtered total (3) > limit (2) → page 1 must report hasMore=true");
+  assert.equal(filteredPaged.body.nextOffset, 2);
+  // Final page of the filtered set: 1 trailing row, hasMore=false.
+  const filteredTail = await api<HistoryResponse>(HIST_PATH("action=export_csv&limit=2&offset=2"), "GET", { token: saToken });
+  assert.equal(filteredTail.status, 200);
+  assert.equal(filteredTail.body.items.length, 1);
+  assert.equal(filteredTail.body.hasMore, false);
+  assert.equal(filteredTail.body.nextOffset, null);
+});
+
+test("GET /maintenance/history (JSON): ?from / ?to scope by createdAt (inclusive end-of-day)", async () => {
+  await seedHistoryOnce();
+  // Inclusive 3-day window covers exactly days 3, 4, 5 (one row per day).
+  // The 'to' bound is end-of-day inclusive: rows recorded at 03:00 UTC on
+  // 2010-04-05 must still appear.
+  const window = await api<HistoryResponse>(HIST_PATH("from=2010-04-03&to=2010-04-05"), "GET", { token: saToken });
+  assert.equal(window.status, 200);
+  assert.equal(window.body.count, 3);
+  const days = window.body.items.map((it) => it.createdAt.slice(0, 10)).sort();
+  assert.deepEqual(days, ["2010-04-03", "2010-04-04", "2010-04-05"]);
+  // Single-day window: one row.
+  const oneDay = await api<HistoryResponse>(HIST_PATH("from=2010-04-06&to=2010-04-06"), "GET", { token: saToken });
+  assert.equal(oneDay.status, 200);
+  assert.equal(oneDay.body.count, 1);
+  assert.equal(oneDay.body.items[0].createdAt, "2010-04-06T03:00:00.000Z");
+  // Window combined with action filter narrows further (AND semantics):
+  // days 4, 5, 6 + action=export_csv → 3 rows; with limit=2 hasMore=true.
+  const combined = await api<HistoryResponse>(
+    HIST_PATH("from=2010-04-04&to=2010-04-08&action=export_csv&limit=2"), "GET", { token: saToken });
+  assert.equal(combined.status, 200);
+  assert.equal(combined.body.items.length, 2);
+  assert.equal(combined.body.hasMore, true, "filtered total (3) > limit (2) → hasMore=true");
+  assert.equal(combined.body.nextOffset, 2);
+});
+
+test("GET /maintenance/history (JSON): rejects invalid ?from / ?to and clamps negative ?offset", async () => {
+  await seedHistoryOnce();
+  // Bad date shape on either bound → 400. Both arms of the validator.
+  for (const path of [
+    HIST_PATH("from=not-a-date"),
+    HIST_PATH("to=2026/01/01"),
+    HIST_PATH("from=2010-13-40"), // matches YYYY-MM-DD shape but not a real date
+  ]) {
+    const r = await api(path, "GET", { token: saToken });
+    assert.equal(r.status, 400, `expected 400 for ${path}, got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+  }
+  // Negative offset is *clamped* to 0 (not rejected) — the route uses
+  // clampInt(offset, 0, 1_000_000, 0). The response's offset field reports
+  // the clamped value, and page 1 still returns the most recent rows.
+  const negOffset = await api<HistoryResponse>(HIST_PATH("offset=-50&limit=3"), "GET", { token: saToken });
+  assert.equal(negOffset.status, 200, "negative offset must be clamped, not rejected");
+  assert.equal(negOffset.body.offset, 0, "negative offset must clamp to 0");
+  assert.equal(negOffset.body.items.length, 3, "clamped page should still be a full page");
+  assert.equal(negOffset.body.items[0].createdAt, "2010-04-08T03:00:00.000Z",
+    "clamped offset=0 should still yield the most-recent row first");
+});
