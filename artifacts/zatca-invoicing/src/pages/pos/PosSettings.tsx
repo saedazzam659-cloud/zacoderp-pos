@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Banknote, CreditCard, Smartphone, Wallet, Save, Loader2, Building2, Info, Check, ChevronsUpDown, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { cn } from "@/lib/utils";
 type ComboOption = { value: string; label: string; keywords?: string };
 
 function SearchCombobox({
-  value, onChange, options, placeholder, emptyText, searchPlaceholder, allowClear = true, className, testId,
+  value, onChange, options, placeholder, emptyText, searchPlaceholder, allowClear = true, className, testId, clearLabel,
 }: {
   value: string | null;
   onChange: (v: string | null) => void;
@@ -24,6 +25,7 @@ function SearchCombobox({
   allowClear?: boolean;
   className?: string;
   testId?: string;
+  clearLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find(o => o.value === value);
@@ -43,7 +45,7 @@ function SearchCombobox({
             {allowClear && selected && (
               <button
                 type="button"
-                aria-label="مسح الاختيار"
+                aria-label={clearLabel ?? "Clear"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange(null); }}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onChange(null); } }}
                 className="opacity-50 hover:opacity-100 focus:opacity-100 focus:outline-none rounded"
@@ -86,10 +88,10 @@ function SearchCombobox({
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type CashBox     = { id: number; nameAr: string; code?: string; accountId?: number | null };
-type BankAccount = { id: number; nameAr: string; bankName?: string | null; accountId?: number | null };
-type Account     = { id: number; code: string; nameAr: string };
-type Company     = { id: number; nameAr: string };
+type CashBox     = { id: number; nameAr: string; nameEn?: string | null; code?: string; accountId?: number | null };
+type BankAccount = { id: number; nameAr: string; nameEn?: string | null; bankName?: string | null; accountId?: number | null };
+type Account     = { id: number; code: string; nameAr: string; nameEn?: string | null };
+type Company     = { id: number; nameAr: string; nameEn?: string | null };
 
 type Settings = {
   posCashCashBoxId:       number | null;
@@ -101,6 +103,11 @@ type Settings = {
 export default function PosSettings() {
   const { user, token } = useAuth();
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`posPages.settings.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
   const qc = useQueryClient();
   const isSuperAdmin = user?.role === "superadmin";
 
@@ -114,7 +121,7 @@ export default function PosSettings() {
     enabled: isSuperAdmin,
     queryFn: async () => {
       const r = await fetch(`${API}/api/companies`, { headers });
-      if (!r.ok) throw new Error("فشل تحميل الشركات");
+      if (!r.ok) throw new Error(tr("errLoadCompanies"));
       return r.json();
     },
   });
@@ -126,7 +133,7 @@ export default function PosSettings() {
     enabled: !!companyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/companies/${companyId}/pos-settings`, { headers });
-      if (!r.ok) throw new Error("فشل تحميل إعدادات نقاط البيع");
+      if (!r.ok) throw new Error(tr("errLoadSettings"));
       return r.json();
     },
   });
@@ -183,27 +190,27 @@ export default function PosSettings() {
       });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e?.error || "فشل الحفظ");
+        throw new Error(e?.error || tr("errSave"));
       }
       return r.json();
     },
     onSuccess: () => {
-      toast({ title: "تم حفظ إعدادات الدفع لنقاط البيع" });
+      toast({ title: tr("toastSaved") });
       qc.invalidateQueries({ queryKey: ["pos-settings", companyId] });
     },
-    onError: (e: any) => toast({ title: "خطأ في الحفظ", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: tr("toastError"), description: e?.message, variant: "destructive" }),
   });
 
   const accountLabel = (id: number | null | undefined) => {
-    if (!id) return "بدون حساب محاسبي مرتبط";
+    if (!id) return tr("noLinkedAccount");
     const a = accountById.get(id);
-    return a ? `${a.code} — ${a.nameAr}` : `حساب #${id}`;
+    return a ? `${a.code} — ${pickName(a)}` : tr("accountFallback", { id });
   };
 
   const cashBoxOption = (cb: CashBox) =>
-    `${cb.nameAr}${cb.accountId ? "  •  " + accountLabel(cb.accountId) : "  •  ⚠ بدون حساب محاسبي"}`;
+    `${pickName(cb)}${cb.accountId ? "  •  " + accountLabel(cb.accountId) : "  •  " + tr("noAccountWarning")}`;
   const bankOption = (b: BankAccount) =>
-    `${b.nameAr}${b.bankName ? " (" + b.bankName + ")" : ""}${b.accountId ? "  •  " + accountLabel(b.accountId) : "  •  ⚠ بدون حساب محاسبي"}`;
+    `${pickName(b)}${b.bankName ? " (" + b.bankName + ")" : ""}${b.accountId ? "  •  " + accountLabel(b.accountId) : "  •  " + tr("noAccountWarning")}`;
 
   const Row = ({ icon: Icon, color, title, subtitle, kind, value, onChange }: {
     icon: any; color: string; title: string; subtitle: string;
@@ -225,28 +232,29 @@ export default function PosSettings() {
         </div>
         <div className="flex-1 min-w-[260px]">
           <Label className="text-xs text-muted-foreground mb-1 block">
-            {kind === "cashbox" ? "اختر صندوق نقدي" : "اختر حساب بنكي"}
+            {kind === "cashbox" ? tr("selectCashBoxLabel") : tr("selectBankLabel")}
           </Label>
           <SearchCombobox
             testId={`select-${title}`}
             value={value ? String(value) : null}
             onChange={(v) => onChange(v ? Number(v) : null)}
-            placeholder="— بدون ربط —"
-            searchPlaceholder={kind === "cashbox" ? "ابحث عن صندوق نقدي..." : "ابحث عن حساب بنكي..."}
-            emptyText="لا توجد نتائج"
+            placeholder={tr("noLinkPh")}
+            searchPlaceholder={kind === "cashbox" ? tr("searchCashBoxPh") : tr("searchBankPh")}
+            emptyText={tr("noResults")}
+            clearLabel={tr("clearSelection")}
             options={list.map((x: any) => {
               const label = kind === "cashbox" ? cashBoxOption(x) : bankOption(x);
               const acc = accountById.get(x.accountId ?? -1);
               return {
                 value: String(x.id),
                 label,
-                keywords: [x.nameAr, (x as any).bankName, (x as any).code, acc?.code, acc?.nameAr].filter(Boolean).join(" "),
+                keywords: [x.nameAr, x.nameEn, (x as any).bankName, (x as any).code, acc?.code, acc?.nameAr, acc?.nameEn].filter(Boolean).join(" "),
               };
             })}
           />
           {value && (
             <div className="mt-1.5 text-[11px] flex items-center gap-1 text-muted-foreground">
-              <span>الترحيل المحاسبي إلى:</span>
+              <span>{tr("postedTo")}</span>
               <span className="font-semibold text-foreground">{accountLabel(linkedAcc)}</span>
             </div>
           )}
@@ -256,15 +264,15 @@ export default function PosSettings() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-5xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <CreditCard className="w-6 h-6 text-primary" />
-            ربط طرق الدفع بالحسابات العامة
+            {tr("title")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            حدّد لكل طريقة دفع في نقاط البيع الصندوق أو الحساب البنكي اللي يستلم النقدية، ويظهر تحته الحساب المحاسبي اللي راح يقيد فيه القيد تلقائياً.
+            {tr("subtitle")}
           </p>
         </div>
         {isSuperAdmin && (
@@ -275,14 +283,14 @@ export default function PosSettings() {
               className="w-64"
               value={companyId ? String(companyId) : null}
               onChange={(v) => setCompanyId(v ? Number(v) : null)}
-              placeholder="اختر شركة"
-              searchPlaceholder="ابحث عن شركة..."
-              emptyText="لا توجد شركات"
+              placeholder={tr("selectCompanyPh")}
+              searchPlaceholder={tr("searchCompanyPh")}
+              emptyText={tr("noCompanies")}
               allowClear={false}
               options={(companiesQ.data ?? []).map(c => ({
                 value: String(c.id),
-                label: c.nameAr,
-                keywords: c.nameAr,
+                label: pickName(c),
+                keywords: [c.nameAr, c.nameEn].filter(Boolean).join(" "),
               }))}
             />
           </div>
@@ -290,7 +298,7 @@ export default function PosSettings() {
       </div>
 
       {!companyId ? (
-        <Card><CardContent className="p-10 text-center text-muted-foreground">اختر شركة للمتابعة</CardContent></Card>
+        <Card><CardContent className="p-10 text-center text-muted-foreground">{tr("selectCompanyToContinue")}</CardContent></Card>
       ) : settingsQ.isLoading ? (
         <Card><CardContent className="p-10 grid place-items-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></CardContent></Card>
       ) : (
@@ -299,37 +307,37 @@ export default function PosSettings() {
             <CardContent className="p-4 flex items-start gap-2 text-sm text-blue-900">
               <Info className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
-                كل صندوق نقدي وحساب بنكي مربوط بحساب من شجرة الحسابات (يظهر بجانبه). عند إتمام أي عملية بيع POS، يقيّد النظام الإيراد في حساب المبيعات وضريبة القيمة المضافة في حساب الضريبة، ويقيد المقابل تلقائيًا في حساب الصندوق/البنك المختار هنا حسب طريقة الدفع.
+                {tr("infoText")}
                 <br />
-                لو ما اخترت ربطًا لطريقة دفع، الكاشير ما راح يقدر يستخدمها في POS.
+                {tr("infoNoLink")}
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="text-base">طرق الدفع</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">{tr("paymentMethods")}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <Row
                 icon={Banknote} color="bg-emerald-500"
-                title="نقداً" subtitle="المبيعات النقدية المباشرة في الصندوق"
+                title={tr("methodCashTitle")} subtitle={tr("methodCashSub")}
                 kind="cashbox" value={draft.posCashCashBoxId}
                 onChange={(v) => setDraft(d => ({ ...d, posCashCashBoxId: v }))}
               />
               <Row
                 icon={CreditCard} color="bg-blue-500"
-                title="شبكة" subtitle="مبيعات نقاط الشبكة (مدى/فيزا/ماستركارد)"
+                title={tr("methodCardTitle")} subtitle={tr("methodCardSub")}
                 kind="bank" value={draft.posCardBankAccountId}
                 onChange={(v) => setDraft(d => ({ ...d, posCardBankAccountId: v }))}
               />
               <Row
                 icon={Smartphone} color="bg-slate-800"
-                title="Apple Pay" subtitle="مدفوعات Apple Pay عبر القارئ"
+                title={tr("methodAppleTitle")} subtitle={tr("methodAppleSub")}
                 kind="bank" value={draft.posAppleBankAccountId}
                 onChange={(v) => setDraft(d => ({ ...d, posAppleBankAccountId: v }))}
               />
               <Row
                 icon={Wallet} color="bg-amber-500"
-                title="محفظة" subtitle="محافظ STC Pay / Urpay وما شابهها"
+                title={tr("methodWalletTitle")} subtitle={tr("methodWalletSub")}
                 kind="bank" value={draft.posWalletBankAccountId}
                 onChange={(v) => setDraft(d => ({ ...d, posWalletBankAccountId: v }))}
               />
@@ -339,7 +347,7 @@ export default function PosSettings() {
           <div className="flex items-center justify-end gap-2">
             <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} data-testid="btn-save">
               {saveMut.isPending ? <Loader2 className="w-4 h-4 animate-spin me-1" /> : <Save className="w-4 h-4 me-1" />}
-              حفظ الإعدادات
+              {tr("saveSettings")}
             </Button>
           </div>
         </>

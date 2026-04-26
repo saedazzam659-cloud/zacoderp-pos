@@ -12,18 +12,12 @@ import { useTranslation } from "react-i18next";
 import { CalendarRange, Filter } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const COLS = [
-  { key: "date",         header: "التاريخ",          width: 14 },
-  { key: "receiptCount", header: "عدد المقبوضات",     width: 14 },
-  { key: "totalIn",      header: "إجمالي المقبوضات",  width: 18 },
-  { key: "paymentCount", header: "عدد المدفوعات",     width: 14 },
-  { key: "totalOut",     header: "إجمالي المدفوعات",  width: 18 },
-  { key: "net",          header: "الصافي",           width: 16 },
-];
-
 export default function CashFlowReport() {
   const { fmt } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`cashReports.dailySummary.${k}`, opts) as string;
+  const trc = (k: string, opts?: any) => t(`cashReports.common.${k}`, opts) as string;
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -33,6 +27,15 @@ export default function CashFlowReport() {
   const [to,    setTo]    = useState(today);
   const [scope, setScope] = useState<"all" | "cash" | "bank">("all");
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+
+  const COLS = [
+    { key: "date",         header: trc("date"),       width: 14 },
+    { key: "receiptCount", header: tr("txCount"),     width: 14 },
+    { key: "totalIn",      header: tr("totalReceipts"), width: 18 },
+    { key: "paymentCount", header: tr("txCount"),     width: 14 },
+    { key: "totalOut",     header: tr("totalPayments"), width: 18 },
+    { key: "net",          header: tr("net"),         width: 16 },
+  ];
 
   const { data = [], isLoading } = useQuery({
     queryKey: ["daily-summary", cid, from, to, scope, branchId],
@@ -56,36 +59,39 @@ export default function CashFlowReport() {
     net: fmt(r.net),
   }));
 
-  const scopeLabel = scope === "all" ? "الكل" : scope === "cash" ? "نقدي" : "بنكي";
+  const scopeAll = isRtl ? "الكل" : "All";
+  const scopeCash = isRtl ? "نقدي" : "Cash";
+  const scopeBank = isRtl ? "بنكي" : "Bank";
+  const scopeLabel = scope === "all" ? scopeAll : scope === "cash" ? scopeCash : scopeBank;
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><CalendarRange className="h-6 w-6 text-primary" />الحركة اليومية للنقدية</h1>
-          <p className="text-muted-foreground text-sm mt-1">ملخص يومي لإجمالي المقبوضات والمدفوعات وصافي التدفق النقدي</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><CalendarRange className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={COLS}
-          filename={`الحركة-اليومية-${from}-${to}`}
-          title="الحركة اليومية للنقدية"
-          subtitle={`النطاق: ${scopeLabel}  |  ${from} → ${to}`}
+          filename={`${tr("filename")}-${from}-${to}`}
+          title={tr("exportTitle")}
+          subtitle={`${scopeLabel}  |  ${from} → ${to}`}
         />
       </div>
 
       <div className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2 mb-4">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">معطيات التقرير</h2>
+          <h2 className="text-sm font-semibold">{trc("filtersReport")}</h2>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
-            <Label>من تاريخ</Label>
+            <Label>{trc("fromDate")}</Label>
             <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>إلى تاريخ</Label>
+            <Label>{trc("toDate")}</Label>
             <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
           </div>
           <div className="space-y-1.5">
@@ -93,13 +99,13 @@ export default function CashFlowReport() {
             <BranchFilter value={branchId} onChange={setBranchId} />
           </div>
           <div className="space-y-1.5">
-            <Label>النطاق</Label>
+            <Label>{isRtl ? "النطاق" : "Scope"}</Label>
             <Select value={scope} onValueChange={v => setScope(v as any)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">الكل (نقدي + بنكي)</SelectItem>
-                <SelectItem value="cash">نقدي فقط</SelectItem>
-                <SelectItem value="bank">بنكي فقط</SelectItem>
+                <SelectItem value="all">{isRtl ? "الكل (نقدي + بنكي)" : "All (Cash + Bank)"}</SelectItem>
+                <SelectItem value="cash">{isRtl ? "نقدي فقط" : "Cash only"}</SelectItem>
+                <SelectItem value="bank">{isRtl ? "بنكي فقط" : "Bank only"}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -108,17 +114,17 @@ export default function CashFlowReport() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
-          <p className="text-xs text-emerald-700">إجمالي المقبوضات</p>
+          <p className="text-xs text-emerald-700">{tr("totalReceipts")}</p>
           <p className="text-xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totals.totalIn)}</p>
-          <p className="text-xs text-emerald-600/70 mt-1">{totals.receiptCount} سند قبض</p>
+          <p className="text-xs text-emerald-600/70 mt-1">{totals.receiptCount} {isRtl ? "سند قبض" : "receipt(s)"}</p>
         </div>
         <div className="rounded-xl border bg-rose-50 border-rose-200 p-4">
-          <p className="text-xs text-rose-700">إجمالي المدفوعات</p>
+          <p className="text-xs text-rose-700">{tr("totalPayments")}</p>
           <p className="text-xl font-bold text-rose-700 tabular-nums mt-1">{fmt(totals.totalOut)}</p>
-          <p className="text-xs text-rose-600/70 mt-1">{totals.paymentCount} سند صرف</p>
+          <p className="text-xs text-rose-600/70 mt-1">{totals.paymentCount} {isRtl ? "سند صرف" : "payment(s)"}</p>
         </div>
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-          <p className="text-xs text-muted-foreground">صافي التدفق النقدي</p>
+          <p className="text-xs text-muted-foreground">{tr("netFlow")}</p>
           <p className={`text-xl font-bold tabular-nums mt-1 ${totals.net < 0 ? "text-rose-700" : ""}`}>{fmt(totals.net)}</p>
         </div>
       </div>
@@ -128,19 +134,19 @@ export default function CashFlowReport() {
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">عدد المقبوضات</th>
-                <th className="px-4 py-3 text-center font-semibold text-emerald-700">إجمالي المقبوضات</th>
-                <th className="px-4 py-3 text-center font-semibold text-rose-700">عدد المدفوعات</th>
-                <th className="px-4 py-3 text-center font-semibold text-rose-700">إجمالي المدفوعات</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الصافي</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{trc("date")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{isRtl ? "عدد المقبوضات" : "Receipt Count"}</th>
+                <th className="px-4 py-3 text-center font-semibold text-emerald-700">{tr("totalReceipts")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-rose-700">{isRtl ? "عدد المدفوعات" : "Payment Count"}</th>
+                <th className="px-4 py-3 text-center font-semibold text-rose-700">{tr("totalPayments")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("net")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : data.length === 0
-                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">لا توجد بيانات في الفترة المحددة</td></tr>
+                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">{tr("noData")}</td></tr>
                 : data.map(r => (
                     <tr key={r.date} className="hover:bg-muted/20">
                       <td className="px-4 py-3 tabular-nums text-xs">{r.date}</td>
@@ -155,7 +161,7 @@ export default function CashFlowReport() {
             {!isLoading && data.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td className="px-4 py-3 text-xs font-semibold text-muted-foreground">الإجمالي</td>
+                  <td className="px-4 py-3 text-xs font-semibold text-muted-foreground">{trc("totalRow")}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{totals.receiptCount}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums text-emerald-700">{fmt(totals.totalIn)}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{totals.paymentCount}</td>

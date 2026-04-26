@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   MonitorSmartphone, Plus, Pencil, Trash2, Loader2, Building2,
   Cpu, Wifi, WifiOff, Unlink, Power, PowerOff, Search,
@@ -22,9 +23,9 @@ import { useToast } from "@/hooks/use-toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Branch  = { id: number; nameAr: string; code?: string };
-type CashBox = { id: number; nameAr: string; code?: string };
-type Company = { id: number; nameAr: string };
+type Branch  = { id: number; nameAr: string; nameEn?: string | null; code?: string };
+type CashBox = { id: number; nameAr: string; nameEn?: string | null; code?: string };
+type Company = { id: number; nameAr: string; nameEn?: string | null };
 
 type Terminal = {
   id:          number;
@@ -33,9 +34,11 @@ type Terminal = {
   nameEn:      string | null;
   branchId:    number;
   branchName:  string | null;
+  branchNameEn?: string | null;
   machineCode: string | null;
   cashBoxId:   number | null;
   cashBoxName: string | null;
+  cashBoxNameEn?: string | null;
   isActive:    boolean;
   notes:       string | null;
   busyUserId:  number | null;
@@ -61,6 +64,11 @@ const blankDraft: Draft = {
 export default function PosTerminals() {
   const { user, token } = useAuth();
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`posPages.terminals.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
   const qc = useQueryClient();
   const isSuperAdmin = user?.role === "superadmin";
 
@@ -80,7 +88,7 @@ export default function PosTerminals() {
     enabled: isSuperAdmin,
     queryFn: async () => {
       const r = await fetch(`${API}/api/companies`, { headers });
-      if (!r.ok) throw new Error("فشل تحميل الشركات");
+      if (!r.ok) throw new Error(tr("errLoadCompanies"));
       return r.json();
     },
   });
@@ -110,7 +118,7 @@ export default function PosTerminals() {
     enabled: !!companyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/pos-terminals`, { headers });
-      if (!r.ok) throw new Error("فشل تحميل محطات البيع");
+      if (!r.ok) throw new Error(tr("errLoadTerminals"));
       return r.json();
     },
   });
@@ -135,16 +143,16 @@ export default function PosTerminals() {
       });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e?.error || "فشل الحفظ");
+        throw new Error(e?.error || tr("errSave"));
       }
       return r.json();
     },
     onSuccess: () => {
-      toast({ title: "تم حفظ محطة البيع" });
+      toast({ title: tr("toastSaved") });
       qc.invalidateQueries({ queryKey: ["pt-terminals", companyId] });
       setEditing(null);
     },
-    onError: (e: any) => toast({ title: "خطأ", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: tr("toastError"), description: e?.message, variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
@@ -152,15 +160,15 @@ export default function PosTerminals() {
       const r = await fetch(`${API}/api/pos-terminals/${id}`, { method: "DELETE", headers });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e?.error || "فشل الحذف");
+        throw new Error(e?.error || tr("errDelete"));
       }
     },
     onSuccess: () => {
-      toast({ title: "تم حذف محطة البيع" });
+      toast({ title: tr("toastDeleted") });
       qc.invalidateQueries({ queryKey: ["pt-terminals", companyId] });
       setConfirmDelete(null);
     },
-    onError: (e: any) => toast({ title: "تعذّر الحذف", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: tr("toastDeleteFailed"), description: e?.message, variant: "destructive" }),
   });
 
   const unpairMut = useMutation({
@@ -168,23 +176,23 @@ export default function PosTerminals() {
       const r = await fetch(`${API}/api/pos-terminals/${id}/unpair`, { method: "POST", headers });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        throw new Error(e?.error || "فشل إلغاء الربط");
+        throw new Error(e?.error || tr("errUnpair"));
       }
     },
     onSuccess: () => {
-      toast({ title: "تم إلغاء ربط الجهاز", description: "يمكن لأي جهاز جديد أن يربط نفسه بهذه المحطة عند الدخول التالي." });
+      toast({ title: tr("toastUnpaired"), description: tr("toastUnpairedDesc") });
       qc.invalidateQueries({ queryKey: ["pt-terminals", companyId] });
     },
-    onError: (e: any) => toast({ title: "خطأ", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: tr("toastError"), description: e?.message, variant: "destructive" }),
   });
 
   const filtered = useMemo(() => {
     const items = terminalsQ.data ?? [];
     const q = search.trim().toLowerCase();
-    return items.filter(t => {
-      if (branchFilter !== "all" && String(t.branchId) !== branchFilter) return false;
+    return items.filter(tt => {
+      if (branchFilter !== "all" && String(tt.branchId) !== branchFilter) return false;
       if (!q) return true;
-      return [t.code, t.nameAr, t.nameEn, t.branchName, t.machineCode]
+      return [tt.code, tt.nameAr, tt.nameEn, tt.branchName, tt.branchNameEn, tt.machineCode]
         .some(v => v && String(v).toLowerCase().includes(q));
     });
   }, [terminalsQ.data, branchFilter, search]);
@@ -193,30 +201,30 @@ export default function PosTerminals() {
     const items = terminalsQ.data ?? [];
     return {
       total:  items.length,
-      active: items.filter(t => t.isActive).length,
-      paired: items.filter(t => !!t.machineCode).length,
-      busy:   items.filter(t => !!t.busyUserId).length,
+      active: items.filter(tt => tt.isActive).length,
+      paired: items.filter(tt => !!tt.machineCode).length,
+      busy:   items.filter(tt => !!tt.busyUserId).length,
     };
   }, [terminalsQ.data]);
 
   const openNew  = () => setEditing({ ...blankDraft });
-  const openEdit = (t: Terminal) => setEditing({
-    id: t.id, code: t.code, nameAr: t.nameAr, nameEn: t.nameEn ?? "",
-    branchId: String(t.branchId), machineCode: t.machineCode ?? "",
-    cashBoxId: t.cashBoxId ? String(t.cashBoxId) : "",
-    isActive: t.isActive, notes: t.notes ?? "",
+  const openEdit = (tt: Terminal) => setEditing({
+    id: tt.id, code: tt.code, nameAr: tt.nameAr, nameEn: tt.nameEn ?? "",
+    branchId: String(tt.branchId), machineCode: tt.machineCode ?? "",
+    cashBoxId: tt.cashBoxId ? String(tt.cashBoxId) : "",
+    isActive: tt.isActive, notes: tt.notes ?? "",
   });
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-6xl mx-auto" dir="rtl">
+    <div className="p-4 md:p-6 space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <MonitorSmartphone className="w-6 h-6 text-primary" />
-            محطات البيع (طرق البيع)
+            {tr("title")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            عرّف لكل فرع محطات البيع المتاحة (كاشير، نافذة دليفري، آيباد…)، اربطها بمكينة فعلية وصندوق نقدي افتراضي. الكاشير يختارها عند تسجيل الدخول لنقاط البيع.
+            {tr("subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -224,27 +232,27 @@ export default function PosTerminals() {
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-muted-foreground" />
               <Select value={companyId ? String(companyId) : ""} onValueChange={(v) => setCompanyId(Number(v))}>
-                <SelectTrigger className="w-56" data-testid="select-company"><SelectValue placeholder="اختر شركة" /></SelectTrigger>
+                <SelectTrigger className="w-56" data-testid="select-company"><SelectValue placeholder={tr("selectCompany")} /></SelectTrigger>
                 <SelectContent>
                   {(companiesQ.data ?? []).map(c => (
-                    <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                    <SelectItem key={c.id} value={String(c.id)}>{pickName(c)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
           <Button onClick={openNew} disabled={!companyId} data-testid="btn-new-terminal">
-            <Plus className="w-4 h-4 me-1" /> محطة بيع جديدة
+            <Plus className="w-4 h-4 me-1" /> {tr("newTerminal")}
           </Button>
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard icon={<MonitorSmartphone className="w-5 h-5" />} label="إجمالي المحطات" value={totals.total} color="bg-primary/10 text-primary" />
-        <StatCard icon={<Power className="w-5 h-5" />}             label="مفعّلة"        value={totals.active} color="bg-emerald-100 text-emerald-700" />
-        <StatCard icon={<Cpu className="w-5 h-5" />}                label="مرتبطة بمكينة" value={totals.paired} color="bg-blue-100 text-blue-700" />
-        <StatCard icon={<Wifi className="w-5 h-5" />}               label="قيد الاستخدام" value={totals.busy}   color="bg-amber-100 text-amber-700" />
+        <StatCard icon={<MonitorSmartphone className="w-5 h-5" />} label={tr("statTotal")} value={totals.total} color="bg-primary/10 text-primary" />
+        <StatCard icon={<Power className="w-5 h-5" />}             label={tr("statActive")} value={totals.active} color="bg-emerald-100 text-emerald-700" />
+        <StatCard icon={<Cpu className="w-5 h-5" />}                label={tr("statPaired")} value={totals.paired} color="bg-blue-100 text-blue-700" />
+        <StatCard icon={<Wifi className="w-5 h-5" />}               label={tr("statBusy")}   value={totals.busy}   color="bg-amber-100 text-amber-700" />
       </div>
 
       {/* Filter row */}
@@ -255,23 +263,23 @@ export default function PosTerminals() {
             <Input
               data-testid="input-search"
               className="ps-8"
-              placeholder="بحث بالكود أو الاسم أو المكينة..."
+              placeholder={tr("searchPh")}
               value={search} onChange={(e) => setSearch(e.target.value)}
             />
           </div>
           <Select value={branchFilter} onValueChange={setBranchFilter}>
             <SelectTrigger className="w-56" data-testid="select-branch-filter"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">كل الفروع</SelectItem>
+              <SelectItem value="all">{tr("allBranches")}</SelectItem>
               {(branchesQ.data ?? []).map(b => (
-                <SelectItem key={b.id} value={String(b.id)}>{b.nameAr}</SelectItem>
+                <SelectItem key={b.id} value={String(b.id)}>{pickName(b)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </CardContent>
       </Card>
 
-      {/* Inline editor — appears between the filter row and the grid */}
+      {/* Inline editor */}
       {editing && (
         <TerminalEditor
           draft={editing}
@@ -286,25 +294,25 @@ export default function PosTerminals() {
 
       {/* Cards grid */}
       {!companyId ? (
-        <Card><CardContent className="p-10 text-center text-muted-foreground">اختر شركة للمتابعة</CardContent></Card>
+        <Card><CardContent className="p-10 text-center text-muted-foreground">{tr("selectCompanyToContinue")}</CardContent></Card>
       ) : terminalsQ.isLoading ? (
         <Card><CardContent className="p-10 grid place-items-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></CardContent></Card>
       ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-muted-foreground space-y-2">
             <MonitorSmartphone className="w-10 h-10 mx-auto opacity-40" />
-            <div>لا توجد محطات بيع. أنشئ أول محطة الآن.</div>
+            <div>{tr("noTerminals")}</div>
           </CardContent>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(t => (
+          {filtered.map(tt => (
             <TerminalCard
-              key={t.id}
-              t={t}
-              onEdit={() => openEdit(t)}
-              onDelete={() => setConfirmDelete(t)}
-              onUnpair={() => unpairMut.mutate(t.id)}
+              key={tt.id}
+              t={tt}
+              onEdit={() => openEdit(tt)}
+              onDelete={() => setConfirmDelete(tt)}
+              onUnpair={() => unpairMut.mutate(tt.id)}
               unpairing={unpairMut.isPending}
             />
           ))}
@@ -315,19 +323,19 @@ export default function PosTerminals() {
       <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>حذف محطة البيع</AlertDialogTitle>
+            <AlertDialogTitle>{tr("deleteDialogTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              سيتم حذف "{confirmDelete?.nameAr}" نهائيًا. هذا الإجراء لا يمكن التراجع عنه.
+              {tr("deleteDialogDesc", { name: confirmDelete ? pickName(confirmDelete) : "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogCancel>{tr("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               data-testid="btn-confirm-delete"
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => confirmDelete && deleteMut.mutate(confirmDelete.id)}
             >
-              حذف
+              {tr("deleteConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -351,7 +359,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
 }
 
 function TerminalCard({
-  t, onEdit, onDelete, onUnpair, unpairing,
+  t: tt, onEdit, onDelete, onUnpair, unpairing,
 }: {
   t: Terminal;
   onEdit: () => void;
@@ -359,75 +367,84 @@ function TerminalCard({
   onUnpair: () => void;
   unpairing: boolean;
 }) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`posPages.terminals.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
+  const branchDisplay = isRtl ? (tt.branchName ?? tt.branchNameEn) : (tt.branchNameEn ?? tt.branchName);
+  const cashBoxDisplay = isRtl ? (tt.cashBoxName ?? tt.cashBoxNameEn) : (tt.cashBoxNameEn ?? tt.cashBoxName);
+  const primaryName = pickName(tt);
+  const altName = isRtl ? tt.nameEn : tt.nameAr;
   return (
-    <Card data-testid={`card-terminal-${t.id}`} className={!t.isActive ? "opacity-70" : ""}>
+    <Card data-testid={`card-terminal-${tt.id}`} className={!tt.isActive ? "opacity-70" : ""}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
-              <Badge variant="outline" className="text-[11px] font-mono">{t.code}</Badge>
-              {t.isActive ? (
+              <Badge variant="outline" className="text-[11px] font-mono">{tt.code}</Badge>
+              {tt.isActive ? (
                 <Badge variant="outline" className="text-[11px] gap-1 border-emerald-200 bg-emerald-50 text-emerald-700">
-                  <Power className="w-3 h-3" /> مفعّلة
+                  <Power className="w-3 h-3" /> {tr("active")}
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-[11px] gap-1 border-slate-200 bg-slate-50 text-slate-600">
-                  <PowerOff className="w-3 h-3" /> معطّلة
+                  <PowerOff className="w-3 h-3" /> {tr("inactive")}
                 </Badge>
               )}
-              {t.busyUserId && (
+              {tt.busyUserId && (
                 <Badge variant="outline" className="text-[11px] gap-1 border-amber-200 bg-amber-50 text-amber-700">
-                  <Wifi className="w-3 h-3" /> قيد الاستخدام
+                  <Wifi className="w-3 h-3" /> {tr("busyLabel")}
                 </Badge>
               )}
             </div>
-            <div className="font-bold truncate">{t.nameAr}</div>
-            {t.nameEn && <div className="text-xs text-muted-foreground truncate">{t.nameEn}</div>}
+            <div className="font-bold truncate">{primaryName}</div>
+            {altName && altName !== primaryName && <div className="text-xs text-muted-foreground truncate">{altName}</div>}
           </div>
         </div>
 
         <div className="text-sm space-y-1.5 border-t pt-2">
           <div className="flex items-center gap-2">
             <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground">الفرع:</span>
-            <span className="font-medium">{t.branchName ?? "—"}</span>
+            <span className="text-muted-foreground">{tr("branchLabel")}</span>
+            <span className="font-medium">{branchDisplay ?? "—"}</span>
           </div>
           <div className="flex items-center gap-2">
             <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground">المكينة:</span>
-            {t.machineCode ? (
-              <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded truncate" title={t.machineCode}>
-                {t.machineCode.length > 16 ? `${t.machineCode.slice(0, 8)}…${t.machineCode.slice(-6)}` : t.machineCode}
+            <span className="text-muted-foreground">{tr("machineLabel")}</span>
+            {tt.machineCode ? (
+              <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded truncate" title={tt.machineCode}>
+                {tt.machineCode.length > 16 ? `${tt.machineCode.slice(0, 8)}…${tt.machineCode.slice(-6)}` : tt.machineCode}
               </span>
             ) : (
               <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                <WifiOff className="w-3 h-3" /> غير مرتبطة (سيتم الربط عند أول دخول)
+                <WifiOff className="w-3 h-3" /> {tr("unlinkedHint")}
               </span>
             )}
           </div>
-          {t.cashBoxName && (
+          {cashBoxDisplay && (
             <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs">الصندوق الافتراضي:</span>
-              <span className="text-xs">{t.cashBoxName}</span>
+              <span className="text-muted-foreground text-xs">{tr("defaultCashBoxLabel")}</span>
+              <span className="text-xs">{cashBoxDisplay}</span>
             </div>
           )}
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-t pt-2">
-          <Button size="sm" variant="outline" className="h-8" onClick={onEdit} data-testid={`btn-edit-${t.id}`}>
-            <Pencil className="w-3.5 h-3.5 me-1" /> تعديل
+          <Button size="sm" variant="outline" className="h-8" onClick={onEdit} data-testid={`btn-edit-${tt.id}`}>
+            <Pencil className="w-3.5 h-3.5 me-1" /> {tr("edit")}
           </Button>
-          {t.machineCode && (
+          {tt.machineCode && (
             <Button
               size="sm" variant="outline" className="h-8"
               onClick={onUnpair} disabled={unpairing}
-              data-testid={`btn-unpair-${t.id}`}
+              data-testid={`btn-unpair-${tt.id}`}
             >
-              <Unlink className="w-3.5 h-3.5 me-1" /> إلغاء الربط
+              <Unlink className="w-3.5 h-3.5 me-1" /> {tr("unpair")}
             </Button>
           )}
-          <Button size="sm" variant="outline" className="h-8 text-destructive hover:text-destructive" onClick={onDelete} data-testid={`btn-delete-${t.id}`}>
-            <Trash2 className="w-3.5 h-3.5 me-1" /> حذف
+          <Button size="sm" variant="outline" className="h-8 text-destructive hover:text-destructive" onClick={onDelete} data-testid={`btn-delete-${tt.id}`}>
+            <Trash2 className="w-3.5 h-3.5 me-1" /> {tr("delete")}
           </Button>
         </div>
       </CardContent>
@@ -446,39 +463,44 @@ function TerminalEditor({
   onSave: () => void;
   saving: boolean;
 }) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`posPages.terminals.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
   const isNew = !draft.id;
   const valid = draft.nameAr.trim().length > 0 && !!draft.branchId;
 
   return (
-    <Card className="border-primary/40 shadow-sm" dir="rtl">
+    <Card className="border-primary/40 shadow-sm" dir={isRtl ? "rtl" : "ltr"}>
       <CardContent className="p-4 md:p-5 space-y-4">
         <div className="flex items-start justify-between gap-3 border-b pb-3">
           <div>
             <h2 className="text-lg font-bold flex items-center gap-2">
               <MonitorSmartphone className="w-5 h-5 text-primary" />
-              {isNew ? "إضافة محطة بيع" : "تعديل محطة بيع"}
+              {isNew ? tr("addNew") : tr("editTitle")}
             </h2>
             <p className="text-xs text-muted-foreground mt-1">
-              عرّف محطة بيع وحدّد فرعها. اترك حقل المكينة فارغًا ليتم ربطها تلقائيًا بأول جهاز يسجل الدخول عليها.
+              {tr("editorDesc")}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground">
-            إغلاق
+            {tr("close")}
           </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="col-span-1">
-            <Label className="text-xs">الكود</Label>
+            <Label className="text-xs">{tr("code")}</Label>
             <Input
               data-testid="input-code"
-              placeholder="تلقائي"
+              placeholder={tr("codeAuto")}
               value={draft.code ?? ""}
               onChange={(e) => onChange({ ...draft, code: e.target.value })}
             />
           </div>
           <div className="col-span-1 flex items-end justify-end gap-2">
-            <Label className="text-xs">مفعّلة</Label>
+            <Label className="text-xs">{tr("activeSwitch")}</Label>
             <Switch
               checked={draft.isActive}
               onCheckedChange={(v) => onChange({ ...draft, isActive: v })}
@@ -487,58 +509,58 @@ function TerminalEditor({
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">الاسم بالعربية *</Label>
+            <Label className="text-xs">{tr("nameArLabel")}</Label>
             <Input
               data-testid="input-name-ar"
-              placeholder="مثل: كاشير 1 / نافذة الدليفري"
+              placeholder={tr("nameArPh")}
               value={draft.nameAr}
               onChange={(e) => onChange({ ...draft, nameAr: e.target.value })}
             />
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">الاسم بالإنجليزية</Label>
+            <Label className="text-xs">{tr("nameEnLabel")}</Label>
             <Input
               data-testid="input-name-en"
-              placeholder="Cashier 1"
+              placeholder={tr("nameEnPh")}
               value={draft.nameEn}
               onChange={(e) => onChange({ ...draft, nameEn: e.target.value })}
             />
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">الفرع *</Label>
+            <Label className="text-xs">{tr("branchSelectLabel")}</Label>
             <Select value={draft.branchId} onValueChange={(v) => onChange({ ...draft, branchId: v })}>
-              <SelectTrigger data-testid="select-branch"><SelectValue placeholder="اختر فرعًا" /></SelectTrigger>
+              <SelectTrigger data-testid="select-branch"><SelectValue placeholder={tr("branchSelectPh")} /></SelectTrigger>
               <SelectContent>
                 {branches.map(b => (
-                  <SelectItem key={b.id} value={String(b.id)}>{b.nameAr}</SelectItem>
+                  <SelectItem key={b.id} value={String(b.id)}>{pickName(b)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">الصندوق النقدي الافتراضي</Label>
+            <Label className="text-xs">{tr("cashBoxSelectLabel")}</Label>
             <Select
               value={draft.cashBoxId || "none"}
               onValueChange={(v) => onChange({ ...draft, cashBoxId: v === "none" ? "" : v })}
             >
               <SelectTrigger data-testid="select-cashbox"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">— بدون —</SelectItem>
+                <SelectItem value="none">{tr("noneOption")}</SelectItem>
                 {cashBoxes.map(c => (
-                  <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                  <SelectItem key={c.id} value={String(c.id)}>{pickName(c)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">كود المكينة (اختياري)</Label>
+            <Label className="text-xs">{tr("machineCodeLabel")}</Label>
             <Input
               data-testid="input-machine-code"
-              placeholder="اتركه فارغًا للربط التلقائي عند أول دخول"
+              placeholder={tr("machineCodePh")}
               value={draft.machineCode}
               onChange={(e) => onChange({ ...draft, machineCode: e.target.value })}
               className="font-mono text-xs"
@@ -546,7 +568,7 @@ function TerminalEditor({
           </div>
 
           <div className="col-span-2">
-            <Label className="text-xs">ملاحظات</Label>
+            <Label className="text-xs">{tr("notes")}</Label>
             <Input
               data-testid="input-notes"
               value={draft.notes}
@@ -556,10 +578,10 @@ function TerminalEditor({
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-2 border-t">
-          <Button variant="outline" onClick={onClose}>إلغاء</Button>
+          <Button variant="outline" onClick={onClose}>{tr("cancel")}</Button>
           <Button onClick={onSave} disabled={!valid || saving} data-testid="btn-save-terminal">
             {saving && <Loader2 className="w-4 h-4 me-1 animate-spin" />}
-            حفظ
+            {tr("save")}
           </Button>
         </div>
       </CardContent>
