@@ -855,7 +855,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     saveMut.mutate(base);
   }
 
-  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">{t("common.loadingShort")}</div>;
+  // NOTE: We deliberately do NOT early-return for `loadingEdit` here, even
+  // though it would be the natural place. A bunch of hooks (useRef/useMemo/
+  // useRegisterScreenActions for the voice-AI assistant) live further down
+  // in this component — bailing out before them would render a different
+  // hook count on the first vs. subsequent render and trip the "Rendered
+  // more hooks than during the previous render" invariant. Instead, we
+  // capture the loading flag and gate the JSX return at the very bottom
+  // so every hook always runs in the same order.
+  const showLoadingPlaceholder = !isNew && loadingEdit;
 
   const customerComboItems = [
     { value: "", label: t("salesDocForm.noCustomer") },
@@ -1450,7 +1458,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     priceIncludesVat,
     lines,
   ]);
-  useRegisterScreenActions(screenActionsCtx);
+  // While the existing-doc fetch is in flight we register `null` instead
+  // of the live context. This keeps the hook order stable (always called)
+  // but prevents the global voice/AI assistant from acting on a half-
+  // hydrated form — e.g. firing `save` against an editId whose state has
+  // not been populated yet would PUT default/empty values.
+  useRegisterScreenActions(showLoadingPlaceholder ? null : screenActionsCtx);
+
+  // Defer the loading placeholder until AFTER all hooks above have run, so
+  // the hook count is identical between the loading and loaded renders
+  // (see the note next to `showLoadingPlaceholder` for full context).
+  if (showLoadingPlaceholder) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        {t("common.loadingShort")}
+      </div>
+    );
+  }
 
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
