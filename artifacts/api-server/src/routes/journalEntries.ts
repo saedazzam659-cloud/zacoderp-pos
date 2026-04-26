@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { journalEntriesTable, journalEntryLinesTable, branchesTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -16,6 +16,47 @@ function guard(req: any, res: any): number | null {
   const cid = resolveCompanyId(req, req.authUser?.companyId ?? undefined);
   if (!cid) { res.status(401).json({ error: "غير مصرح" }); return null; }
   return cid;
+}
+
+/**
+ * Resolves and authorizes a branchId for a journal-entry write. Mirrors the
+ * payroll-runs flow:
+ *   - Caller-supplied branchId is intersected against the user's allowed scope
+ *     (a restricted user picking a forbidden branch is rejected with 403).
+ *   - If the caller did not pick one and the user is restricted to a single
+ *     branch, that branch is used implicitly so reports filtered by branch
+ *     do not silently drop the entry.
+ *   - The chosen branch must belong to this company (returns 400 otherwise).
+ * On error the response is sent and `null` is returned (sentinel "DENY").
+ */
+async function resolveBranchForWrite(
+  req: any, res: any, cid: number, raw: unknown,
+): Promise<number | null | "DENY"> {
+  const requested = (raw == null || raw === "") ? null : Number(raw);
+  // Accept only positive integers — guards against NaN, decimals, negatives,
+  // and Infinity all in one check.
+  if (requested != null && (!Number.isInteger(requested) || requested <= 0)) {
+    res.status(400).json({ error: "معرّف الفرع غير صحيح" }); return "DENY";
+  }
+  const intersected = intersectBranchRequest(req, requested);
+  if (intersected === "deny") {
+    res.status(403).json({ error: "غير مصرح بالوصول إلى هذا الفرع" }); return "DENY";
+  }
+  const allowed = (req as any).authUser?.branchIds as number[] | undefined;
+  const viewAll = (req as any).authUser?.viewAllBranches === true
+    || ["admin", "superadmin"].includes((req as any).authUser?.role);
+  let resolved: number | null = null;
+  if (typeof intersected === "number") {
+    resolved = intersected;
+  } else if (!viewAll && allowed?.length === 1) {
+    resolved = allowed[0];
+  }
+  if (resolved != null) {
+    const [br] = await db.select({ id: branchesTable.id }).from(branchesTable)
+      .where(and(eq(branchesTable.id, resolved), eq(branchesTable.companyId, cid)));
+    if (!br) { res.status(400).json({ error: "الفرع غير موجود في هذه الشركة" }); return "DENY"; }
+  }
+  return resolved;
 }
 function getCompanyId(req: any): number | undefined {
   return resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined);
@@ -75,12 +116,17 @@ router.post("/", async (req, res) => {
     // exists for "journal_entry"; otherwise fall back to client-supplied
     // value or null (legacy behavior). Server allocation is atomic so
     // concurrent submits can never persist the same number.
+    // Authorize + validate the requested branch BEFORE we burn a sequence
+    // number, so a 403/400 doesn't waste a journal-entry sequence value.
+    const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
+    if (resolvedBranchId === "DENY") return;
+
     let resolvedDocNumber: string | null;
     try {
       const fromSeq = await nextSequenceNumber(cid, "journal_entry", {
         userId:   (req as any).authUser?.id ?? null,
         refTable: "journal_entries",
-        branchId: branchId ? Number(branchId) : null,
+        branchId: resolvedBranchId,
       });
       resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
     } catch (seqErr: any) {
@@ -96,7 +142,7 @@ router.post("/", async (req, res) => {
       exchangeRate: exchangeRate ?? "1",
       description:  description || null,
       entryType:    entryType || "general",
-      branchId:     branchId ? Number(branchId) : null,
+      branchId:     resolvedBranchId,
       status:       "posted",
     }).returning();
 
@@ -173,6 +219,12 @@ router.put("/:id", async (req, res) => {
       }
     }
 
+    // Authorize + validate the requested branch (same rules as on create:
+    // branch must be inside the user's allowed scope and belong to this
+    // company). NULL is preserved for users who explicitly clear it.
+    const resolvedBranchId = await resolveBranchForWrite(req, res, cid, branchId);
+    if (resolvedBranchId === "DENY") return;
+
     // docNumber is intentionally omitted — once assigned, it is immutable.
     const [entry] = await db.update(journalEntriesTable).set({
       entryDate:    entryDate || undefined,
@@ -180,7 +232,7 @@ router.put("/:id", async (req, res) => {
       exchangeRate: exchangeRate ?? "1",
       description:  description || null,
       entryType:    entryType || "general",
-      branchId:     branchId ? Number(branchId) : null,
+      branchId:     resolvedBranchId,
       updatedAt:    new Date(),
     }).where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid))).returning();
 

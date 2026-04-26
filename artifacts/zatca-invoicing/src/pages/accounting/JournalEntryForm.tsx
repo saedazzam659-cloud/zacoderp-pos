@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
   FileText, Printer, FileSpreadsheet, FileDown, Lock,
+  ChevronRight, ChevronLeft, Search,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -181,6 +182,47 @@ export default function JournalEntryForm() {
     queryFn:  () => journalEntriesApi.get(editId!, cid),
     enabled:  !!editId,
   });
+
+  // ── Document navigation (سابق / تالي / بحث) ──────────────────────
+  // Pulls the journal-entry list (already cached when the user comes
+  // from the listing page) and lets the user step from one entry to
+  // its neighbour without going back to the table. The list is sorted
+  // newest-first by the API, which we keep so "السابق" walks toward
+  // older entries and "التالي" toward newer ones — matching how the
+  // table is displayed.
+  const { data: navList = [] } = useQuery<any[]>({
+    queryKey: ["journal-entries", cid],
+    queryFn:  () => journalEntriesApi.list(cid),
+    enabled:  !!user && !isNew,
+    staleTime: 30_000,
+  });
+  const currentIndex = editId != null
+    ? navList.findIndex((e: any) => Number(e.id) === Number(editId))
+    : -1;
+  // "السابق" → older entry (further down in the newest-first list).
+  const prevEntry = currentIndex >= 0 && currentIndex < navList.length - 1
+    ? navList[currentIndex + 1] : null;
+  // "التالي" → newer entry (further up in the newest-first list).
+  const nextEntry = currentIndex > 0 ? navList[currentIndex - 1] : null;
+
+  const [navSearch, setNavSearch] = useState("");
+  function jumpFromSearch() {
+    const q = navSearch.trim();
+    if (!q) return;
+    const lower = q.toLowerCase();
+    // 1) exact doc-number match wins; 2) substring on doc-number;
+    // 3) substring on description.
+    const hit =
+      navList.find((e: any) => String(e.docNumber ?? "").toLowerCase() === lower) ||
+      navList.find((e: any) => String(e.docNumber ?? "").toLowerCase().includes(lower)) ||
+      navList.find((e: any) => String(e.description ?? "").toLowerCase().includes(lower));
+    if (!hit) {
+      toast({ title: "لم يتم العثور على مستند مطابق", variant: "destructive" });
+      return;
+    }
+    setNavSearch("");
+    navigate(`/accounting/journals/${hit.id}`);
+  }
 
   // Pull next entry number from the central sequence engine (مسلسل الحركات)
   // when creating new. Falls back to free-typed input when no sequence is
@@ -575,6 +617,66 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
         </div>
 
         <div className="flex items-center gap-2">
+          {/* ── Document navigation (السابق / التالي / بحث) ───────
+              Renders only on edit views (isNew has no current
+              position to step from). The cluster mirrors the
+              control bar shown in the design: Previous, position
+              indicator, Next, search-by-doc-number/description.
+              All buttons are RTL-aware. */}
+          {!isNew && navList.length > 0 && (
+            <div
+              className="flex items-center gap-1 rounded-md border bg-background px-1 py-0.5 print:hidden"
+              data-testid="journal-doc-nav"
+            >
+              <Button
+                type="button" variant="ghost" size="sm"
+                className="h-7 px-2 gap-1 text-xs"
+                disabled={!prevEntry}
+                onClick={() => prevEntry && navigate(`/accounting/journals/${prevEntry.id}`)}
+                title={prevEntry ? `الانتقال إلى ${prevEntry.docNumber ?? `#${prevEntry.id}`}` : "لا يوجد قيد سابق"}
+                data-testid="button-doc-prev"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+                السابق
+              </Button>
+              <span className="text-[11px] tabular-nums px-1.5 text-muted-foreground select-none" data-testid="doc-position">
+                {currentIndex >= 0
+                  ? `${currentIndex + 1} / ${navList.length} مستند`
+                  : `${navList.length} مستند`}
+              </span>
+              <Button
+                type="button" variant="ghost" size="sm"
+                className="h-7 px-2 gap-1 text-xs"
+                disabled={!nextEntry}
+                onClick={() => nextEntry && navigate(`/accounting/journals/${nextEntry.id}`)}
+                title={nextEntry ? `الانتقال إلى ${nextEntry.docNumber ?? `#${nextEntry.id}`}` : "لا يوجد قيد تالٍ"}
+                data-testid="button-doc-next"
+              >
+                التالي
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <div className="relative">
+                <Search className="h-3.5 w-3.5 absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={navSearch}
+                  onChange={e => setNavSearch(e.target.value)}
+                  onKeyDown={e => {
+                    // Stop the form-wide Enter handler from also advancing
+                    // focus — Enter here is a "jump to that document" action.
+                    // IME composition (Arabic candidate selection, etc.)
+                    // also fires Enter, which we must let through.
+                    if (e.key !== "Enter") return;
+                    if ((e.nativeEvent as any).isComposing) return;
+                    e.preventDefault(); e.stopPropagation(); jumpFromSearch();
+                  }}
+                  placeholder="اكتب رقم المستند أو البيان..."
+                  className="h-7 pe-7 ps-2 text-xs w-56"
+                  data-testid="input-doc-search"
+                />
+              </div>
+            </div>
+          )}
+
           {!isNew && (
             <>
               <Button variant="outline" size="sm" onClick={openEntryPrintWindow} className="gap-1.5 print:hidden">
