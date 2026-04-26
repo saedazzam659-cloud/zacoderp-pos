@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters } from "@/lib/format";
 import { useToast } from "@/hooks/use-toast";
-import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { useNextSequenceNumber, type SequenceTxType } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +22,7 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator, Tag } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -98,14 +98,23 @@ function calcLine(l: DocLine, priceIncludesVat = false) {
 }
 
 export interface SalesDocumentFormProps {
-  mode: "invoice" | "quotation";
+  mode: "invoice" | "quotation" | "order";
 }
 
 export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
-  const isInvoice = mode === "invoice";
-  const basePath  = isInvoice ? "/sales/invoices"   : "/sales/quotations";
-  const apiPath   = isInvoice ? "sales-invoices"    : "sales-quotations";
-  const queryKey  = isInvoice ? "sales-invoice"     : "sales-quotation";
+  const isInvoice   = mode === "invoice";
+  const isQuotation = mode === "quotation";
+  const isOrder     = mode === "order";
+  // "Operational" documents (invoice + sales order) carry the same set of
+  // operational fields: branch, sales rep, payment type, cash/bank account.
+  // Quotations are commercial offers only and skip these. Sales orders look
+  // like invoices on the form but produce ZERO accounting/stock side-effects
+  // server-side — that finance-free contract is enforced in the route, not
+  // here. Accounting account fields and offers stay invoice-only.
+  const usesOps     = isInvoice || isOrder;
+  const basePath    = isInvoice ? "/sales/invoices"   : isOrder ? "/sales/orders"   : "/sales/quotations";
+  const apiPath     = isInvoice ? "sales-invoices"    : isOrder ? "sales-orders"    : "sales-quotations";
+  const queryKey    = isInvoice ? "sales-invoice"     : isOrder ? "sales-order"     : "sales-quotation";
 
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
@@ -252,7 +261,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: !!user && isInvoice,
+    enabled: !!user && usesOps,
   });
   const defaultBranch = (branches as any[]).find((b: any) => b.isMain) ?? (branches as any[])[0];
   useEffect(() => {
@@ -300,29 +309,41 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     enabled: !!editId,
   });
 
-  // Pull the next number from the central sequence engine for new INVOICES
-  // only (quotations don't have a sequence type). When no active sequence
-  // exists, the field falls back to the legacy free-typed input.
-  const seqPeek = useNextSequenceNumber("sales_invoice", isInvoice && !editId);
+  // Pull the next number from the central sequence engine. Each document
+  // type has its own sequence ("sales_invoice" / "sales_order"); quotations
+  // don't have one. When no active sequence exists, the field falls back to
+  // the legacy free-typed input.
+  // For quotations we still pass a tx type the hook understands but disable
+  // the fetch — keeps the union type honest without runtime impact.
+  const sequenceType: SequenceTxType = isOrder ? "sales_order" : "sales_invoice";
+  const sequenceEnabled = (isInvoice || isOrder) && !editId;
+  const seqPeek = useNextSequenceNumber(sequenceType, sequenceEnabled);
   useEffect(() => {
-    if (!isInvoice || editId) return;
+    if (!sequenceEnabled) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
-  }, [isInvoice, editId, seqPeek.hasSequence, seqPeek.number]);
+  }, [sequenceEnabled, seqPeek.hasSequence, seqPeek.number]);
 
   useEffect(() => {
     if (!existing) return;
     setDocNumber(existing.docNumber ?? "");
-    setDocDate((isInvoice ? existing.invoiceDate : existing.quotationDate) ?? today());
-    if (!isInvoice) setValidUntil(existing.validUntil ?? "");
+    // Date column name differs per document type.
+    const dateField = isInvoice ? existing.invoiceDate
+                    : isOrder   ? existing.orderDate
+                                : existing.quotationDate;
+    setDocDate(dateField ?? today());
+    // Quotation: validUntil. Order: expectedDeliveryDate. Both ride on the
+    // same `validUntil` state for UI simplicity (it's a free-form date).
+    if (isQuotation) setValidUntil(existing.validUntil ?? "");
+    if (isOrder)     setValidUntil(existing.expectedDeliveryDate ?? "");
     setCustomerId(existing.customerId ? String(existing.customerId) : "");
-    if (isInvoice) setBranchId(existing.branchId ? String(existing.branchId) : "");
-    if (isInvoice) setPaymentType(existing.paymentType ?? "credit");
-    if (isInvoice) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
-    if (isInvoice) setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
+    if (usesOps) setBranchId(existing.branchId ? String(existing.branchId) : "");
+    if (usesOps) setPaymentType(existing.paymentType ?? "credit");
+    if (usesOps) setCashBoxId(existing.cashBoxId ? String(existing.cashBoxId) : "");
+    if (usesOps) setBankAccountId(existing.bankAccountId ? String(existing.bankAccountId) : "");
     setCurrencyCode(existing.currencyCode ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setNotes(existing.notes ?? "");
-    if (isInvoice) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
+    if (usesOps) setSalesRepId(existing.salesRepId ? String(existing.salesRepId) : "");
     setPriceIncludesVat(!!existing.priceIncludesVat);
     setDocDiscount(String(existing.discountAmount ?? "0"));
     if (isInvoice) {
@@ -388,14 +409,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         setDocDate(today());
         if (!isInvoice) setValidUntil("");
         setCustomerId(src.customerId ? String(src.customerId) : "");
-        if (isInvoice) setBranchId(src.branchId ? String(src.branchId) : "");
-        if (isInvoice) setPaymentType(src.paymentType ?? "credit");
-        if (isInvoice) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
-        if (isInvoice) setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
+        if (usesOps) setBranchId(src.branchId ? String(src.branchId) : "");
+        if (usesOps) setPaymentType(src.paymentType ?? "credit");
+        if (usesOps) setCashBoxId(src.cashBoxId ? String(src.cashBoxId) : "");
+        if (usesOps) setBankAccountId(src.bankAccountId ? String(src.bankAccountId) : "");
         setCurrencyCode(src.currencyCode ?? "SAR");
         setExchangeRate(String(src.exchangeRate ?? "1"));
         setNotes(src.notes ?? "");
-        if (isInvoice) setSalesRepId(src.salesRepId ? String(src.salesRepId) : "");
+        if (usesOps) setSalesRepId(src.salesRepId ? String(src.salesRepId) : "");
         setPriceIncludesVat(!!src.priceIncludesVat);
         setDocDiscount(String(src.discountAmount ?? "0"));
         if (isInvoice) {
@@ -745,10 +766,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       return j;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : "sales-quotations"] });
+      qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
       toast({ title: isNew
-        ? (isInvoice ? t("salesDocForm.toastInvoiceCreated") : t("salesDocForm.toastQuotationCreated"))
-        : (isInvoice ? t("salesDocForm.toastInvoiceSaved")  : t("salesDocForm.toastQuotationSaved")) });
+        ? (isInvoice
+            ? t("salesDocForm.toastInvoiceCreated")
+            : isOrder
+              ? t("salesDocForm.toastOrderCreated")
+              : t("salesDocForm.toastQuotationCreated"))
+        : (isInvoice
+            ? t("salesDocForm.toastInvoiceSaved")
+            : isOrder
+              ? t("salesDocForm.toastOrderSaved")
+              : t("salesDocForm.toastQuotationSaved")) });
       navigate(basePath);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -774,7 +803,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.invoiceDate = docDate;
       // Header-level offer FK — sent on every save (including null) so the
       // engine can clear a previously-applied doc offer when conditions
-      // change. Quotations don't run offers.
+      // change. Quotations + orders don't run offers.
       base.documentOfferId = documentOfferId || null;
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
@@ -786,6 +815,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       base.salesAccountId     = salesAccountId     ? Number(salesAccountId)     : null;
       base.taxAccountId       = taxAccountId       ? Number(taxAccountId)       : null;
       base.discountAccountId  = discountAccountId  ? Number(discountAccountId)  : null;
+    } else if (isOrder) {
+      // Sales order payload — operational fields ride along but the server
+      // route stores them informationally and never posts a journal entry,
+      // moves stock, creates a voucher, or submits to ZATCA.
+      base.orderDate            = docDate;
+      base.expectedDeliveryDate = validUntil || null;
+      base.paymentType          = paymentType;
+      base.cashBoxId            = paymentType === "cash" ? (cashBoxId || null) : null;
+      base.bankAccountId        = paymentType === "bank" ? (bankAccountId || null) : null;
+      base.branchId             = branchId || null;
+      base.salesRepId           = salesRepId ? Number(salesRepId) : null;
     } else {
       base.quotationDate = docDate;
       base.validUntil = validUntil || null;
@@ -814,13 +854,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   ];
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
-  const Icon  = isInvoice ? ShoppingBag : FileSignature;
+  const Icon  = isInvoice ? ShoppingBag : isOrder ? ClipboardList : FileSignature;
   const title = isNew
-    ? (isInvoice ? t("salesDocForm.newInvoice") : t("salesDocForm.newQuotation"))
-    : (isInvoice ? t("salesDocForm.editInvoice", { id: editId }) : t("salesDocForm.editQuotation", { id: editId }));
+    ? (isInvoice
+        ? t("salesDocForm.newInvoice")
+        : isOrder
+          ? t("salesDocForm.newOrder")
+          : t("salesDocForm.newQuotation"))
+    : (isInvoice
+        ? t("salesDocForm.editInvoice", { id: editId })
+        : isOrder
+          ? t("salesDocForm.editOrder", { id: editId })
+          : t("salesDocForm.editQuotation", { id: editId }));
   const subtitle = isInvoice
     ? t("salesDocForm.subtitleInvoice")
-    : t("salesDocForm.subtitleQuotation");
+    : isOrder
+      ? t("salesDocForm.subtitleOrder")
+      : t("salesDocForm.subtitleQuotation");
 
   const linesSection = (
     <div className="pt-2 space-y-3">
@@ -1041,16 +1091,18 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <CardContent className="pt-5 pb-5 space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : t("salesDocForm.quotationNumber")}</Label>
+                  <Label className="text-xs">{isInvoice ? t("salesDocForm.invoiceNumber") : isOrder ? t("salesDocForm.orderNumber") : t("salesDocForm.quotationNumber")}</Label>
                   {(() => {
                     const lockOnEdit = !!editId;
-                    const lockOnSeq  = isInvoice && seqPeek.hasSequence;
+                    // Lock the number field whenever the central sequence
+                    // engine is authoritative for this document type.
+                    const lockOnSeq  = !!sequenceType && seqPeek.hasSequence;
                     const locked     = lockOnEdit || lockOnSeq;
                     return (
                       <Input
                         ref={docNumberRef}
                         className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
-                        placeholder={isInvoice && seqPeek.loading ? "…" : t("common.auto")}
+                        placeholder={!!sequenceType && seqPeek.loading ? "…" : t("common.auto")}
                         dir="ltr"
                         value={docNumber}
                         onChange={e => { if (!locked) setDocNumber(e.target.value); }}
@@ -1066,7 +1118,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 </div>
                 {!isInvoice && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs">{t("salesDocForm.validUntil")}</Label>
+                    <Label className="text-xs">{isOrder ? t("salesDocForm.expectedDeliveryDate") : t("salesDocForm.validUntil")}</Label>
                     <Input type="date" className="h-9 text-sm" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
                   </div>
                 )}
@@ -1075,7 +1127,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
                 </div>
                 <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} />
-                {isInvoice && (
+                {usesOps && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.branch")}</Label>
                     <Select value={branchId || undefined} onValueChange={setBranchId}>
@@ -1088,7 +1140,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </Select>
                   </div>
                 )}
-                {isInvoice && (
+                {usesOps && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
                     <Select value={paymentType} onValueChange={setPaymentType}>
@@ -1101,7 +1153,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </Select>
                   </div>
                 )}
-                {isInvoice && paymentType === "cash" && (
+                {usesOps && paymentType === "cash" && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.cashBox")}</Label>
                     <Select value={cashBoxId || undefined} onValueChange={setCashBoxId}>
@@ -1114,7 +1166,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     </Select>
                   </div>
                 )}
-                {isInvoice && paymentType === "bank" && (
+                {usesOps && paymentType === "bank" && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.bankAccount")}</Label>
                     <Select value={bankAccountId || undefined} onValueChange={setBankAccountId}>
@@ -1147,7 +1199,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>
-                {isInvoice && (
+                {usesOps && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.salesRep")}</Label>
                     <SearchCombobox
@@ -1178,7 +1230,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(basePath)}>{t("common.cancel")}</Button>
         <Button onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+          {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
         </Button>
       </div>
     </div>

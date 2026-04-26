@@ -4,6 +4,7 @@ import {
   salesInvoicesTable, salesInvoiceLinesTable,
   salesReturnsTable, salesReturnLinesTable,
   salesQuotationsTable, salesQuotationLinesTable,
+  salesOrdersTable, salesOrderLinesTable,
   customerSettlementsTable, stockBalanceTable, stockLedgerTable,
   customersTable, cashBoxesTable, bankAccountsTable, warehousesTable,
   journalEntriesTable, journalEntryLinesTable,
@@ -124,6 +125,9 @@ router.use(pathRbac([
   ["/sales-invoices",        "sales_invoices"],
   ["/sales-returns",         "sales_returns"],
   ["/sales-quotations",      "sales_quotations"],
+  // Sales orders piggy-back on the sales_invoices permission key — no
+  // dedicated module key needed and existing roles work without migration.
+  ["/sales-orders",          "sales_invoices"],
   ["/customer-settlements",  "sales_invoices"],
 ]));
 
@@ -1547,6 +1551,314 @@ router.delete("/sales-quotations/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     await db.delete(salesQuotationsTable).where(and(eq(salesQuotationsTable.id, id), eq(salesQuotationsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// SALES ORDERS (أوامر البيع)
+// ═══════════════════════════════════════════════
+// Pre-invoice commitment document — a sales order represents an agreed
+// transaction with a customer that has NOT YET become a financial event.
+//
+// CRITICAL: every endpoint here is FINANCE-FREE. We MUST NOT:
+//   • create journal entries (no `createJournalEntry` calls)
+//   • move stock (`stock_balance` / `stock_ledger` are off-limits)
+//   • create receipt vouchers / payment vouchers
+//   • update customer balance
+//   • submit to ZATCA
+//
+// The order only "becomes real" via /sales-orders/:id/convert which spawns
+// a DRAFT sales invoice — and that invoice goes through the normal posting
+// flow when the user explicitly posts it. Up until then, an order is just
+// a planning document.
+function mapOrderLine(l: any, orderId: number, cid: number) {
+  return {
+    orderId, companyId: cid,
+    itemId:           l.itemId      ? Number(l.itemId)      : null,
+    itemName:         l.itemName,
+    itemCode:         l.itemCode    || null,
+    unit:             l.unit        || null,
+    unitId:           l.unitId      ? Number(l.unitId)      : null,
+    conversionFactor: String(l.conversionFactor || "1"),
+    warehouseId:      l.warehouseId ? Number(l.warehouseId) : null,
+    qty:              String(l.qty       || "1"),
+    unitPrice:        String(l.unitPrice || "0"),
+    discount:         String(l.discount  || "0"),
+    vatRate:          String(l.vatRate   || "15"),
+    lineTotal:        String(l.lineTotal || "0"),
+    notes:            l.notes || null,
+  };
+}
+
+router.get("/sales-orders", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const rows = await db.select().from(salesOrdersTable)
+      .where(eq(salesOrdersTable.companyId, cid))
+      .orderBy(desc(salesOrdersTable.orderDate), desc(salesOrdersTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/sales-orders/:id", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    const [o] = await db.select().from(salesOrdersTable)
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
+    if (!o) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+    const lines = await db.select().from(salesOrderLinesTable)
+      .where(eq(salesOrderLinesTable.orderId, id))
+      .orderBy(asc(salesOrderLinesTable.id));
+    res.json({ ...o, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/sales-orders", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { docNumber, orderDate, expectedDeliveryDate, customerId, branchId,
+            paymentType, cashBoxId, bankAccountId, salesRepId,
+            currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
+            totalAmount, priceIncludesVat, notes, lines } = req.body;
+    if (!orderDate) { res.status(400).json({ error: "تاريخ أمر البيع مطلوب" }); return; }
+    const pType = paymentType || "credit";
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+
+    // Allocate document number from the central sequence engine when an
+    // active "sales_order" sequence exists; otherwise fall back to whatever
+    // the client typed (legacy free-numbering). Same atomic FOR-UPDATE
+    // pattern as invoices — two concurrent saves can never collide.
+    let resolvedDocNumber: string | null;
+    try {
+      const fromSeq = await nextSequenceNumber(cid, "sales_order", {
+        userId:   req.authUser?.id ?? null,
+        refTable: "sales_orders",
+        branchId: branchId ? Number(branchId) : null,
+      });
+      resolvedDocNumber = fromSeq ?? ((docNumber && String(docNumber).trim()) || null);
+    } catch (seqErr: any) {
+      res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم أمر البيع" });
+      return;
+    }
+
+    const [o] = await db.insert(salesOrdersTable).values({
+      companyId: cid,
+      branchId:             branchId ? Number(branchId) : null,
+      docNumber:            resolvedDocNumber,
+      orderDate,
+      expectedDeliveryDate: expectedDeliveryDate || null,
+      customerId:           customerId ? Number(customerId) : null,
+      paymentType:          pType,
+      // Stored informationally so the converted invoice can pre-fill them.
+      // No financial action is taken at order save time.
+      cashBoxId:            pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId:        pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
+      salesRepId:           salesRepId ? Number(salesRepId) : null,
+      currencyCode:         currencyCode || "SAR",
+      exchangeRate:         String(exchangeRate || "1"),
+      subtotal:             totals.subtotal,
+      vatAmount:            totals.vatAmount,
+      discountAmount:       totals.discountAmount,
+      totalAmount:          totals.totalAmount,
+      priceIncludesVat:     asBool(priceIncludesVat),
+      status:               "draft",
+      notes:                notes || null,
+      createdById:          req.authUser?.id ?? null,
+    }).returning();
+
+    if (lines?.length) {
+      await db.insert(salesOrderLinesTable).values(
+        lines.map((l: any) => mapOrderLine(l, o.id, cid))
+      );
+    }
+
+    // INTENTIONALLY NO: journal entry, stock movement, receipt voucher,
+    // ZATCA submission, or customer balance update.
+    res.status(201).json(o);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/sales-orders/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    // Lock down once an order has been converted to an invoice — editing
+    // the source document after conversion would let the user retroactively
+    // change what the invoice was based on. Cancelled orders are also
+    // immutable to keep the audit trail honest.
+    const [existing] = await db.select({ status: salesOrdersTable.status, convertedInvoiceId: salesOrdersTable.convertedInvoiceId })
+      .from(salesOrdersTable)
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+    if (existing.status === "converted" || existing.convertedInvoiceId) {
+      res.status(409).json({ error: "لا يمكن تعديل أمر بيع تم تحويله إلى فاتورة" }); return;
+    }
+    if (existing.status === "cancelled") {
+      res.status(409).json({ error: "لا يمكن تعديل أمر بيع ملغى" }); return;
+    }
+
+    const { docNumber, orderDate, expectedDeliveryDate, customerId, branchId,
+            paymentType, cashBoxId, bankAccountId, salesRepId,
+            currencyCode, exchangeRate, subtotal, vatAmount, discountAmount,
+            totalAmount, priceIncludesVat, notes, lines } = req.body;
+    const pType = paymentType || "credit";
+    const totals = clampDiscountAndTotal(subtotal, vatAmount, discountAmount);
+
+    const [o] = await db.update(salesOrdersTable).set({
+      docNumber:            docNumber || null,
+      orderDate,
+      expectedDeliveryDate: expectedDeliveryDate || null,
+      customerId:           customerId ? Number(customerId) : null,
+      branchId:             branchId ? Number(branchId) : null,
+      paymentType:          pType,
+      cashBoxId:            pType === "cash" && cashBoxId ? Number(cashBoxId) : null,
+      bankAccountId:        pType === "bank" && bankAccountId ? Number(bankAccountId) : null,
+      salesRepId:           salesRepId ? Number(salesRepId) : null,
+      currencyCode:         currencyCode || "SAR",
+      exchangeRate:         String(exchangeRate || "1"),
+      subtotal:             totals.subtotal,
+      vatAmount:            totals.vatAmount,
+      discountAmount:       totals.discountAmount,
+      totalAmount:          totals.totalAmount,
+      priceIncludesVat:     asBool(priceIncludesVat),
+      notes:                notes || null,
+      updatedAt:            new Date(),
+    }).where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid))).returning();
+    if (!o) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+
+    if (lines !== undefined) {
+      await db.delete(salesOrderLinesTable).where(eq(salesOrderLinesTable.orderId, id));
+      if (lines.length) {
+        await db.insert(salesOrderLinesTable).values(
+          lines.map((l: any) => mapOrderLine(l, id, cid))
+        );
+      }
+    }
+    res.json(o);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Status transitions for sales orders. The "converted" status is set
+// exclusively by /convert — clients cannot transition to it directly.
+router.patch("/sales-orders/:id/status", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const { status } = req.body;
+    if (!["draft","confirmed","cancelled"].includes(status)) {
+      res.status(400).json({ error: "حالة غير صالحة" }); return;
+    }
+    const [current] = await db.select().from(salesOrdersTable)
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
+    if (!current) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+    if (current.status === "converted") {
+      res.status(400).json({ error: "لا يمكن تغيير حالة أمر بيع مُحوَّل" }); return;
+    }
+    const allowed: Record<string, string[]> = {
+      draft:     ["confirmed", "cancelled"],
+      confirmed: ["cancelled"],
+      cancelled: [],
+      converted: [],
+    };
+    if (!allowed[current.status ?? "draft"]?.includes(status)) {
+      res.status(400).json({ error: `لا يمكن الانتقال من ${current.status} إلى ${status}` });
+      return;
+    }
+    const [row] = await db.update(salesOrdersTable)
+      .set({ status, updatedAt: new Date() })
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)))
+      .returning();
+    res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Convert sales order → DRAFT sales invoice.
+// Carries over the order's payment type / branch / sales rep so the
+// resulting invoice is a one-click post away. Marks the source order as
+// "converted" and records the new invoice id for audit / display.
+router.post("/sales-orders/:id/convert", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [o] = await db.select().from(salesOrdersTable)
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
+    if (!o) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+    if (o.convertedInvoiceId) { res.status(400).json({ error: "تم التحويل مسبقاً" }); return; }
+    if (o.status !== "confirmed") {
+      res.status(400).json({ error: "يجب تأكيد أمر البيع قبل تحويله إلى فاتورة" }); return;
+    }
+
+    const lines = await db.select().from(salesOrderLinesTable)
+      .where(eq(salesOrderLinesTable.orderId, id));
+
+    const [inv] = await db.insert(salesInvoicesTable).values({
+      companyId:        cid,
+      branchId:         o.branchId,
+      docNumber:        null,
+      invoiceDate:      new Date().toISOString().slice(0, 10),
+      customerId:       o.customerId,
+      paymentType:      o.paymentType ?? "credit",
+      cashBoxId:        o.cashBoxId,
+      bankAccountId:    o.bankAccountId,
+      currencyCode:     o.currencyCode,
+      exchangeRate:     o.exchangeRate,
+      subtotal:         o.subtotal,
+      vatAmount:        o.vatAmount,
+      discountAmount:   o.discountAmount,
+      totalAmount:      o.totalAmount,
+      priceIncludesVat: o.priceIncludesVat,
+      status:           "draft",
+      notes:            `محوّل من أمر البيع ${o.docNumber ?? `SO-${o.id}`}`,
+      createdById:      req.authUser?.id ?? null,
+      salesRepId:       o.salesRepId,
+    }).returning();
+
+    if (lines.length) {
+      await db.insert(salesInvoiceLinesTable).values(lines.map(l => ({
+        invoiceId:        inv.id,
+        companyId:        cid,
+        itemId:           l.itemId,
+        itemName:         l.itemName,
+        itemCode:         l.itemCode,
+        unit:             l.unit,
+        unitId:           l.unitId,
+        conversionFactor: l.conversionFactor,
+        warehouseId:      l.warehouseId,
+        qty:              l.qty,
+        unitPrice:        l.unitPrice,
+        discount:         l.discount,
+        vatRate:          l.vatRate,
+        lineTotal:        l.lineTotal,
+        notes:            l.notes,
+      })));
+    }
+
+    await db.update(salesOrdersTable)
+      .set({ status: "converted", convertedInvoiceId: inv.id, updatedAt: new Date() })
+      .where(eq(salesOrdersTable.id, id));
+
+    res.json({ order: o, invoice: inv });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/sales-orders/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    // Block deletion once converted to keep the FK chain to the spawned
+    // invoice intact (and the audit trail meaningful).
+    const [existing] = await db.select({ convertedInvoiceId: salesOrdersTable.convertedInvoiceId })
+      .from(salesOrdersTable)
+      .where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "أمر البيع غير موجود" }); return; }
+    if (existing.convertedInvoiceId) {
+      res.status(409).json({ error: "لا يمكن حذف أمر بيع تم تحويله إلى فاتورة" }); return;
+    }
+    await db.delete(salesOrdersTable).where(and(eq(salesOrdersTable.id, id), eq(salesOrdersTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

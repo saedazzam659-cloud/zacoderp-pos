@@ -152,6 +152,8 @@ const salesSubNav: NavDef[] = [
   { nameKey: "nav.customers",            href: "/customers",         icon: Users,           permKey: "customers" },
   { nameKey: "nav.salesReps",            href: "/sales/reps",        icon: BadgeCheck,      permKey: "sales_reps" },
   { nameKey: "nav.quotations",           href: "/sales/quotations",  icon: FileSignature,   permKey: "sales_quotations" },
+  // Sales orders piggy-back on the sales_invoices permission key.
+  { nameKey: "nav.salesOrders",          href: "/sales/orders",      icon: ClipboardList,   permKey: "sales_invoices" },
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
   { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },

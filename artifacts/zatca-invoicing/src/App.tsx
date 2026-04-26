@@ -153,6 +153,8 @@ import SalesInvoices        from "@/pages/sales/SalesInvoices";
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
 import SalesQuotations      from "@/pages/sales/SalesQuotations";
 import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";
+import SalesOrders          from "@/pages/sales/SalesOrders";
+import SalesOrderForm       from "@/pages/sales/SalesOrderForm";
 import SalesReturns         from "@/pages/sales/SalesReturns";
 import CustomerSettlement   from "@/pages/sales/CustomerSettlement";
 
@@ -348,6 +350,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/quotations/new" module="sales_quotations" action="create" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/:id" module="sales_quotations" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations"     module="sales_quotations" component={SalesQuotations} />}
+            {/* Sales Orders piggy-back on sales_invoices permission — no module migration needed */}
+            {!isSuperAdmin && <PermRoute path="/sales/orders/new"     module="sales_invoices"   action="create" component={SalesOrderForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/orders/:id"     module="sales_invoices"   component={SalesOrderForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/orders"         module="sales_invoices"   component={SalesOrders} />}
             {!isSuperAdmin && <PermRoute path="/sales/returns"        module="sales_returns"    component={SalesReturns} />}
 
             {/* Customers & Sales Reports */}

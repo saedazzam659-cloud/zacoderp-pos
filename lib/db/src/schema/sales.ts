@@ -177,6 +177,64 @@ export const salesQuotationLinesTable = pgTable("sales_quotation_lines", {
   notes:       text("notes"),
 });
 
+// ─── Sales Orders (أوامر البيع) ──────────────────────────────────────────────
+// Pre-invoice commitment document. Has ZERO financial / accounting / stock
+// side-effects on save — orders never touch journal_entries, stock_ledger,
+// receipt_vouchers, or ZATCA. They only become "real" once converted to a
+// sales invoice (which then runs the normal posting flow).
+export const salesOrderStatusEnum = pgEnum("sales_order_status", [
+  "draft", "confirmed", "cancelled", "converted",
+]);
+
+export const salesOrdersTable = pgTable("sales_orders", {
+  id:                   serial("id").primaryKey(),
+  companyId:            integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:             integer("branch_id"),
+  docNumber:            text("doc_number"),
+  orderDate:            text("order_date").notNull(),
+  expectedDeliveryDate: text("expected_delivery_date"),
+  customerId:           integer("customer_id").references(() => customersTable.id),
+  // Payment type + cash/bank account ids are stored INFORMATIONALLY only
+  // (so the future converted invoice can pre-fill these). Never used to
+  // post a receipt voucher or journal entry from the order itself.
+  paymentType:          text("payment_type").notNull().default("credit"),
+  cashBoxId:            integer("cash_box_id"),
+  bankAccountId:        integer("bank_account_id"),
+  salesRepId:           integer("sales_rep_id"),
+  currencyCode:         text("currency_code").notNull().default("SAR"),
+  exchangeRate:         numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
+  subtotal:             numeric("subtotal",        { precision: 15, scale: 2 }).notNull().default("0"),
+  vatAmount:            numeric("vat_amount",      { precision: 15, scale: 2 }).notNull().default("0"),
+  discountAmount:       numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  totalAmount:          numeric("total_amount",    { precision: 15, scale: 2 }).notNull().default("0"),
+  priceIncludesVat:     boolean("price_includes_vat").notNull().default(false),
+  status:               salesOrderStatusEnum("status").notNull().default("draft"),
+  convertedInvoiceId:   integer("converted_invoice_id").references(() => salesInvoicesTable.id),
+  createdById:          integer("created_by_id"),
+  notes:                text("notes"),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const salesOrderLinesTable = pgTable("sales_order_lines", {
+  id:               serial("id").primaryKey(),
+  orderId:          integer("order_id").notNull().references(() => salesOrdersTable.id, { onDelete: "cascade" }),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id"),
+  itemName:         text("item_name").notNull(),
+  itemCode:         text("item_code"),
+  unit:             text("unit"),
+  unitId:           integer("unit_id"),
+  conversionFactor: numeric("conversion_factor", { precision: 15, scale: 6 }).default("1"),
+  warehouseId:      integer("warehouse_id"),
+  qty:              numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
+  unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
+  discount:         numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
+  lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
+  notes:            text("notes"),
+});
+
 // ─── Customer Settlements ────────────────────────────────────────────────────
 export const customerSettlementsTable = pgTable("customer_settlements", {
   id:             serial("id").primaryKey(),

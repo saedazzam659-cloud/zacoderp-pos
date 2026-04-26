@@ -6,7 +6,16 @@ import { cn } from "@/lib/utils";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 
-export type SalesPrintType = "invoice" | "return" | "quotation";
+// "order" prints exactly like a quotation: same finance-free, no-VAT-reporting
+// document. The header label and field names differ; everything else (lines,
+// totals, customer block) is identical.
+export type SalesPrintType = "invoice" | "return" | "quotation" | "order";
+
+// Document types that should NOT show "payment method" in print since they
+// represent no actual payment event.
+function isNonPaymentDoc(type: SalesPrintType) {
+  return type === "quotation" || type === "order";
+}
 
 interface PrintData {
   type: SalesPrintType;
@@ -17,16 +26,23 @@ interface PrintData {
 }
 
 function docTitle(type: SalesPrintType) {
-  return type === "invoice" ? "فاتورة مبيعات" : type === "return" ? "مرتجع مبيعات" : "عرض سعر";
+  return type === "invoice" ? "فاتورة مبيعات"
+    : type === "return"   ? "مرتجع مبيعات"
+    : type === "order"    ? "أمر بيع"
+    : "عرض سعر";
 }
 
 function docPrefix(type: SalesPrintType) {
-  return type === "invoice" ? "SI" : type === "return" ? "SR" : "SQ";
+  return type === "invoice" ? "SI"
+    : type === "return"   ? "SR"
+    : type === "order"    ? "SO"
+    : "SQ";
 }
 
 function docDate(doc: any, type: SalesPrintType) {
   return type === "invoice" ? (doc.invoiceDate ?? "—")
-    : type === "return" ? (doc.returnDate ?? "—")
+    : type === "return"   ? (doc.returnDate ?? "—")
+    : type === "order"    ? (doc.orderDate ?? "—")
     : (doc.quotationDate ?? "—");
 }
 
