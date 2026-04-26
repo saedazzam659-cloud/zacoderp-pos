@@ -53,62 +53,77 @@ export interface DefaultMapping {
   accountCode:  string;
 }
 
+// Synced from the customer-supplied template
+// `accounting-mappings-2026-04-26_1777181797171.xlsx` (41 entries) — this
+// is the wiring a brand-new tenant gets out of the box.
+//
+// ملاحظة: أُبقي على بطاقتي «cashbox» و«bank» (المستقلتين) خارج القالب لأن كل
+// خزينة أو حساب بنكي يحمل حقل account_id خاصاً به في cash_boxes /
+// bank_accounts، والترحيل يستخدم هذا الحساب المباشر بدلاً من البحث عن ربط
+// محاسبي عام. أدوار cash/bank داخل supplier_settlement / customer_settlement
+// تبقى لأنها قيم احتياطية فعلية تستخدمها سندات القبض والصرف عند عدم تحديد
+// خزينة/بنك معيّن.
 export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   // فواتير المشتريات
-  { documentType: "purchase_invoice", roleKey: "inventory",          accountCode: "11051" },
-  { documentType: "purchase_invoice", roleKey: "vat_input",          accountCode: "11071" },
-  { documentType: "purchase_invoice", roleKey: "payable",            accountCode: "21011" },
-  { documentType: "purchase_invoice", roleKey: "discount",           accountCode: "4103"  },
+  { documentType: "purchase_invoice",     roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "purchase_invoice",     roleKey: "vat_input",              accountCode: "11071" },
+  { documentType: "purchase_invoice",     roleKey: "payable",                accountCode: "21011" },
+  { documentType: "purchase_invoice",     roleKey: "discount",               accountCode: "4103"  },
 
   // مرتجع المشتريات
-  { documentType: "purchase_return",  roleKey: "payable",            accountCode: "21011" },
-  { documentType: "purchase_return",  roleKey: "inventory",          accountCode: "11051" },
-  { documentType: "purchase_return",  roleKey: "vat_input",          accountCode: "11071" },
-  { documentType: "purchase_return",  roleKey: "discount",           accountCode: "4103"  },
+  { documentType: "purchase_return",      roleKey: "payable",                accountCode: "21011" },
+  { documentType: "purchase_return",      roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "purchase_return",      roleKey: "vat_input",              accountCode: "11071" },
+  { documentType: "purchase_return",      roleKey: "discount",               accountCode: "4103"  },
+
+  // تسوية الموردين
+  { documentType: "supplier_settlement",  roleKey: "payable",                accountCode: "21011" },
+  { documentType: "supplier_settlement",  roleKey: "cash",                   accountCode: "11011" },
+  { documentType: "supplier_settlement",  roleKey: "bank",                   accountCode: "11021" },
 
   // فواتير المبيعات
-  { documentType: "sales_invoice",    roleKey: "receivable",         accountCode: "11031" },
-  { documentType: "sales_invoice",    roleKey: "revenue",            accountCode: "4101"  },
-  { documentType: "sales_invoice",    roleKey: "vat_output",         accountCode: "21041" },
-  { documentType: "sales_invoice",    roleKey: "cogs",               accountCode: "5101"  },
-  { documentType: "sales_invoice",    roleKey: "inventory",          accountCode: "11051" },
-  { documentType: "sales_invoice",    roleKey: "discount",           accountCode: "5103"  },
+  { documentType: "sales_invoice",        roleKey: "receivable",             accountCode: "11031" },
+  { documentType: "sales_invoice",        roleKey: "revenue",                accountCode: "4101"  },
+  { documentType: "sales_invoice",        roleKey: "vat_output",             accountCode: "21041" },
+  { documentType: "sales_invoice",        roleKey: "cogs",                   accountCode: "5101"  },
+  { documentType: "sales_invoice",        roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "sales_invoice",        roleKey: "discount",               accountCode: "5103"  },
 
   // مرتجع المبيعات
-  { documentType: "sales_return",     roleKey: "revenue_return",     accountCode: "4101"  },
-  { documentType: "sales_return",     roleKey: "vat_output",         accountCode: "21041" },
-  { documentType: "sales_return",     roleKey: "receivable",         accountCode: "11031" },
-  { documentType: "sales_return",     roleKey: "inventory",          accountCode: "11051" },
-  { documentType: "sales_return",     roleKey: "cogs",               accountCode: "5101"  },
-  { documentType: "sales_return",     roleKey: "discount",           accountCode: "5103"  },
+  { documentType: "sales_return",         roleKey: "revenue_return",         accountCode: "4101"  },
+  { documentType: "sales_return",         roleKey: "vat_output",             accountCode: "21041" },
+  { documentType: "sales_return",         roleKey: "receivable",             accountCode: "11031" },
+  { documentType: "sales_return",         roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "sales_return",         roleKey: "cogs",                   accountCode: "5101"  },
+  { documentType: "sales_return",         roleKey: "discount",               accountCode: "5103"  },
 
   // تسوية العملاء
-  { documentType: "customer_settlement", roleKey: "cash",            accountCode: "11011" },
-  { documentType: "customer_settlement", roleKey: "bank",            accountCode: "11021" },
-  { documentType: "customer_settlement", roleKey: "receivable",      accountCode: "11031" },
+  { documentType: "customer_settlement",  roleKey: "cash",                   accountCode: "11011" },
+  { documentType: "customer_settlement",  roleKey: "bank",                   accountCode: "11021" },
+  { documentType: "customer_settlement",  roleKey: "receivable",             accountCode: "11031" },
 
-  // المخازن
-  { documentType: "warehouse",            roleKey: "inventory",       accountCode: "11051" },
-  { documentType: "warehouse",            roleKey: "opening_balance", accountCode: "3301"  },
+  // المخازن (الافتتاحي)
+  { documentType: "warehouse",            roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "warehouse",            roleKey: "opening_balance",        accountCode: "3301"  },
 
   // تسوية المخازن
-  { documentType: "warehouse_adjustment", roleKey: "inventory",        accountCode: "11051" },
-  { documentType: "warehouse_adjustment", roleKey: "adjustment_gain",  accountCode: "4104"  },
-  { documentType: "warehouse_adjustment", roleKey: "adjustment_loss",  accountCode: "5504"  },
+  { documentType: "warehouse_adjustment", roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "warehouse_adjustment", roleKey: "adjustment_gain",        accountCode: "4104"  },
+  { documentType: "warehouse_adjustment", roleKey: "adjustment_loss",        accountCode: "5504"  },
 
-  // ملاحظة:  أُزيلت بطاقتا «cashbox» و«bank» من القالب الافتراضي لأن كل خزينة
-  // أو حساب بنكي يحمل حقل account_id خاصاً به في cash_boxes / bank_accounts،
-  // والترحيل يستخدم هذا الحساب المباشر بدلاً من البحث عن ربط محاسبي عام.
-  // أبقينا أدوار cash/bank داخل customer_settlement و supplier_settlement لأنها
-  // قيم احتياطية فعلية تستخدمها سندات القبض والصرف عند عدم تحديد خزينة/بنك
-  // معيّن.
+  // تحويلات المخازن
+  { documentType: "warehouse_transfer",   roleKey: "inventory_source",       accountCode: "11051" },
+  { documentType: "warehouse_transfer",   roleKey: "inventory_destination",  accountCode: "11081" },
+  { documentType: "warehouse_transfer",   roleKey: "transfer_cost",          accountCode: "5101"  },
 
   // الاعتمادات المستندية
-  { documentType: "letter_of_credit",     roleKey: "lc_margin",       accountCode: "1150"  },
-  { documentType: "letter_of_credit",     roleKey: "lc_liability",    accountCode: "2150"  },
-  { documentType: "letter_of_credit",     roleKey: "lc_commission",   accountCode: "5830"  },
-  { documentType: "letter_of_credit",     roleKey: "lc_expenses",     accountCode: "5835"  },
-  { documentType: "letter_of_credit",     roleKey: "lc_fx_diff",      accountCode: "5840"  },
+  { documentType: "letter_of_credit",     roleKey: "lc_margin",              accountCode: "1150"  },
+  { documentType: "letter_of_credit",     roleKey: "lc_liability",           accountCode: "2150"  },
+  { documentType: "letter_of_credit",     roleKey: "lc_commission",          accountCode: "5830"  },
+  { documentType: "letter_of_credit",     roleKey: "lc_expenses",            accountCode: "5835"  },
+  { documentType: "letter_of_credit",     roleKey: "lc_fx_diff",             accountCode: "5840"  },
+  { documentType: "letter_of_credit",     roleKey: "inventory",              accountCode: "1150"  },
+  { documentType: "letter_of_credit",     roleKey: "bank",                   accountCode: "1150"  },
 ];
 
 export interface SeedDefaultsResult {
