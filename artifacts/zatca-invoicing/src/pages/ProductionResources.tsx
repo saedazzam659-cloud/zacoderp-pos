@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Pencil, Cog } from "lucide-react";
+import { Plus, Trash2, Pencil, Cog, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,9 +10,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -51,6 +48,30 @@ export default function ProductionResources() {
     capacityPerHour: "",
     notes: "",
   });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+
+  function closePanel() {
+    setOpen(false);
+    setEditing(null);
+    setForm({ name: "", type: "machine", status: "available", capacityPerHour: "", notes: "" });
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      firstFieldRef.current?.focus();
+    });
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closePanel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -152,68 +173,106 @@ export default function ProductionResources() {
             <p className="text-sm text-slate-500">{t("production.subtitle")}</p>
           </div>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={openCreate} data-testid="btn-new-resource">
-              <Plus className="h-4 w-4 me-1" />
-              {t("production.addResource")}
+        <Button
+          ref={triggerRef}
+          onClick={() => (open ? closePanel() : openCreate())}
+          data-testid="btn-new-resource"
+          variant={open ? "outline" : "default"}
+          aria-expanded={open}
+          aria-controls="panel-resource-form"
+        >
+          {open ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
+          {open ? t("common.cancel") : t("production.addResource")}
+        </Button>
+      </div>
+
+      {open && (
+        <div
+          ref={panelRef}
+          id="panel-resource-form"
+          role="region"
+          aria-label={editing ? `${t("common.edit")}: ${editing.name}` : t("production.addResource")}
+          className="rounded-lg border border-indigo-200 dark:border-indigo-900/50 bg-gradient-to-br from-indigo-50/60 to-blue-50/40 dark:from-indigo-950/20 dark:to-blue-950/10 shadow-sm"
+          data-testid="panel-resource-form"
+        >
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-indigo-200/70 dark:border-indigo-900/40">
+            <div className="flex items-center gap-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+              {editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {editing ? `${t("common.edit")}: ${editing.name}` : t("production.addResource")}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={closePanel}
+              aria-label={t("common.cancel")}
+            >
+              <X className="h-4 w-4" />
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editing ? t("common.edit") : t("production.addResource")}</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={save} className="space-y-3">
-              <div>
-                <Label>{t("production.resourceName")}</Label>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required data-testid="input-res-name" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>{t("production.resourceType")}</Label>
-                  <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {TYPES.map((tp) => (
-                        <SelectItem key={tp} value={tp}>{t(`production.type_${tp}`)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>{t("production.status")}</Label>
-                  <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {STATUSES.map((s) => (
-                        <SelectItem key={s} value={s}>{t(`production.resourceStatus_${s}`)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+          </div>
+          <form onSubmit={save} className="p-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="md:col-span-2 lg:col-span-2">
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.resourceName")}</Label>
+                <Input
+                  ref={firstFieldRef}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  required
+                  data-testid="input-res-name"
+                  className="mt-1"
+                />
               </div>
               <div>
-                <Label>{t("production.capacityPerHour")}</Label>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.resourceType")}</Label>
+                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TYPES.map((tp) => (
+                      <SelectItem key={tp} value={tp}>{t(`production.type_${tp}`)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.status")}</Label>
+                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STATUSES.map((s) => (
+                      <SelectItem key={s} value={s}>{t(`production.resourceStatus_${s}`)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.capacityPerHour")}</Label>
                 <Input
                   type="number" step="0.01"
                   value={form.capacityPerHour}
                   onChange={(e) => setForm({ ...form, capacityPerHour: e.target.value })}
+                  className="mt-1"
                 />
               </div>
-              <div>
-                <Label>{t("production.notes")}</Label>
-                <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+              <div className="md:col-span-2 lg:col-span-3">
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.notes")}</Label>
+                <Input
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  className="mt-1"
+                />
               </div>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setOpen(false)}>{t("common.cancel")}</Button>
-                <Button type="submit" disabled={saving} data-testid="btn-save-res">
-                  {saving ? t("common.loading") : t("common.save")}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={closePanel}>{t("common.cancel")}</Button>
+              <Button type="submit" disabled={saving} data-testid="btn-save-res">
+                {saving ? t("common.loading") : t("common.save")}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">

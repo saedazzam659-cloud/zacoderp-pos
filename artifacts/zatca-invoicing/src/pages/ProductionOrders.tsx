@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useLocation } from "wouter";
-import { Plus, Search, Factory, ArrowRight } from "lucide-react";
+import { Plus, Search, Factory, ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 
@@ -64,6 +61,29 @@ export default function ProductionOrders() {
     unitCode: "PCE",
     notes: "",
   });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+
+  function closePanel() {
+    setOpenCreate(false);
+    setForm({ title: "", plannedQty: "", unitCode: "PCE", notes: "" });
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  useEffect(() => {
+    if (!openCreate) return;
+    requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      firstFieldRef.current?.focus();
+    });
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closePanel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCreate]);
 
   async function load() {
     if (!token) return;
@@ -141,68 +161,99 @@ export default function ProductionOrders() {
             <p className="text-sm text-slate-500">{t("production.subtitle")}</p>
           </div>
         </div>
-        <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-          <DialogTrigger asChild>
-            <Button data-testid="btn-new-order">
-              <Plus className="h-4 w-4 me-1" />
+        <Button
+          ref={triggerRef}
+          data-testid="btn-new-order"
+          onClick={() => (openCreate ? closePanel() : setOpenCreate(true))}
+          variant={openCreate ? "outline" : "default"}
+          aria-expanded={openCreate}
+          aria-controls="panel-new-order"
+        >
+          {openCreate ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
+          {openCreate ? t("common.cancel") : t("production.newOrder")}
+        </Button>
+      </div>
+
+      {openCreate && (
+        <div
+          ref={panelRef}
+          id="panel-new-order"
+          role="region"
+          aria-label={t("production.newOrder")}
+          className="rounded-lg border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50/60 to-fuchsia-50/40 dark:from-violet-950/20 dark:to-fuchsia-950/10 shadow-sm"
+          data-testid="panel-new-order"
+        >
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-violet-200/70 dark:border-violet-900/40">
+            <div className="flex items-center gap-2 text-sm font-semibold text-violet-700 dark:text-violet-300">
+              <Plus className="h-4 w-4" />
               {t("production.newOrder")}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={closePanel}
+              aria-label={t("common.cancel")}
+            >
+              <X className="h-4 w-4" />
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{t("production.newOrder")}</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-3">
-              <div>
-                <Label>{t("production.title_field")}</Label>
+          </div>
+          <form onSubmit={handleCreate} className="p-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="md:col-span-2">
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.title_field")}</Label>
                 <Input
+                  ref={firstFieldRef}
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   required
                   data-testid="input-title"
+                  className="mt-1"
                 />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>{t("production.plannedQty")}</Label>
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    value={form.plannedQty}
-                    onChange={(e) => setForm({ ...form, plannedQty: e.target.value })}
-                    data-testid="input-planned-qty"
-                  />
-                </div>
-                <div>
-                  <Label>{t("production.unitCode")}</Label>
-                  <Input
-                    value={form.unitCode}
-                    onChange={(e) => setForm({ ...form, unitCode: e.target.value })}
-                    data-testid="input-unit-code"
-                  />
-                </div>
               </div>
               <div>
-                <Label>{t("production.notes")}</Label>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.plannedQty")}</Label>
                 <Input
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  data-testid="input-notes"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  value={form.plannedQty}
+                  onChange={(e) => setForm({ ...form, plannedQty: e.target.value })}
+                  data-testid="input-planned-qty"
+                  className="mt-1"
                 />
               </div>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setOpenCreate(false)}>
-                  {t("common.cancel")}
-                </Button>
-                <Button type="submit" disabled={creating} data-testid="btn-create-order">
-                  {creating ? t("common.loading") : t("common.save")}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+              <div>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCode")}</Label>
+                <Input
+                  value={form.unitCode}
+                  onChange={(e) => setForm({ ...form, unitCode: e.target.value })}
+                  data-testid="input-unit-code"
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.notes")}</Label>
+              <Input
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                data-testid="input-notes"
+                className="mt-1"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={closePanel}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="submit" disabled={creating} data-testid="btn-create-order">
+                {creating ? t("common.loading") : t("common.save")}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">

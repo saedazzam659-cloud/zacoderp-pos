@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Plus, Trash2, Activity, ListChecks, Sparkles,
-  CheckCircle2, PlayCircle, ClipboardCheck, Flag, Ban,
+  CheckCircle2, PlayCircle, ClipboardCheck, Flag, Ban, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,9 +15,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -110,6 +107,29 @@ export default function ProductionOrderDetail() {
     unitCode: "PCE",
     unitCost: "",
   });
+  const itemTriggerRef = useRef<HTMLButtonElement>(null);
+  const itemPanelRef = useRef<HTMLDivElement>(null);
+  const firstItemFieldRef = useRef<HTMLInputElement>(null);
+
+  function closeItemPanel() {
+    setOpenItem(false);
+    setItemForm({ kind: "raw", description: "", quantity: "", unitCode: "PCE", unitCost: "" });
+    requestAnimationFrame(() => itemTriggerRef.current?.focus());
+  }
+
+  useEffect(() => {
+    if (!openItem) return;
+    requestAnimationFrame(() => {
+      itemPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      firstItemFieldRef.current?.focus();
+    });
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeItemPanel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openItem]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -267,21 +287,50 @@ export default function ProductionOrderDetail() {
             </TabsList>
             <TabsContent value="items" className="space-y-3">
               <div className="flex justify-end">
-                <Dialog open={openItem} onOpenChange={setOpenItem}>
-                  <DialogTrigger asChild>
-                    <Button size="sm" data-testid="btn-add-item">
-                      <Plus className="h-4 w-4 me-1" />{t("production.addItem")}
+                <Button
+                  ref={itemTriggerRef}
+                  size="sm"
+                  data-testid="btn-add-item"
+                  onClick={() => (openItem ? closeItemPanel() : setOpenItem(true))}
+                  variant={openItem ? "outline" : "default"}
+                  aria-expanded={openItem}
+                  aria-controls="panel-add-item"
+                >
+                  {openItem ? <X className="h-4 w-4 me-1" /> : <Plus className="h-4 w-4 me-1" />}
+                  {openItem ? t("common.cancel") : t("production.addItem")}
+                </Button>
+              </div>
+              {openItem && (
+                <div
+                  ref={itemPanelRef}
+                  id="panel-add-item"
+                  role="region"
+                  aria-label={t("production.addItem")}
+                  className="rounded-lg border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50/60 to-fuchsia-50/40 dark:from-violet-950/20 dark:to-fuchsia-950/10 shadow-sm"
+                  data-testid="panel-add-item"
+                >
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-violet-200/70 dark:border-violet-900/40">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-violet-700 dark:text-violet-300">
+                      <Plus className="h-4 w-4" />
+                      {t("production.addItem")}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={closeItemPanel}
+                      aria-label={t("common.cancel")}
+                    >
+                      <X className="h-4 w-4" />
                     </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>{t("production.addItem")}</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={addItem} className="space-y-3">
-                      <div>
-                        <Label>{t("production.itemKind")}</Label>
+                  </div>
+                  <form onSubmit={addItem} className="p-4 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                      <div className="md:col-span-3">
+                        <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.itemKind")}</Label>
                         <Select value={itemForm.kind} onValueChange={(v: any) => setItemForm({ ...itemForm, kind: v })}>
-                          <SelectTrigger data-testid="select-item-kind"><SelectValue /></SelectTrigger>
+                          <SelectTrigger data-testid="select-item-kind" className="mt-1"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="raw">{t("production.kind_raw")}</SelectItem>
                             <SelectItem value="product">{t("production.kind_product")}</SelectItem>
@@ -289,54 +338,57 @@ export default function ProductionOrderDetail() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div>
-                        <Label>{t("production.description")}</Label>
+                      <div className="md:col-span-9">
+                        <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.description")}</Label>
                         <Input
+                          ref={firstItemFieldRef}
                           value={itemForm.description}
                           onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })}
                           required
                           data-testid="input-item-description"
+                          className="mt-1"
                         />
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <Label>{t("production.quantity")}</Label>
-                          <Input
-                            type="number" step="0.01"
-                            value={itemForm.quantity}
-                            onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })}
-                            data-testid="input-item-qty"
-                          />
-                        </div>
-                        <div>
-                          <Label>{t("production.unitCode")}</Label>
-                          <Input
-                            value={itemForm.unitCode}
-                            onChange={(e) => setItemForm({ ...itemForm, unitCode: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <Label>{t("production.unitCost")}</Label>
-                          <Input
-                            type="number" step="0.01"
-                            value={itemForm.unitCost}
-                            onChange={(e) => setItemForm({ ...itemForm, unitCost: e.target.value })}
-                            data-testid="input-item-cost"
-                          />
-                        </div>
+                      <div className="md:col-span-4">
+                        <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.quantity")}</Label>
+                        <Input
+                          type="number" step="0.01"
+                          value={itemForm.quantity}
+                          onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })}
+                          data-testid="input-item-qty"
+                          className="mt-1"
+                        />
                       </div>
-                      <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => setOpenItem(false)}>
-                          {t("common.cancel")}
-                        </Button>
-                        <Button type="submit" disabled={savingItem} data-testid="btn-save-item">
-                          {savingItem ? t("common.loading") : t("common.save")}
-                        </Button>
-                      </DialogFooter>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              </div>
+                      <div className="md:col-span-4">
+                        <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCode")}</Label>
+                        <Input
+                          value={itemForm.unitCode}
+                          onChange={(e) => setItemForm({ ...itemForm, unitCode: e.target.value })}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div className="md:col-span-4">
+                        <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCost")}</Label>
+                        <Input
+                          type="number" step="0.01"
+                          value={itemForm.unitCost}
+                          onChange={(e) => setItemForm({ ...itemForm, unitCost: e.target.value })}
+                          data-testid="input-item-cost"
+                          className="mt-1"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <Button type="button" variant="outline" onClick={closeItemPanel}>
+                        {t("common.cancel")}
+                      </Button>
+                      <Button type="submit" disabled={savingItem} data-testid="btn-save-item">
+                        {savingItem ? t("common.loading") : t("common.save")}
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+              )}
               <div className="rounded-lg border bg-white dark:bg-slate-900">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 dark:bg-slate-800">
