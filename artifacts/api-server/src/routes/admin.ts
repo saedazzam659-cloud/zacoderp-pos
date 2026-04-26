@@ -14,7 +14,7 @@ import {
 } from "../lib/maintenanceChecks.js";
 import {
   ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
-  getRecentToolErrors, TOOL_ERROR_WINDOW_DAYS,
+  getRecentToolErrors, getRecentToolRecoveries, TOOL_ERROR_WINDOW_DAYS,
   runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
   clearCriticalDigestCooldown,
   severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
@@ -4864,6 +4864,27 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب أخطاء أدوات الصيانة" });
+  }
+});
+
+// GET /maintenance/recent-recoveries — tools whose latest run flipped from
+// 'error' back to a non-error status within the recency window. Mirrors the
+// shape returned by `getRecentToolRecoveries` (the same helper the critical
+// digest uses to render its green "تعافت مؤخراً" section). Drives the
+// matching panel on the AI Company Fix page so operators get on-screen
+// confirmation that a fix landed without having to wait for the next digest
+// email. Empty `items` means the UI hides the panel entirely.
+router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res) => {
+  const limit = clampInt(req.query.limit, 1, 200, 50);
+  try {
+    const items = await getRecentToolRecoveries(limit);
+    res.json({
+      count: items.length,
+      windowDays: TOOL_ERROR_WINDOW_DAYS,
+      items,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب أدوات الصيانة المتعافية" });
   }
 });
 

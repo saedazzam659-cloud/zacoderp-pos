@@ -826,6 +826,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // so a manual sweep that recovers (or newly breaks) a tool must
       // refresh it too — otherwise the panel keeps showing stale rows.
       qc.invalidateQueries({ queryKey: ["maintenance-error-summary"] });
+      // Recovered-tool panel is the positive mirror of the errored-tool
+      // panel and is driven by the same per-(company, tool) projection, so
+      // a manual sweep that flips a tool from error → ok must refresh it
+      // too — otherwise the green panel won't appear until the next reload.
+      qc.invalidateQueries({ queryKey: ["maintenance-recent-recoveries"] });
       // Critical-alerts panel uses the same per-(company, tool) latest
       // projection — invalidate it so a recovery flips the row out (and a
       // newly critical run flips one in) without requiring a page reload.
@@ -1035,6 +1040,35 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
         count: number;
         windowDays: number;
         items: Array<{ companyId: number; companyName: string; toolKey: string; error: string | null; runAt: string }>;
+      }>;
+    },
+    refetchOnWindowFocus: false,
+  });
+
+  // Mirror of the broken-tool panel above, in the positive direction. Lists
+  // (company, tool) pairs whose latest run flipped from 'error' back to a
+  // non-error status within the recency window — the same set the critical-
+  // digest email's green "تعافت مؤخراً" section uses. Without this panel a
+  // fixed tool just silently disappears from the amber list, leaving operators
+  // who don't read the email with no on-screen confirmation that the fix
+  // landed. Empty state hides the panel entirely so the page stays calm when
+  // there's nothing to celebrate.
+  const recoverySummaryQ = useQuery({
+    queryKey: ["maintenance-recent-recoveries"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/recent-recoveries?limit=50`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب أدوات الصيانة المتعافية");
+      return r.json() as Promise<{
+        count: number;
+        windowDays: number;
+        items: Array<{
+          companyId: number;
+          companyName: string;
+          toolKey: string;
+          currentStatus: string;
+          previousErrorAt: string;
+          recoveredAt: string;
+        }>;
       }>;
     },
     refetchOnWindowFocus: false,
@@ -1709,6 +1743,79 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       </td>
                       <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
                         {new Date(row.runAt).toLocaleString("ar-SA")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Recovered-tool panel: positive mirror of the broken-tool panel ─
+            Lists (company, tool) pairs whose latest run flipped from 'error'
+            back to a non-error status within the same recency window. Driven
+            by the same helper the critical-digest email uses for its green
+            "تعافت مؤخراً" section, so what an operator sees on screen matches
+            what gets emailed. Hidden entirely when there are no recoveries
+            (no empty-state chrome) so the page stays calm during quiet
+            periods. */}
+        {recoverySummaryQ.data && recoverySummaryQ.data.items.length > 0 && (
+          <div className="border border-emerald-200 rounded p-3 bg-emerald-50/40">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+              <span className="text-sm font-medium text-emerald-900">
+                أدوات صيانة تعافت آخر {recoverySummaryQ.data.windowDays} أيام
+                <span className="font-normal text-emerald-800/80 mr-1">
+                  ({recoverySummaryQ.data.items.length} حالة)
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground mr-auto">
+                هذه الفحوصات كانت معطّلة وعادت للعمل — تختفي تلقائياً بعد {recoverySummaryQ.data.windowDays} أيام.
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-emerald-100/60 text-emerald-900">
+                  <tr>
+                    <th className="px-2 py-1 text-right">الشركة</th>
+                    <th className="px-2 py-1 text-right">الأداة</th>
+                    <th className="px-2 py-1 text-right">آخر خطأ</th>
+                    <th className="px-2 py-1 text-right">وقت التعافي</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-emerald-100">
+                  {recoverySummaryQ.data.items.map((row) => (
+                    <tr key={`${row.companyId}:${row.toolKey}`}>
+                      <td className="px-2 py-1">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline font-medium"
+                          onClick={() => onSelectCompany(row.companyId)}
+                          title={`اختيار ${row.companyName} (#${row.companyId})`}
+                        >
+                          {row.companyName || `#${row.companyId}`}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[11px]">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline"
+                          onClick={() => setToolHistoryTarget({
+                            companyId: row.companyId,
+                            companyName: row.companyName || `#${row.companyId}`,
+                            toolKey: row.toolKey,
+                          })}
+                          title={`عرض آخر التشغيلات لـ ${row.toolKey} (${row.companyName || `#${row.companyId}`})`}
+                        >
+                          {row.toolKey}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                        {new Date(row.previousErrorAt).toLocaleString("ar-SA")}
+                      </td>
+                      <td className="px-2 py-1 text-emerald-900 whitespace-nowrap">
+                        {new Date(row.recoveredAt).toLocaleString("ar-SA")}
                       </td>
                     </tr>
                   ))}
