@@ -1150,7 +1150,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
         count: number;
         items: Array<{
           companyId: number;
-          companyName: string | null;
+          // Always populated by /maintenance/critical-summary — the server
+          // joins `companies.name_ar` (NOT NULL) and filters to active
+          // companies. Removes the need to cross-reference the companies
+          // list for this panel, which previously fell back to "#<id>" when
+          // that query was slow, blank, or stale.
+          companyName: string;
           toolKey: string;
           count: number;
           runAt: string;
@@ -1720,9 +1725,9 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                           type="button"
                           className="text-violet-700 hover:underline font-medium"
                           onClick={() => onSelectCompany(row.companyId)}
-                          title={`اختيار ${row.companyName ?? `#${row.companyId}`} (#${row.companyId})`}
+                          title={`اختيار ${row.companyName} (#${row.companyId})`}
                         >
-                          {row.companyName || `#${row.companyId}`}
+                          {row.companyName}
                         </button>
                       </td>
                       <td className="px-2 py-1 font-mono text-[11px]">
@@ -1731,10 +1736,10 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                           className="text-violet-700 hover:underline"
                           onClick={() => setToolHistoryTarget({
                             companyId: row.companyId,
-                            companyName: companyDisplayName(row.companyId, row.companyName),
+                            companyName: row.companyName,
                             toolKey: row.toolKey,
                           })}
-                          title={`عرض آخر التشغيلات لـ ${row.toolKey} (${row.companyName ?? `#${row.companyId}`})`}
+                          title={`عرض آخر التشغيلات لـ ${row.toolKey} (${row.companyName})`}
                         >
                           {row.toolKey}
                         </button>
