@@ -2227,6 +2227,14 @@ router.post("/command", async (req, res) => {
       : [];
     const lookups = sanitizeJson(req.body?.lookups, 60_000);
     const screenDescription = String(req.body?.screen_description ?? "").slice(0, 500);
+    const availableRoutes = Array.isArray(req.body?.available_routes)
+      ? req.body.available_routes.slice(0, 200)
+      : [];
+    const uiSnapshot = sanitizeJson(req.body?.ui_snapshot, 12000) ?? {
+      buttons: [],
+      inputs: [],
+      comboboxes: [],
+    };
 
     if (!userMessage.trim()) {
       res.json({
@@ -2240,17 +2248,14 @@ router.post("/command", async (req, res) => {
       return;
     }
 
-    const noActionable = availableFields.length === 0 && availableActions.length === 0;
-
+    // The model now has GLOBAL capabilities (navigate, click, type, select)
+    // available on every screen. So "no actionable" only refers to the
+    // screen-scoped registration; the assistant is never inert.
     const fallbackMessage = () => ({
       message:
         lang === "en"
-          ? noActionable
-            ? "This screen doesn't expose actions I can drive yet — I can only explain it. Try going to a form like /sales/invoices/new."
-            : "I couldn't reach the AI service. Please try again in a moment."
-          : noActionable
-            ? "هذه الشاشة لا تتيح لي تنفيذ إجراءات حتى الآن — أستطيع شرحها فقط. جرّب فتح شاشة مدخلات مثل فاتورة مبيعات جديدة."
-            : "تعذر الوصول للذكاء الاصطناعي حالياً. حاول مرة أخرى بعد قليل.",
+          ? "I couldn't reach the AI service. Please try again in a moment."
+          : "تعذر الوصول للذكاء الاصطناعي حالياً. حاول مرة أخرى بعد قليل.",
       commands: [] as any[],
       source: "fallback" as const,
     });
@@ -2262,50 +2267,62 @@ router.post("/command", async (req, res) => {
 
     const sysPrompt =
       lang === "en"
-        ? `You are an action planner embedded in a Saudi multi-tenant ERP. The user is currently on screen "${screenContext}" and is talking to you in natural language. You are given:
+        ? `You are an action planner embedded in a Saudi multi-tenant ERP. You drive the WHOLE app by voice or text — not just one form. The user is currently on screen "${screenContext}" and is talking to you in natural language. You are given:
   - the user's message
-  - a JSON description of fields on the screen (each with a name, label, type and — when relevant — options or lookup key)
-  - a JSON description of actions you can invoke (each with a name and parameters)
+  - available_routes: every screen the user can navigate to (path + AR/EN labels + aliases)
+  - ui_snapshot: visible buttons / inputs / comboboxes on the CURRENT screen, each with a label
+  - available_fields / available_actions: extra structured fields and actions THIS screen has registered (only some screens do)
   - the current form state
   - lookup tables that map ids to human names (e.g. customers, items)
 Your job is to return a JSON object:
-  { "message": "<short Arabic or English reply to the user>",
-    "commands": [ <ordered list of commands to execute on the screen> ] }
+  { "message": "<short reply in the user's language>",
+    "commands": [ <ordered list of commands to execute> ] }
 Allowed command shapes:
-  { "type": "set_field", "field": "<field.name>", "value": <value> }
-  { "type": "call_action", "action": "<action.name>", "params": { ... } }
+  { "type": "navigate",       "path": "<path from available_routes>", "label": "<short human label>" }
+  { "type": "click",          "label": "<button text from ui_snapshot.buttons>" }            // optional: "testid"
+  { "type": "double_click",   "label": "<button text>" }
+  { "type": "type_text",      "label": "<input label from ui_snapshot.inputs>", "value": "<text to type>" }
+  { "type": "select_option",  "label": "<combobox label>", "option": "<option text the user wants>" }
+  { "type": "set_field",      "field": "<available_fields[].name>", "value": <validated value> }
+  { "type": "call_action",    "action": "<available_actions[].name>", "params": { ... } }
 Rules:
-  1. Only reference field.name and action.name values that actually appear in available_fields / available_actions.
-  2. For type="lookup" fields, resolve human names against the matching lookup list and return the lookup item's "id" as the value (string).
-  3. For type="select" fields, the value MUST equal one of options[].value.
-  4. For type="boolean" fields, return true or false.
-  5. Numbers (qty, price) should be sent as numbers, not strings.
-  6. Plan a minimal, sensible sequence — set fields BEFORE calling actions that depend on them.
-  7. If the user asks for something the screen cannot do (no matching field/action, or a name with no lookup match), return commands: [] and explain in "message" what is missing.
-  8. NEVER invent fields, actions, or lookup ids. If unsure, ask the user in "message".
+  1. NAVIGATION: when the user asks to "open", "go to", or names a screen ("افتح المبيعات", "go to inventory"), pick the best route from available_routes and emit a navigate command. After navigating, you may NOT issue further click/type commands in the same response — the new screen hasn't loaded yet; ask the user what to do next.
+  2. CLICK / DOUBLE_CLICK: only use labels that appear (case-insensitively, partial match OK) in ui_snapshot.buttons. NEVER invent button text.
+  3. TYPE_TEXT: only use labels from ui_snapshot.inputs. The value is the literal text to put in the field.
+  4. SELECT_OPTION: only use labels from ui_snapshot.comboboxes. "option" is the visible option text the user wants picked.
+  5. set_field / call_action: only when available_fields / available_actions includes that name. For lookup fields, resolve the human name to the lookup item's "id" string. For select fields, value MUST equal one of options[].value. Numbers as numbers, booleans as true/false.
+  6. Plan a minimal, sensible sequence — fields before dependent actions, navigate before anything on the new screen (in a follow-up turn).
+  7. If you can't fulfil the request (no matching route / button / field, ambiguous name, etc), return commands: [] and EXPLAIN in "message" what's missing or ask a clarifying question.
+  8. NEVER invent route paths, field names, action names, button labels, or lookup ids.
   9. Reply "message" should be short (1-2 sentences), in the user's language.
  10. The user's message may be transcribed from speech — be tolerant of small typos and approximate names.`
-        : `أنت مخطط إجراءات مدمج داخل نظام ERP سعودي متعدد المستأجرين. المستخدم على الشاشة "${screenContext}" ويتحدث معك بلغة طبيعية. تستلم:
+        : `أنت مخطط إجراءات مدمج داخل نظام ERP سعودي متعدد المستأجرين. مهمتك التحكم في كامل التطبيق بالصوت أو الكتابة — وليس بنموذج واحد فقط. المستخدم حالياً على الشاشة "${screenContext}" ويتحدث معك بلغة طبيعية. تستلم:
   - رسالة المستخدم
-  - وصف JSON للحقول الموجودة على الشاشة (لكل حقل name و label و type وأحياناً options أو lookup)
-  - وصف JSON للإجراءات التي يمكنك استدعاؤها (لكل إجراء name والمعاملات المطلوبة)
+  - available_routes: كل الشاشات التي يستطيع المستخدم الانتقال إليها (path + اسم عربي + اسم إنجليزي + مرادفات)
+  - ui_snapshot: الأزرار وحقول الإدخال والقوائم المنسدلة الظاهرة الآن على الشاشة، مع label لكل عنصر
+  - available_fields / available_actions: حقول وإجراءات إضافية سجّلتها هذه الشاشة (لا تتوفر في كل الشاشات)
   - حالة النموذج الحالية
   - جداول lookup تربط المعرفات بالأسماء البشرية (عملاء، أصناف...)
 مهمتك إرجاع كائن JSON بهذا الشكل:
-  { "message": "<رد قصير للمستخدم>",
+  { "message": "<رد قصير للمستخدم بلغته>",
     "commands": [ <قائمة مرتبة من الأوامر لتنفيذها> ] }
 أنواع الأوامر المسموحة:
-  { "type": "set_field", "field": "<field.name>", "value": <القيمة> }
-  { "type": "call_action", "action": "<action.name>", "params": { ... } }
+  { "type": "navigate",       "path": "<مسار من available_routes>", "label": "<اسم الشاشة>" }
+  { "type": "click",          "label": "<نص الزر من ui_snapshot.buttons>" }
+  { "type": "double_click",   "label": "<نص الزر>" }
+  { "type": "type_text",      "label": "<اسم الحقل من ui_snapshot.inputs>", "value": "<النص المراد كتابته>" }
+  { "type": "select_option",  "label": "<اسم القائمة>", "option": "<اسم الخيار الظاهر للمستخدم>" }
+  { "type": "set_field",      "field": "<available_fields[].name>", "value": <قيمة موافقة لنوع الحقل> }
+  { "type": "call_action",    "action": "<available_actions[].name>", "params": { ... } }
 قواعد إلزامية:
-  1. استخدم فقط أسماء الحقول والإجراءات الموجودة فعلاً في available_fields / available_actions.
-  2. الحقول من نوع lookup: استخرج id من جدول الـ lookup المطابق بناءً على الاسم الذي ذكره المستخدم، وأرسل id كـ string.
-  3. الحقول من نوع select: القيمة يجب أن تساوي إحدى options[].value بالضبط.
-  4. الحقول من نوع boolean: أرسل true أو false.
-  5. الكميات والأسعار: أرسلها كأرقام (numbers) لا كنصوص.
-  6. خطّط لتسلسل بسيط ومنطقي — اضبط الحقول قبل استدعاء الإجراءات المعتمدة عليها.
-  7. لو طلب المستخدم شيئاً لا تدعمه الشاشة (لا يوجد حقل/إجراء مطابق، أو اسم لا يوجد له lookup) — أعد commands: [] واشرح في message ما هو الناقص.
-  8. لا تخترع أبداً أسماء حقول أو إجراءات أو معرفات lookup. لو غير متأكد، اسأل المستخدم في message.
+  1. التنقل: لو طلب المستخدم "افتح/اذهب إلى/روح إلى" شاشة، اختر أنسب مسار من available_routes وأصدر أمر navigate. بعد التنقل لا تُصدر أوامر click/type/type_text في نفس الرد — الشاشة الجديدة لم تظهر بعد؛ اسأل المستخدم عن الخطوة التالية.
+  2. النقر: استخدم فقط نصوص أزرار موجودة في ui_snapshot.buttons (تطابق غير حساس لحالة الأحرف، ويُقبل التطابق الجزئي). لا تخترع أبداً نص زر.
+  3. type_text: استخدم فقط labels من ui_snapshot.inputs. القيمة هي النص الحرفي للكتابة في الحقل.
+  4. select_option: استخدم فقط labels من ui_snapshot.comboboxes. "option" هو الخيار الظاهر الذي يريد المستخدم اختياره.
+  5. set_field / call_action: فقط عندما يكون الاسم موجوداً فعلاً في available_fields / available_actions. الحقول من نوع lookup: حوّل الاسم البشري إلى id من جدول lookup كـ string. select: القيمة يجب أن تساوي إحدى options[].value. الأرقام كأرقام، booleans كـ true/false.
+  6. خطّط تسلسلاً بسيطاً ومنطقياً — اضبط الحقول قبل الإجراءات المعتمدة عليها، وانتقل أولاً قبل أي شيء على الشاشة الجديدة (في رد لاحق).
+  7. لو لم تستطع تنفيذ الطلب (لا يوجد route/زر/حقل مطابق، اسم غامض...) أعد commands: [] واشرح في message ما هو الناقص أو اسأل سؤالاً توضيحياً.
+  8. لا تخترع مطلقاً مسارات أو أسماء حقول أو إجراءات أو نصوص أزرار أو معرفات lookup.
   9. message يجب أن تكون قصيرة (جملة أو جملتين) باللغة العربية.
  10. رسالة المستخدم قد تكون مُحوّلة من الصوت — تسامح مع الأخطاء الإملائية البسيطة وقارب الأسماء.`;
 
@@ -2314,6 +2331,8 @@ Rules:
         screen_context: screenContext,
         screen_description: screenDescription,
         user_message: userMessage,
+        available_routes: availableRoutes,
+        ui_snapshot: uiSnapshot,
         available_fields: availableFields,
         available_actions: availableActions,
         screen_state: screenState,
@@ -2405,8 +2424,58 @@ Rules:
       return { ok: true, value: value == null ? "" : String(value) };
     };
 
+    // Build a path → label map of every navigable route the user is allowed
+    // to open. The model can ONLY emit navigate commands for paths in this
+    // set — protects against hallucinated routes and against the model
+    // ignoring the per-user permission filter.
+    const routePaths = new Map<string, string>();
+    for (const r of availableRoutes as any[]) {
+      if (r && typeof r.path === "string" && r.path.startsWith("/")) {
+        routePaths.set(r.path, String(r.ar || r.en || r.id || r.path));
+      }
+    }
+
+    // Whitelist of visible button / input / combobox labels. We use these
+    // as a soft check — case-insensitive substring match — so the model's
+    // partial-match license (rule #2 in the prompt) still works without
+    // letting completely invented labels through.
+    const buttonLabels = collectLabels((uiSnapshot as any)?.buttons);
+    const inputLabels = collectLabels((uiSnapshot as any)?.inputs);
+    const comboboxLabels = collectLabels((uiSnapshot as any)?.comboboxes);
+    // Whitelist of testids the model is allowed to reference, scoped to the
+    // CURRENT screen snapshot. Without this check the model could emit any
+    // arbitrary `testid` and bypass the label whitelist entirely.
+    const buttonTestids = collectTestids((uiSnapshot as any)?.buttons);
+    const labelLooksValid = (label: any, pool: string[]) => {
+      if (typeof label !== "string" || !label.trim()) return false;
+      const a = normalizeLabel(label);
+      if (!a) return false;
+      return pool.some((b) => b === a || b.includes(a) || a.includes(b));
+    };
+
+    // Destructive labels we never let the model click without an explicit,
+    // separately-confirmed user intent. Mirror of the client-side denylist
+    // so the network can't be skipped.
+    const destructive = (label: any) => {
+      if (typeof label !== "string") return false;
+      const norm = label.replace(/[\u064B-\u065F\u0670]/g, "").trim();
+      return [
+        /\bdelete\b/i,
+        /\bremove\b/i,
+        /\bvoid\b/i,
+        /\bdiscard\b/i,
+        /\bdestroy\b/i,
+        /\breset\b/i,
+        /حذف/,
+        /إزالة/,
+        /إلغاء\s*(الفاتورة|الطلب|المستند)/,
+        /تدمير/,
+        /مسح\s*الكل/,
+      ].some((p) => p.test(norm));
+    };
+
     const rawCmds = Array.isArray(parsed?.commands) ? parsed.commands : [];
-    const cleaned = rawCmds
+    const intermediate = rawCmds
       .map((c: any) => {
         if (!c || typeof c !== "object") return null;
         if (c.type === "set_field" && typeof c.field === "string" && fieldDefs.has(c.field)) {
@@ -2426,10 +2495,67 @@ Rules:
             params: c.params && typeof c.params === "object" ? c.params : {},
           };
         }
+        if (c.type === "navigate" && typeof c.path === "string" && routePaths.has(c.path)) {
+          return {
+            type: "navigate",
+            path: c.path,
+            label: typeof c.label === "string" && c.label.trim()
+              ? c.label.slice(0, 80)
+              : routePaths.get(c.path),
+          };
+        }
+        if (c.type === "click" || c.type === "double_click") {
+          // Drop destructive button clicks before the model can fire them.
+          if (destructive(c.label)) return null;
+          // Accept the command if EITHER the label is in the visible button
+          // pool, OR the testid was actually present in the snapshot.
+          const labelOk = labelLooksValid(c.label, buttonLabels);
+          const testidOk =
+            typeof c.testid === "string" &&
+            c.testid.trim() &&
+            buttonTestids.has(c.testid);
+          if (!labelOk && !testidOk) return null;
+          const out: any = { type: c.type };
+          if (typeof c.label === "string") out.label = c.label.slice(0, 120);
+          if (testidOk) out.testid = c.testid.slice(0, 80);
+          return out;
+        }
+        if (
+          c.type === "type_text" &&
+          labelLooksValid(c.label, inputLabels) &&
+          (typeof c.value === "string" || typeof c.value === "number")
+        ) {
+          return {
+            type: "type_text",
+            label: String(c.label).slice(0, 120),
+            value: String(c.value).slice(0, 1000),
+          };
+        }
+        if (
+          c.type === "select_option" &&
+          labelLooksValid(c.label, comboboxLabels) &&
+          typeof c.option === "string" &&
+          c.option.trim()
+        ) {
+          return {
+            type: "select_option",
+            label: String(c.label).slice(0, 120),
+            option: c.option.slice(0, 200),
+          };
+        }
         return null;
       })
-      .filter(Boolean)
-      .slice(0, 50);
+      .filter(Boolean);
+
+    // Enforce "navigate must be terminal": once we hit a navigate command,
+    // drop everything after it. The new screen's DOM hasn't loaded yet so
+    // any further click/type would either fail or hit a stale element.
+    const cleaned: any[] = [];
+    for (const cmd of intermediate) {
+      cleaned.push(cmd);
+      if (cmd.type === "navigate") break;
+      if (cleaned.length >= 50) break;
+    }
 
     res.json({
       message: String(parsed.message ?? "").slice(0, 1000),
@@ -2454,6 +2580,48 @@ function sanitizeJson(v: any, maxBytes: number): any {
   } catch {
     return null;
   }
+}
+
+/**
+ * Pull a normalized array of label strings out of a UI snapshot section
+ * (buttons / inputs / comboboxes). Used server-side to whitelist which
+ * labels the model is allowed to act on.
+ */
+function collectLabels(section: any): string[] {
+  if (!Array.isArray(section)) return [];
+  const out: string[] = [];
+  for (const item of section) {
+    if (item && typeof item.label === "string") {
+      const n = normalizeLabel(item.label);
+      if (n) out.push(n);
+    }
+  }
+  return out;
+}
+
+/**
+ * Pull the set of `testid` values that the snapshot reported. We only let
+ * the model reference testids that are actually visible right now — never
+ * arbitrary ones — to close a hallucination/escalation hole.
+ */
+function collectTestids(section: any): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(section)) return out;
+  for (const item of section) {
+    if (item && typeof item.testid === "string" && item.testid.trim()) {
+      out.add(item.testid);
+    }
+  }
+  return out;
+}
+
+/** Cheap label normalization: strip Arabic diacritics + lowercase + trim. */
+function normalizeLabel(s: string): string {
+  return (s || "")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 export default router;

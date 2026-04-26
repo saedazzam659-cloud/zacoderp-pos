@@ -10,6 +10,7 @@ import {
   type ExecutedStep,
   type ScreenActionsRegistration,
 } from "@/contexts/ScreenActionsContext";
+import { visibleVoiceRoutes } from "@/lib/voiceNavRoutes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -295,6 +296,21 @@ export default function ScreenAssistant() {
   // ───────────────────────────────────────────────────────────────────
   // Active command playback (new /api/ai/command endpoint)
   // ───────────────────────────────────────────────────────────────────
+  // Build the per-user list of routes the AI is allowed to navigate to.
+  // Filtered by role + permissions so we never tell the model about screens
+  // the user can't actually open (it would just bounce off the route gates).
+  const navRoutes = useMemo(() => {
+    if (!user) return [];
+    const isSuperAdmin = user.role === "superadmin";
+    const isAdmin = user.role === "admin";
+    const perms = (user.permissions ?? {}) as Record<string, { view?: boolean }>;
+    return visibleVoiceRoutes({
+      isSuperAdmin,
+      isAdmin,
+      hasPerm: (k) => !!perms[k]?.view || isAdmin || isSuperAdmin,
+    }).map((r) => ({ id: r.id, path: r.path, ar: r.ar, en: r.en, aliases: r.aliases }));
+  }, [user]);
+
   const sendCommand = useCallback(
     async (userMessage: string) => {
       if (!token) return;
@@ -312,6 +328,11 @@ export default function ScreenAssistant() {
           available_fields: [],
           available_actions: [],
           lookups: {},
+          // Global capabilities — always sent so the AI can navigate / click
+          // / type / pick from a combobox on ANY screen, not just forms that
+          // registered field actions.
+          available_routes: navRoutes,
+          ui_snapshot: snapshotVisibleUi(),
         };
         const reg = registrationRef.current;
         if (reg && reg.screenContext === screenContext) {
@@ -334,11 +355,14 @@ export default function ScreenAssistant() {
         const j = (await r.json()) as CommandResponse;
 
         let steps: ExecutedStep[] | undefined;
-        if (Array.isArray(j.commands) && j.commands.length > 0 && hasActionableScreen) {
-          // Pass the screen context we registered AT REQUEST TIME so the
-          // executor can detect mid-flight navigation and refuse to apply
-          // commands to the wrong screen.
-          steps = await executor(j.commands, screenContext);
+        if (Array.isArray(j.commands) && j.commands.length > 0) {
+          // Only pass the expectedScreenContext when this screen is the one
+          // that registered actions — otherwise (global/navigation commands)
+          // we want the executor to allow them everywhere.
+          steps = await executor(
+            j.commands,
+            hasActionableScreen ? screenContext : undefined,
+          );
         }
 
         setChatLog((prev) => [
@@ -359,7 +383,7 @@ export default function ScreenAssistant() {
         setLoading(false);
       }
     },
-    [token, screenContext, lang, registrationRef, hasActionableScreen, executor, t],
+    [token, screenContext, lang, navRoutes, registrationRef, hasActionableScreen, executor, t],
   );
 
   // When the panel is opened, lazily fetch the contextual explanation. Refetch
@@ -755,4 +779,136 @@ function compactLookups(
     out[k] = (list ?? []).slice(0, 200);
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// UI snapshot — what the AI can "see" on the current screen.
+//
+// We scan the live DOM for plausible voice targets (buttons, links,
+// inputs, comboboxes) and return their visible labels + a stable selector
+// the executor can re-find them by. The model uses these to plan
+// click / type / select_option commands without per-screen registration.
+// ─────────────────────────────────────────────────────────────────────────
+
+const MAX_BUTTONS = 30;
+const MAX_INPUTS = 25;
+const MAX_COMBOBOXES = 15;
+
+function snapshotVisibleUi() {
+  if (typeof document === "undefined") return { buttons: [], inputs: [], comboboxes: [] };
+  return {
+    buttons: snapshotButtons(),
+    inputs: snapshotInputs(),
+    comboboxes: snapshotComboboxes(),
+  };
+}
+
+function isElementVisible(el: Element): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.hidden) return false;
+  if (el.getAttribute("aria-hidden") === "true") return false;
+  const cs = window.getComputedStyle(el);
+  if (cs.display === "none" || cs.visibility === "hidden") return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return false;
+  // Off-screen below the fold by a lot — probably not what the user means.
+  if (rect.top > (window.innerHeight + 600)) return false;
+  if (rect.bottom < -200) return false;
+  return true;
+}
+
+function readableLabel(el: HTMLElement): string {
+  return (
+    el.getAttribute("aria-label") ||
+    el.getAttribute("title") ||
+    (el as HTMLInputElement).value ||
+    (el.textContent || "").trim()
+  ).replace(/\s+/g, " ").slice(0, 80);
+}
+
+function snapshotButtons() {
+  const out: { label: string; testid?: string }[] = [];
+  const els = document.querySelectorAll<HTMLElement>(
+    'button,[role="button"],a[href],[role="menuitem"],[role="tab"],[data-voice-action]',
+  );
+  const seen = new Set<string>();
+  for (const el of Array.from(els)) {
+    if (!isElementVisible(el)) continue;
+    if (el.closest('[data-testid="screen-assistant-panel"]')) continue;
+    if (el.closest('[data-testid="voice-fab"]')) continue;
+    const label = readableLabel(el);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const testid = el.getAttribute("data-testid") || undefined;
+    out.push(testid ? { label, testid } : { label });
+    if (out.length >= MAX_BUTTONS) break;
+  }
+  return out;
+}
+
+function snapshotInputs() {
+  const out: { label: string; type: string; placeholder?: string; testid?: string }[] = [];
+  const els = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+    "input:not([type=hidden]):not([type=submit]):not([type=button]),textarea",
+  );
+  for (const el of Array.from(els)) {
+    if (!isElementVisible(el)) continue;
+    if (el.closest('[data-testid="screen-assistant-panel"]')) continue;
+    let label = "";
+    const id = el.getAttribute("id");
+    if (id) {
+      const lbl = document.querySelector(`label[for="${cssEscape(id)}"]`);
+      if (lbl) label = (lbl.textContent || "").trim();
+    }
+    if (!label) {
+      const wrappingLabel = el.closest("label");
+      if (wrappingLabel) label = (wrappingLabel.textContent || "").trim();
+    }
+    if (!label) label = el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || "";
+    if (!label) continue;
+    out.push({
+      label: label.replace(/\s+/g, " ").slice(0, 80),
+      type: (el.getAttribute("type") || el.tagName.toLowerCase()).slice(0, 20),
+      placeholder: el.getAttribute("placeholder") || undefined,
+      testid: el.getAttribute("data-testid") || undefined,
+    });
+    if (out.length >= MAX_INPUTS) break;
+  }
+  return out;
+}
+
+function snapshotComboboxes() {
+  const out: { label: string; testid?: string }[] = [];
+  const els = document.querySelectorAll<HTMLElement>(
+    'select,[role="combobox"],button[aria-haspopup="listbox"],button[aria-haspopup="menu"]',
+  );
+  for (const el of Array.from(els)) {
+    if (!isElementVisible(el)) continue;
+    if (el.closest('[data-testid="screen-assistant-panel"]')) continue;
+    let label = "";
+    const id = el.getAttribute("id");
+    if (id) {
+      const lbl = document.querySelector(`label[for="${cssEscape(id)}"]`);
+      if (lbl) label = (lbl.textContent || "").trim();
+    }
+    if (!label) {
+      const wrappingLabel = el.closest("label");
+      if (wrappingLabel) label = (wrappingLabel.textContent || "").trim();
+    }
+    if (!label) label = el.getAttribute("aria-label") || readableLabel(el) || "";
+    if (!label) continue;
+    out.push({
+      label: label.replace(/\s+/g, " ").slice(0, 80),
+      testid: el.getAttribute("data-testid") || undefined,
+    });
+    if (out.length >= MAX_COMBOBOXES) break;
+  }
+  return out;
+}
+
+function cssEscape(s: string): string {
+  if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(s);
+  return s.replace(/["\\]/g, "\\$&");
 }
