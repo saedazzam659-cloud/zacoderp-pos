@@ -1873,6 +1873,7 @@
     "status": "الحالة",
     "actions": "إجراءات",
     "doubleClickHint": "انقر مرتين لعرض سطور القيد",
+    "openSource": "فتح المستند المصدر",
     "confirmDelete": "تأكيد الحذف",
     "confirmDeleteDesc": "هل أنت متأكد من حذف هذا القيد؟ لا يمكن التراجع.",
     "cancel": "إلغاء",

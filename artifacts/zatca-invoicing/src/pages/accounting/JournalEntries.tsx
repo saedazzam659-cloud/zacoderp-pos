@@ -17,6 +17,33 @@ import { Plus, Search, Pencil, Trash2, BookOpen, ArrowUpDown, Calendar, CheckCir
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 
+// Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
+// source document that produced it. Hub-only routes (e.g. /sales/returns,
+// /hr/loans) ignore the id because those modules don't have a per-id detail
+// page yet — clicking still lands the user on the right list. Returns null
+// for general/manual entries that have no source to drill into.
+function sourceUrlFor(entryType: string | null | undefined, sourceId: number | null | undefined): string | null {
+  const t = entryType ?? "";
+  switch (t) {
+    case "sales_invoice":       return sourceId ? `/sales/invoices/${sourceId}` : null;
+    case "sales_return":        return "/sales/returns";
+    case "customer_settlement": return "/sales/settlements";
+    case "purchase_invoice":    return sourceId ? `/purchasing/invoices/${sourceId}` : null;
+    case "purchase_return":     return "/purchasing/returns";
+    case "supplier_settlement": return "/purchasing/settlements";
+    case "receipt":
+    case "receipt_voucher":     return "/cash/receipt-vouchers";
+    case "payment":
+    case "payment_voucher":     return "/cash/payment-vouchers";
+    case "stock_transfer":      return "/inventory/transfers";
+    case "stock_adjustment":    return "/inventory/adjustments";
+    case "payroll_run":         return "/hr/payroll";
+    case "employee_loan":       return "/hr/loans";
+    case "eos_payment":         return "/hr/end-of-service";
+    default:                    return null;
+  }
+}
+
 export default function JournalEntries() {
   const { user } = useAuth() as any;
   const { t } = useTranslation();
@@ -271,6 +298,8 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                 <tbody className="divide-y">
                   {filtered.map((entry: any) => {
                     const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
+                    const docLabel = entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`;
+                    const sourceUrl = sourceUrlFor(entry.entryType, entry.sourceId);
                     return (
                       <tr
                         key={entry.id}
@@ -278,8 +307,19 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                         onDoubleClick={() => navigate(`/accounting/journals/${entry.id}?tab=lines`)}
                         title={t("journalEntries.doubleClickHint")}
                       >
-                        <td className="px-4 py-3 font-mono text-xs font-semibold text-primary">
-                          {entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`}
+                        <td className="px-4 py-3 font-mono text-xs font-semibold">
+                          {sourceUrl ? (
+                            <button
+                              type="button"
+                              className="text-primary hover:underline"
+                              title={t("journalEntries.openSource")}
+                              onClick={(e) => { e.stopPropagation(); navigate(sourceUrl); }}
+                            >
+                              {docLabel}
+                            </button>
+                          ) : (
+                            <span className="text-primary">{docLabel}</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground flex items-center gap-1.5">
                           <Calendar className="h-3.5 w-3.5" />

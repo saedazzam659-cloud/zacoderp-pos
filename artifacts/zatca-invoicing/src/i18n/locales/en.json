@@ -1862,6 +1862,7 @@
     "status": "Status",
     "actions": "Actions",
     "doubleClickHint": "Double-click to view entry lines",
+    "openSource": "Open source document",
     "confirmDelete": "Confirm Delete",
     "confirmDeleteDesc": "Are you sure you want to delete this entry? This cannot be undone.",
     "cancel": "Cancel",

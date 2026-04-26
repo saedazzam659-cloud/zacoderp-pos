@@ -1,7 +1,14 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { journalEntriesTable, journalEntryLinesTable, branchesTable } from "@workspace/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import {
+  journalEntriesTable, journalEntryLinesTable, branchesTable,
+  salesInvoicesTable, salesReturnsTable, customerSettlementsTable,
+  purchaseInvoicesTable, purchaseReturnsTable, supplierSettlementsTable,
+  receiptVouchersTable, paymentVouchersTable,
+  stockTransfersTable, stockAdjustmentsTable,
+  payrollRunsTable, employeeLoansTable,
+} from "@workspace/db";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureLeafAccounts } from "../lib/leafAccount.js";
@@ -63,6 +70,27 @@ function getCompanyId(req: any): number | undefined {
 }
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
+// Source-doc table descriptors used by the LIST endpoint to enrich each
+// journal-entry row with the `sourceId` of the document that produced it.
+// The match key is whichever column on the source table holds the value the
+// poster wrote into `journal_entries.doc_number` (see hr-journals.ts,
+// receipt-vouchers.ts, sales.ts, purchasing.ts, inventory.ts).
+const SOURCE_TABLES: Record<string, { table: any; col: any }> = {
+  sales_invoice:        { table: salesInvoicesTable,        col: salesInvoicesTable.docNumber },
+  sales_return:         { table: salesReturnsTable,         col: salesReturnsTable.docNumber },
+  customer_settlement:  { table: customerSettlementsTable,  col: customerSettlementsTable.docNumber },
+  purchase_invoice:     { table: purchaseInvoicesTable,     col: purchaseInvoicesTable.docNumber },
+  purchase_return:      { table: purchaseReturnsTable,      col: purchaseReturnsTable.docNumber },
+  supplier_settlement:  { table: supplierSettlementsTable,  col: supplierSettlementsTable.docNumber },
+  receipt:              { table: receiptVouchersTable,      col: receiptVouchersTable.code },
+  receipt_voucher:      { table: receiptVouchersTable,      col: receiptVouchersTable.code },
+  payment:              { table: paymentVouchersTable,      col: paymentVouchersTable.code },
+  payment_voucher:      { table: paymentVouchersTable,      col: paymentVouchersTable.code },
+  stock_transfer:       { table: stockTransfersTable,       col: stockTransfersTable.transferNumber },
+  stock_adjustment:     { table: stockAdjustmentsTable,     col: stockAdjustmentsTable.adjustmentNumber },
+  payroll_run:          { table: payrollRunsTable,          col: payrollRunsTable.code },
+};
+
 router.get("/", async (req, res) => {
   try {
     const cid = getCompanyId(req);
@@ -72,7 +100,72 @@ router.get("/", async (req, res) => {
           .orderBy(desc(journalEntriesTable.createdAt))
       : await db.select().from(journalEntriesTable)
           .orderBy(desc(journalEntriesTable.createdAt));
-    res.json(rows);
+
+    if (rows.length === 0) { res.json([]); return; }
+
+    // 1) Aggregate debit/credit per entry in a single SQL pass instead of N+1.
+    const ids = rows.map(r => r.id);
+    const sums = await db.select({
+      entryId:     journalEntryLinesTable.entryId,
+      totalDebit:  sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}),  0)`.as("total_debit"),
+      totalCredit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.credit}), 0)`.as("total_credit"),
+    })
+      .from(journalEntryLinesTable)
+      .where(inArray(journalEntryLinesTable.entryId, ids))
+      .groupBy(journalEntryLinesTable.entryId);
+    const sumByEntry = new Map(sums.map(s => [s.entryId, s]));
+
+    // 2) Resolve sourceId for each row by batching lookups per
+    //    (entryType, companyId). Always pinning by companyId — even in
+    //    superadmin all-companies mode where `cid` is undefined — guarantees
+    //    a docNumber collision across tenants can never resolve to the
+    //    wrong tenant's source row. `employee_loan` is a special case: the
+    //    poster encodes the source id into the docNumber as "LOAN-{id}"
+    //    (see hr-journals.ts), so we parse rather than query. Unknown or
+    //    manually-created entry types simply get no sourceId — the
+    //    frontend then renders the docNumber as plain text.
+    const sourceIdByEntry = new Map<number, number>();
+    const byTypeCompany = new Map<string, { docNum: string; entryId: number }[]>();
+    for (const r of rows) {
+      const et = r.entryType ?? "";
+      const dn = r.docNumber ?? "";
+      if (!dn) continue;
+      if (et === "employee_loan") {
+        const m = /^LOAN-(\d+)$/.exec(dn);
+        if (m) sourceIdByEntry.set(r.id, Number(m[1]));
+        continue;
+      }
+      if (!SOURCE_TABLES[et]) continue;
+      const key = `${et}|${r.companyId}`;
+      if (!byTypeCompany.has(key)) byTypeCompany.set(key, []);
+      byTypeCompany.get(key)!.push({ docNum: dn, entryId: r.id });
+    }
+    for (const [key, items] of byTypeCompany) {
+      const sep = key.indexOf("|");
+      const et = key.slice(0, sep);
+      const groupCid = Number(key.slice(sep + 1));
+      const { table, col } = SOURCE_TABLES[et];
+      const docNums = Array.from(new Set(items.map(i => i.docNum)));
+      // Always company-scoped — every source table follows the same
+      // `company_id` convention so the same WHERE shape works for all.
+      const found = await db.select({ id: (table as any).id, key: col }).from(table)
+        .where(and(eq((table as any).companyId, groupCid), inArray(col, docNums)));
+      const byKey = new Map(found.map((f: any) => [f.key, f.id]));
+      for (const it of items) {
+        const sid = byKey.get(it.docNum);
+        if (sid != null) sourceIdByEntry.set(it.entryId, sid as number);
+      }
+    }
+
+    res.json(rows.map(r => {
+      const s = sumByEntry.get(r.id);
+      return {
+        ...r,
+        totalDebit:  s?.totalDebit  ?? "0",
+        totalCredit: s?.totalCredit ?? "0",
+        sourceId:    sourceIdByEntry.get(r.id) ?? null,
+      };
+    }));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
