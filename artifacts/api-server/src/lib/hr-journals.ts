@@ -233,6 +233,7 @@ export async function buildLoanDisbursementJournal(
 
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
+    branchId: emp?.branchId ?? null,
     docNumber: `LOAN-${loan.id}`,
     entryDate: loan.loanDate,
     currency: "SAR",
@@ -277,6 +278,7 @@ export async function buildEosPaymentJournal(
 
   const [entry] = await dx.insert(journalEntriesTable).values({
     companyId: cid,
+    branchId: emp.branchId ?? null,
     docNumber: `EOS-${employeeId}-${payDate.replace(/-/g, "")}`,
     entryDate: payDate,
     currency: "SAR",

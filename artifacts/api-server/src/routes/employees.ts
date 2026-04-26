@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable } from "@workspace/db";
+import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable, branchesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, intersectBranchRequest } from "../middleware/auth.js";
 import { requireAdminRole } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
@@ -914,12 +914,36 @@ router.post("/payroll/runs", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const b = req.body || {};
-    const { year, month, lines, payDate, notes } = b;
+    const { year, month, lines, payDate, notes, branchId } = b;
     if (!year || !month || !Array.isArray(lines)) { res.status(400).json({ error: "بيانات غير مكتملة" }); return; }
     const y = Number(year), m = Number(month);
     const periodStart = `${y}-${String(m).padStart(2,"0")}-01`;
     const periodEnd = new Date(y, m, 0).toISOString().slice(0, 10);
     const code = `PR-${y}${String(m).padStart(2,"0")}`;
+    // Default branch: stamp it on the run so the JE that posting later builds
+    // is visible in branch-scoped reports. Resolution rules:
+    //   - If the caller passed branchId, intersect against their allowed scope
+    //     (a restricted user picking a forbidden branch is rejected with 403).
+    //   - If they didn't pass one and they're restricted to a single branch,
+    //     use that branch implicitly.
+    //   - Always verify the chosen branch belongs to this company.
+    const requestedRaw = (branchId == null || branchId === "") ? undefined : Number(branchId);
+    const intersected = intersectBranchRequest(req as any, requestedRaw ?? null);
+    if (intersected === "deny") { res.status(403).json({ error: "غير مصرح بالوصول إلى هذا الفرع" }); return; }
+    const allowedBranches = (req as any).authUser?.branchIds as number[] | undefined;
+    const viewAll = (req as any).authUser?.viewAllBranches === true
+      || ["admin","superadmin"].includes((req as any).authUser?.role);
+    let resolvedBranchId: number | null = null;
+    if (typeof intersected === "number") {
+      resolvedBranchId = intersected;
+    } else if (!viewAll && allowedBranches?.length === 1) {
+      resolvedBranchId = allowedBranches[0];
+    }
+    if (resolvedBranchId != null) {
+      const [br] = await db.select({ id: branchesTable.id }).from(branchesTable)
+        .where(and(eq(branchesTable.id, resolvedBranchId), eq(branchesTable.companyId, cid)));
+      if (!br) { res.status(400).json({ error: "الفرع غير موجود في هذه الشركة" }); return; }
+    }
 
     let totalGross = 0, totalDed = 0, totalNet = 0;
     for (const l of lines) {
@@ -931,6 +955,7 @@ router.post("/payroll/runs", async (req, res) => {
     try {
       const [run] = await db.insert(payrollRunsTable).values({
         companyId: cid,
+        branchId: resolvedBranchId,
         code,
         year: y, month: m,
         periodStart, periodEnd,
