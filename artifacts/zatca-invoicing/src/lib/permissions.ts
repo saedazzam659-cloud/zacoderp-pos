@@ -82,6 +82,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "hr_eos",               label: "perms.modules.hr_eos",               group: G.hr,         actions: VC },
   { key: "hr_calculators",       label: "perms.modules.hr_calculators",       group: G.hr,         actions: VO },
   { key: "hr_settings",          label: "perms.modules.hr_settings",          group: G.hr,         actions: ["view", "edit"] },
+  { key: "hr_face_attendance",   label: "perms.modules.hr_face_attendance",   group: G.hr,         actions: ALL },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

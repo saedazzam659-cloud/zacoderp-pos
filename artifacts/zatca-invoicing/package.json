@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@types/qrcode": "^1.5.6",
+    "@vladmandic/face-api": "^1.7.15",
     "i18next": "^26.0.6",
     "i18next-browser-languagedetector": "^8.2.1",
     "jspdf": "^4.2.1",

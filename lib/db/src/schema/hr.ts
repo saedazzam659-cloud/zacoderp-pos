@@ -79,11 +79,85 @@ export const employeeAttendanceTable = pgTable("employee_attendance", {
   lateMinutes:  integer("late_minutes").default(0),
   status:       text("status").notNull().default("present"),
   notes:        text("notes"),
+  aiMethod:     text("ai_method"),
+  aiConfidenceIn: decimal("ai_confidence_in", { precision: 5, scale: 4 }),
+  aiConfidenceOut: decimal("ai_confidence_out", { precision: 5, scale: 4 }),
+  cameraInId:   integer("camera_in_id"),
+  cameraOutId:  integer("camera_out_id"),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
   uqDay: unique("uq_attendance_emp_date").on(t.employeeId, t.date),
 }));
+
+export const attendanceCamerasTable = pgTable("attendance_cameras", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").references(() => companiesTable.id).notNull(),
+  branchId:     integer("branch_id").references(() => branchesTable.id),
+  name:         text("name").notNull(),
+  location:     text("location"),
+  kind:         text("kind").notNull().default("webcam"),
+  dvrIp:        text("dvr_ip"),
+  port:         integer("port"),
+  channel:      integer("channel"),
+  protocol:     text("protocol").default("rtsp"),
+  username:     text("username"),
+  passwordEnc:  text("password_enc"),
+  streamUrl:    text("stream_url"),
+  aiEnabled:    boolean("ai_enabled").notNull().default(true),
+  status:       text("status").notNull().default("active"),
+  lastSeenAt:   timestamp("last_seen_at"),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const employeeFaceEnrollmentsTable = pgTable("employee_face_enrollments", {
+  id:             serial("id").primaryKey(),
+  companyId:      integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:     integer("employee_id").references(() => employeesTable.id, { onDelete: "cascade" }).notNull(),
+  descriptorJson: text("descriptor_json").notNull(),
+  qualityScore:   decimal("quality_score", { precision: 5, scale: 4 }).default("0"),
+  pose:           text("pose").default("frontal"),
+  livenessPassed: boolean("liveness_passed").notNull().default(false),
+  imageUrl:       text("image_url"),
+  isPrimary:      boolean("is_primary").notNull().default(false),
+  capturedAt:     timestamp("captured_at").defaultNow().notNull(),
+  createdAt:      timestamp("created_at").defaultNow().notNull(),
+});
+
+export const faceRecognitionLogsTable = pgTable("face_recognition_logs", {
+  id:                 serial("id").primaryKey(),
+  companyId:          integer("company_id").references(() => companiesTable.id).notNull(),
+  employeeId:         integer("employee_id").references(() => employeesTable.id, { onDelete: "set null" }),
+  cameraId:           integer("camera_id"),
+  matchedConfidence:  decimal("matched_confidence", { precision: 5, scale: 4 }),
+  bestDistance:       decimal("best_distance", { precision: 5, scale: 4 }),
+  action:             text("action"),
+  status:             text("status").notNull(),
+  livenessPassed:     boolean("liveness_passed").notNull().default(false),
+  spoofReason:        text("spoof_reason"),
+  frameThumbnailUrl:  text("frame_thumbnail_url"),
+  deviceInfo:         text("device_info"),
+  attendanceId:       integer("attendance_id"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+});
+
+export const attendanceAiSettingsTable = pgTable("attendance_ai_settings", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").references(() => companiesTable.id).notNull().unique(),
+  matchThreshold:   decimal("match_threshold", { precision: 5, scale: 4 }).notNull().default("0.6"),
+  cooldownSeconds:  integer("cooldown_seconds").notNull().default(300),
+  requireLiveness:  boolean("require_liveness").notNull().default(true),
+  autoCheckOut:     boolean("auto_check_out").notNull().default(true),
+  lateToleranceMin: integer("late_tolerance_min").notNull().default(10),
+  workdayStart:     text("workday_start").default("08:00"),
+  workdayEnd:       text("workday_end").default("17:00"),
+  notifyOnUnknown:  boolean("notify_on_unknown").notNull().default(true),
+  minQualityScore:  decimal("min_quality_score", { precision: 5, scale: 4 }).notNull().default("0.5"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().notNull(),
+});
 
 export const employeeLoansTable = pgTable("employee_loans", {
   id:             serial("id").primaryKey(),

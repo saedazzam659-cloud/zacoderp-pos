@@ -63,6 +63,12 @@ import ProductionResources from "@/pages/ProductionResources";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
+import FaceAttendanceHub from "@/pages/hr/face/FaceAttendanceHub";
+import FaceEnrollment from "@/pages/hr/face/FaceEnrollment";
+import LiveAttendanceKiosk from "@/pages/hr/face/LiveAttendanceKiosk";
+import AttendanceCameras from "@/pages/hr/face/AttendanceCameras";
+import FaceAttendanceLogs from "@/pages/hr/face/FaceAttendanceLogs";
+import FaceAttendanceSettings from "@/pages/hr/face/FaceAttendanceSettings";
 import HRReportEmployees from "@/pages/hr/reports/EmployeesReport";
 import HRReportPayroll from "@/pages/hr/reports/PayrollReport";
 import HRReportAttendance from "@/pages/hr/reports/AttendanceReport";
@@ -281,6 +287,12 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
             {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}
             {!isSuperAdmin && <PermRoute path="/hr/settings"                module="hr_settings"    component={HRSettings} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face"                    module="hr_face_attendance" component={FaceAttendanceHub} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/enrollment"         module="hr_face_attendance" component={FaceEnrollment} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/kiosk"              module="hr_face_attendance" component={LiveAttendanceKiosk} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/cameras"            module="hr_face_attendance" component={AttendanceCameras} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/logs"               module="hr_face_attendance" component={FaceAttendanceLogs} />}
+            {!isSuperAdmin && <PermRoute path="/hr/face/settings"           module="hr_face_attendance" component={FaceAttendanceSettings} />}
 
             {!isSuperAdmin && <PermRoute path="/production"                  module="production"     component={ProductionDashboard} />}
             {!isSuperAdmin && <PermRoute path="/production/orders"           module="production"     component={ProductionOrders} />}

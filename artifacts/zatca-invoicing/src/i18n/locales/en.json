@@ -454,6 +454,7 @@
     "hrEmployees": "Human Resources",
     "hrContracts": "Contracts",
     "hrAttendance": "Attendance",
+    "hrFaceAttendance": "AI Face Attendance",
     "hrLoans": "Loans & Advances",
     "hrPayroll": "Payroll Runs",
     "hrEos": "End of Service",
@@ -1349,7 +1350,8 @@
       "hr_payroll": "Payroll",
       "hr_eos": "End of Service",
       "hr_calculators": "HR Calculators",
-      "hr_settings": "HR Settings"
+      "hr_settings": "HR Settings",
+      "hr_face_attendance": "AI Face Attendance"
     }
   },
   "cashCommon": {

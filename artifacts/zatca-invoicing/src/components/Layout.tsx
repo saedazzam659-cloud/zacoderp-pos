@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
-  Factory, Cog,
+  Factory, Cog, ScanFace,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -113,6 +113,7 @@ const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog,         permKey: "hr_employees" },
   { nameKey: "nav.hrContracts",     href: "/hr/contracts",       icon: FileSignature,   permKey: "hr_employees" },
   { nameKey: "nav.hrAttendance",    href: "/hr/attendance",      icon: CalendarRange,   permKey: "hr_attendance" },
+  { nameKey: "nav.hrFaceAttendance",href: "/hr/face",            icon: ScanFace,        permKey: "hr_face_attendance" },
   { nameKey: "nav.hrLoans",         href: "/hr/loans",           icon: Wallet,          permKey: "hr_loans" },
   { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote,        permKey: "hr_payroll" },
   { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale,           permKey: "hr_eos" },
@@ -121,7 +122,7 @@ const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings,        permKey: "hr_settings" },
 ];
 const HR_GROUP_PERMS = [
-  "hr_employees", "hr_attendance", "hr_loans", "hr_payroll",
+  "hr_employees", "hr_attendance", "hr_face_attendance", "hr_loans", "hr_payroll",
   "hr_eos", "hr_calculators", "hr_settings",
 ];
 // ── Production / Manufacturing submenu ──────────────────────────────────

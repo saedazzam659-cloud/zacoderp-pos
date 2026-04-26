@@ -1,0 +1,248 @@
+🚀 منصة الحضور والانصراف بالذكاء الاصطناعي + DVR (Multi-Company SaaS)
+
+---
+
+🎯 الهدف العام
+
+إنشاء نظام مركزي ذكي يعتمد على التعرف على الوجه من خلال DVR/Kameras لتسجيل الحضور والانصراف، مع دعم:
+
+- تعدد الشركات (Multi-Tenant)
+- تعدد الفروع
+- تعدد الكاميرات
+- إدارة مركزية من Super Admin
+
+---
+
+🧠 المفهوم المعماري (Architecture)
+
+1. Multi-Tenant Architecture
+
+- كل شركة = Tenant
+- عزل البيانات بالكامل
+- دعم:
+  - Subdomain لكل شركة (مثال: company1.zacoderp.com)
+  - أو TenantID داخل نفس النظام
+
+---
+
+🏢 الكيانات الأساسية
+
+1. الشركات (Companies)
+
+- CompanyID
+- Name
+- Domain
+- SubscriptionPlan
+- Status
+- Timezone
+- AI_Enabled (Yes/No)
+
+---
+
+2. الفروع (Branches)
+
+- BranchID
+- CompanyID
+- Name
+- Location
+- WorkingHours
+
+---
+
+3. الموظفين (Employees)
+
+- EmployeeID
+- CompanyID
+- BranchID
+- Name
+- Code
+- FaceEncoding
+- FaceImages[]
+- Status
+
+---
+
+4. الكاميرات (Cameras)
+
+- CameraID
+- CompanyID
+- BranchID
+- DVR_IP
+- Port
+- Channel
+- StreamURL
+- AI_Enabled
+
+---
+
+5. الحضور والانصراف (AttendanceLogs)
+
+- ID
+- CompanyID
+- EmployeeID
+- BranchID
+- Date
+- CheckIn
+- CheckOut
+- Method = FaceRecognition
+- Confidence
+- CameraID
+
+---
+
+🖥️ الشاشات الأساسية
+
+---
+
+1. شاشة Super Admin
+
+- إدارة الشركات
+- إدارة الاشتراكات
+- مراقبة النظام
+- Dashboard عام:
+  - عدد الشركات
+  - عدد العمليات اليومية
+  - أداء الذكاء الاصطناعي
+
+---
+
+2. شاشة إعداد الشركة
+
+- تفعيل AI
+- تحديد سياسة الحضور:
+  - مرونة الوقت
+  - عدد مرات الدخول
+- ربط الفروع
+
+---
+
+3. شاشة ربط DVR والكاميرات
+
+- إضافة أكثر من كاميرا
+- Live Preview
+- Test Connection
+- اختيار:
+  - نوع الكاميرا
+  - بروتوكول RTSP / HTTP
+
+---
+
+4. شاشة تسجيل الوجه (Face Enrollment)
+
+- اختيار الموظف
+- التقاط صور متعددة
+- تحليل جودة الوجه:
+  - إضاءة
+  - زاوية
+- تخزين Face Encoding
+
+---
+
+5. شاشة الحضور الذكية
+
+- عرض مباشر للكاميرا
+- عرض:
+  - اسم الموظف
+  - صورته
+  - نسبة التطابق
+- تسجيل تلقائي:
+  - حضور
+  - انصراف
+
+---
+
+⚙️ محرك الذكاء الاصطناعي (AI Engine)
+
+المكونات:
+
+- Face Detection
+- Face Encoding
+- Face Matching
+
+آلية العمل:
+
+1. التقاط Frame من DVR
+2. كشف الوجه
+3. تحويله إلى Encoding
+4. مقارنة مع قاعدة البيانات الخاصة بالشركة فقط
+5. إرجاع أفضل Match
+
+---
+
+🔄 Workflow احترافي
+
+1. الكاميرا تبث الفيديو
+2. خدمة AI تلتقط Frame كل 1-2 ثانية
+3. يتم التعرف على الوجه
+4. إذا تم التعرف:
+   - التحقق من:
+     - آخر تسجيل
+     - سياسة الشركة
+   - تسجيل الحدث
+5. إرسال النتيجة:
+   - للواجهة مباشرة
+   - حفظ في DB
+
+---
+
+🔐 الأمان (Security)
+
+- عزل البيانات بين الشركات
+- تشفير Face Encoding
+- JWT + Multi-Tenant Token
+- Audit Logs كامل
+
+---
+
+📊 الذكاء والتحليلات
+
+Dashboard:
+
+- تأخيرات
+- غياب
+- ساعات العمل
+- Heatmap للحضور
+
+---
+
+⚡ تحسين الأداء
+
+- استخدام Queue (RabbitMQ / Kafka)
+- استخدام Cache (Redis)
+- فصل:
+  - AI Service
+  - API Service
+
+---
+
+🌐 API احترافي
+
+التعرف على الوجه
+
+POST /api/ai/recognize
+{
+"companyId": 1,
+"image": "base64"
+}
+
+---
+
+تسجيل حضور
+
+POST /api/attendance/log
+{
+"employeeId": 10,
+"companyId": 1,
+"confidence": 0.95,
+"cameraId": 2
+}
+
+---
+
+🧩 التكامل مع HR
+
+- ربط مباشر مع:
+  - الرواتب
+  - الإجازات
+- احتساب:
+  - التأخير

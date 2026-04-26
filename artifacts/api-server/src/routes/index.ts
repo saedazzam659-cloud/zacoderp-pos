@@ -48,6 +48,7 @@ import sequencesRouter from "./sequences";
 import offersRouter from "./offers";
 import adminModulesRouter from "./adminModules";
 import productionRouter from "./production";
+import faceAttendanceRouter from "./faceAttendance";
 
 const router: IRouter = Router();
 
@@ -86,6 +87,7 @@ router.use("/cost-centers",       costCentersRouter);
 router.use("/employees",          employeesRouter);
 router.use("/hr/settings",        hrSettingsRouter);
 router.use("/hr/reports",         hrReportsRouter);
+router.use("/hr/face",            faceAttendanceRouter);
 router.use(storageRouter);
 router.use("/pos-sessions", posSessionsRouter);
 router.use("/pos-terminals", posTerminalsRouter);
