@@ -84,6 +84,43 @@ export type ReturnsBySupplierRow = {
   totalVat: number;
 };
 
+// Detailed supplier ledger row — extends the basic statement row with the
+// embedded line-item drilldown (invoices/returns) and voucher metadata
+// (سند صرف). Shape mirrors the server's /supplier-statement-detailed.
+export type SupplierStatementDetailedLineItem = {
+  itemCode: string | null;
+  itemName: string;
+  unit: string | null;
+  qty: number;
+  unitPrice: number;
+  discount: number;
+  vatRate: number;
+  vatAmount: number;
+  netAmount: number;
+  lineTotal: number;
+};
+export type SupplierStatementDetailedPaymentMeta = {
+  paymentType: string | null;
+  cashBoxName: string | null;
+  bankAccountName: string | null;
+  refNumber: string | null;
+  description: string | null;
+};
+export type SupplierStatementDetailedRow = {
+  id: number;
+  date: string;
+  type: "invoice" | "return" | "payment";
+  docNumber: string | null;
+  debit: number;
+  credit: number;
+  description: string;
+  vatAmount?: number;
+  discountAmount?: number;
+  lines?: SupplierStatementDetailedLineItem[];
+  meta?: SupplierStatementDetailedPaymentMeta;
+};
+export type SupplierStatementDetailed = { opening: number; lines: SupplierStatementDetailedRow[] };
+
 export const purchaseAnalyticsApi = {
   bySupplier:        (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<PurchasesBySupplierRow[]>(`/by-supplier${qs({ companyId: cid, from, to, branchId })}`),
@@ -93,6 +130,8 @@ export const purchaseAnalyticsApi = {
     get<PurchasesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy, branchId })}`),
   supplierStatement: (cid: number | undefined, supplierId: number, from?: string, to?: string, branchId?: number) =>
     get<SupplierStatement>(`/supplier-statement${qs({ companyId: cid, supplierId, from, to, branchId })}`),
+  supplierStatementDetailed: (cid: number | undefined, supplierId: number, from?: string, to?: string, branchId?: number) =>
+    get<SupplierStatementDetailed>(`/supplier-statement-detailed${qs({ companyId: cid, supplierId, from, to, branchId })}`),
   aging:             (cid?: number, asOf?: string, branchId?: number) =>
     get<SupplierAgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsBySupplier: (cid?: number, from?: string, to?: string, branchId?: number) =>

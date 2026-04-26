@@ -440,6 +440,7 @@ function SalesNavGroup({
 // ─── SalesReportsNavGroup ─────────────────────────────────────────────────────
 const salesReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.customerStatement",  href: "/sales/reports/customer-statement", icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.customerStatementDetailed", href: "/sales/reports/customer-statement-detailed", icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.customerBalances",   href: "/sales/reports/customer-balances",  icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.salesAging",         href: "/sales/reports/aging",              icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.salesByCustomer",    href: "/sales/reports/sales-by-customer",  icon: FileText, permKey: "sales_reports" },
@@ -495,6 +496,7 @@ function SalesReportsNavGroup({
 // ─── PurchasingReportsNavGroup ────────────────────────────────────────────────
 const purchasingReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.supplierStatement",      href: "/purchasing/reports/supplier-statement",    icon: FileText, permKey: "suppliers" },
+  { nameKey: "navExtra.supplierStatementDetailed", href: "/purchasing/reports/supplier-statement-detailed", icon: FileText, permKey: "suppliers" },
   { nameKey: "navExtra.supplierBalances",       href: "/purchasing/reports/supplier-balances",     icon: FileText, permKey: "suppliers" },
   { nameKey: "navExtra.purchaseAging",          href: "/purchasing/reports/aging",                 icon: FileText, permKey: "purchase_invoices" },
   { nameKey: "navExtra.purchasesBySupplier",    href: "/purchasing/reports/purchases-by-supplier", icon: FileText, permKey: "purchase_invoices" },

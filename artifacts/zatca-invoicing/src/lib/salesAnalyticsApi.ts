@@ -143,6 +143,43 @@ export type DailyReport = {
   receipts:     DailyReportReceipt[];
 };
 
+// Detailed customer ledger row — extends the basic statement row with the
+// embedded line-item drilldown (for invoices/returns) and voucher metadata
+// (for receipts). Shape mirrors the server's /customer-statement-detailed.
+export type CustomerStatementDetailedLineItem = {
+  itemCode: string | null;
+  itemName: string;
+  unit: string | null;
+  qty: number;
+  unitPrice: number;
+  discount: number;
+  vatRate: number;
+  vatAmount: number;
+  netAmount: number;
+  lineTotal: number;
+};
+export type CustomerStatementDetailedReceiptMeta = {
+  paymentType: string | null;
+  cashBoxName: string | null;
+  bankAccountName: string | null;
+  refNumber: string | null;
+  description: string | null;
+};
+export type CustomerStatementDetailedRow = {
+  id: number;
+  date: string;
+  type: "invoice" | "return" | "receipt";
+  docNumber: string | null;
+  debit: number;
+  credit: number;
+  description: string;
+  vatAmount?: number;
+  discountAmount?: number;
+  lines?: CustomerStatementDetailedLineItem[];
+  meta?: CustomerStatementDetailedReceiptMeta;
+};
+export type CustomerStatementDetailed = { opening: number; lines: CustomerStatementDetailedRow[] };
+
 export const salesAnalyticsApi = {
   byCustomer:        (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<SalesByCustomerRow[]>(`/by-customer${qs({ companyId: cid, from, to, branchId })}`),
@@ -152,6 +189,8 @@ export const salesAnalyticsApi = {
     get<SalesByPeriodRow[]>(`/by-period${qs({ companyId: cid, from, to, groupBy, branchId })}`),
   customerStatement: (cid: number | undefined, customerId: number, from?: string, to?: string, branchId?: number) =>
     get<CustomerStatement>(`/customer-statement${qs({ companyId: cid, customerId, from, to, branchId })}`),
+  customerStatementDetailed: (cid: number | undefined, customerId: number, from?: string, to?: string, branchId?: number) =>
+    get<CustomerStatementDetailed>(`/customer-statement-detailed${qs({ companyId: cid, customerId, from, to, branchId })}`),
   aging:             (cid?: number, asOf?: string, branchId?: number) =>
     get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number) =>

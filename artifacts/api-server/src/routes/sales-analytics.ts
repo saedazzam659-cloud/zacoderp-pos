@@ -7,6 +7,8 @@ import {
   receiptVouchersTable,
   salesRepsTable,
   branchesTable,
+  cashBoxesTable,
+  bankAccountsTable,
 } from "@workspace/db";
 import { and, eq, sql, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
@@ -324,6 +326,241 @@ router.get("/customer-statement", async (req, res) => {
       ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: Number(i.total), credit: 0, description: "فاتورة مبيعات آجلة" })),
       ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: 0, credit: Number(r.total), description: "مرتجع مبيعات" })),
       ...recs.map(r => ({ date: r.date, type: "receipt", docNumber: r.docNumber, debit: 0, credit: Number(r.amount), description: "سند قبض" })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+
+    res.json({ opening, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Detailed customer ledger — same chronological transactions as /customer-statement,
+ * but each invoice/return entry carries an embedded `lines[]` of item-level rows
+ * (item code, qty, unit price, discount, vatAmount, line total). Receipts carry
+ * a `meta` block (payment method, cash box / bank, reference). Used by the
+ * "كشف حساب عميل تفصيلي" report so users can audit *what* was sold/returned in
+ * each transaction without leaving the ledger.
+ */
+router.get("/customer-statement-detailed", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ opening: 0, lines: [] }); return; }
+    const bid = getBid(req);
+    const { customerId, from, to } = req.query as Record<string, string>;
+    const ccid = Number(customerId);
+    if (!customerId || !Number.isFinite(ccid)) {
+      res.status(400).json({ error: "customerId مطلوب ويجب أن يكون رقماً صحيحاً" });
+      return;
+    }
+
+    // Opening balance carry — identical to /customer-statement.
+    async function sumPriorTo(date: string | undefined) {
+      if (!date) return 0;
+      const [inv] = await db.select({ s: sql<string>`coalesce(sum(${salesInvoicesTable.totalAmount}), 0)` })
+        .from(salesInvoicesTable)
+        .where(and(
+          eq(salesInvoicesTable.companyId, cid as number),
+          eq(salesInvoicesTable.customerId, ccid),
+          eq(salesInvoicesTable.status, "posted"),
+          eq(salesInvoicesTable.paymentType, "credit"),
+          sql`${salesInvoicesTable.invoiceDate} < ${date}`,
+          ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+        ));
+      const [ret] = await db.select({ s: sql<string>`coalesce(sum(${salesReturnsTable.totalAmount}), 0)` })
+        .from(salesReturnsTable)
+        .where(and(
+          eq(salesReturnsTable.companyId, cid as number),
+          eq(salesReturnsTable.customerId, ccid),
+          eq(salesReturnsTable.status, "posted"),
+          eq(salesReturnsTable.paymentType, "credit"),
+          sql`${salesReturnsTable.returnDate} < ${date}`,
+          ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
+        ));
+      const [rec] = await db.select({ s: sql<string>`coalesce(sum(${receiptVouchersTable.amount}), 0)` })
+        .from(receiptVouchersTable)
+        .where(and(
+          eq(receiptVouchersTable.companyId, cid as number),
+          eq(receiptVouchersTable.entityType, "customer"),
+          eq(receiptVouchersTable.entityId, ccid),
+          eq(receiptVouchersTable.status, "posted"),
+          sql`${receiptVouchersTable.date} < ${date}`,
+          ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+        ));
+      return Number(inv.s) - Number(ret.s) - Number(rec.s);
+    }
+    const opening = await sumPriorTo(from);
+
+    // Header rows in date range.
+    const invConds: any[] = [
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.customerId, ccid),
+      eq(salesInvoicesTable.status, "posted"),
+      eq(salesInvoicesTable.paymentType, "credit"),
+    ];
+    pushBranchScope(req, invConds, salesInvoicesTable.branchId, bid);
+    if (from) invConds.push(gte(salesInvoicesTable.invoiceDate, from));
+    if (to)   invConds.push(lte(salesInvoicesTable.invoiceDate, to));
+    const invs = await db.select({
+      id: salesInvoicesTable.id, date: salesInvoicesTable.invoiceDate,
+      docNumber: salesInvoicesTable.docNumber, total: salesInvoicesTable.totalAmount,
+      subtotal: salesInvoicesTable.subtotal, vatAmount: salesInvoicesTable.vatAmount,
+      discountAmount: salesInvoicesTable.discountAmount,
+      priceIncludesVat: salesInvoicesTable.priceIncludesVat,
+    }).from(salesInvoicesTable).where(and(...invConds));
+
+    const retConds: any[] = [
+      eq(salesReturnsTable.companyId, cid),
+      eq(salesReturnsTable.customerId, ccid),
+      eq(salesReturnsTable.status, "posted"),
+      eq(salesReturnsTable.paymentType, "credit"),
+    ];
+    pushBranchScope(req, retConds, salesReturnsTable.branchId, bid);
+    if (from) retConds.push(gte(salesReturnsTable.returnDate, from));
+    if (to)   retConds.push(lte(salesReturnsTable.returnDate, to));
+    const rets = await db.select({
+      id: salesReturnsTable.id, date: salesReturnsTable.returnDate,
+      docNumber: salesReturnsTable.docNumber, total: salesReturnsTable.totalAmount,
+      vatAmount: salesReturnsTable.vatAmount, discountAmount: salesReturnsTable.discountAmount,
+      priceIncludesVat: salesReturnsTable.priceIncludesVat,
+    }).from(salesReturnsTable).where(and(...retConds));
+
+    const recConds: any[] = [
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.entityType, "customer"),
+      eq(receiptVouchersTable.entityId, ccid),
+      eq(receiptVouchersTable.status, "posted"),
+    ];
+    pushBranchScope(req, recConds, receiptVouchersTable.branchId, bid);
+    if (from) recConds.push(gte(receiptVouchersTable.date, from));
+    if (to)   recConds.push(lte(receiptVouchersTable.date, to));
+    const recs = await db.select({
+      id: receiptVouchersTable.id, date: receiptVouchersTable.date,
+      docNumber: receiptVouchersTable.code, amount: receiptVouchersTable.amount,
+      paymentType: receiptVouchersTable.paymentType,
+      cashBoxId: receiptVouchersTable.cashBoxId,
+      bankAccountId: receiptVouchersTable.bankAccountId,
+      refNumber: receiptVouchersTable.refNumber,
+      description: receiptVouchersTable.description,
+    }).from(receiptVouchersTable).where(and(...recConds));
+
+    // Batch-load child rows for invoices and returns.
+    const invIds = invs.map(i => i.id);
+    const retIds = rets.map(r => r.id);
+
+    const invLines = invIds.length
+      ? await db.select({
+          invoiceId: salesInvoiceLinesTable.invoiceId,
+          itemCode:  salesInvoiceLinesTable.itemCode,
+          itemName:  salesInvoiceLinesTable.itemName,
+          unit:      salesInvoiceLinesTable.unit,
+          qty:       salesInvoiceLinesTable.qty,
+          unitPrice: salesInvoiceLinesTable.unitPrice,
+          discount:  salesInvoiceLinesTable.discount,
+          vatRate:   salesInvoiceLinesTable.vatRate,
+          lineTotal: salesInvoiceLinesTable.lineTotal,
+        }).from(salesInvoiceLinesTable)
+        .where(inArray(salesInvoiceLinesTable.invoiceId, invIds))
+      : [];
+
+    const retLines = retIds.length
+      ? await db.select({
+          returnId:  salesReturnLinesTable.returnId,
+          itemCode:  salesReturnLinesTable.itemCode,
+          itemName:  salesReturnLinesTable.itemName,
+          unit:      salesReturnLinesTable.unit,
+          qty:       salesReturnLinesTable.qty,
+          unitPrice: salesReturnLinesTable.unitPrice,
+          discount:  salesReturnLinesTable.discount,
+          vatRate:   salesReturnLinesTable.vatRate,
+          lineTotal: salesReturnLinesTable.lineTotal,
+        }).from(salesReturnLinesTable)
+        .where(inArray(salesReturnLinesTable.returnId, retIds))
+      : [];
+
+    // Cash boxes / bank accounts referenced by receipts (for friendly names).
+    const cbIds  = Array.from(new Set(recs.map(r => r.cashBoxId).filter((x): x is number => !!x)));
+    const baIds  = Array.from(new Set(recs.map(r => r.bankAccountId).filter((x): x is number => !!x)));
+    const cbRows = cbIds.length
+      ? await db.select({ id: cashBoxesTable.id, name: cashBoxesTable.name })
+          .from(cashBoxesTable).where(inArray(cashBoxesTable.id, cbIds))
+      : [];
+    const baRows = baIds.length
+      ? await db.select({ id: bankAccountsTable.id, name: bankAccountsTable.name })
+          .from(bankAccountsTable).where(inArray(bankAccountsTable.id, baIds))
+      : [];
+    const cbName = new Map(cbRows.map(r => [r.id, r.name]));
+    const baName = new Map(baRows.map(r => [r.id, r.name]));
+
+    // Group child lines by parent id and compute per-line VAT honouring
+    // the parent's price_includes_vat flag.
+    function groupLines(rows: any[], parentKey: string, parents: Map<number, { priceIncludesVat: boolean | null }>) {
+      const map = new Map<number, any[]>();
+      for (const row of rows) {
+        const parentId = row[parentKey] as number;
+        const piv = !!parents.get(parentId)?.priceIncludesVat;
+        const qty   = Number(row.qty || 0);
+        const price = Number(row.unitPrice || 0);
+        const disc  = Number(row.discount || 0);
+        const rate  = Number(row.vatRate || 0);
+        const gross = qty * price;
+        const afterDisc = gross - disc;
+        let net: number, vat: number;
+        if (piv) { net = rate ? afterDisc / (1 + rate / 100) : afterDisc; vat = afterDisc - net; }
+        else     { net = afterDisc; vat = net * rate / 100; }
+        const arr = map.get(parentId) ?? [];
+        arr.push({
+          itemCode: row.itemCode ?? null,
+          itemName: row.itemName,
+          unit:     row.unit ?? null,
+          qty,
+          unitPrice: price,
+          discount:  disc,
+          vatRate:   rate,
+          vatAmount: Number(vat.toFixed(2)),
+          netAmount: Number(net.toFixed(2)),
+          lineTotal: Number(row.lineTotal || 0),
+        });
+        map.set(parentId, arr);
+      }
+      return map;
+    }
+    const invParents = new Map(invs.map(i => [i.id, { priceIncludesVat: i.priceIncludesVat }]));
+    const retParents = new Map(rets.map(r => [r.id, { priceIncludesVat: r.priceIncludesVat }]));
+    const invLineMap = groupLines(invLines, "invoiceId", invParents);
+    const retLineMap = groupLines(retLines, "returnId", retParents);
+
+    type DetailedLine = {
+      id: number; date: string; type: string; docNumber: string | null;
+      debit: number; credit: number; description: string;
+      // Embedded drilldown payload (lines for invoice/return, meta for receipt).
+      lines?: any[]; meta?: any;
+      vatAmount?: number; discountAmount?: number;
+    };
+    const lines: DetailedLine[] = [
+      ...invs.map(i => ({
+        id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
+        debit: Number(i.total), credit: 0, description: "فاتورة مبيعات آجلة",
+        vatAmount: Number(i.vatAmount || 0),
+        discountAmount: Number(i.discountAmount || 0),
+        lines: invLineMap.get(i.id) ?? [],
+      })),
+      ...rets.map(r => ({
+        id: r.id, date: r.date, type: "return", docNumber: r.docNumber,
+        debit: 0, credit: Number(r.total), description: "مرتجع مبيعات",
+        vatAmount: Number(r.vatAmount || 0),
+        discountAmount: Number(r.discountAmount || 0),
+        lines: retLineMap.get(r.id) ?? [],
+      })),
+      ...recs.map(r => ({
+        id: r.id, date: r.date, type: "receipt", docNumber: r.docNumber,
+        debit: 0, credit: Number(r.amount), description: "سند قبض",
+        meta: {
+          paymentType: r.paymentType,
+          cashBoxName: r.cashBoxId ? (cbName.get(r.cashBoxId) ?? null) : null,
+          bankAccountName: r.bankAccountId ? (baName.get(r.bankAccountId) ?? null) : null,
+          refNumber: r.refNumber,
+          description: r.description,
+        },
+      })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });

@@ -3,10 +3,12 @@ import { db } from "@workspace/db";
 import {
   suppliersTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
-  purchaseReturnsTable,
+  purchaseReturnsTable,  purchaseReturnLinesTable,
   paymentVouchersTable,
+  cashBoxesTable,
+  bankAccountsTable,
 } from "@workspace/db";
-import { and, eq, sql, gte, lte, asc } from "drizzle-orm";
+import { and, eq, sql, gte, lte, asc, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
 const router = Router();
@@ -325,6 +327,235 @@ router.get("/supplier-statement", async (req, res) => {
       ...invs.map(i => ({ date: i.date, type: "invoice", docNumber: i.docNumber, debit: 0, credit: Number(i.total), description: "فاتورة مشتريات آجلة" })),
       ...rets.map(r => ({ date: r.date, type: "return",  docNumber: r.docNumber, debit: Number(r.total), credit: 0, description: "مرتجع مشتريات" })),
       ...pays.map(p => ({ date: p.date, type: "payment", docNumber: p.docNumber, debit: Number(p.amount), credit: 0, description: "سند صرف" })),
+    ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
+
+    res.json({ opening, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Detailed supplier ledger — same chronological transactions as /supplier-statement,
+ * but each invoice/return entry carries an embedded `lines[]` of item-level rows
+ * (item code, qty, unit price, discount, vatAmount, line total). Payment vouchers
+ * (سند صرف) carry a `meta` block (payment method, cash box / bank, reference).
+ * Used by the "كشف حساب مورد تفصيلي" report.
+ */
+router.get("/supplier-statement-detailed", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json({ opening: 0, lines: [] }); return; }
+    const bid = getBid(req);
+    const { supplierId, from, to } = req.query as Record<string, string>;
+    const sid = Number(supplierId);
+    if (!supplierId || !Number.isFinite(sid)) {
+      res.status(400).json({ error: "supplierId مطلوب ويجب أن يكون رقماً صحيحاً" });
+      return;
+    }
+
+    async function sumPriorTo(date: string | undefined) {
+      if (!date) return 0;
+      const [inv] = await db.select({ s: sql<string>`coalesce(sum(${purchaseInvoicesTable.totalAmount}), 0)` })
+        .from(purchaseInvoicesTable)
+        .where(and(
+          eq(purchaseInvoicesTable.companyId, cid as number),
+          eq(purchaseInvoicesTable.supplierId, sid),
+          eq(purchaseInvoicesTable.status, "posted"),
+          eq(purchaseInvoicesTable.paymentType, "credit"),
+          sql`${purchaseInvoicesTable.invoiceDate} < ${date}`,
+          ...branchScopeSpread(req, purchaseInvoicesTable.branchId, bid),
+        ));
+      const [ret] = await db.select({ s: sql<string>`coalesce(sum(${purchaseReturnsTable.totalAmount}), 0)` })
+        .from(purchaseReturnsTable)
+        .where(and(
+          eq(purchaseReturnsTable.companyId, cid as number),
+          eq(purchaseReturnsTable.supplierId, sid),
+          eq(purchaseReturnsTable.status, "posted"),
+          eq(purchaseReturnsTable.paymentType, "credit"),
+          sql`${purchaseReturnsTable.returnDate} < ${date}`,
+          ...branchScopeSpread(req, purchaseReturnsTable.branchId, bid),
+        ));
+      const [pay] = await db.select({ s: sql<string>`coalesce(sum(${paymentVouchersTable.amount}), 0)` })
+        .from(paymentVouchersTable)
+        .where(and(
+          eq(paymentVouchersTable.companyId, cid as number),
+          eq(paymentVouchersTable.entityType, "supplier"),
+          eq(paymentVouchersTable.entityId, sid),
+          eq(paymentVouchersTable.status, "posted"),
+          sql`${paymentVouchersTable.date} < ${date}`,
+          ...branchScopeSpread(req, paymentVouchersTable.branchId, bid),
+        ));
+      return Number(inv.s) - Number(ret.s) - Number(pay.s);
+    }
+    const opening = await sumPriorTo(from);
+
+    const invConds: any[] = [
+      eq(purchaseInvoicesTable.companyId, cid),
+      eq(purchaseInvoicesTable.supplierId, sid),
+      eq(purchaseInvoicesTable.status, "posted"),
+      eq(purchaseInvoicesTable.paymentType, "credit"),
+    ];
+    pushBranchScope(req, invConds, purchaseInvoicesTable.branchId, bid);
+    if (from) invConds.push(gte(purchaseInvoicesTable.invoiceDate, from));
+    if (to)   invConds.push(lte(purchaseInvoicesTable.invoiceDate, to));
+    const invs = await db.select({
+      id: purchaseInvoicesTable.id, date: purchaseInvoicesTable.invoiceDate,
+      docNumber: purchaseInvoicesTable.docNumber, total: purchaseInvoicesTable.totalAmount,
+      subtotal: purchaseInvoicesTable.subtotal, vatAmount: purchaseInvoicesTable.vatAmount,
+      discountAmount: purchaseInvoicesTable.discountAmount,
+      priceIncludesVat: purchaseInvoicesTable.priceIncludesVat,
+    }).from(purchaseInvoicesTable).where(and(...invConds));
+
+    const retConds: any[] = [
+      eq(purchaseReturnsTable.companyId, cid),
+      eq(purchaseReturnsTable.supplierId, sid),
+      eq(purchaseReturnsTable.status, "posted"),
+      eq(purchaseReturnsTable.paymentType, "credit"),
+    ];
+    pushBranchScope(req, retConds, purchaseReturnsTable.branchId, bid);
+    if (from) retConds.push(gte(purchaseReturnsTable.returnDate, from));
+    if (to)   retConds.push(lte(purchaseReturnsTable.returnDate, to));
+    const rets = await db.select({
+      id: purchaseReturnsTable.id, date: purchaseReturnsTable.returnDate,
+      docNumber: purchaseReturnsTable.docNumber, total: purchaseReturnsTable.totalAmount,
+      vatAmount: purchaseReturnsTable.vatAmount, discountAmount: purchaseReturnsTable.discountAmount,
+      priceIncludesVat: purchaseReturnsTable.priceIncludesVat,
+    }).from(purchaseReturnsTable).where(and(...retConds));
+
+    const payConds: any[] = [
+      eq(paymentVouchersTable.companyId, cid),
+      eq(paymentVouchersTable.entityType, "supplier"),
+      eq(paymentVouchersTable.entityId, sid),
+      eq(paymentVouchersTable.status, "posted"),
+    ];
+    pushBranchScope(req, payConds, paymentVouchersTable.branchId, bid);
+    if (from) payConds.push(gte(paymentVouchersTable.date, from));
+    if (to)   payConds.push(lte(paymentVouchersTable.date, to));
+    const pays = await db.select({
+      id: paymentVouchersTable.id, date: paymentVouchersTable.date,
+      docNumber: paymentVouchersTable.code, amount: paymentVouchersTable.amount,
+      paymentType: paymentVouchersTable.paymentType,
+      cashBoxId: paymentVouchersTable.cashBoxId,
+      bankAccountId: paymentVouchersTable.bankAccountId,
+      refNumber: paymentVouchersTable.refNumber,
+      description: paymentVouchersTable.description,
+    }).from(paymentVouchersTable).where(and(...payConds));
+
+    const invIds = invs.map(i => i.id);
+    const retIds = rets.map(r => r.id);
+
+    const invLines = invIds.length
+      ? await db.select({
+          invoiceId: purchaseInvoiceLinesTable.invoiceId,
+          itemCode:  purchaseInvoiceLinesTable.itemCode,
+          itemName:  purchaseInvoiceLinesTable.itemName,
+          unit:      purchaseInvoiceLinesTable.unit,
+          qty:       purchaseInvoiceLinesTable.qty,
+          unitPrice: purchaseInvoiceLinesTable.unitPrice,
+          discount:  purchaseInvoiceLinesTable.discount,
+          vatRate:   purchaseInvoiceLinesTable.vatRate,
+          lineTotal: purchaseInvoiceLinesTable.lineTotal,
+        }).from(purchaseInvoiceLinesTable)
+        .where(inArray(purchaseInvoiceLinesTable.invoiceId, invIds))
+      : [];
+
+    const retLines = retIds.length
+      ? await db.select({
+          returnId:  purchaseReturnLinesTable.returnId,
+          itemCode:  purchaseReturnLinesTable.itemCode,
+          itemName:  purchaseReturnLinesTable.itemName,
+          unit:      purchaseReturnLinesTable.unit,
+          qty:       purchaseReturnLinesTable.qty,
+          unitPrice: purchaseReturnLinesTable.unitPrice,
+          discount:  purchaseReturnLinesTable.discount,
+          vatRate:   purchaseReturnLinesTable.vatRate,
+          lineTotal: purchaseReturnLinesTable.lineTotal,
+        }).from(purchaseReturnLinesTable)
+        .where(inArray(purchaseReturnLinesTable.returnId, retIds))
+      : [];
+
+    const cbIds  = Array.from(new Set(pays.map(p => p.cashBoxId).filter((x): x is number => !!x)));
+    const baIds  = Array.from(new Set(pays.map(p => p.bankAccountId).filter((x): x is number => !!x)));
+    const cbRows = cbIds.length
+      ? await db.select({ id: cashBoxesTable.id, name: cashBoxesTable.name })
+          .from(cashBoxesTable).where(inArray(cashBoxesTable.id, cbIds))
+      : [];
+    const baRows = baIds.length
+      ? await db.select({ id: bankAccountsTable.id, name: bankAccountsTable.name })
+          .from(bankAccountsTable).where(inArray(bankAccountsTable.id, baIds))
+      : [];
+    const cbName = new Map(cbRows.map(r => [r.id, r.name]));
+    const baName = new Map(baRows.map(r => [r.id, r.name]));
+
+    function groupLines(rows: any[], parentKey: string, parents: Map<number, { priceIncludesVat: boolean | null }>) {
+      const map = new Map<number, any[]>();
+      for (const row of rows) {
+        const parentId = row[parentKey] as number;
+        const piv = !!parents.get(parentId)?.priceIncludesVat;
+        const qty   = Number(row.qty || 0);
+        const price = Number(row.unitPrice || 0);
+        const disc  = Number(row.discount || 0);
+        const rate  = Number(row.vatRate || 0);
+        const gross = qty * price;
+        const afterDisc = gross - disc;
+        let net: number, vat: number;
+        if (piv) { net = rate ? afterDisc / (1 + rate / 100) : afterDisc; vat = afterDisc - net; }
+        else     { net = afterDisc; vat = net * rate / 100; }
+        const arr = map.get(parentId) ?? [];
+        arr.push({
+          itemCode: row.itemCode ?? null,
+          itemName: row.itemName,
+          unit:     row.unit ?? null,
+          qty,
+          unitPrice: price,
+          discount:  disc,
+          vatRate:   rate,
+          vatAmount: Number(vat.toFixed(2)),
+          netAmount: Number(net.toFixed(2)),
+          lineTotal: Number(row.lineTotal || 0),
+        });
+        map.set(parentId, arr);
+      }
+      return map;
+    }
+    const invParents = new Map(invs.map(i => [i.id, { priceIncludesVat: i.priceIncludesVat }]));
+    const retParents = new Map(rets.map(r => [r.id, { priceIncludesVat: r.priceIncludesVat }]));
+    const invLineMap = groupLines(invLines, "invoiceId", invParents);
+    const retLineMap = groupLines(retLines, "returnId", retParents);
+
+    // For supplier ledger, invoices increase the payable (credit); returns and
+    // payments decrease it (debit) — same convention as /supplier-statement.
+    type DetailedLine = {
+      id: number; date: string; type: string; docNumber: string | null;
+      debit: number; credit: number; description: string;
+      lines?: any[]; meta?: any;
+      vatAmount?: number; discountAmount?: number;
+    };
+    const lines: DetailedLine[] = [
+      ...invs.map(i => ({
+        id: i.id, date: i.date, type: "invoice", docNumber: i.docNumber,
+        debit: 0, credit: Number(i.total), description: "فاتورة مشتريات آجلة",
+        vatAmount: Number(i.vatAmount || 0),
+        discountAmount: Number(i.discountAmount || 0),
+        lines: invLineMap.get(i.id) ?? [],
+      })),
+      ...rets.map(r => ({
+        id: r.id, date: r.date, type: "return", docNumber: r.docNumber,
+        debit: Number(r.total), credit: 0, description: "مرتجع مشتريات",
+        vatAmount: Number(r.vatAmount || 0),
+        discountAmount: Number(r.discountAmount || 0),
+        lines: retLineMap.get(r.id) ?? [],
+      })),
+      ...pays.map(p => ({
+        id: p.id, date: p.date, type: "payment", docNumber: p.docNumber,
+        debit: Number(p.amount), credit: 0, description: "سند صرف",
+        meta: {
+          paymentType: p.paymentType,
+          cashBoxName: p.cashBoxId ? (cbName.get(p.cashBoxId) ?? null) : null,
+          bankAccountName: p.bankAccountId ? (baName.get(p.bankAccountId) ?? null) : null,
+          refNumber: p.refNumber,
+          description: p.description,
+        },
+      })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.type.localeCompare(b.type));
 
     res.json({ opening, lines });
