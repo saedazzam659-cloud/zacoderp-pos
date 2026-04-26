@@ -1533,6 +1533,157 @@ ${JSON.stringify(context || {}, null, 2)}
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Analyze an HR report — generates AI insights, observations, and
+// actionable recommendations in Arabic from the report's summary stats
+// and a representative sample of rows.
+//
+// Body: { reportType, title, summary, rows, period? }
+// Returns: { source, insights[], recommendations[], risks[], headline }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/analyze-hr-report", async (req, res) => {
+  try {
+    const { reportType, title, summary, rows, period } = req.body as any;
+    if (!reportType || !summary) {
+      res.status(400).json({ error: "بيانات التقرير مطلوبة" });
+      return;
+    }
+
+    function fallback() {
+      const insights: string[] = [];
+      const recommendations: string[] = [];
+      const risks: string[] = [];
+
+      if (reportType === "employees") {
+        insights.push(`إجمالي الموظفين: ${summary.total} (${summary.active} نشط، ${summary.inactive} غير نشط).`);
+        insights.push(`نسبة السعودة (تقريباً): ${summary.total ? ((summary.saudis / summary.total) * 100).toFixed(1) : 0}%.`);
+        insights.push(`إجمالي الراتب الأساسي الشهري: ${num(summary.totalBasicSalary).toFixed(2)} ر.س، إجمالي البدلات: ${num(summary.totalAllowances).toFixed(2)} ر.س.`);
+        if (summary.total && summary.saudis / summary.total < 0.4) {
+          risks.push("نسبة السعودة منخفضة — قد تتعرض المنشأة لمتطلبات نطاقات.");
+          recommendations.push("راجع متطلبات نطاقات وخطّط لرفع نسبة السعودة عبر التوظيف أو الاستبدال.");
+        }
+      } else if (reportType === "payroll") {
+        insights.push(`عدد المسيرات في الفترة: ${summary.runsCount}، عدد الموظفين الإجمالي: ${summary.employeesCount}.`);
+        insights.push(`إجمالي الإجمالي: ${num(summary.totalGross).toFixed(2)} ر.س — صافي الإجمالي: ${num(summary.totalNet).toFixed(2)} ر.س.`);
+        insights.push(`إجمالي حصة الموظف من التأمينات (GOSI): ${num(summary.totalGosi).toFixed(2)} ر.س.`);
+        insights.push(`إجمالي خصومات السلف: ${num(summary.totalLoans).toFixed(2)} ر.س — إجمالي الإضافي والأوفر تايم: ${num(summary.totalOvertime).toFixed(2)} ر.س.`);
+        if (summary.totalDeductions / Math.max(1, summary.totalGross) > 0.3) {
+          risks.push("نسبة الاستقطاعات للإجمالي تتجاوز 30% — قد يؤثر ذلك على رضا الموظفين.");
+        }
+      } else if (reportType === "attendance") {
+        insights.push(`إجمالي السجلات: ${summary.totalRecords} لـ ${summary.employeesCount} موظفاً.`);
+        insights.push(`أيام الحضور: ${summary.totalPresent}، الغياب: ${summary.totalAbsent}، الإجازات: ${summary.totalLeave}، التأخير: ${summary.totalLate}.`);
+        insights.push(`متوسط نسبة الحضور: ${num(summary.avgAttendanceRate).toFixed(1)}%.`);
+        if (summary.avgAttendanceRate < 90) {
+          risks.push("متوسط الحضور أقل من 90% — مؤشر على ضعف الانتظام.");
+          recommendations.push("افحص الموظفين أصحاب الغياب الأعلى وحدد الأسباب.");
+        }
+      } else if (reportType === "contracts") {
+        insights.push(`إجمالي العقود: ${summary.total} (${summary.active} نشط).`);
+        insights.push(`عقود منتهية: ${summary.expired} — قاربت على الانتهاء: ${summary.expiringSoon}.`);
+        if (summary.expiringSoon > 0) {
+          risks.push(`${summary.expiringSoon} عقد قارب الانتهاء — يجب التجديد قبل الموعد لتفادي المخالفات.`);
+          recommendations.push("راجع العقود قاربة الانتهاء وابدأ إجراءات التجديد أو الإنهاء.");
+        }
+      } else if (reportType === "documents") {
+        insights.push(`إجمالي الوثائق: ${summary.total}.`);
+        insights.push(`إقامات منتهية: ${summary.iqamaExpired} — قاربت على الانتهاء: ${summary.iqamaExpiring}.`);
+        insights.push(`جوازات منتهية: ${summary.passportExpired} — قاربت على الانتهاء: ${summary.passportExpiring}.`);
+        if (summary.expired > 0) risks.push(`${summary.expired} وثيقة منتهية حالياً — مخالفة قانونية.`);
+        if (summary.expiringSoon > 0) recommendations.push("ابدأ إجراءات تجديد الوثائق قاربة الانتهاء فوراً.");
+      } else if (reportType === "loans") {
+        insights.push(`إجمالي السلف: ${summary.total} (${summary.active} نشط).`);
+        insights.push(`إجمالي المبلغ: ${num(summary.totalAmount).toFixed(2)} ر.س — المسدد: ${num(summary.totalPaid).toFixed(2)} ر.س — المتبقي: ${num(summary.totalRemaining).toFixed(2)} ر.س.`);
+        if (summary.totalRemaining > summary.totalAmount * 0.5) {
+          insights.push("أكثر من نصف قيمة السلف لا يزال متبقياً.");
+        }
+      } else if (reportType === "eos") {
+        insights.push(`عدد الموظفين المنتهية خدمتهم: ${summary.total}.`);
+        insights.push(`إجمالي مكافآت نهاية الخدمة المقدّرة: ${num(summary.totalEosEstimate).toFixed(2)} ر.س.`);
+        insights.push(`متوسط سنوات الخدمة: ${num(summary.averageYears).toFixed(1)} سنة.`);
+        recommendations.push("تأكد من تكوين مخصص نهاية خدمة شهري بنسبة كافية لمواجهة الالتزامات المستقبلية.");
+      } else if (reportType === "employee-cost") {
+        insights.push(`عدد الموظفين النشطين: ${summary.total}.`);
+        insights.push(`إجمالي التكلفة الشهرية للشركة: ${num(summary.totalMonthlyCost).toFixed(2)} ر.س.`);
+        insights.push(`إجمالي التكلفة السنوية: ${num(summary.totalAnnualCost).toFixed(2)} ر.س.`);
+        insights.push(`إجمالي حصة صاحب العمل من التأمينات: ${num(summary.totalGosi).toFixed(2)} ر.س شهرياً.`);
+      } else if (reportType === "leaves") {
+        insights.push(`إجمالي طلبات الإجازة: ${summary.total} — معتمدة: ${summary.approved}، معلقة: ${summary.pending}.`);
+        insights.push(`إجمالي الأيام: ${summary.totalDays} — مدفوعة: ${summary.paidDays}، غير مدفوعة: ${summary.unpaidDays}.`);
+      }
+
+      function num(v: any): number { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; }
+
+      const headline = insights[0] || "لا توجد ملاحظات.";
+      return {
+        source: "fallback" as const,
+        headline,
+        insights,
+        recommendations,
+        risks,
+      };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+
+    try {
+      // Limit rows in prompt to keep token usage reasonable
+      const rowsForPrompt = Array.isArray(rows) ? rows.slice(0, 30) : [];
+
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 1200,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: "أنت محلل بيانات موارد بشرية محترف، خبير في نظام العمل السعودي ولوائح المؤسسة العامة للتأمينات الاجتماعية وقواعد نطاقات. تحلل تقارير شؤون الموظفين بأسلوب احترافي مختصر وتقدم توصيات قابلة للتنفيذ.",
+            },
+            {
+              role: "user",
+              content: `حلل تقرير ${title || reportType} للموارد البشرية.
+
+نوع التقرير: ${reportType}
+${period ? `الفترة: ${JSON.stringify(period)}` : ""}
+
+ملخص التقرير:
+${JSON.stringify(summary, null, 2)}
+
+عينة من السجلات (أول 30):
+${JSON.stringify(rowsForPrompt, null, 2)}
+
+قدم تحليلاً عربياً واضحاً يتضمن:
+1. headline: عنوان قصير جداً (سطر واحد) يلخص أهم ملاحظة.
+2. insights: 4-6 ملاحظات موضوعية بناءً على الأرقام (تشمل النسب، المقارنات، الاتجاهات، النقاط الأكثر إثارة للاهتمام).
+3. recommendations: 3-5 توصيات عملية محددة لتحسين الأداء أو تقليل المخاطر، بحسب نوع التقرير.
+4. risks: المخاطر القانونية أو المالية أو التشغيلية المحتملة (يمكن أن تكون مصفوفة فارغة إن لم توجد).
+
+أعد JSON بالشكل:
+{ "headline": "...", "insights": ["...", "..."], "recommendations": ["...", "..."], "risks": ["...", "..."] }`,
+            },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+      const headline = String(parsed.headline || "").trim();
+      const insights = Array.isArray(parsed.insights) ? parsed.insights.map((x: any) => String(x)) : [];
+      const recommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations.map((x: any) => String(x)) : [];
+      const risks = Array.isArray(parsed.risks) ? parsed.risks.map((x: any) => String(x)) : [];
+      if (!headline && insights.length === 0) { res.json(fallback()); return; }
+      res.json({ source: "ai", headline, insights, recommendations, risks });
+    } catch {
+      res.json(fallback());
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Validate a journal entry. Confirms it is balanced (debits == credits)
 // AND uses AI to spot common mistakes (account on wrong side, suspicious
 // amounts, missing leg, etc.). Falls back to a deterministic rule-based

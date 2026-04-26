@@ -115,6 +115,7 @@ const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrPayroll",       href: "/hr/payroll",         icon: Banknote,        permKey: "hr_payroll" },
   { nameKey: "nav.hrEos",           href: "/hr/end-of-service",  icon: Scale,           permKey: "hr_eos" },
   { nameKey: "nav.hrCalculators",   href: "/hr/calculators",     icon: Calculator,      permKey: "hr_calculators" },
+  { nameKey: "nav.hrReports",       href: "/hr/reports",         icon: BarChart3,       permKey: "hr_employees" },
   { nameKey: "nav.hrSettings",      href: "/hr/settings",        icon: Settings,        permKey: "hr_settings" },
 ];
 const HR_GROUP_PERMS = [

@@ -58,6 +58,16 @@ import AllContracts from "@/pages/hr/AllContracts";
 import EndOfService from "@/pages/hr/EndOfService";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
+import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
+import HRReportEmployees from "@/pages/hr/reports/EmployeesReport";
+import HRReportPayroll from "@/pages/hr/reports/PayrollReport";
+import HRReportAttendance from "@/pages/hr/reports/AttendanceReport";
+import HRReportContracts from "@/pages/hr/reports/ContractsReport";
+import HRReportDocuments from "@/pages/hr/reports/DocumentsExpiryReport";
+import HRReportLoans from "@/pages/hr/reports/LoansReport";
+import HRReportEos from "@/pages/hr/reports/EOSReport";
+import HRReportEmployeeCost from "@/pages/hr/reports/EmployeeCostReport";
+import HRReportLeaves from "@/pages/hr/reports/LeavesReport";
 import PosMonitoring from "@/pages/pos/Monitoring";
 import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
@@ -259,6 +269,17 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/end-of-service"          module="hr_eos"         component={EndOfService} />}
             {!isSuperAdmin && <PermRoute path="/hr/calculators"             module="hr_calculators" component={HRCalculators} />}
             {!isSuperAdmin && <PermRoute path="/hr/settings"                module="hr_settings"    component={HRSettings} />}
+            {/* HR reports — all gated against hr_employees permission */}
+            {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/payroll"         module="hr_payroll"     component={HRReportPayroll} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/attendance"      module="hr_attendance"  component={HRReportAttendance} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/contracts"       module="hr_employees"   component={HRReportContracts} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/documents"       module="hr_employees"   component={HRReportDocuments} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/loans"           module="hr_loans"       component={HRReportLoans} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/eos"             module="hr_eos"         component={HRReportEos} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/employee-cost"   module="hr_payroll"     component={HRReportEmployeeCost} />}
+            {!isSuperAdmin && <PermRoute path="/hr/reports/leaves"          module="hr_employees"   component={HRReportLeaves} />}
 
             {/* Inventory routes */}
             {!isSuperAdmin && <PermRoute path="/inventory" module="items" component={InventoryDashboard} />}

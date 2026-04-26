@@ -122,4 +122,73 @@ export const employeesApi = {
   // AI — explain HR journal entry
   aiExplainHrJournal: (entryType: string, entry: any, lines: any[], context?: any) =>
     req<any>("POST", "/ai/explain-hr-journal", { entryType, entry, lines, context }),
+
+  // ─────────────────────────── HR REPORTS ───────────────────────────
+  reportEmployees: (filters: { status?: string; department?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set("status", filters.status);
+    if (filters.department) qs.set("department", filters.department);
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/employees${q ? `?${q}` : ""}`);
+  },
+  reportPayroll: (filters: { year: number; monthFrom?: number; monthTo?: number; employeeId?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set("year", String(filters.year));
+    if (filters.monthFrom) qs.set("monthFrom", String(filters.monthFrom));
+    if (filters.monthTo) qs.set("monthTo", String(filters.monthTo));
+    if (filters.employeeId) qs.set("employeeId", String(filters.employeeId));
+    return req<{ summary: any; employees: any[] }>("GET", `/hr/reports/payroll?${qs.toString()}`);
+  },
+  reportAttendance: (filters: { from: string; to: string; employeeId?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set("from", filters.from); qs.set("to", filters.to);
+    if (filters.employeeId) qs.set("employeeId", String(filters.employeeId));
+    return req<{ summary: any; employees: any[] }>("GET", `/hr/reports/attendance?${qs.toString()}`);
+  },
+  reportContracts: (filters: { status?: string; expiringDays?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set("status", filters.status);
+    if (filters.expiringDays) qs.set("expiringDays", String(filters.expiringDays));
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/contracts${q ? `?${q}` : ""}`);
+  },
+  reportDocumentsExpiry: (days: number = 90) =>
+    req<{ summary: any; rows: any[] }>("GET", `/hr/reports/documents-expiry?days=${days}`),
+  reportLoans: (filters: { status?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set("status", filters.status);
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/loans${q ? `?${q}` : ""}`);
+  },
+  reportEos: (filters: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.from) qs.set("from", filters.from);
+    if (filters.to) qs.set("to", filters.to);
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/eos${q ? `?${q}` : ""}`);
+  },
+  reportEmployeeCost: (gosiPct?: number) => {
+    const qs = new URLSearchParams();
+    if (gosiPct !== undefined) qs.set("gosiEmployerPct", String(gosiPct));
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/employee-cost${q ? `?${q}` : ""}`);
+  },
+  reportLeaves: (filters: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.from) qs.set("from", filters.from);
+    if (filters.to) qs.set("to", filters.to);
+    const q = qs.toString();
+    return req<{ summary: any; rows: any[] }>("GET", `/hr/reports/leaves${q ? `?${q}` : ""}`);
+  },
+
+  // AI — analyze any HR report (insights, recommendations, risks)
+  aiAnalyzeHrReport: (input: {
+    reportType: string; title: string; summary: any; rows: any[]; period?: any;
+  }) => req<{
+    source: "ai" | "fallback";
+    headline: string;
+    insights: string[];
+    recommendations: string[];
+    risks: string[];
+  }>("POST", "/ai/analyze-hr-report", input),
 };
