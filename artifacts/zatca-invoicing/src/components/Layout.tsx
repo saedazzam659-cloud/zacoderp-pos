@@ -408,18 +408,27 @@ function PurchasingNavGroup({
 }
 
 // ─── SalesNavGroup ─────────────────────────────────────────────────────────────
+// Reports for customers/sales are nested INSIDE this group (per the user's
+// request) so they live under their parent module instead of as a sibling
+// top-level menu. The reports sub-collapsible carries its own open state
+// driven by `reportsOpen` / `onReportsToggle` (still managed in Layout
+// state, just rendered here).
 function SalesNavGroup({
-  location, onNavigate, open, onToggle,
+  location, onNavigate, open, onToggle, reportsOpen, onReportsToggle,
 }: {
   location: string;
   onNavigate: () => void;
   open: boolean;
   onToggle: () => void;
+  reportsOpen: boolean;
+  onReportsToggle: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   if (!groupVisible(user, SALES_GROUP_PERMS)) return null;
-  const isOnSales = (location.startsWith("/sales") && !location.startsWith("/sales/reports")) || location.startsWith("/customers");
+  // Treat /sales/reports as part of the parent group so the parent stays
+  // highlighted while the user is browsing inside its nested reports.
+  const isOnSales = location.startsWith("/sales") || location.startsWith("/customers");
   return (
     <div>
       <button
@@ -444,6 +453,12 @@ function SalesNavGroup({
           {salesSubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
+          <SalesReportsNavGroup
+            location={location}
+            onNavigate={onNavigate}
+            open={reportsOpen}
+            onToggle={onReportsToggle}
+          />
         </div>
       )}
     </div>
@@ -563,18 +578,26 @@ function PurchasingReportsNavGroup({
 }
 
 // ─── InventoryNavGroup (stable, top-level component) ──────────────────────────
+// Inventory reports are nested INSIDE this group (per the user's request) so
+// they live under their parent module instead of as a sibling top-level menu.
+// The nested reports collapsible carries its own open state driven by
+// `reportsOpen` / `onReportsToggle` (still managed in Layout state).
 function InventoryNavGroup({
-  location, onNavigate, open, onToggle,
+  location, onNavigate, open, onToggle, reportsOpen, onReportsToggle,
 }: {
   location: string;
   onNavigate: () => void;
   open: boolean;
   onToggle: () => void;
+  reportsOpen: boolean;
+  onReportsToggle: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth() as any;
   if (!groupVisible(user, INVENTORY_GROUP_PERMS)) return null;
-  const isOnInventory = location.startsWith("/inventory") && !location.startsWith("/inventory/reports");
+  // Treat /inventory/reports as part of the parent group so the parent stays
+  // highlighted while the user is browsing inside its nested reports.
+  const isOnInventory = location.startsWith("/inventory");
   return (
     <div>
       {/* Toggle button */}
@@ -603,6 +626,12 @@ function InventoryNavGroup({
           {inventorySubNav.map(item => (
             <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
           ))}
+          <InventoryReportsNavGroup
+            location={location}
+            onNavigate={onNavigate}
+            open={reportsOpen}
+            onToggle={onReportsToggle}
+          />
         </div>
       )}
     </div>
@@ -993,17 +1022,8 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={inventoryOpen}
                   onToggle={onInventoryToggle}
-                />
-              </div>
-            )}
-
-            {menuPerms.inventory !== false && (
-              <div className="space-y-0.5">
-                <InventoryReportsNavGroup
-                  location={location}
-                  onNavigate={onNavigate}
-                  open={invReportsOpen}
-                  onToggle={onInvReportsToggle}
+                  reportsOpen={invReportsOpen}
+                  onReportsToggle={onInvReportsToggle}
                 />
               </div>
             )}
@@ -1014,15 +1034,8 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={salesOpen}
                 onToggle={onSalesToggle}
-              />
-            </div>
-
-            <div className="space-y-0.5">
-              <SalesReportsNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={salesReportsOpen}
-                onToggle={onSalesReportsToggle}
+                reportsOpen={salesReportsOpen}
+                onReportsToggle={onSalesReportsToggle}
               />
             </div>
 
