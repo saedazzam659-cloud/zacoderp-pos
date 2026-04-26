@@ -23,6 +23,18 @@ function getFrom(): string {
   return process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "no-reply@localhost";
 }
 
+// Test-only seam. The maintenance test suite stubs `nodemailer.createTransport`
+// per-test to capture rendered emails, but `getTransporter()` memoises the
+// first transporter it builds — so a stub installed by test #2 is silently
+// shadowed by the transporter test #1 already cached. Calling this function
+// at the start of a test forces the next `sendEmail` to rebuild the
+// transporter from the current env and current `nodemailer.createTransport`,
+// keeping every test's stub effective regardless of execution order. Not
+// imported anywhere in production code paths.
+export function __resetEmailTransporterForTesting(): void {
+  cached = null;
+}
+
 // Microsoft Outlook (Microsoft Graph) — Replit connector fallback when SMTP isn't set.
 // Uses the @replit/connectors-sdk to send via POST /v1.0/me/sendMail with the
 // authenticated user's mailbox.

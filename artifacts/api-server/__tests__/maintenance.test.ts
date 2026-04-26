@@ -100,6 +100,7 @@ import {
   runEmailHistoryAutoPrune,
   type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
+import { __resetEmailTransporterForTesting } from "../src/lib/email.ts";
 import nodemailer from "nodemailer";
 
 // ─── Test scoping ───────────────────────────────────────────────────────────
@@ -3024,6 +3025,272 @@ test("dispatchCriticalDigest: recoveryRows reach sendMaintenanceCriticalDigest +
     // Restore in reverse-acquisition order: nodemailer first (so a future
     // sendEmail call can't accidentally use our stale stub), then env, then
     // the schedule-row anchors, then the SA opt-in flags.
+    (nodemailer as { createTransport: unknown }).createTransport = origCreateTransport;
+    for (const [k, v] of Object.entries(envSnapshot)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    if (cfgBefore) {
+      await db.update(maintenanceScheduleTable).set({
+        lastSuccessfulEmailAt: cfgBefore.lastSuccessfulEmailAt,
+        lastEmailCriticalSignature: cfgBefore.lastEmailCriticalSignature,
+      }).where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+    }
+    if (previouslyOnIds.length) {
+      await db.update(usersTable)
+        .set({ notifyMaintenanceEmail: true })
+        .where(inArray(usersTable.id, previouslyOnIds));
+    }
+  }
+});
+
+// ─── Recovery-query failure isolation ────────────────────────────────────────
+// The dispatch path wraps `getRecentToolRecoveries` in a try/catch on purpose:
+// if that helper ever throws (bad SQL, transient DB hiccup, schema drift), the
+// digest must still ship — just without the green "recovered tools" section.
+// Today nothing pins this contract, so a future change that lets the error
+// escape the try/catch would silently break every critical-digest send and
+// SuperAdmins would simply stop receiving alerts.
+//
+// What this guards:
+//   1. `dispatchCriticalDigest` returns `status === "ok"` even when the
+//      recovery query throws — the catch in maintenanceScheduler.ts must
+//      swallow the error and continue with `recoveryDigestRows = []`.
+//   2. The rendered HTML omits the recovery section heading
+//      ("أدوات صيانة تعافت") when the query failed — proves the catch
+//      actually substituted an empty array (vs. partial data leaking through
+//      on a malformed payload).
+//
+// Mechanics: monkey-patch `db.execute` to throw when invoked with the
+// recovery query's SQL (uniquely identifiable by the `LAG(status)` window
+// function — `getMaintenanceAlerts`, `getRecentToolErrors`, and the audit-row
+// INSERT all use other constructs). Restored in `finally` so subsequent tests
+// see the real `db.execute`. The seed includes a real recovery row so the
+// "heading absent" assertion is meaningful: without the patch, the heading
+// WOULD render — its absence here is caused by the simulated failure, not by
+// "no recoveries existed in the first place".
+test("dispatchCriticalDigest: recovery-query failure does NOT block the digest (heading omitted, status=ok)", async () => {
+  // Mute every other opted-in SuperAdmin so only our seeded recipient is
+  // eligible — same pattern as the sibling dispatch test above.
+  const otherSAs = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.role, "superadmin"),
+      eq(usersTable.notifyMaintenanceEmail, true),
+    ));
+  const previouslyOnIds = otherSAs.map((r) => r.id);
+  if (previouslyOnIds.length) {
+    await db.update(usersTable)
+      .set({ notifyMaintenanceEmail: false })
+      .where(inArray(usersTable.id, previouslyOnIds));
+  }
+
+  // Force SMTP on with bogus values so `getTransporter()` returns a
+  // transporter that we'll then replace with a recording stub. Outlook is
+  // unset so `sendEmail` only attempts the SMTP path.
+  const envSnapshot: Record<string, string | undefined> = {
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_PORT: process.env.SMTP_PORT,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASS: process.env.SMTP_PASS,
+    REPLIT_CONNECTORS_HOSTNAME: process.env.REPLIT_CONNECTORS_HOSTNAME,
+  };
+  process.env.SMTP_HOST = "smtp.test.invalid";
+  process.env.SMTP_PORT = "587";
+  process.env.SMTP_USER = `${TEST_TAG}@example.test`;
+  process.env.SMTP_PASS = "ignored-test-pw";
+  delete process.env.REPLIT_CONNECTORS_HOSTNAME;
+
+  let captured: { to: unknown; subject: string; html: string } | null = null;
+  const origCreateTransport = nodemailer.createTransport;
+  (nodemailer as { createTransport: unknown }).createTransport = (() => ({
+    sendMail: async (opts: { to: unknown; subject: string; html: string }) => {
+      captured = { to: opts.to, subject: opts.subject, html: opts.html };
+      return { messageId: `${TEST_TAG}-rec-fail` };
+    },
+    verify: async () => true,
+    close: () => undefined,
+  })) as typeof nodemailer.createTransport;
+  // Force email.ts to rebuild the transporter from the now-patched
+  // `nodemailer.createTransport` — without this, the transporter cached by
+  // the sibling dispatch test above would shadow our stub and `captured`
+  // would never be populated.
+  __resetEmailTransporterForTesting();
+
+  // Snapshot + clear the cooldown anchors so `shouldSkipForRateLimit` can't
+  // suppress this dispatch on a shared DB where a prior successful send
+  // already advanced the anchor.
+  const [cfgBefore] = await db.select().from(maintenanceScheduleTable)
+    .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+  await db.update(maintenanceScheduleTable)
+    .set({ lastSuccessfulEmailAt: null, lastEmailCriticalSignature: null })
+    .where(eq(maintenanceScheduleTable.id, MAINTENANCE_SCHEDULE_ID));
+
+  // Watermark maintenance_email_runs so we capture only the audit row this
+  // dispatch writes (for cleanup).
+  const beforeMaxExec = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM maintenance_email_runs
+  `);
+  const beforeMax = Number(
+    ((beforeMaxExec as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0,
+  );
+
+  // Walk a drizzle SQL object's StringChunks to find a literal substring.
+  // We use `LAG(status)` as the recovery-query fingerprint — neither
+  // `getMaintenanceAlerts` (DISTINCT ON), `getRecentToolErrors` (DISTINCT ON),
+  // nor the audit-row INSERT use LAG, so the patch only intercepts the
+  // recovery query and never collateral-damages the rest of the dispatch.
+  const sqlContainsLagStatus = (q: unknown): boolean => {
+    const seen = new Set<unknown>();
+    const visit = (node: unknown): boolean => {
+      if (node === null || node === undefined) return false;
+      if (typeof node === "string") return node.includes("LAG(status)");
+      if (typeof node !== "object") return false;
+      if (seen.has(node)) return false;
+      seen.add(node);
+      const obj = node as { value?: unknown; queryChunks?: unknown };
+      if (Array.isArray(obj.value) && obj.value.some((v) => typeof v === "string" && v.includes("LAG(status)"))) {
+        return true;
+      }
+      if (typeof obj.value === "string" && obj.value.includes("LAG(status)")) return true;
+      if (Array.isArray(obj.queryChunks) && obj.queryChunks.some(visit)) return true;
+      return false;
+    };
+    return visit(q);
+  };
+
+  // Snapshot the original `db.execute` and patch it. The patch is restored
+  // in `finally` so subsequent tests see the real method.
+  const origExecute = db.execute.bind(db);
+  let recoveryQueryAttempts = 0;
+  (db as { execute: unknown }).execute = ((query: unknown) => {
+    if (sqlContainsLagStatus(query)) {
+      recoveryQueryAttempts += 1;
+      throw new Error("simulated-recovery-query-failure");
+    }
+    return origExecute(query as never);
+  }) as typeof db.execute;
+
+  try {
+    // Sanity-check the patch BEFORE we run dispatch: the recovery helper
+    // must throw when called directly. If this passes the assertion would
+    // be vacuous (a "no heading" assertion would also pass when the helper
+    // returned [] for legitimate reasons).
+    let directThrew = false;
+    try {
+      await getRecentToolRecoveries(50, TOOL_ERROR_WINDOW_DAYS);
+    } catch {
+      directThrew = true;
+    }
+    assert.ok(
+      directThrew,
+      "patch is not in effect: getRecentToolRecoveries did not throw — the rest of this test would pass vacuously",
+    );
+
+    // Seed one threshold='all' SuperAdmin so the dispatch has at least one
+    // recipient regardless of which severities are present.
+    const hash = await bcrypt.hash("ignored-test-pw", 4);
+    const recipientEmail = `${TEST_TAG}-recfail-sa@example.test`;
+    const [seeded] = await db.insert(usersTable).values({
+      username: `${TEST_TAG}_recfail_sa`,
+      email: recipientEmail,
+      passwordHash: hash,
+      role: "superadmin",
+      isActive: true,
+      sessionToken: null,
+      sessionId: null,
+      companyId: null,
+      notifyMaintenanceEmail: true,
+      notifyMaintenanceSeverity: "all",
+    }).returning({ id: usersTable.id });
+    insertedUserIds.push(seeded.id);
+
+    // Seed a fresh critical alert so dispatch fires (rows.length > 0).
+    const now = Date.now();
+    const critRun = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-recfail-crit",
+      status: "critical",
+      count: 17,
+      trigger: "scheduled",
+      runAt: new Date(now - 1_000),
+      durationMs: 1,
+      error: null,
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    insertedMaintenanceRunIds.push(critRun[0].id);
+
+    // Seed a real recovery (error → ok within the 7-day window). Without
+    // this seed, the "heading absent" assertion would also pass when no
+    // recoveries existed at all — we want it to fail loudly if the catch
+    // is removed and the unhandled exception escapes.
+    const recErr = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-recfail-recovered",
+      status: "error",
+      count: 0,
+      trigger: "scheduled",
+      runAt: new Date(now - 3 * 86_400_000),
+      durationMs: 1,
+      error: "boom-from-recovery-fail-test",
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    const recOk = await db.insert(maintenanceRunsTable).values({
+      companyId: dirtyCompanyId,
+      toolKey: "tt-recfail-recovered",
+      status: "ok",
+      count: 0,
+      trigger: "scheduled",
+      runAt: new Date(now - 1 * 86_400_000),
+      durationMs: 1,
+      error: null,
+      details: null,
+    }).returning({ id: maintenanceRunsTable.id });
+    insertedMaintenanceRunIds.push(recErr[0].id, recOk[0].id);
+
+    // Fire the dispatch end-to-end on the same code path the daily tick uses.
+    const outcome = await dispatchCriticalDigest({ trigger: "scheduled" });
+
+    // Capture audit row(s) for cleanup.
+    const newEmailRuns = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(sql`${maintenanceEmailRunsTable.id} > ${beforeMax}`);
+    for (const r of newEmailRuns) insertedMaintenanceEmailRunIds.push(r.id);
+
+    // 1. Dispatch must still complete normally — the catch around
+    //    `getRecentToolRecoveries` must swallow the simulated error and
+    //    continue to `sendMaintenanceCriticalDigest` unaffected.
+    assert.equal(
+      outcome.status, "ok",
+      `dispatch must still ship as ok when the recovery query fails; got "${outcome.status}": ${outcome.message}`,
+    );
+    assert.ok(captured, "sendMail must have been invoked — proves the SMTP path was reached");
+    assert.ok(
+      recoveryQueryAttempts > 0,
+      "the patched db.execute must have intercepted the recovery query at least once",
+    );
+
+    // 2. The rendered HTML must omit the recovery section heading. The
+    //    catch substitutes an empty `recoveryDigestRows` array, and
+    //    `recoveryRowsHtml` short-circuits to "" when the list is empty —
+    //    so the heading never makes it into the body.
+    const html = captured!.html;
+    assert.equal(
+      html.indexOf("أدوات صيانة تعافت"), -1,
+      "digest HTML must NOT include the 'recovered tools' section heading when getRecentToolRecoveries throws",
+    );
+    // And the seeded recovery's tool key (which would otherwise appear
+    // inside the recovery <table>) must be absent too — defends against a
+    // future refactor that swaps the heading text but still leaks rows.
+    assert.equal(
+      html.indexOf("tt-recfail-recovered"), -1,
+      "digest HTML must NOT include the seeded recovery tool's key when the recovery query failed",
+    );
+  } finally {
+    // Restore in reverse-acquisition order: db.execute first (so any
+    // teardown query runs against the real method), then nodemailer, then
+    // env, then the schedule-row anchors, then the SA opt-in flags.
+    (db as { execute: unknown }).execute = origExecute;
     (nodemailer as { createTransport: unknown }).createTransport = origCreateTransport;
     for (const [k, v] of Object.entries(envSnapshot)) {
       if (v === undefined) delete process.env[k];
