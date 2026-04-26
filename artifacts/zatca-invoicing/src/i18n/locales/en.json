@@ -189,7 +189,16 @@
     "appliedOfferLine": "Offer “{{name}}” applied to this line ({{discount}}%)",
     "appliedOfferDocument": "Document offer discount",
     "appliedOfferDocumentHint": "Offer “{{name}}” applied to the invoice total",
-    "appliedOfferBuyXGetY": "Buy {{buy}}, get {{get}} at {{pct}}% off"
+    "appliedOfferBuyXGetY": "Buy {{buy}}, get {{get}} at {{pct}}% off",
+    "navigator": {
+      "placeholder": "Search invoices...",
+      "searchPlaceholder": "Type invoice number or customer name...",
+      "empty": "No matching invoices",
+      "prev": "Previous",
+      "next": "Next",
+      "prevDisabled": "You're at the oldest invoice",
+      "nextDisabled": "You're at the newest invoice"
+    }
   },
   "salesQuotations": {
     "title": "Quotations",

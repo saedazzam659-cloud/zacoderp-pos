@@ -189,7 +189,16 @@
     "appliedOfferLine": "تم تطبيق العرض «{{name}}» على هذا الصنف ({{discount}}%)",
     "appliedOfferDocument": "خصم العرض على الإجمالي",
     "appliedOfferDocumentHint": "تم تطبيق العرض «{{name}}» على إجمالي الفاتورة",
-    "appliedOfferBuyXGetY": "اشترِ {{buy}} واحصل على {{get}} بخصم {{pct}}%"
+    "appliedOfferBuyXGetY": "اشترِ {{buy}} واحصل على {{get}} بخصم {{pct}}%",
+    "navigator": {
+      "placeholder": "ابحث عن فاتورة...",
+      "searchPlaceholder": "اكتب رقم الفاتورة أو اسم العميل...",
+      "empty": "لا توجد فواتير مطابقة",
+      "prev": "السابق",
+      "next": "التالي",
+      "prevDisabled": "أنت في أقدم فاتورة",
+      "nextDisabled": "أنت في أحدث فاتورة"
+    }
   },
   "salesQuotations": {
     "title": "عروض الأسعار",
