@@ -65,6 +65,7 @@ import {
   maintenanceRunsTable,
   maintenanceScheduleTable,
   maintenanceEmailRunsTable,
+  maintenanceRetentionSettingsTable,
 } from "@workspace/db";
 
 import app from "../src/app.ts";
@@ -2629,4 +2630,233 @@ test("dispatchCriticalDigest: per-threshold recipient routing for warn/error/cri
         .where(inArray(usersTable.id, previouslyOnIds));
     }
   }
+});
+
+// ─── Retention settings (PUT/GET + GET-preview/POST-fix integration) ────────
+//
+// These cover the per-tool retention overrides surfaced under "السجلات" on
+// the AI Company Fix screen. The contract under test:
+//
+//   • GET   /api/admin/maintenance/retention-settings
+//       → returns a row per known toolKey with `days`, `defaultDays`, bounds,
+//         and a `persisted` boolean (false when no override exists yet).
+//   • PUT   /api/admin/maintenance/retention-settings/:toolKey
+//       → validates the toolKey against the allow-list and clamps `days`
+//         into the per-tool [min, max] window; on success upserts the row.
+//   • GET   /api/admin/maintenance/old-* (preview)
+//       AND POST  /api/admin/maintenance/old-*/fix
+//       → both honor the persisted retention as the default when no `days`
+//         is supplied, but the explicit `?days` / body `days` still wins.
+//
+// All tests scope their assertions to the seeded TEST_TAG company so they
+// don't drift on shared databases. After each mutation, the test resets the
+// retention row back to its defaults so subsequent tests start from a clean
+// state regardless of execution order.
+async function resetRetention(toolKey: string): Promise<void> {
+  await db.delete(maintenanceRetentionSettingsTable)
+    .where(eq(maintenanceRetentionSettingsTable.toolKey, toolKey));
+}
+
+test("GET /maintenance/retention-settings: 401 without bearer token", async () => {
+  const r = await api("/api/admin/maintenance/retention-settings", "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/retention-settings: 403 for non-superadmin", async () => {
+  const r = await api("/api/admin/maintenance/retention-settings", "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/retention-settings: returns defaults for all four tools when nothing persisted", async () => {
+  for (const k of ["old-audit-logs", "old-maintenance-runs", "old-maintenance-email-runs", "old-report-email-runs"]) {
+    await resetRetention(k);
+  }
+  const r = await api<{ settings: Record<string, { days: number; defaultDays: number; min: number; max: number; persisted: boolean }> }>(
+    "/api/admin/maintenance/retention-settings", "GET", { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.ok(isObject(r.body));
+  const s = r.body.settings;
+  // Defaults must match the four cards on the AI Company Fix screen and the
+  // RETENTION_TOOL_BOUNDS table in admin.ts.
+  assert.deepEqual(s["old-audit-logs"],            { days: 365, defaultDays: 365, min: 30, max: 3650, persisted: false, updatedAt: null });
+  assert.deepEqual(s["old-maintenance-runs"],      { days: 90,  defaultDays: 90,  min: 7,  max: 3650, persisted: false, updatedAt: null });
+  assert.deepEqual(s["old-maintenance-email-runs"], { days: 90, defaultDays: 90,  min: 7,  max: 3650, persisted: false, updatedAt: null });
+  assert.deepEqual(s["old-report-email-runs"],     { days: 90,  defaultDays: 90,  min: 7,  max: 3650, persisted: false, updatedAt: null });
+});
+
+test("PUT /maintenance/retention-settings/:toolKey: 400 for unknown toolKey", async () => {
+  const r = await api("/api/admin/maintenance/retention-settings/not-a-tool", "PUT",
+    { token: saToken, body: { days: 30 } });
+  assert.equal(r.status, 400);
+});
+
+test("PUT /maintenance/retention-settings/:toolKey: rejects non-integer / out-of-range values", async () => {
+  // Below min for old-audit-logs (min=30)
+  let r = await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+    { token: saToken, body: { days: 5 } });
+  assert.equal(r.status, 400);
+  // Above max for old-audit-logs (max=3650)
+  r = await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+    { token: saToken, body: { days: 999_999 } });
+  assert.equal(r.status, 400);
+  // Non-integer
+  r = await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+    { token: saToken, body: { days: 30.5 } });
+  assert.equal(r.status, 400);
+  // Missing days entirely
+  r = await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+    { token: saToken, body: {} });
+  assert.equal(r.status, 400);
+});
+
+test("PUT then GET /maintenance/retention-settings: persists and round-trips", async () => {
+  await resetRetention("old-audit-logs");
+  const put = await api<{ ok: boolean; toolKey: string; days: number }>(
+    "/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+    { token: saToken, body: { days: 200 } },
+  );
+  assert.equal(put.status, 200);
+  assert.equal(put.body.days, 200);
+
+  const get = await api<{ settings: Record<string, { days: number; persisted: boolean; updatedAt: string | null }> }>(
+    "/api/admin/maintenance/retention-settings", "GET", { token: saToken },
+  );
+  assert.equal(get.status, 200);
+  assert.equal(get.body.settings["old-audit-logs"].days, 200);
+  assert.equal(get.body.settings["old-audit-logs"].persisted, true);
+  assert.ok(get.body.settings["old-audit-logs"].updatedAt);
+  await resetRetention("old-audit-logs");
+});
+
+test("GET /maintenance/old-audit-logs: persisted retention drives the preview count when no ?days is supplied", async () => {
+  // Use schemaCompanyId since the two seeded >365-day-old audit rows in
+  // `before()` are written under that company. We also seed two FRESH
+  // 400-day-old rows here so the assertion is robust on a shared DB where
+  // the original seeded rows might have been pruned by an earlier test.
+  await resetRetention("old-audit-logs");
+  const oldAt = new Date(Date.now() - 400 * 86_400_000);
+  const localSeed = await db.insert(auditLogTable).values([
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: schemaCompanyId, module: "test_retention", action: "view",
+      method: "GET", path: `/api/test/preview/${randomBytes(4).toString("hex")}`,
+      statusCode: 200, ip: "127.0.0.1", createdAt: oldAt },
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: schemaCompanyId, module: "test_retention", action: "view",
+      method: "GET", path: `/api/test/preview/${randomBytes(4).toString("hex")}`,
+      statusCode: 200, ip: "127.0.0.2", createdAt: oldAt },
+  ]).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(...localSeed.map(r => r.id));
+
+  try {
+    const baseline = await api<{ count: number }>(
+      `/api/admin/maintenance/old-audit-logs?companyId=${schemaCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(baseline.status, 200);
+    assert.ok(baseline.body.count >= 2, `baseline preview should include the seeded old audit rows (got ${baseline.body.count})`);
+
+    await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+      { token: saToken, body: { days: 999 } });
+    const tightened = await api<{ count: number }>(
+      `/api/admin/maintenance/old-audit-logs?companyId=${schemaCompanyId}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(tightened.status, 200);
+    // The seeded rows are 400 days old < 999, so they must NOT count any
+    // more. (Other test rows in the shared DB might still be older than 999d
+    // — we can't assert ===0, only that the count dropped by at least 2.)
+    assert.ok(
+      tightened.body.count <= baseline.body.count - 2,
+      `expected count to drop by ≥2 after raising retention to 999d; baseline=${baseline.body.count} after=${tightened.body.count}`,
+    );
+
+    // Explicit ?days override must still win even when a persisted value exists.
+    const overridden = await api<{ count: number }>(
+      `/api/admin/maintenance/old-audit-logs?companyId=${schemaCompanyId}&days=365`,
+      "GET", { token: saToken },
+    );
+    assert.equal(overridden.status, 200);
+    assert.equal(overridden.body.count, baseline.body.count, "explicit ?days=365 should match the unpersisted baseline");
+  } finally {
+    await resetRetention("old-audit-logs");
+  }
+});
+
+test("POST /maintenance/old-audit-logs/fix: honors persisted retention when body has no `days`", async () => {
+  // Seed a fresh pair of >400-day-old audit rows so this test is self-contained
+  // and won't interfere with other tests' counts.
+  const oldAt = new Date(Date.now() - 410 * 86_400_000);
+  const seeded = await db.insert(auditLogTable).values([
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: dirtyCompanyId, module: "test_retention", action: "view",
+      method: "GET", path: `/api/test/retention/${randomBytes(4).toString("hex")}`,
+      statusCode: 200, ip: "127.0.0.1", createdAt: oldAt },
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: dirtyCompanyId, module: "test_retention", action: "view",
+      method: "GET", path: `/api/test/retention/${randomBytes(4).toString("hex")}`,
+      statusCode: 200, ip: "127.0.0.2", createdAt: oldAt },
+  ]).returning({ id: auditLogTable.id });
+  const seededIds = seeded.map(r => r.id);
+  insertedAuditLogIds.push(...seededIds);
+
+  try {
+    // Persist a tight retention (500d) so the seeded 410-day-old rows are
+    // OUTSIDE the prune window.
+    await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+      { token: saToken, body: { days: 500 } });
+
+    // POST without `days` in the body → server should resolve to 500d and
+    // therefore NOT delete our 410-day-old rows.
+    const fixSafe = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-audit-logs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixSafe.status, 200);
+    const stillThereSafe = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(inArray(auditLogTable.id, seededIds));
+    assert.equal(stillThereSafe.length, 2, "rows must survive a prune that uses the persisted 500d retention");
+
+    // Now drop the retention to 30d → the same body (no `days`) should now
+    // delete the seeded rows.
+    await api("/api/admin/maintenance/retention-settings/old-audit-logs", "PUT",
+      { token: saToken, body: { days: 30 } });
+    const fixAggressive = await api<{ deleted: number }>(
+      "/api/admin/maintenance/old-audit-logs/fix", "POST",
+      { token: saToken, body: { companyId: dirtyCompanyId } },
+    );
+    assert.equal(fixAggressive.status, 200);
+    const stillThereAggressive = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(inArray(auditLogTable.id, seededIds));
+    assert.equal(stillThereAggressive.length, 0, "rows must be deleted once the retention is lowered to 30d");
+  } finally {
+    await resetRetention("old-audit-logs");
+  }
+});
+
+test("PUT /maintenance/retention-settings: writes an audit-log row with action=edit_retention", async () => {
+  await resetRetention("old-maintenance-runs");
+  // Capture the highest existing id BEFORE the PUT so we only inspect rows
+  // this test wrote — shared-DB safety.
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const r = await api("/api/admin/maintenance/retention-settings/old-maintenance-runs", "PUT",
+    { token: saToken, body: { days: 45 } });
+  assert.equal(r.status, 200);
+
+  const newRows = await db.select({ id: auditLogTable.id, action: auditLogTable.action, module: auditLogTable.module })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "edit_retention"),
+    ));
+  assert.ok(newRows.length >= 1, "PUT should write an audit_log row with action=edit_retention");
+  // Track for cleanup
+  for (const row of newRows) insertedAuditLogIds.push(row.id);
+  await resetRetention("old-maintenance-runs");
 });

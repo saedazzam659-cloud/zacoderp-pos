@@ -10,8 +10,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, RefreshCw, ChevronDown, ChevronUp, CheckCircle2,
-  AlertTriangle, AlertCircle, Clock, Download,
+  AlertTriangle, AlertCircle, Clock, Download, Save, CalendarClock,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -78,6 +79,22 @@ export type MaintenanceToolProps = {
       status: "ok" | "warn" | "critical" | "error";
     }>;
   } | null;
+  /**
+   * When provided, the card surfaces a "retention (days)" editor (input +
+   * Save button). The persisted value is fetched from
+   * /api/admin/maintenance/retention-settings and used as the default for
+   * BOTH the GET preview (`?days=…`) and the POST fix body. Falls back to
+   * `defaultDays` (= the original UI hardcode) until the fetch resolves so
+   * the first render matches pre-task behaviour.
+   *
+   * The label / description copy is NOT rendered here so each card can keep
+   * its existing wording — this prop is purely the editor + plumbing.
+   */
+  retentionConfig?: {
+    defaultDays: number;
+    min: number;
+    max: number;
+  };
 };
 
 export default function MaintenanceTool(props: MaintenanceToolProps) {
@@ -85,6 +102,7 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
     toolKey, label, description, icon: Icon, checkEndpoint, fixEndpoint,
     destructive, confirmTitle, confirmDescription, buildFixBody, fixActions,
     renderDetails, externalCta, companyId, onFixed, latestScan, trend,
+    retentionConfig,
   } = props;
   const { token } = useAuth();
   const { toast } = useToast();
@@ -129,15 +147,78 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
     refetchOnWindowFocus: false,
   });
 
-  const queryKey = ["maintenance-tool", toolKey, companyId];
+  // ─── Retention settings (only when retentionConfig is supplied) ──────────
+  // Shared across every retention-aware card so a single GET hydrates them
+  // all. The response is a map keyed by toolKey.
+  const retentionQ = useQuery({
+    queryKey: ["maintenance-retention-settings"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/retention-settings`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل قراءة إعدادات الاحتفاظ");
+      return r.json() as Promise<{
+        settings: Record<string, {
+          days: number; defaultDays: number; min: number; max: number;
+          persisted: boolean; updatedAt: string | null;
+        }>;
+      }>;
+    },
+    enabled: !!retentionConfig,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const persistedRetention = retentionQ.data?.settings?.[toolKey];
+  // Effective retention: persisted value when loaded, otherwise the static
+  // default. Used by BOTH the GET preview URL and the POST fix body so the
+  // operator's saved value wins everywhere — including the CSV export.
+  const effectiveDays = retentionConfig
+    ? (persistedRetention?.days ?? retentionConfig.defaultDays)
+    : null;
+  // Draft (unsaved) value held in the input. Resets to null when the
+  // persisted value changes (e.g. after a save round-trips).
+  const [draftDays, setDraftDays] = useState<string>("");
+  useEffect(() => {
+    if (effectiveDays != null) setDraftDays(String(effectiveDays));
+  }, [effectiveDays]);
+
+  const saveRetentionMut = useMutation({
+    mutationFn: async (days: number) => {
+      const r = await fetch(`${API}/api/admin/maintenance/retention-settings/${encodeURIComponent(toolKey)}`, {
+        method: "PUT", headers, body: JSON.stringify({ days }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل حفظ مدة الاحتفاظ");
+      return r.json() as Promise<{ ok: boolean; toolKey: string; days: number }>;
+    },
+    onSuccess: () => {
+      toast({ title: "تم حفظ مدة الاحتفاظ" });
+      qc.invalidateQueries({ queryKey: ["maintenance-retention-settings"] });
+      qc.invalidateQueries({ queryKey: ["maintenance-tool", toolKey, companyId] });
+      qc.invalidateQueries({ queryKey: ["maintenance-history"] });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // Build the URL query string used by both the JSON check and the CSV
+  // export. When a retention is configured, anchor on the effective value so
+  // the preview / count matches what the fix action will actually delete.
+  const checkUrlQuery = (extra: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ companyId: String(companyId ?? "") });
+    if (retentionConfig && effectiveDays != null) params.set("days", String(effectiveDays));
+    for (const [k, v] of Object.entries(extra)) params.set(k, v);
+    return params.toString();
+  };
+
+  // queryKey includes effectiveDays so changing the retention triggers an
+  // automatic re-fetch (keeps the on-screen count in sync with the saved
+  // value without forcing the operator to click "فحص").
+  const queryKey = ["maintenance-tool", toolKey, companyId, effectiveDays];
   const checkQ = useQuery({
     queryKey,
     queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/${checkEndpoint}?companyId=${companyId}`, { headers });
+      const r = await fetch(`${API}/api/admin/${checkEndpoint}?${checkUrlQuery()}`, { headers });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل الفحص");
       return r.json() as Promise<{ count: number; items?: any[]; [k: string]: any }>;
     },
-    enabled: !!companyId,
+    enabled: !!companyId && (!retentionConfig || effectiveDays != null),
     refetchOnWindowFocus: false,
   });
 
@@ -167,7 +248,7 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
   // audit-log row so the export action shows up in "سجل الإصلاحات".
   const csvMut = useMutation({
     mutationFn: async () => {
-      const r = await fetch(`${API}/api/admin/${checkEndpoint}?companyId=${companyId}&format=csv`, {
+      const r = await fetch(`${API}/api/admin/${checkEndpoint}?${checkUrlQuery({ format: "csv" })}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) {
@@ -234,6 +315,10 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
     if (!companyId) return;
     const targetIds = selectedIds.length > 0 ? selectedIds : (data?.items ?? []).map((it: any) => it.id ?? it.sequenceId ?? it.accountId).filter((v: any) => v != null);
     const body = action.buildBody(companyId, targetIds);
+    // Inject the saved retention into the POST body so the prune always
+    // honors the persisted value — even if the parent's buildFixBody still
+    // hardcodes a default. Server re-validates regardless.
+    if (retentionConfig && effectiveDays != null) body.days = effectiveDays;
     setPendingAction({
       key: `${toolKey}:${action.key}`,
       body,
@@ -318,6 +403,67 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
             {(checkQ.error as any)?.message || "فشل الفحص"}
           </p>
         )}
+        {retentionConfig && (() => {
+          const draftNum = Number(draftDays);
+          const draftValid = Number.isFinite(draftNum)
+            && Math.floor(draftNum) === draftNum
+            && draftNum >= retentionConfig.min
+            && draftNum <= retentionConfig.max;
+          const dirty = effectiveDays != null && draftValid && draftNum !== effectiveDays;
+          const isCustom = !!persistedRetention?.persisted;
+          return (
+            <div className="rounded border border-violet-100 bg-violet-50/40 p-2 space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] text-violet-900">
+                <CalendarClock className="h-3 w-3" />
+                <span className="font-medium">مدة الاحتفاظ (بالأيام)</span>
+                <span className="text-muted-foreground">
+                  — السجلات الأقدم تُحذف عند تشغيل الإصلاح. الافتراضي {retentionConfig.defaultDays}.
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Input
+                  type="number"
+                  min={retentionConfig.min}
+                  max={retentionConfig.max}
+                  step={1}
+                  value={draftDays}
+                  onChange={(e) => setDraftDays(e.target.value)}
+                  disabled={retentionQ.isFetching || saveRetentionMut.isPending}
+                  className="h-7 w-24 text-xs tabular-nums"
+                  aria-label={`مدة الاحتفاظ لـ ${label}`}
+                />
+                <span className="text-[11px] text-muted-foreground tabular-nums">
+                  ({retentionConfig.min}–{retentionConfig.max})
+                </span>
+                <Button
+                  size="sm" variant="outline" className="h-7 text-xs gap-1"
+                  onClick={() => saveRetentionMut.mutate(Math.floor(draftNum))}
+                  disabled={!draftValid || !dirty || saveRetentionMut.isPending}
+                  title={
+                    !draftValid
+                      ? `الرجاء إدخال رقم صحيح بين ${retentionConfig.min} و ${retentionConfig.max}`
+                      : !dirty
+                        ? "لم يتغيّر شيء"
+                        : "حفظ مدة الاحتفاظ"
+                  }
+                >
+                  {saveRetentionMut.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Save className="h-3 w-3" />}
+                  حفظ
+                </Button>
+                {isCustom && effectiveDays !== retentionConfig.defaultDays && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 border border-violet-200">
+                    مخصّص
+                  </span>
+                )}
+                {retentionQ.isFetching && (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                )}
+              </div>
+            </div>
+          );
+        })()}
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
             size="sm" variant="outline" className="h-7 text-xs gap-1"

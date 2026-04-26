@@ -103,6 +103,21 @@ export const maintenanceEmailRunsTable = pgTable("maintenance_email_runs", {
   byRanAt: index("maintenance_email_runs_ran_at_idx").on(t.ranAt),
 }));
 
+// Per-tool retention window for the "old-*" prune cards in the SuperAdmin
+// maintenance toolbox. Each row maps a tool key (e.g. "old-audit-logs") to
+// the configured retention in days. Reads fall back to a hardcoded default
+// when no row exists, so an empty table behaves exactly like the previous
+// hardcoded UI defaults (365 / 90 / 90 / 90). One small table keeps the
+// shape typed (vs. a stringly-typed system_settings row) and lets us add
+// future per-tool retention metadata (e.g. last-edited-by) without touching
+// the catch-all settings table.
+export const maintenanceRetentionSettingsTable = pgTable("maintenance_retention_settings", {
+  toolKey:   text("tool_key").primaryKey(),
+  days:      integer("days").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type MaintenanceRun = typeof maintenanceRunsTable.$inferSelect;
 export type MaintenanceSchedule = typeof maintenanceScheduleTable.$inferSelect;
 export type MaintenanceEmailRun = typeof maintenanceEmailRunsTable.$inferSelect;
+export type MaintenanceRetentionSetting = typeof maintenanceRetentionSettingsTable.$inferSelect;

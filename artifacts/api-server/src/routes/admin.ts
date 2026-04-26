@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
 import {
@@ -3468,6 +3468,62 @@ function csvDate(v: unknown): string {
   if (Number.isNaN(d.getTime())) return s;
   return d.toISOString().replace("T", " ").slice(0, 16);
 }
+// Per-tool retention defaults + bounds for the four "old-*" prune cards. The
+// defaults match the original hardcoded values so an empty
+// maintenance_retention_settings table behaves exactly like the pre-task
+// behaviour. Bounds match the existing clampInt() ranges in each handler.
+const RETENTION_TOOL_BOUNDS: Record<string, { default: number; min: number; max: number }> = {
+  "old-audit-logs":             { default: 365, min: 30, max: 3650 },
+  "old-maintenance-runs":       { default: 90,  min: 7,  max: 3650 },
+  "old-maintenance-email-runs": { default: 90,  min: 7,  max: 3650 },
+  "old-report-email-runs":      { default: 90,  min: 7,  max: 3650 },
+};
+type RetentionToolKey = keyof typeof RETENTION_TOOL_BOUNDS;
+
+// Read the persisted retention (in days) for a given tool, falling back to
+// the hardcoded default when no row exists. Always re-clamps the persisted
+// value against the current bounds so a stale row from an older deploy
+// cannot bypass the input validation.
+async function getRetentionDays(toolKey: string): Promise<number> {
+  const bounds = RETENTION_TOOL_BOUNDS[toolKey];
+  if (!bounds) return 0;
+  // Fail-soft: if the settings table is missing (fresh deploy that hasn't
+  // run `pnpm db:push` yet) or the SELECT errors for any other reason, fall
+  // back to the static default rather than 500ing the maintenance endpoints
+  // that depend on this. Old behavior (hardcoded defaults) is preserved.
+  try {
+    const [row] = await db.select()
+      .from(maintenanceRetentionSettingsTable)
+      .where(eq(maintenanceRetentionSettingsTable.toolKey, toolKey));
+    if (!row) return bounds.default;
+    return clampInt(row.days, bounds.min, bounds.max, bounds.default);
+  } catch (err) {
+    console.warn("getRetentionDays: failed to read maintenance_retention_settings — using default", { toolKey, err });
+    return bounds.default;
+  }
+}
+
+// Resolve the effective retention for an old-* request: prefer the explicit
+// `?days=` (or body.days) when supplied, otherwise fall back to the persisted
+// per-tool setting (or its default). Always clamped to the configured bounds
+// so neither stale UI nor a stale settings row can widen the cutoff.
+// Fail-soft: any unexpected error falls back to the static default so the
+// surrounding maintenance handler never regresses to a 500.
+async function resolveRetentionDays(
+  toolKey: RetentionToolKey, source: any,
+): Promise<number> {
+  const bounds = RETENTION_TOOL_BOUNDS[toolKey];
+  try {
+    if (source !== undefined && source !== null && source !== "") {
+      return clampInt(source, bounds.min, bounds.max, bounds.default);
+    }
+    return await getRetentionDays(toolKey);
+  } catch (err) {
+    console.warn("resolveRetentionDays: unexpected failure — using default", { toolKey, err });
+    return bounds.default;
+  }
+}
+
 async function logMaint(
   req: Request, companyId: number, action: string,
   entityType: string, metadata: Record<string, any>,
@@ -3952,7 +4008,7 @@ router.get("/maintenance/unbalanced-entries", requireSuperAdmin, async (req, res
 // stale UI cannot widen the cutoff.
 router.get("/maintenance/old-audit-logs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.query.days, 30, 3650, 365);
+  const days = await resolveRetentionDays("old-audit-logs", req.query.days);
   try {
     if (wantsCsv(req)) {
       const r = await checkOldAuditLogs(g.companyId, days, { unlimited: true });
@@ -3981,7 +4037,7 @@ router.get("/maintenance/old-audit-logs", requireSuperAdmin, async (req, res) =>
 
 router.post("/maintenance/old-audit-logs/fix", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.body?.days, 30, 3650, 365);
+  const days = await resolveRetentionDays("old-audit-logs", req.body?.days);
   try {
     const exec = await db.execute<{ id: number }>(sql`
       DELETE FROM audit_log
@@ -4004,7 +4060,7 @@ router.post("/maintenance/old-audit-logs/fix", requireSuperAdmin, async (req, re
 // Fix: delete those rows. Default 90d keeps a quarter of trend data on hand.
 router.get("/maintenance/old-maintenance-runs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.query.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-maintenance-runs", req.query.days);
   try {
     if (wantsCsv(req)) {
       const r = await checkOldMaintenanceRuns(g.companyId, days, { unlimited: true });
@@ -4032,7 +4088,7 @@ router.get("/maintenance/old-maintenance-runs", requireSuperAdmin, async (req, r
 
 router.post("/maintenance/old-maintenance-runs/fix", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.body?.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-maintenance-runs", req.body?.days);
   try {
     const exec = await db.execute<{ id: number }>(sql`
       DELETE FROM maintenance_runs
@@ -4059,7 +4115,7 @@ router.post("/maintenance/old-maintenance-runs/fix", requireSuperAdmin, async (r
 // consistent with the rest of the toolbox.
 router.get("/maintenance/old-maintenance-email-runs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.query.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-maintenance-email-runs", req.query.days);
   try {
     if (wantsCsv(req)) {
       const r = await checkOldMaintenanceEmailRuns(g.companyId, days, { unlimited: true });
@@ -4088,7 +4144,7 @@ router.get("/maintenance/old-maintenance-email-runs", requireSuperAdmin, async (
 
 router.post("/maintenance/old-maintenance-email-runs/fix", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.body?.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-maintenance-email-runs", req.body?.days);
   try {
     // Re-evaluate cutoff server-side at fix time so a stale UI cannot widen it.
     const exec = await db.execute<{ id: number }>(sql`
@@ -4116,7 +4172,7 @@ router.post("/maintenance/old-maintenance-email-runs/fix", requireSuperAdmin, as
 // filenames stay consistent with the rest of the toolbox.
 router.get("/maintenance/old-report-email-runs", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.query.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-report-email-runs", req.query.days);
   try {
     if (wantsCsv(req)) {
       const r = await checkOldReportEmailRuns(g.companyId, days, { unlimited: true });
@@ -4145,7 +4201,7 @@ router.get("/maintenance/old-report-email-runs", requireSuperAdmin, async (req, 
 
 router.post("/maintenance/old-report-email-runs/fix", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const days = clampInt(req.body?.days, 7, 3650, 90);
+  const days = await resolveRetentionDays("old-report-email-runs", req.body?.days);
   try {
     // Re-evaluate cutoff server-side at fix time so a stale UI cannot widen it.
     const exec = await db.execute<{ id: number }>(sql`
@@ -4158,6 +4214,100 @@ router.post("/maintenance/old-report-email-runs/fix", requireSuperAdmin, async (
     res.json({ ok: true, deleted, days });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل التنفيذ" });
+  }
+});
+
+// ─── Retention settings for the four "old-*" prune cards ────────────────────
+// GET returns the *effective* retention for each tool (persisted value when
+// present, otherwise the hardcoded default) plus the bounds the UI uses to
+// clamp the input. PUT upserts a single tool's retention and audit-logs the
+// change so SuperAdmins can see who tuned what.
+router.get("/maintenance/retention-settings", requireSuperAdmin, async (_req, res) => {
+  try {
+    const rows = await db.select().from(maintenanceRetentionSettingsTable);
+    const persisted = new Map(rows.map(r => [r.toolKey, r]));
+    const settings: Record<string, {
+      days: number; defaultDays: number; min: number; max: number;
+      persisted: boolean; updatedAt: string | null;
+    }> = {};
+    for (const [toolKey, bounds] of Object.entries(RETENTION_TOOL_BOUNDS)) {
+      const row = persisted.get(toolKey);
+      const days = row
+        ? clampInt(row.days, bounds.min, bounds.max, bounds.default)
+        : bounds.default;
+      settings[toolKey] = {
+        days,
+        defaultDays: bounds.default,
+        min: bounds.min,
+        max: bounds.max,
+        persisted: !!row,
+        updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : null,
+      };
+    }
+    res.json({ settings });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل قراءة إعدادات الاحتفاظ" });
+  }
+});
+
+router.put("/maintenance/retention-settings/:toolKey", requireSuperAdmin, async (req, res) => {
+  const toolKey = String(req.params.toolKey ?? "");
+  const bounds = RETENTION_TOOL_BOUNDS[toolKey];
+  if (!bounds) {
+    res.status(400).json({ error: "أداة غير معروفة" });
+    return;
+  }
+  const rawDays = req.body?.days;
+  if (rawDays === undefined || rawDays === null || rawDays === "") {
+    res.status(400).json({ error: "الرجاء إدخال عدد الأيام" });
+    return;
+  }
+  const parsed = Number(rawDays);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)
+      || parsed < bounds.min || parsed > bounds.max) {
+    res.status(400).json({
+      error: `يجب أن تكون مدة الاحتفاظ عدداً صحيحاً بين ${bounds.min} و ${bounds.max} يوماً`,
+    });
+    return;
+  }
+  const days = parsed;
+  try {
+    const [previous] = await db.select()
+      .from(maintenanceRetentionSettingsTable)
+      .where(eq(maintenanceRetentionSettingsTable.toolKey, toolKey));
+    const now = new Date();
+    await db.insert(maintenanceRetentionSettingsTable)
+      .values({ toolKey, days, updatedAt: now })
+      .onConflictDoUpdate({
+        target: maintenanceRetentionSettingsTable.toolKey,
+        set: { days, updatedAt: now },
+      });
+    // Audit-log the change so the maintenance history panel can show who
+    // tuned a retention window. Recorded under company 0 (system-wide) since
+    // retention settings are global, not per-tenant.
+    await writeAudit({
+      userId:   req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role:     "superadmin",
+      companyId: 0,
+      module:   "maintenance",
+      action:   "edit_retention",
+      method:   req.method,
+      path:     req.originalUrl,
+      entityType: "maintenance_retention",
+      entityId: toolKey,
+      metadata: { toolKey, days, previousDays: previous?.days ?? null, defaultDays: bounds.default },
+    });
+    res.json({
+      ok: true,
+      toolKey,
+      days,
+      defaultDays: bounds.default,
+      min: bounds.min,
+      max: bounds.max,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل حفظ مدة الاحتفاظ" });
   }
 });
 

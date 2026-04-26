@@ -101,6 +101,7 @@ const HISTORY_ACTION_LABELS_AR: Record<string, string> = {
   run_now_all:      "تشغيل للكل",
   edit_schedule:    "تعديل الجدولة",
   send_test_email:  "بريد تجريبي",
+  edit_retention:   "تعديل مدة الاحتفاظ",
 };
 const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   journal_pending:                 "قيود معلّقة",
@@ -114,9 +115,11 @@ const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   old_audit_logs:                  "سجلات تدقيق قديمة",
   old_maintenance_runs:            "عمليات صيانة قديمة",
   old_maintenance_email_runs:      "سجل بريد الصيانة القديم",
+  old_report_email_runs:           "سجل بريد التقارير القديم",
   maintenance_history:             "سجل الصيانة",
   maintenance_schedule:            "جدولة الصيانة",
   maintenance_runs:                "تشغيل الصيانة",
+  maintenance_retention:           "مدة الاحتفاظ بالسجلات",
 };
 function historyActionLabelAr(value: string): string {
   return HISTORY_ACTION_LABELS_AR[value] ?? value;
@@ -2043,7 +2046,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           <MaintenanceTool
             toolKey="old-audit-logs"
             label="سجل التدقيق القديم"
-            description="سجلات تدقيق أقدم من سنة (audit_log) — حذفها يقلّص حجم الجدول دون التأثير على الإجراءات الحديثة."
+            description="سجلات تدقيق أقدم من مدة الاحتفاظ المحدّدة (audit_log) — حذفها يقلّص حجم الجدول دون التأثير على الإجراءات الحديثة."
             icon={ScrollText}
             checkEndpoint="maintenance/old-audit-logs"
             fixEndpoint="maintenance/old-audit-logs/fix"
@@ -2052,9 +2055,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             destructive
             latestScan={latestByTool.get("old-audit-logs") ?? null}
             trend={trendForTool("old-audit-logs")}
+            retentionConfig={{ defaultDays: 365, min: 30, max: 3650 }}
             confirmTitle="حذف سجلات التدقيق القديمة"
-            confirmDescription={(n) => `سيتم حذف ${n} سجل تدقيق أقدم من 365 يوماً نهائياً. متابعة؟`}
-            buildFixBody={(cid) => ({ companyId: cid, days: 365 })}
+            confirmDescription={(n) => `سيتم حذف ${n} سجل تدقيق ضمن مدة الاحتفاظ المحدّدة نهائياً. متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid })}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -2097,7 +2101,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           <MaintenanceTool
             toolKey="old-maintenance-runs"
             label="سجل تشغيل الصيانة القديم"
-            description="نتائج فحص صيانة أقدم من 90 يوماً (maintenance_runs) — حذفها يحافظ على لوحة المؤشرات سريعة."
+            description="نتائج فحص صيانة أقدم من مدة الاحتفاظ المحدّدة (maintenance_runs) — حذفها يحافظ على لوحة المؤشرات سريعة."
             icon={Trash2}
             checkEndpoint="maintenance/old-maintenance-runs"
             fixEndpoint="maintenance/old-maintenance-runs/fix"
@@ -2106,9 +2110,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             destructive
             latestScan={latestByTool.get("old-maintenance-runs") ?? null}
             trend={trendForTool("old-maintenance-runs")}
+            retentionConfig={{ defaultDays: 90, min: 7, max: 3650 }}
             confirmTitle="حذف سجلات تشغيل الصيانة القديمة"
-            confirmDescription={(n) => `سيتم حذف ${n} نتيجة فحص أقدم من 90 يوماً نهائياً. متابعة؟`}
-            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            confirmDescription={(n) => `سيتم حذف ${n} نتيجة فحص ضمن مدة الاحتفاظ المحدّدة نهائياً. متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid })}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -2158,7 +2163,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           <MaintenanceTool
             toolKey="old-maintenance-email-runs"
             label="سجل بريد الصيانة القديم"
-            description="محاولات إرسال تنبيهات الصيانة (maintenance_email_runs) أقدم من 90 يوماً — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
+            description="محاولات إرسال تنبيهات الصيانة (maintenance_email_runs) أقدم من مدة الاحتفاظ المحدّدة — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
             icon={Trash2}
             checkEndpoint="maintenance/old-maintenance-email-runs"
             fixEndpoint="maintenance/old-maintenance-email-runs/fix"
@@ -2167,9 +2172,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             destructive
             latestScan={null}
             trend={undefined}
+            retentionConfig={{ defaultDays: 90, min: 7, max: 3650 }}
             confirmTitle="حذف سجل بريد الصيانة القديم"
-            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال أقدم من 90 يوماً نهائياً (سجل عام لكل الشركات). متابعة؟`}
-            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال ضمن مدة الاحتفاظ المحدّدة نهائياً (سجل عام لكل الشركات). متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid })}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
@@ -2223,7 +2229,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           <MaintenanceTool
             toolKey="old-report-email-runs"
             label="سجل بريد التقارير القديم"
-            description="محاولات إرسال تقارير الـSuperAdmin (report_email_schedule_runs) أقدم من 90 يوماً — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
+            description="محاولات إرسال تقارير الـSuperAdmin (report_email_schedule_runs) أقدم من مدة الاحتفاظ المحدّدة — حذفها يقلّص حجم سجل التدقيق دون التأثير على المحاولات الحديثة. السجل مشترك بين كل الشركات."
             icon={Trash2}
             checkEndpoint="maintenance/old-report-email-runs"
             fixEndpoint="maintenance/old-report-email-runs/fix"
@@ -2232,9 +2238,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             destructive
             latestScan={null}
             trend={undefined}
+            retentionConfig={{ defaultDays: 90, min: 7, max: 3650 }}
             confirmTitle="حذف سجل بريد التقارير القديم"
-            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال أقدم من 90 يوماً نهائياً (سجل عام لكل الشركات). متابعة؟`}
-            buildFixBody={(cid) => ({ companyId: cid, days: 90 })}
+            confirmDescription={(n) => `سيتم حذف ${n} محاولة إرسال ضمن مدة الاحتفاظ المحدّدة نهائياً (سجل عام لكل الشركات). متابعة؟`}
+            buildFixBody={(cid) => ({ companyId: cid })}
             renderDetails={({ data }) => {
               const items = data.items ?? [];
               return (
