@@ -23,6 +23,12 @@ import {
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
+// Shared poll cadence for the three live-refresh maintenance panels on this
+// page (critical alerts, broken tools, recovered tools). Keeping it in one
+// named constant prevents the panels from drifting out of sync if we ever
+// adjust the cadence — change this once and all three panels move together.
+const MAINTENANCE_PANEL_REFETCH_MS = 30_000;
+
 type CheckResult = {
   key: string; label: string; severity: "high" | "medium" | "low";
   count: number; samples: any[];
@@ -1099,7 +1105,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
-    refetchInterval: 30_000,
+    refetchInterval: MAINTENANCE_PANEL_REFETCH_MS,
   });
 
   // Mirror of the broken-tool panel above, in the positive direction. Lists
@@ -1134,7 +1140,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
-    refetchInterval: 30_000,
+    refetchInterval: MAINTENANCE_PANEL_REFETCH_MS,
   });
 
   // CSV export for the green recovery panel — calls the same endpoint with
@@ -1216,7 +1222,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
-    refetchInterval: 30_000,
+    refetchInterval: MAINTENANCE_PANEL_REFETCH_MS,
   });
 
   // Tool-history drill-down — clicking a tool key in the broken-tool panel
