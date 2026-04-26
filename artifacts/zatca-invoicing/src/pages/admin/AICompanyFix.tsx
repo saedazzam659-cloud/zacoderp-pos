@@ -1074,6 +1074,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // surfaces it explicitly so admins notice when a check stops working. The
   // window is server-defined (TOOL_ERROR_WINDOW_DAYS) and returned in the
   // payload so the panel can label its retention policy honestly.
+  // Auto-refreshes on the same 30s cadence as the critical-alerts panel below
+  // so a tool that breaks (or gets fixed) between manual sweeps appears
+  // without requiring a page reload. Polling pauses when the tab is hidden
+  // because refetchIntervalInBackground defaults to false in TanStack Query
+  // v5, so an unattended dashboard doesn't burn requests.
   const errorSummaryQ = useQuery({
     queryKey: ["maintenance-error-summary"],
     queryFn: async () => {
@@ -1086,6 +1091,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
+    refetchInterval: 30_000,
   });
 
   // Mirror of the broken-tool panel above, in the positive direction. Lists
@@ -1096,6 +1102,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // who don't read the email with no on-screen confirmation that the fix
   // landed. Empty state hides the panel entirely so the page stays calm when
   // there's nothing to celebrate.
+  // Auto-refreshes on the same 30s cadence as the broken-tool and critical-
+  // alerts panels so a freshly-recovered tool surfaces within one tick of the
+  // next scheduled sweep, without requiring a manual reload. Polling pauses
+  // when the tab is hidden (TanStack Query v5 leaves refetchIntervalInBackground
+  // false by default), keeping request volume in check.
   const recoverySummaryQ = useQuery({
     queryKey: ["maintenance-recent-recoveries"],
     queryFn: async () => {
@@ -1115,6 +1126,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
+    refetchInterval: 30_000,
   });
 
   // Fleet view — top 5 active companies with the most critical findings in
