@@ -2332,6 +2332,102 @@ test("GET /maintenance/tool-history: honours ?limit and clamps to [1, 50]", asyn
   }
 });
 
+test("GET /maintenance/tool-history: ?format=csv returns text/csv with the documented Arabic header row + writes an export_csv audit row", async () => {
+  // Watermark audit_log so we only inspect rows this test wrote — same
+  // shared-DB safety pattern the email-history CSV test below uses.
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  // Expected data-line count = every recorded run for the (company, tool)
+  // pair, regardless of the on-screen ?limit. The CSV branch is documented
+  // to ignore that parameter so the file contains the full failure trail,
+  // not just the 20 rows the modal renders. Compute the count from the DB
+  // so the assertion holds across run orderings on a shared test DB.
+  const [{ runCount }] = await db
+    .select({ runCount: sql<number>`count(*)::int` })
+    .from(maintenanceRunsTable)
+    .where(and(
+      eq(maintenanceRunsTable.companyId, dirtyCompanyId),
+      eq(maintenanceRunsTable.toolKey, "journal-pending"),
+    ));
+  // ≥2 (not just ≥1) so the &limit=1 + format=csv combination below is a
+  // *strict* anti-regression signal: a hypothetical broken implementation
+  // that threaded `limit` into the CSV SQL could otherwise sneak through
+  // when only one run exists. The run-now tests above fire multiple
+  // sweeps against the dirty company, so this precondition holds.
+  assert.ok(runCount >= 2,
+    `expected at least two seeded runs for (dirty, journal-pending) before exporting (so ?limit=1 vs full-trail is observable), got ${runCount}`);
+
+  // Pass &limit=1 alongside &format=csv to prove the CSV branch ignores
+  // the on-screen cap: a sloppy refactor that threaded `limit` into the CSV
+  // SQL would cap the file at 1 data line and trip the row-count assertion
+  // below.
+  const r = await api(
+    `/api/admin/maintenance/tool-history?companyId=${dirtyCompanyId}&toolKey=journal-pending&limit=1&format=csv`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.text.slice(0, 200)}`);
+  assert.match(r.headers.get("content-type") ?? "", /text\/csv/i, "Content-Type must be text/csv");
+
+  // Content-Disposition filename starts with the documented prefix so the
+  // file the operator hands engineers can be matched by name back to the
+  // (company, tool) modal they exported it from.
+  const disposition = r.headers.get("content-disposition") ?? "";
+  assert.match(
+    disposition,
+    new RegExp(`attachment;\\s*filename="tool-history-${dirtyCompanyId}-journal-pending-`),
+    `Content-Disposition must start with the documented prefix, got: ${disposition}`,
+  );
+
+  // Exact header row — admins archiving the file expect a stable schema.
+  const headerLine = r.text.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0];
+  const expectedHeaders = ["الحالة", "التشغيل", "عدد النتائج", "المدة (مللي ث)", "وقت التشغيل", "رسالة الخطأ"];
+  for (const h of expectedHeaders) {
+    assert.ok(headerLine.includes(h), `CSV header row must include "${h}", got: ${headerLine}`);
+  }
+
+  // Data lines: one per recorded run for the (company, tool) pair — the
+  // CSV branch intentionally ignores ?limit so this can exceed the on-screen
+  // cap of 20.
+  const dataLines = r.text.replace(/^\uFEFF/, "").split(/\r?\n/).slice(1).filter((l) => l.length > 0);
+  assert.equal(dataLines.length, runCount,
+    `CSV should contain one data line per recorded run (?limit must be ignored), got ${dataLines.length} for ${runCount} DB rows`);
+
+  // Audit side-effect: a single row recording who pulled the file, the
+  // module/action/entityType, and the documented metadata shape
+  // ({ format, toolKey, count }).
+  const newAuditRows = await db.select({
+    id:         auditLogTable.id,
+    action:     auditLogTable.action,
+    module:     auditLogTable.module,
+    entityType: auditLogTable.entityType,
+    userId:     auditLogTable.userId,
+    metadata:   auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.entityType, "maintenance_tool_history"),
+    ));
+  assert.equal(newAuditRows.length, 1, "CSV branch must write exactly one export_csv audit row");
+  const audit = newAuditRows[0];
+  assert.equal(audit.userId, saUserId, "audit row must record the calling SuperAdmin");
+  assert.ok(isObject(audit.metadata), "audit metadata must be a JSON object");
+  const meta = audit.metadata as Record<string, unknown>;
+  assert.equal(meta.format, "csv");
+  assert.equal(meta.toolKey, "journal-pending");
+  assert.equal(meta.count, runCount,
+    `metadata.count must equal the number of exported rows, got ${meta.count} for ${runCount} DB rows`);
+  // Track for suite-level cleanup (also covered by the userId-based wipe in
+  // cleanup() but explicit tracking matches the rest of the suite).
+  insertedAuditLogIds.push(audit.id);
+});
+
 // ─── /maintenance/notification-preview ─────────────────────────────────────
 // Backs the Settings → Notifications hint that tells SuperAdmins how many of
 // the recent scheduled sweeps would have actually emailed them at each
