@@ -927,6 +927,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب سجل البريد");
       return r.json() as Promise<{
         count: number;
+        // `total` is the count of attempts that match the active filters
+        // across the entire table, not just the loaded pages — surfaced in
+        // the panel header as "Loaded N of T attempts" (task #67) so
+        // SuperAdmins auditing a long history can tell how far they are
+        // through the dataset without paging to the end.
+        total: number;
         items: Array<{
           id: number;
           ranAt: string;
@@ -1447,6 +1453,13 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
           const lastPage   = emailHistoryQ.data.pages[emailHistoryQ.data.pages.length - 1];
           const hasMore    = !!lastPage?.hasMore;
           const loadedCount = emailHistoryItems.length;
+          // `total` (task #67) — count of attempts matching the active
+          // filters across the whole table. Server returns it on every page
+          // (not just offset=0) so it stays accurate as new attempts land
+          // between page loads. Fall back to loadedCount defensively if a
+          // stale page-shape ever omits it, so the header never reads "of
+          // undefined".
+          const totalCount = lastPage?.total ?? loadedCount;
           return (
           <div className="border border-violet-200 rounded p-3 bg-white">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -1454,8 +1467,8 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               <span className="text-sm font-medium text-violet-900">سجل تنبيهات البريد</span>
               <span className="text-[11px] text-muted-foreground">
                 {hasFilters
-                  ? `${loadedCount} محاولة مطابقة للفلاتر${hasMore ? "+" : ""}`
-                  : `آخر ${loadedCount} محاولة إرسال (نجاح أو فشل أو متخطّاة)${hasMore ? " — هناك المزيد" : ""}`}
+                  ? `تم تحميل ${loadedCount} من ${totalCount} محاولة مطابقة للفلاتر`
+                  : `تم تحميل ${loadedCount} من ${totalCount} محاولة إرسال (نجاح أو فشل أو متخطّاة)`}
               </span>
               <div className="mr-auto flex items-center gap-1.5">
                 <Button
@@ -1616,7 +1629,13 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                 the first page. Hidden when the server reports no more rows
                 so the UI doesn't suggest extra data exists. The fetch error
                 from any page surfaces above the button so admins notice. */}
-            {hasMore && (
+            {hasMore && (() => {
+              // Surface the remaining count on the button label so admins
+              // know how many attempts are still un-loaded before clicking
+              // (task #67). Clamp at 0 in case totalCount briefly trails
+              // loadedCount between concurrent inserts and the next refetch.
+              const remaining = Math.max(0, totalCount - loadedCount);
+              return (
               <div className="mt-2 flex items-center justify-center">
                 <Button
                   size="sm" variant="outline"
@@ -1628,10 +1647,13 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   {emailHistoryQ.isFetchingNextPage
                     ? <Loader2 className="h-3 w-3 animate-spin" />
                     : null}
-                  تحميل المزيد
+                  {remaining > 0
+                    ? `تحميل المزيد (${remaining} متبقّية)`
+                    : "تحميل المزيد"}
                 </Button>
               </div>
-            )}
+              );
+            })()}
           </div>
           );
         })()}

@@ -5105,10 +5105,23 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
     // the email-history panel can page through hundreds of attempts via the
     // "تحميل المزيد" button without silently capping at 100 (task #54).
     const q = db.select().from(maintenanceEmailRunsTable);
-    const rows = await (where ? q.where(where) : q)
-      .orderBy(desc(maintenanceEmailRunsTable.ranAt))
-      .limit(limit + 1)
-      .offset(offset);
+    // Run the page query and the total-count query in parallel — the count
+    // uses the SAME `where` so the "Loaded N of T" header in the audit panel
+    // (task #67) reflects the active filters, and SuperAdmins can tell how
+    // far they are through the dataset without paging to the end. Always
+    // returned (not gated on offset===0) so the total stays accurate even if
+    // new attempts land between page loads. maintenance_email_runs is a
+    // small append-only audit table so the extra count(*) is cheap.
+    const countQ = db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(maintenanceEmailRunsTable);
+    const [rows, [{ total }]] = await Promise.all([
+      (where ? q.where(where) : q)
+        .orderBy(desc(maintenanceEmailRunsTable.ranAt))
+        .limit(limit + 1)
+        .offset(offset),
+      where ? countQ.where(where) : countQ,
+    ]);
     const hasMore = rows.length > limit;
     const pageRows = hasMore ? rows.slice(0, limit) : rows;
     const items = pageRows.map((r) => ({
@@ -5124,6 +5137,7 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
     }));
     res.json({
       count:      items.length,
+      total,
       items,
       offset,
       limit,
