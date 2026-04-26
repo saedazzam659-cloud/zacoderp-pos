@@ -24,7 +24,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, Plus, Trash2, FileText, ListOrdered, Calculator, Tag } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
-import { PostedDocumentBanner } from "@/components/PostedDocumentBanner";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -1004,12 +1003,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     </div>
   );
 
-  // Posted-doc lock: when an existing invoice/return has been posted we
-  // surface a read-only banner with an admin-only "Unpost" action and
-  // disable the entire form (interaction blocked + save button disabled).
-  const isPosted = !isNew && (existing as any)?.status === "posted";
-  const unpostPath = isInvoice ? "sales-invoices" : "sales-returns";
-
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">
       <div className="flex items-center gap-3">
@@ -1027,16 +1020,6 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         </div>
       </div>
 
-      {!isNew && (
-        <PostedDocumentBanner
-          status={(existing as any)?.status}
-          unpostUrl={`${API}/api/sales/${unpostPath}/${editId}/unpost`}
-          unpostMethod="PATCH"
-          invalidateKeys={[[queryKey, editId], queryKey]}
-        />
-      )}
-
-      <fieldset disabled={isPosted} className={isPosted ? "opacity-70 pointer-events-none" : undefined}>
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
@@ -1191,15 +1174,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
         </Card>
       </Tabs>
-      </fieldset>
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(basePath)}>{t("common.cancel")}</Button>
-        {!isPosted && (
-          <Button onClick={handleSave} disabled={saveMut.isPending}>
-            {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
-          </Button>
-        )}
+        <Button onClick={handleSave} disabled={saveMut.isPending}>
+          {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
+        </Button>
       </div>
     </div>
   );
