@@ -375,7 +375,7 @@ router.post("/verify-otp", saOtpLimit, async (req, res) => {
     res.status(429).json({ error: "تم تجاوز عدد المحاولات. اطلب رمزًا جديدًا." });
     return;
   }
-  if (otp.deviceFingerprint && otp.deviceFingerprint !== fp) {
+  if (otp.deviceFingerprint && otp.deviceFingerprint !== fp && !emergencyBypassEnabled()) {
     await recordAttempt({
       userId: otp.userId, username: null, ip, userAgent: ua, deviceFingerprint: fp,
       success: false, outcome: "device_denied", failureReason: "otp_fingerprint_mismatch",
