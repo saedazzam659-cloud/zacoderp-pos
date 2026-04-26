@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   Activity, Banknote, ReceiptText, Users as UsersIcon,
   Building2, Clock, RefreshCw, Search, Lock, AlertCircle, X,
@@ -17,27 +18,32 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { posMonitoringApi, type PosSessionRow, type PosSessionDetail } from "@/lib/posMonitoringApi";
 
-const SAR = (n: number | string | null | undefined) =>
-  new Intl.NumberFormat("ar-SA", { style: "currency", currency: "SAR", maximumFractionDigits: 2 }).format(Number(n ?? 0));
-const dt = (s: string | null) => s ? new Date(s).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" }) : "—";
-const durationMin = (a: string, b: string | null) => {
+const SAR = (n: number | string | null | undefined, locale: string) =>
+  new Intl.NumberFormat(locale, { style: "currency", currency: "SAR", maximumFractionDigits: 2 }).format(Number(n ?? 0));
+
+const dt = (s: string | null, locale: string) =>
+  s ? new Date(s).toLocaleString(locale, { dateStyle: "short", timeStyle: "short" }) : "—";
+
+const durationMin = (a: string, b: string | null, t: (k: string, opts?: any) => string) => {
   const start = new Date(a).getTime();
   const end = b ? new Date(b).getTime() : Date.now();
   const m = Math.max(0, Math.round((end - start) / 60000));
-  if (m < 60) return `${m} د`;
+  if (m < 60) return t("posPages.monitoring.durMin", { m });
   const h = Math.floor(m / 60), r = m % 60;
-  return `${h} س ${r} د`;
+  return t("posPages.monitoring.durHourMin", { h, m: r });
 };
 
 function StatusBadge({ status }: { status: PosSessionRow["status"] }) {
+  const { t } = useTranslation();
+  const tr = (k: string) => t(`posPages.monitoring.${k}`) as string;
   if (status === "open") return (
     <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
       <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 me-1.5 animate-pulse" />
-      مفتوحة
+      {tr("statusOpen")}
     </Badge>
   );
-  if (status === "closed") return <Badge variant="secondary">مغلقة</Badge>;
-  return <Badge className="bg-amber-100 text-amber-800 border-amber-200">إغلاق إجباري</Badge>;
+  if (status === "closed") return <Badge variant="secondary">{tr("statusClosed")}</Badge>;
+  return <Badge className="bg-amber-100 text-amber-800 border-amber-200">{tr("statusForceClosed")}</Badge>;
 }
 
 function StatCard({ icon: Icon, label, value, accent, sub }: {
@@ -64,6 +70,12 @@ function StatCard({ icon: Icon, label, value, accent, sub }: {
 export default function PosMonitoring() {
   const { user, token } = useAuth();
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const locale = isRtl ? "ar-SA" : "en-US";
+  const tr = (k: string, opts?: any) => t(`posPages.monitoring.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
   const qc = useQueryClient();
   const isSuperAdmin = user?.role === "superadmin";
   const [companyId, setCompanyId] = useState<number | null>(user?.companyId ?? null);
@@ -77,7 +89,7 @@ export default function PosMonitoring() {
       const res = await fetch(`${API}/api/companies`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error("فشل تحميل الشركات");
+      if (!res.ok) throw new Error(tr("loadCompaniesFailed"));
       return (await res.json()) as Array<{ id: number; nameAr: string; nameEn?: string }>;
     },
   });
@@ -115,8 +127,11 @@ export default function PosMonitoring() {
       String(r.id).includes(q) ||
       r.user?.username?.toLowerCase().includes(q) ||
       r.user?.nameAr?.toLowerCase().includes(q) ||
+      (r.user as any)?.nameEn?.toLowerCase().includes(q) ||
       r.branch?.nameAr?.toLowerCase().includes(q) ||
-      r.cashBox?.nameAr?.toLowerCase().includes(q)
+      (r.branch as any)?.nameEn?.toLowerCase().includes(q) ||
+      r.cashBox?.nameAr?.toLowerCase().includes(q) ||
+      (r.cashBox as any)?.nameEn?.toLowerCase().includes(q)
     );
   }, [list.data, search]);
 
@@ -125,38 +140,39 @@ export default function PosMonitoring() {
     const map = new Map<string, { name: string; sales: number; invoices: number }>();
     for (const r of filtered) {
       const key = r.user?.username || "—";
-      const name = r.user?.nameAr || r.user?.username || "—";
+      const name = pickName(r.user as any) || r.user?.username || "—";
       const cur = map.get(key) ?? { name, sales: 0, invoices: 0 };
       cur.sales += Number(r.totalSales || 0);
       cur.invoices += Number(r.invoiceCount || 0);
       map.set(key, cur);
     }
     return Array.from(map.values()).sort((a, b) => b.sales - a.sales).slice(0, 5);
-  }, [filtered]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, isRtl]);
 
   async function forceClose(id: number) {
     try {
-      await posMonitoringApi.forceClose(id, "إغلاق من لوحة المراقبة");
-      toast({ title: "تم الإغلاق", description: `تم إغلاق الجلسة #${id} بنجاح` });
+      await posMonitoringApi.forceClose(id, tr("closeReason"));
+      toast({ title: tr("toastClosedTitle"), description: tr("toastClosedDesc", { id }) });
       qc.invalidateQueries({ queryKey: ["pos-sessions"] });
       qc.invalidateQueries({ queryKey: ["pos-summary-today"] });
       qc.invalidateQueries({ queryKey: ["pos-session", id] });
     } catch (e: any) {
-      toast({ title: "تعذّر الإغلاق", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+      toast({ title: tr("toastCloseFailedTitle"), description: e?.message || tr("unknownError"), variant: "destructive" });
     }
   }
 
   return (
-    <div className="space-y-6 p-1" dir="rtl">
+    <div className="space-y-6 p-1" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Activity className="w-6 h-6 text-emerald-600" />
-            مراقبة نقاط البيع
+            {tr("title")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            تتبّع جلسات الكاشير المفتوحة والمغلقة، ومبيعات اليوم اللحظية
+            {tr("subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -167,11 +183,11 @@ export default function PosMonitoring() {
             className="gap-1"
           >
             <span className={`inline-block w-2 h-2 rounded-full ${autoRefresh ? "bg-emerald-300 animate-pulse" : "bg-muted-foreground"}`} />
-            تحديث تلقائي
+            {tr("autoRefresh")}
           </Button>
           <Button variant="outline" size="sm" onClick={() => { list.refetch(); summary.refetch(); }} className="gap-1">
             <RefreshCw className="w-4 h-4" />
-            تحديث
+            {tr("refresh")}
           </Button>
         </div>
       </div>
@@ -186,27 +202,27 @@ export default function PosMonitoring() {
           <>
             <StatCard
               icon={Activity}
-              label="جلسات مفتوحة الآن"
+              label={tr("kpiOpenSessions")}
               value={String(summary.data?.openSessions ?? 0)}
               accent="bg-gradient-to-br from-emerald-500 to-emerald-600"
-              sub="عبر كل الفروع"
+              sub={tr("kpiOpenSessionsSub")}
             />
             <StatCard
               icon={Banknote}
-              label="مبيعات اليوم (نقاط البيع)"
-              value={SAR(summary.data?.totalSales ?? 0)}
+              label={tr("kpiTodaySales")}
+              value={SAR(summary.data?.totalSales ?? 0, locale)}
               accent="bg-gradient-to-br from-blue-500 to-indigo-600"
-              sub="فواتير مرحّلة فقط"
+              sub={tr("kpiTodaySalesSub")}
             />
             <StatCard
               icon={ReceiptText}
-              label="عدد فواتير اليوم"
+              label={tr("kpiTodayInvoices")}
               value={String(summary.data?.invoiceCount ?? 0)}
               accent="bg-gradient-to-br from-purple-500 to-fuchsia-600"
             />
             <StatCard
               icon={Lock}
-              label="جلسات أُغلقت اليوم"
+              label={tr("kpiClosedToday")}
               value={String(summary.data?.closedToday ?? 0)}
               accent="bg-gradient-to-br from-slate-500 to-slate-700"
             />
@@ -218,21 +234,21 @@ export default function PosMonitoring() {
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground`} />
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="بحث برقم الجلسة، الكاشير، الفرع، الصندوق..."
-              className="pe-9"
+              placeholder={tr("searchPh")}
+              className={isRtl ? "pe-9" : "ps-9"}
             />
           </div>
           <Select value={status || "all"} onValueChange={(v) => setStatus(v === "all" ? "" : v as any)}>
-            <SelectTrigger className="w-44"><SelectValue placeholder="كل الحالات" /></SelectTrigger>
+            <SelectTrigger className="w-44"><SelectValue placeholder={tr("allStatuses")} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">كل الحالات</SelectItem>
-              <SelectItem value="open">مفتوحة</SelectItem>
-              <SelectItem value="closed">مغلقة</SelectItem>
-              <SelectItem value="force_closed">إغلاق إجباري</SelectItem>
+              <SelectItem value="all">{tr("allStatuses")}</SelectItem>
+              <SelectItem value="open">{tr("statusOpen")}</SelectItem>
+              <SelectItem value="closed">{tr("statusClosed")}</SelectItem>
+              <SelectItem value="force_closed">{tr("statusForceClosed")}</SelectItem>
             </SelectContent>
           </Select>
           {isSuperAdmin && (
@@ -241,12 +257,12 @@ export default function PosMonitoring() {
               onValueChange={(v) => setCompanyId(v === "all" ? null : Number(v))}
             >
               <SelectTrigger className="w-56" data-testid="select-company">
-                <SelectValue placeholder="كل الشركات" />
+                <SelectValue placeholder={tr("allCompanies")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">كل الشركات</SelectItem>
+                <SelectItem value="all">{tr("allCompanies")}</SelectItem>
                 {(companiesQ.data ?? []).map(c => (
-                  <SelectItem key={c.id} value={String(c.id)}>{c.nameAr}</SelectItem>
+                  <SelectItem key={c.id} value={String(c.id)}>{pickName(c as any)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -256,43 +272,48 @@ export default function PosMonitoring() {
 
       {/* Active sessions live strip */}
       {openSessions.length > 0 && (
-        <Card className="border-0 shadow-sm bg-gradient-to-l from-emerald-50 to-white">
+        <Card className={`border-0 shadow-sm bg-gradient-to-${isRtl ? "l" : "r"} from-emerald-50 to-white`}>
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-3">
               <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <h3 className="font-semibold text-emerald-900">جلسات نشطة الآن ({openSessions.length})</h3>
+              <h3 className="font-semibold text-emerald-900">{tr("activeNow", { count: openSessions.length })}</h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {openSessions.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => setSelectedId(s.id)}
-                  className="text-right rounded-xl border border-emerald-200 bg-white p-3 hover:shadow-md hover:border-emerald-400 transition-all"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-sm font-bold">
-                        {(s.user?.nameAr || s.user?.username || "?").charAt(0)}
-                      </div>
-                      <div>
-                        <div className="font-medium text-sm">{s.user?.nameAr || s.user?.username || "—"}</div>
-                        <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Building2 className="w-3 h-3" />
-                          {s.branch?.nameAr || "—"} · {s.cashBox?.nameAr || "بدون صندوق"}
+              {openSessions.map(s => {
+                const userName = pickName(s.user as any) || s.user?.username || "—";
+                const branchName = pickName(s.branch as any) || "—";
+                const cashBoxName = pickName(s.cashBox as any) || tr("noCashBox");
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedId(s.id)}
+                    className={`${isRtl ? "text-right" : "text-left"} rounded-xl border border-emerald-200 bg-white p-3 hover:shadow-md hover:border-emerald-400 transition-all`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-sm font-bold">
+                          {userName.charAt(0)}
+                        </div>
+                        <div>
+                          <div className="font-medium text-sm">{userName}</div>
+                          <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                            <Building2 className="w-3 h-3" />
+                            {branchName} · {cashBoxName}
+                          </div>
                         </div>
                       </div>
+                      <div className={isRtl ? "text-left" : "text-right"}>
+                        <div className="text-base font-bold text-emerald-700">{SAR(s.totalSales, locale)}</div>
+                        <div className="text-[11px] text-muted-foreground">{tr("invoiceShort", { count: s.invoiceCount })}</div>
+                      </div>
                     </div>
-                    <div className="text-left">
-                      <div className="text-base font-bold text-emerald-700">{SAR(s.totalSales)}</div>
-                      <div className="text-[11px] text-muted-foreground">{s.invoiceCount} فاتورة</div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{dt(s.openedAt, locale)}</span>
+                      <span className="font-medium text-emerald-700">{durationMin(s.openedAt, null, t)}</span>
                     </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />فُتحت {dt(s.openedAt)}</span>
-                    <span className="font-medium text-emerald-700">{durationMin(s.openedAt, null)}</span>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -304,15 +325,15 @@ export default function PosMonitoring() {
           <CardContent className="p-4">
             <h3 className="font-semibold mb-3 flex items-center gap-2">
               <UsersIcon className="w-4 h-4 text-blue-600" />
-              أفضل الكاشيرات (حسب المبيعات)
+              {tr("topCashiers")}
             </h3>
             <div className="space-y-2">
               {byUser.map((u, idx) => (
                 <div key={u.name} className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">{idx + 1}</div>
                   <div className="flex-1 text-sm font-medium">{u.name}</div>
-                  <div className="text-xs text-muted-foreground">{u.invoices} فاتورة</div>
-                  <div className="font-semibold text-sm">{SAR(u.sales)}</div>
+                  <div className="text-xs text-muted-foreground">{tr("invoiceShort", { count: u.invoices })}</div>
+                  <div className="font-semibold text-sm">{SAR(u.sales, locale)}</div>
                 </div>
               ))}
             </div>
@@ -326,72 +347,75 @@ export default function PosMonitoring() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs">
-                <tr className="text-right">
+                <tr className={isRtl ? "text-right" : "text-left"}>
                   <th className="p-3">#</th>
-                  <th className="p-3">الكاشير</th>
-                  <th className="p-3">الفرع</th>
-                  <th className="p-3">الصندوق</th>
-                  <th className="p-3">فُتحت</th>
-                  <th className="p-3">أُغلقت</th>
-                  <th className="p-3">المدة</th>
-                  <th className="p-3 text-left">الفواتير</th>
-                  <th className="p-3 text-left">المبيعات</th>
-                  <th className="p-3 text-left">فرق الصندوق</th>
-                  <th className="p-3">الحالة</th>
-                  <th className="p-3 text-left">إجراءات</th>
+                  <th className="p-3">{tr("colCashier")}</th>
+                  <th className="p-3">{tr("colBranch")}</th>
+                  <th className="p-3">{tr("colCashBox")}</th>
+                  <th className="p-3">{tr("colOpened")}</th>
+                  <th className="p-3">{tr("colClosed")}</th>
+                  <th className="p-3">{tr("colDuration")}</th>
+                  <th className={`p-3 ${isRtl ? "text-left" : "text-right"}`}>{tr("colInvoices")}</th>
+                  <th className={`p-3 ${isRtl ? "text-left" : "text-right"}`}>{tr("colSales")}</th>
+                  <th className={`p-3 ${isRtl ? "text-left" : "text-right"}`}>{tr("colDifference")}</th>
+                  <th className="p-3">{tr("colStatus")}</th>
+                  <th className={`p-3 ${isRtl ? "text-left" : "text-right"}`}>{tr("colActions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {list.isLoading && (
-                  <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">جارٍ التحميل…</td></tr>
+                  <tr><td colSpan={12} className="p-6 text-center text-muted-foreground">{tr("loading")}</td></tr>
                 )}
                 {!list.isLoading && filtered.length === 0 && (
                   <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">
-                    لا توجد جلسات مطابقة للبحث.
+                    {tr("noMatch")}
                   </td></tr>
                 )}
-                {filtered.map(s => (
-                  <tr
-                    key={s.id}
-                    className="border-t hover:bg-muted/30 cursor-pointer"
-                    onClick={() => setSelectedId(s.id)}
-                  >
-                    <td className="p-3 font-mono text-xs">#{s.id}</td>
-                    <td className="p-3">
-                      <div className="font-medium">{s.user?.nameAr || s.user?.username || "—"}</div>
-                      {s.user?.nameAr && <div className="text-[11px] text-muted-foreground">{s.user.username}</div>}
-                    </td>
-                    <td className="p-3">{s.branch?.nameAr || "—"}</td>
-                    <td className="p-3">{s.cashBox?.nameAr || "—"}</td>
-                    <td className="p-3 text-xs">{dt(s.openedAt)}</td>
-                    <td className="p-3 text-xs">{dt(s.closedAt)}</td>
-                    <td className="p-3 text-xs">{durationMin(s.openedAt, s.closedAt)}</td>
-                    <td className="p-3 text-left tabular-nums">{s.invoiceCount}</td>
-                    <td className="p-3 text-left font-semibold tabular-nums">{SAR(s.totalSales)}</td>
-                    <td className="p-3 text-left tabular-nums">
-                      {s.difference != null ? (
-                        <span className={Number(s.difference) === 0 ? "text-muted-foreground" :
-                          Number(s.difference) > 0 ? "text-emerald-600" : "text-red-600"}>
-                          {SAR(s.difference)}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td className="p-3"><StatusBadge status={s.status} /></td>
-                    <td className="p-3 text-left">
-                      {s.status === "open" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={(e) => { e.stopPropagation(); if (confirm(`إغلاق الجلسة #${s.id} إجباريًا؟`)) forceClose(s.id); }}
-                          className="gap-1 text-xs"
-                        >
-                          <Lock className="w-3 h-3" />
-                          إغلاق
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map(s => {
+                  const userName = pickName(s.user as any) || s.user?.username || "—";
+                  return (
+                    <tr
+                      key={s.id}
+                      className="border-t hover:bg-muted/30 cursor-pointer"
+                      onClick={() => setSelectedId(s.id)}
+                    >
+                      <td className="p-3 font-mono text-xs">#{s.id}</td>
+                      <td className="p-3">
+                        <div className="font-medium">{userName}</div>
+                        {(s.user?.nameAr || (s.user as any)?.nameEn) && <div className="text-[11px] text-muted-foreground">{s.user?.username}</div>}
+                      </td>
+                      <td className="p-3">{pickName(s.branch as any) || "—"}</td>
+                      <td className="p-3">{pickName(s.cashBox as any) || "—"}</td>
+                      <td className="p-3 text-xs">{dt(s.openedAt, locale)}</td>
+                      <td className="p-3 text-xs">{dt(s.closedAt, locale)}</td>
+                      <td className="p-3 text-xs">{durationMin(s.openedAt, s.closedAt, t)}</td>
+                      <td className={`p-3 ${isRtl ? "text-left" : "text-right"} tabular-nums`}>{s.invoiceCount}</td>
+                      <td className={`p-3 ${isRtl ? "text-left" : "text-right"} font-semibold tabular-nums`}>{SAR(s.totalSales, locale)}</td>
+                      <td className={`p-3 ${isRtl ? "text-left" : "text-right"} tabular-nums`}>
+                        {s.difference != null ? (
+                          <span className={Number(s.difference) === 0 ? "text-muted-foreground" :
+                            Number(s.difference) > 0 ? "text-emerald-600" : "text-red-600"}>
+                            {SAR(s.difference, locale)}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td className="p-3"><StatusBadge status={s.status} /></td>
+                      <td className={`p-3 ${isRtl ? "text-left" : "text-right"}`}>
+                        {s.status === "open" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => { e.stopPropagation(); if (confirm(tr("forceCloseConfirm", { id: s.id }))) forceClose(s.id); }}
+                            className="gap-1 text-xs"
+                          >
+                            <Lock className="w-3 h-3" />
+                            {tr("close")}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -400,21 +424,21 @@ export default function PosMonitoring() {
 
       {/* Session details dialog */}
       <Dialog open={selectedId != null} onOpenChange={(o) => !o && setSelectedId(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" dir={isRtl ? "rtl" : "ltr"}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Activity className="w-5 h-5 text-emerald-600" />
-              تفاصيل الجلسة {selectedId ? `#${selectedId}` : ""}
+              {tr("sessionTitle", { id: selectedId ? `#${selectedId}` : "" })}
             </DialogTitle>
           </DialogHeader>
 
-          {detail.isLoading && <div className="py-8 text-center text-muted-foreground">جارٍ التحميل…</div>}
+          {detail.isLoading && <div className="py-8 text-center text-muted-foreground">{tr("loading")}</div>}
           {detail.data && <SessionDetailBody d={detail.data} onForceClose={() => forceClose(detail.data!.id)} />}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectedId(null)}>
               <X className="w-4 h-4 me-1" />
-              إغلاق
+              {tr("close")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -424,26 +448,32 @@ export default function PosMonitoring() {
 }
 
 function SessionDetailBody({ d, onForceClose }: { d: PosSessionDetail; onForceClose: () => void }) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const locale = isRtl ? "ar-SA" : "en-US";
+  const tr = (k: string, opts?: any) => t(`posPages.monitoring.${k}`, opts) as string;
+  const pickName = (r: { nameAr?: string | null; nameEn?: string | null } | undefined | null) =>
+    !r ? "" : (isRtl ? (r.nameAr ?? r.nameEn ?? "") : (r.nameEn ?? r.nameAr ?? ""));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Info label="الكاشير" value={d.user?.nameAr || d.user?.username || "—"} />
-        <Info label="الفرع" value={d.branch?.nameAr || "—"} />
-        <Info label="الصندوق" value={d.cashBox?.nameAr || "—"} />
-        <Info label="الحالة" value={<StatusBadge status={d.status} />} />
-        <Info label="فُتحت" value={dt(d.openedAt)} />
-        <Info label="أُغلقت" value={dt(d.closedAt)} />
-        <Info label="المدة" value={durationMin(d.openedAt, d.closedAt)} />
-        <Info label="الجهاز" value={<span className="text-[11px] truncate block">{d.device || "—"}</span>} />
-        <Info label="نقدية افتتاحية" value={SAR(d.openingCash)} />
-        <Info label="نقدية متوقعة" value={SAR(d.expectedCash)} />
-        <Info label="نقدية إغلاق" value={SAR(d.closingCash)} />
+        <Info label={tr("infoCashier")}      value={pickName(d.user as any) || d.user?.username || "—"} />
+        <Info label={tr("infoBranch")}       value={pickName(d.branch as any) || "—"} />
+        <Info label={tr("infoCashBox")}      value={pickName(d.cashBox as any) || "—"} />
+        <Info label={tr("infoStatus")}       value={<StatusBadge status={d.status} />} />
+        <Info label={tr("infoOpened")}       value={dt(d.openedAt, locale)} />
+        <Info label={tr("infoClosed")}       value={dt(d.closedAt, locale)} />
+        <Info label={tr("infoDuration")}     value={durationMin(d.openedAt, d.closedAt, t)} />
+        <Info label={tr("infoDevice")}       value={<span className="text-[11px] truncate block">{d.device || "—"}</span>} />
+        <Info label={tr("infoOpeningCash")}  value={SAR(d.openingCash, locale)} />
+        <Info label={tr("infoExpectedCash")} value={SAR(d.expectedCash, locale)} />
+        <Info label={tr("infoClosingCash")}  value={SAR(d.closingCash, locale)} />
         <Info
-          label="الفرق"
+          label={tr("infoDifference")}
           value={
             <span className={Number(d.difference || 0) === 0 ? "" :
               Number(d.difference || 0) > 0 ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>
-              {d.difference != null ? SAR(d.difference) : "—"}
+              {d.difference != null ? SAR(d.difference, locale) : "—"}
             </span>
           }
         />
@@ -451,17 +481,17 @@ function SessionDetailBody({ d, onForceClose }: { d: PosSessionDetail; onForceCl
 
       <div className="grid grid-cols-3 gap-3 pt-3 border-t">
         <div className="rounded-lg bg-blue-50 p-3 text-center">
-          <div className="text-[11px] text-blue-700">إجمالي المبيعات</div>
-          <div className="text-lg font-bold text-blue-900">{SAR(d.totalSales)}</div>
+          <div className="text-[11px] text-blue-700">{tr("totalSales")}</div>
+          <div className="text-lg font-bold text-blue-900">{SAR(d.totalSales, locale)}</div>
         </div>
         <div className="rounded-lg bg-purple-50 p-3 text-center">
-          <div className="text-[11px] text-purple-700">عدد الفواتير</div>
+          <div className="text-[11px] text-purple-700">{tr("invoiceCount")}</div>
           <div className="text-lg font-bold text-purple-900">{d.invoiceCount}</div>
         </div>
         <div className="rounded-lg bg-emerald-50 p-3 text-center">
-          <div className="text-[11px] text-emerald-700">متوسط الفاتورة</div>
+          <div className="text-[11px] text-emerald-700">{tr("avgInvoice")}</div>
           <div className="text-lg font-bold text-emerald-900">
-            {SAR(d.invoiceCount ? d.totalSales / d.invoiceCount : 0)}
+            {SAR(d.invoiceCount ? d.totalSales / d.invoiceCount : 0, locale)}
           </div>
         </div>
       </div>
@@ -469,34 +499,34 @@ function SessionDetailBody({ d, onForceClose }: { d: PosSessionDetail; onForceCl
       <div>
         <h4 className="font-semibold mb-2 flex items-center gap-2">
           <ReceiptText className="w-4 h-4" />
-          فواتير الجلسة ({d.invoices.length})
+          {tr("sessionInvoices", { count: d.invoices.length })}
         </h4>
         <div className="rounded-lg border max-h-72 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-xs sticky top-0">
-              <tr className="text-right">
-                <th className="p-2">رقم</th>
-                <th className="p-2">التاريخ</th>
-                <th className="p-2">الدفع</th>
-                <th className="p-2">الحالة</th>
-                <th className="p-2 text-left">الإجمالي</th>
+              <tr className={isRtl ? "text-right" : "text-left"}>
+                <th className="p-2">{tr("invColNo")}</th>
+                <th className="p-2">{tr("invColDate")}</th>
+                <th className="p-2">{tr("invColPayment")}</th>
+                <th className="p-2">{tr("invColStatus")}</th>
+                <th className={`p-2 ${isRtl ? "text-left" : "text-right"}`}>{tr("invColTotal")}</th>
               </tr>
             </thead>
             <tbody>
               {d.invoices.length === 0 && (
-                <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">لا توجد فواتير في هذه الجلسة بعد.</td></tr>
+                <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">{tr("noInvoicesYet")}</td></tr>
               )}
               {d.invoices.map(i => (
                 <tr key={i.id} className="border-t">
                   <td className="p-2 font-mono text-xs">{i.docNumber || `#${i.id}`}</td>
-                  <td className="p-2 text-xs">{new Date(i.createdAt).toLocaleTimeString("ar-SA")}</td>
-                  <td className="p-2 text-xs">{i.paymentType === "cash" ? "نقدًا" : i.paymentType || "—"}</td>
+                  <td className="p-2 text-xs">{new Date(i.createdAt).toLocaleTimeString(locale)}</td>
+                  <td className="p-2 text-xs">{i.paymentType === "cash" ? tr("paymentCash") : i.paymentType || "—"}</td>
                   <td className="p-2 text-xs">
                     {i.status === "posted"
-                      ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">مرحّلة</Badge>
+                      ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">{tr("statusPosted")}</Badge>
                       : <Badge variant="secondary">{i.status}</Badge>}
                   </td>
-                  <td className="p-2 text-left tabular-nums font-medium">{SAR(i.totalAmount)}</td>
+                  <td className={`p-2 ${isRtl ? "text-left" : "text-right"} tabular-nums font-medium`}>{SAR(i.totalAmount, locale)}</td>
                 </tr>
               ))}
             </tbody>
@@ -508,18 +538,18 @@ function SessionDetailBody({ d, onForceClose }: { d: PosSessionDetail; onForceCl
         <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
           <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
           <div className="flex-1 text-xs text-amber-900">
-            هذه الجلسة لا تزال مفتوحة. يمكنك إغلاقها إجباريًا من هنا (يُسجَّل الإغلاق باسمك).
+            {tr("stillOpenNotice")}
           </div>
-          <Button size="sm" variant="outline" onClick={() => { if (confirm("تأكيد الإغلاق الإجباري؟")) onForceClose(); }}>
+          <Button size="sm" variant="outline" onClick={() => { if (confirm(tr("forceCloseConfirmFinal"))) onForceClose(); }}>
             <Lock className="w-3 h-3 me-1" />
-            إغلاق إجباري
+            {tr("forceCloseTitle")}
           </Button>
         </div>
       )}
 
       {d.closedNotes && (
         <div className="text-xs text-muted-foreground">
-          <span className="font-medium">ملاحظات الإغلاق:</span> {d.closedNotes}
+          <span className="font-medium">{tr("closedNotes")}</span> {d.closedNotes}
         </div>
       )}
     </div>
