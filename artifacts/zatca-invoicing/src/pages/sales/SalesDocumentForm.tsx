@@ -1115,6 +1115,32 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <p className="text-xs text-muted-foreground">{subtitle}</p>
           </div>
         </div>
+        {isInvoice && editId && (existing as any) && (() => {
+          // Posted/unposted badge — visible only when editing an existing
+          // sales invoice. Three states map to the underlying invoice status:
+          //   "posted"    → green   "مرحّلة"
+          //   "cancelled" → gray    "ملغية"
+          //   anything else (draft / null) → amber "غير مرحّلة"
+          // Reuses the global `status.*` i18n keys so the wording matches
+          // the rest of the app (lists, reports, badges).
+          const st = String((existing as any).status ?? "draft");
+          const cls =
+            st === "posted"    ? "bg-green-50 text-green-700 border-green-200" :
+            st === "cancelled" ? "bg-muted text-muted-foreground border-border" :
+                                 "bg-amber-50 text-amber-700 border-amber-200";
+          const label = st === "posted"    ? t("status.posted")
+                      : st === "cancelled" ? t("status.cancelled")
+                      :                       t("status.draft");
+          return (
+            <span
+              className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium", cls)}
+              data-testid="invoice-posting-status"
+              title={st === "posted" ? t("status.posted") : t("status.draft")}
+            >
+              {label}
+            </span>
+          );
+        })()}
         {isInvoice && (
           <div className="ms-auto flex items-center gap-2 min-w-0">
             {/* Prev = older invoice (RTL: right-pointing chevron, LTR: left). */}

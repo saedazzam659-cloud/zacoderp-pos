@@ -9,8 +9,10 @@ import { z } from "zod/v4";
 // any TX_TYPES re-export on the API server side.
 export const SEQUENCE_TX_TYPES = [
   "sales_invoice",
+  "sales_order",
   "sales_return",
   "purchase_invoice",
+  "purchase_order",
   "purchase_return",
   "journal_entry",
   "stock_transfer",
