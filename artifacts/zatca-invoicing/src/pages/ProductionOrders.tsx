@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
+import UnitCodeSelect from "@/components/UnitCodeSelect";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -226,9 +227,9 @@ export default function ProductionOrders() {
               </div>
               <div>
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCode")}</Label>
-                <Input
+                <UnitCodeSelect
                   value={form.unitCode}
-                  onChange={(e) => setForm({ ...form, unitCode: e.target.value })}
+                  onChange={(v) => setForm({ ...form, unitCode: v })}
                   data-testid="input-unit-code"
                   className="mt-1"
                 />

@@ -16,6 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
+import UnitCodeSelect from "@/components/UnitCodeSelect";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -361,9 +362,9 @@ export default function ProductionOrderDetail() {
                       </div>
                       <div className="md:col-span-4">
                         <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.unitCode")}</Label>
-                        <Input
+                        <UnitCodeSelect
                           value={itemForm.unitCode}
-                          onChange={(e) => setItemForm({ ...itemForm, unitCode: e.target.value })}
+                          onChange={(v) => setItemForm({ ...itemForm, unitCode: v })}
                           className="mt-1"
                         />
                       </div>
