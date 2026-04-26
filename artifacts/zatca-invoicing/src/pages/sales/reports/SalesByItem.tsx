@@ -11,19 +11,11 @@ import { useTranslation } from "react-i18next";
 import { Package, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "itemCode",     header: "كود الصنف",     width: 14 },
-  { key: "itemName",     header: "اسم الصنف",     width: 30 },
-  { key: "unit",         header: "الوحدة",        width: 10 },
-  { key: "qty",          header: "الكمية المباعة", width: 14 },
-  { key: "totalSales",   header: "إجمالي البيع",   width: 16 },
-  { key: "invoiceCount", header: "عدد الفواتير",  width: 14 },
-  { key: "share",        header: "نسبة المساهمة", width: 14 },
-];
-
 export default function SalesByItem() {
   const { fmt, fmtQty } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`salesReports.salesByItem.${k}`, opts) as string;
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -34,13 +26,23 @@ export default function SalesByItem() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
+  const EXPORT_COLS = [
+    { key: "itemCode",     header: tr("exportColItemCode"),    width: 14 },
+    { key: "itemName",     header: tr("exportColItemName"),    width: 30 },
+    { key: "unit",         header: tr("exportColUnit"),        width: 10 },
+    { key: "qty",          header: tr("exportColQty"),         width: 14 },
+    { key: "totalSales",   header: tr("exportColTotalSales"),  width: 16 },
+    { key: "invoiceCount", header: tr("exportColInvoiceCount"), width: 14 },
+    { key: "share",        header: tr("exportColShare"),       width: 14 },
+  ];
+
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sales-by-item", cid, from, to, branchId],
     queryFn: () => salesAnalyticsApi.byItem(cid, from, to, branchId),
   });
 
   const filtered = (rows as any[]).filter(r =>
-    !search || r.itemName?.includes(search) || r.itemCode?.includes(search)
+    !search || r.itemName?.toLowerCase().includes(search.toLowerCase()) || r.itemCode?.includes(search)
   );
 
   const grandSales = filtered.reduce((s, r) => s + r.totalSales, 0);
@@ -57,43 +59,43 @@ export default function SalesByItem() {
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />المبيعات حسب الصنف</h1>
-          <p className="text-muted-foreground text-sm mt-1">ترتيب الأصناف حسب قيمة المبيعات لتحديد الأعلى أداءً</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`المبيعات-حسب-الصنف-${from}-${to}`}
-          title="تقرير المبيعات حسب الصنف"
-          subtitle={`من ${from} إلى ${to}  |  إجمالي ${fmt(grandSales)} ر.س`}
+          filename={`${tr("exportFilename")}-${from}-${to}`}
+          title={tr("exportTitle")}
+          subtitle={tr("exportSubtitle", { from, to, value: fmt(grandSales) })}
         />
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl border bg-purple-50 border-purple-200 p-3">
-          <p className="text-[11px] text-purple-700">عدد الأصناف المباعة</p>
+          <p className="text-[11px] text-purple-700">{tr("itemsSold")}</p>
           <p className="text-xl font-bold text-purple-700 tabular-nums mt-1">{filtered.length}</p>
         </div>
         <div className="rounded-xl border bg-card p-3">
-          <p className="text-[11px] text-muted-foreground">إجمالي الكمية</p>
+          <p className="text-[11px] text-muted-foreground">{tr("totalQty")}</p>
           <p className="text-xl font-bold tabular-nums mt-1">{fmtQty(grandQty)}</p>
         </div>
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-3">
-          <p className="text-[11px] text-muted-foreground">إجمالي القيمة</p>
+          <p className="text-[11px] text-muted-foreground">{tr("totalValue")}</p>
           <p className="text-xl font-bold tabular-nums mt-1">{fmt(grandSales)}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
-          <Label>من تاريخ</Label>
+          <Label>{t("salesReports.common.from")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
-          <Label>إلى تاريخ</Label>
+          <Label>{t("salesReports.common.to")}</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -101,10 +103,10 @@ export default function SalesByItem() {
           <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
-          <Label>بحث</Label>
+          <Label>{tr("search")}</Label>
           <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+            <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={tr("searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
       </div>
@@ -114,19 +116,19 @@ export default function SalesByItem() {
           <table className="w-full text-sm min-w-[800px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">الوحدة</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">الكمية</th>
-                <th className="px-3 py-3 text-center font-semibold text-blue-700">إجمالي البيع</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">عدد الفواتير</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">نسبة المساهمة</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colItem")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden sm:table-cell`}>{tr("colUnit")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">{tr("colQty")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-blue-700">{tr("colTotalSales")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{tr("colInvoiceCount")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colShare")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : filtered.length === 0
-                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">لا توجد مبيعات في هذه الفترة</td></tr>
+                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">{tr("noRows")}</td></tr>
                 : filtered.map((r: any, i: number) => {
                     const share = grandSales > 0 ? (r.totalSales / grandSales) * 100 : 0;
                     return (
@@ -144,7 +146,7 @@ export default function SalesByItem() {
                             <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                               <div className="h-full bg-primary" style={{ width: `${Math.min(100, share)}%` }} />
                             </div>
-                            <span className="text-xs tabular-nums w-12 text-left">{share.toFixed(1)}%</span>
+                            <span className={`text-xs tabular-nums w-12 ${isRtl ? "text-left" : "text-right"}`}>{share.toFixed(1)}%</span>
                           </div>
                         </td>
                       </tr>
@@ -154,7 +156,7 @@ export default function SalesByItem() {
             {!isLoading && filtered.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td colSpan={2} className="px-3 py-3 text-xs font-bold">الإجمالي</td>
+                  <td colSpan={2} className="px-3 py-3 text-xs font-bold">{tr("footerLabel")}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums">{fmtQty(grandQty)}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums text-blue-700">{fmt(grandSales)}</td>
                   <td className="px-3 py-3 hidden md:table-cell"></td>

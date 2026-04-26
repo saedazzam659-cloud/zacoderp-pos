@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
+import { useTranslation } from "react-i18next";
 import { Wallet, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 import { cn } from "@/lib/utils";
@@ -19,21 +20,25 @@ function withBranch(url: string, branchId?: number) {
   return url + (url.includes("?") ? "&" : "?") + "branchId=" + branchId;
 }
 
-const EXPORT_COLS = [
-  { key: "customerNameAr", header: "العميل", width: 32 },
-  { key: "phone",          header: "الهاتف", width: 18 },
-  { key: "city",           header: "المدينة", width: 18 },
-  { key: "balance",        header: "الرصيد", width: 16 },
-  { key: "status",         header: "الحالة", width: 14 },
-];
-
 export default function CustomerBalances() {
   const { fmt } = useFmt();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`salesReports.customerBalances.${k}`, opts) as string;
+  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "debit" | "credit">("all");
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+
+  const EXPORT_COLS = [
+    { key: "customerName", header: tr("exportColCustomer"), width: 32 },
+    { key: "phone",        header: tr("exportColPhone"),    width: 18 },
+    { key: "city",         header: tr("exportColCity"),     width: 18 },
+    { key: "balance",      header: tr("exportColBalance"),  width: 16 },
+    { key: "status",       header: tr("exportColStatus"),   width: 14 },
+  ];
 
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", cid],
@@ -57,11 +62,10 @@ export default function CustomerBalances() {
   const enriched = useMemo(() =>
     (customers as any[])
       .map(c => ({ ...c, balance: balByCustomer[c.id] ?? 0 }))
-      // When a branch is selected, hide customers with no movement in that branch (balance = 0).
       .filter(c => branchId === undefined || c.balance !== 0)
       .filter(c =>
         (filter === "all" ? true : filter === "debit" ? c.balance > 0 : c.balance < 0) &&
-        (!search || c.nameAr?.includes(search) || c.phone?.includes(search))
+        (!search || c.nameAr?.includes(search) || c.nameEn?.toLowerCase().includes(search.toLowerCase()) || c.phone?.includes(search))
       )
       .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance)),
     [customers, balances, search, filter, branchId]
@@ -72,54 +76,54 @@ export default function CustomerBalances() {
   const net = totalDebit - totalCredit;
 
   const exportRows = enriched.map(c => ({
-    customerNameAr: c.nameAr ?? "",
-    phone:          c.phone ?? "",
-    city:           c.city ?? "",
-    balance:        fmt(c.balance),
-    status:         c.balance > 0 ? "مدين" : c.balance < 0 ? "دائن" : "صفر",
+    customerName: pickName(c.nameAr, c.nameEn),
+    phone:        c.phone ?? "",
+    city:         c.city ?? "",
+    balance:      fmt(c.balance),
+    status:       c.balance > 0 ? tr("statusDebit") : c.balance < 0 ? tr("statusCredit") : tr("statusZero"),
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Wallet className="h-6 w-6 text-primary" />أرصدة العملاء</h1>
-          <p className="text-muted-foreground text-sm mt-1">ملخص أرصدة جميع العملاء (موجب = مدين، سالب = دائن)</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Wallet className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`أرصدة-العملاء-${new Date().toISOString().slice(0, 10)}`}
-          title="تقرير أرصدة العملاء"
-          subtitle={`صافي المديونية: ${fmt(net)} ر.س`}
+          filename={`${tr("exportFilename")}-${new Date().toISOString().slice(0, 10)}`}
+          title={tr("exportTitle")}
+          subtitle={tr("exportSubtitle", { value: fmt(net) })}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
-          <p className="text-xs text-blue-700">إجمالي المدين (مستحق علينا منهم)</p>
+          <p className="text-xs text-blue-700">{tr("totalDebit")}</p>
           <p className="text-2xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totalDebit)}</p>
         </div>
         <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
-          <p className="text-xs text-emerald-700">إجمالي الدائن (مدفوعات زائدة)</p>
+          <p className="text-xs text-emerald-700">{tr("totalCredit")}</p>
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totalCredit)}</p>
         </div>
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-          <p className="text-xs text-muted-foreground">صافي المديونية</p>
+          <p className="text-xs text-muted-foreground">{tr("net")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{fmt(net)}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
         <div className="relative sm:col-span-2">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pr-9" placeholder="بحث بالاسم أو الهاتف..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+          <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={tr("searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <BranchFilter value={branchId} onChange={setBranchId} />
         <select className="border rounded-md px-3 py-2 text-sm bg-card h-9" value={filter} onChange={e => setFilter(e.target.value as any)}>
-          <option value="all">كل العملاء</option>
-          <option value="debit">المدينون فقط</option>
-          <option value="credit">الدائنون فقط</option>
+          <option value="all">{tr("filterAll")}</option>
+          <option value="debit">{tr("filterDebit")}</option>
+          <option value="credit">{tr("filterCredit")}</option>
         </select>
       </div>
 
@@ -128,23 +132,23 @@ export default function CustomerBalances() {
           <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">العميل</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">الهاتف</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">المدينة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الرصيد</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colCustomer")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden sm:table-cell`}>{tr("colPhone")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden md:table-cell`}>{tr("colCity")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colBalance")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colStatus")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : enriched.length === 0
-                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">لا توجد بيانات للعرض</td></tr>
+                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">{tr("noRows")}</td></tr>
                 : enriched.map(c => (
                     <tr key={c.id} className="hover:bg-muted/20">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-sm">{c.nameAr ?? "—"}</p>
-                        {c.nameEn && <p className="text-[10px] text-muted-foreground">{c.nameEn}</p>}
+                        <p className="font-medium text-sm">{pickName(c.nameAr, c.nameEn) || "—"}</p>
+                        {(isRtl ? c.nameEn : c.nameAr) && <p className="text-[10px] text-muted-foreground">{isRtl ? c.nameEn : c.nameAr}</p>}
                       </td>
                       <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground font-mono">{c.phone ?? "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">{c.city ?? "—"}</td>
@@ -154,10 +158,10 @@ export default function CustomerBalances() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {c.balance > 0
-                          ? <span className="text-[10px] bg-blue-50 text-blue-600 rounded-full px-2 py-0.5 font-medium">مدين</span>
+                          ? <span className="text-[10px] bg-blue-50 text-blue-600 rounded-full px-2 py-0.5 font-medium">{tr("statusDebit")}</span>
                           : c.balance < 0
-                          ? <span className="text-[10px] bg-emerald-50 text-emerald-700 rounded-full px-2 py-0.5 font-medium">دائن</span>
-                          : <span className="text-[10px] bg-muted rounded-full px-2 py-0.5 font-medium">صفر</span>}
+                          ? <span className="text-[10px] bg-emerald-50 text-emerald-700 rounded-full px-2 py-0.5 font-medium">{tr("statusCredit")}</span>
+                          : <span className="text-[10px] bg-muted rounded-full px-2 py-0.5 font-medium">{tr("statusZero")}</span>}
                       </td>
                     </tr>
                   ))}
@@ -165,7 +169,7 @@ export default function CustomerBalances() {
             {!isLoading && enriched.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td colSpan={3} className="px-4 py-3 text-xs font-bold">صافي ({enriched.length} عميل)</td>
+                  <td colSpan={3} className="px-4 py-3 text-xs font-bold">{tr("footerLabel", { count: enriched.length })}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">{fmt(net)}</td>
                   <td></td>
                 </tr>

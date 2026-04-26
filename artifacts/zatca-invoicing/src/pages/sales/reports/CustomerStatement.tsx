@@ -19,25 +19,12 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  invoice: "فاتورة",
-  return:  "مرتجع",
-  receipt: "سند قبض",
-};
-
-const EXPORT_COLS = [
-  { key: "date",        header: "التاريخ",   width: 14 },
-  { key: "type",        header: "نوع الحركة", width: 14 },
-  { key: "docNumber",   header: "رقم المستند", width: 16 },
-  { key: "description", header: "البيان",     width: 24 },
-  { key: "debit",       header: "مدين",       width: 14 },
-  { key: "credit",      header: "دائن",       width: 14 },
-  { key: "balance",     header: "الرصيد",     width: 16 },
-];
-
 export default function CustomerStatement() {
   const { fmt } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`salesReports.customerStatement.${k}`, opts) as string;
+  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
 
@@ -63,6 +50,22 @@ export default function CustomerStatement() {
 
   const customer = (customers as any[]).find(c => String(c.id) === applied.customerId);
 
+  const TYPE_LABEL: Record<string, string> = {
+    invoice: tr("typeInvoice"),
+    return:  tr("typeReturn"),
+    receipt: tr("typeReceipt"),
+  };
+
+  const EXPORT_COLS = [
+    { key: "date",        header: tr("exportColDate"),    width: 14 },
+    { key: "type",        header: tr("exportColType"),    width: 14 },
+    { key: "docNumber",   header: tr("exportColDoc"),     width: 16 },
+    { key: "description", header: tr("exportColDesc"),    width: 24 },
+    { key: "debit",       header: tr("exportColDebit"),   width: 14 },
+    { key: "credit",      header: tr("exportColCredit"),  width: 14 },
+    { key: "balance",     header: tr("exportColBalance"), width: 16 },
+  ];
+
   const augmented = useMemo(() => {
     const opening = data?.opening ?? 0;
     let bal = opening;
@@ -77,7 +80,7 @@ export default function CustomerStatement() {
 
   const exportRows = [
     ...(applied.customerId ? [{
-      date: applied.from, type: "—", docNumber: "—", description: "رصيد افتتاحي",
+      date: applied.from, type: "—", docNumber: "—", description: tr("openingRow"),
       debit: data?.opening && data.opening > 0 ? fmt(data.opening) : "",
       credit: data?.opening && data.opening < 0 ? fmt(-data.opening) : "",
       balance: fmt(data?.opening ?? 0),
@@ -93,19 +96,21 @@ export default function CustomerStatement() {
     })),
   ];
 
+  const customerLabel = customer ? pickName(customer.nameAr, customer.nameEn) : "";
+
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" />كشف حساب عميل</h1>
-          <p className="text-muted-foreground text-sm mt-1">حركة العميل التفصيلية مع الرصيد الافتتاحي والتراكمي</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`كشف-حساب-${customer?.nameAr ?? "عميل"}-${applied.from}-${applied.to}`}
-          title="كشف حساب عميل"
-          subtitle={customer ? `${customer.nameAr}  |  ${applied.from} → ${applied.to}` : "اختر عميلاً"}
+          filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
+          title={tr("exportTitle")}
+          subtitle={customer ? `${customerLabel}  |  ${applied.from} → ${applied.to}` : tr("exportSubtitlePick")}
         />
       </div>
 
@@ -113,24 +118,24 @@ export default function CustomerStatement() {
       <div className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2 mb-4">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">معطيات كشف الحساب</h2>
+          <h2 className="text-sm font-semibold">{tr("filtersTitle")}</h2>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-1.5">
-            <Label>العميل <span className="text-red-500">*</span></Label>
+            <Label>{tr("customerLabel")} <span className="text-red-500">*</span></Label>
             <SearchCombobox
-              items={(customers as any[]).map(c => ({ value: String(c.id), label: c.nameAr, labelEn: c.nameEn }))}
+              items={(customers as any[]).map(c => ({ value: String(c.id), label: pickName(c.nameAr, c.nameEn), labelEn: c.nameEn }))}
               value={filters.customerId}
               onValueChange={v => setFilters(p => ({ ...p, customerId: v }))}
-              placeholder="اختر العميل"
+              placeholder={tr("selectCustomer")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>من تاريخ</Label>
+            <Label>{t("salesReports.common.from")}</Label>
             <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>إلى تاريخ</Label>
+            <Label>{t("salesReports.common.to")}</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
@@ -140,7 +145,7 @@ export default function CustomerStatement() {
         </div>
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} disabled={!filters.customerId} className="gap-2">
-            <Search className="h-3.5 w-3.5" />عرض الكشف
+            <Search className="h-3.5 w-3.5" />{tr("show")}
           </Button>
         </div>
       </div>
@@ -149,19 +154,19 @@ export default function CustomerStatement() {
       {applied.customerId && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">رصيد افتتاحي</p>
+            <p className="text-xs text-muted-foreground">{tr("opening")}</p>
             <p className={`text-xl font-bold tabular-nums mt-1 ${(data?.opening ?? 0) >= 0 ? "" : "text-emerald-600"}`}>{fmt(data?.opening ?? 0)}</p>
           </div>
           <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
-            <p className="text-xs text-blue-700">إجمالي مدين</p>
+            <p className="text-xs text-blue-700">{tr("totalDebit")}</p>
             <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">{fmt(totals.debit)}</p>
           </div>
           <div className="rounded-xl border bg-emerald-50 border-emerald-200 p-4">
-            <p className="text-xs text-emerald-700">إجمالي دائن</p>
+            <p className="text-xs text-emerald-700">{tr("totalCredit")}</p>
             <p className="text-xl font-bold text-emerald-700 tabular-nums mt-1">{fmt(totals.credit)}</p>
           </div>
           <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-            <p className="text-xs text-muted-foreground">الرصيد النهائي</p>
+            <p className="text-xs text-muted-foreground">{tr("closing")}</p>
             <p className={`text-xl font-bold tabular-nums mt-1 ${closing >= 0 ? "" : "text-emerald-600"}`}>{fmt(closing)}</p>
           </div>
         </div>
@@ -174,20 +179,20 @@ export default function CustomerStatement() {
             <table className="w-full text-sm min-w-[700px]">
               <thead className="bg-muted/50 border-b">
                 <tr>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">نوع الحركة</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">رقم المستند</th>
-                  <th className="px-4 py-3 text-right font-semibold text-muted-foreground">البيان</th>
-                  <th className="px-4 py-3 text-center font-semibold text-blue-700">مدين</th>
-                  <th className="px-4 py-3 text-center font-semibold text-emerald-700">دائن</th>
-                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الرصيد</th>
+                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colDate")}</th>
+                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colType")}</th>
+                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colDoc")}</th>
+                  <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colDescription")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-blue-700">{tr("colDebit")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-emerald-700">{tr("colCredit")}</th>
+                  <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colBalance")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {/* Opening */}
                 <tr className="bg-muted/20">
                   <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{applied.from}</td>
-                  <td className="px-4 py-3 text-xs italic text-muted-foreground" colSpan={3}>رصيد افتتاحي</td>
+                  <td className="px-4 py-3 text-xs italic text-muted-foreground" colSpan={3}>{tr("openingRow")}</td>
                   <td className="px-4 py-3 text-center tabular-nums text-xs">{(data?.opening ?? 0) > 0 ? fmt(data!.opening) : "—"}</td>
                   <td className="px-4 py-3 text-center tabular-nums text-xs">{(data?.opening ?? 0) < 0 ? fmt(-(data!.opening)) : "—"}</td>
                   <td className="px-4 py-3 text-center tabular-nums text-sm font-bold">{fmt(data?.opening ?? 0)}</td>
@@ -195,7 +200,7 @@ export default function CustomerStatement() {
                 {isLoading
                   ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={7} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                   : augmented.length === 0
-                  ? <tr><td colSpan={7} className="py-12 text-center text-muted-foreground">لا توجد حركات لهذا العميل في الفترة المحددة</td></tr>
+                  ? <tr><td colSpan={7} className="py-12 text-center text-muted-foreground">{tr("noRows")}</td></tr>
                   : augmented.map((l, idx) => (
                       <tr key={idx} className="hover:bg-muted/20">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{l.date}</td>
@@ -211,7 +216,7 @@ export default function CustomerStatement() {
               {!isLoading && augmented.length > 0 && (
                 <tfoot className="bg-muted/30 border-t">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-muted-foreground">الإجمالي</td>
+                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-muted-foreground">{tr("totalLabel")}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-blue-700">{fmt(totals.debit)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums text-emerald-700">{fmt(totals.credit)}</td>
                     <td className="px-4 py-3 text-center font-bold tabular-nums">{fmt(closing)}</td>
@@ -224,7 +229,7 @@ export default function CustomerStatement() {
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">
           <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p>اختر عميلاً من القائمة لعرض كشف الحساب</p>
+          <p>{tr("selectCustomerPrompt")}</p>
         </div>
       )}
     </div>

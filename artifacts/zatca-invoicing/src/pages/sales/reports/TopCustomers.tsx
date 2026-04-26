@@ -11,17 +11,12 @@ import { useTranslation } from "react-i18next";
 import { TrendingUp, Trophy } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "rank",           header: "الترتيب",       width: 10 },
-  { key: "customerNameAr", header: "العميل",        width: 30 },
-  { key: "invoiceCount",   header: "عدد الفواتير",  width: 14 },
-  { key: "netSales",       header: "صافي البيع",    width: 16 },
-  { key: "share",          header: "نسبة المساهمة", width: 14 },
-];
-
 export default function TopCustomers() {
   const { fmt } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`salesReports.topCustomers.${k}`, opts) as string;
+  const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -31,6 +26,14 @@ export default function TopCustomers() {
   const [to, setTo] = useState(today);
   const [topN, setTopN] = useState("10");
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+
+  const EXPORT_COLS = [
+    { key: "rank",         header: tr("exportColRank"),         width: 10 },
+    { key: "customerName", header: tr("exportColCustomer"),     width: 30 },
+    { key: "invoiceCount", header: tr("exportColInvoiceCount"), width: 14 },
+    { key: "netSales",     header: tr("exportColNetSales"),     width: 16 },
+    { key: "share",        header: tr("exportColShare"),        width: 14 },
+  ];
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sales-by-customer", cid, from, to, branchId],
@@ -46,11 +49,11 @@ export default function TopCustomers() {
   }));
 
   const exportRows = top.map(r => ({
-    rank:           r.rank,
-    customerNameAr: r.customerNameAr,
-    invoiceCount:   r.invoiceCount,
-    netSales:       fmt(r.netSales),
-    share:          `${r.share.toFixed(2)}%`,
+    rank:         r.rank,
+    customerName: pickName(r.customerNameAr, r.customerNameEn),
+    invoiceCount: r.invoiceCount,
+    netSales:     fmt(r.netSales),
+    share:        `${r.share.toFixed(2)}%`,
   }));
 
   const medalColor = (rank: number) =>
@@ -60,28 +63,28 @@ export default function TopCustomers() {
     "bg-muted text-muted-foreground border-muted";
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><TrendingUp className="h-6 w-6 text-rose-500" />أفضل العملاء</h1>
-          <p className="text-muted-foreground text-sm mt-1">ترتيب أعلى العملاء قيمةً خلال الفترة المحددة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><TrendingUp className="h-6 w-6 text-rose-500" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`افضل-العملاء-${from}-${to}`}
-          title={`تقرير أفضل ${limit} عميل`}
-          subtitle={`من ${from} إلى ${to}`}
+          filename={`${tr("exportFilename")}-${from}-${to}`}
+          title={tr("exportTitle", { n: limit })}
+          subtitle={tr("exportSubtitle", { from, to })}
         />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         <div className="space-y-1.5">
-          <Label>من تاريخ</Label>
+          <Label>{t("salesReports.common.from")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
-          <Label>إلى تاريخ</Label>
+          <Label>{t("salesReports.common.to")}</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -89,13 +92,13 @@ export default function TopCustomers() {
           <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5">
-          <Label>عدد العملاء</Label>
+          <Label>{tr("topNLabel")}</Label>
           <Input type="number" min={1} value={topN} onChange={e => setTopN(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label className="invisible">.</Label>
           <div className="rounded-md border bg-primary/5 border-primary/10 px-3 py-2">
-            <p className="text-[11px] text-muted-foreground">إجمالي مبيعات الفترة</p>
+            <p className="text-[11px] text-muted-foreground">{tr("periodTotal")}</p>
             <p className="text-sm font-bold tabular-nums">{fmt(grandTotal)}</p>
           </div>
         </div>
@@ -106,18 +109,18 @@ export default function TopCustomers() {
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground w-16">الترتيب</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">العميل</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">عدد الفواتير</th>
-                <th className="px-3 py-3 text-center font-semibold text-emerald-700">صافي البيع</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">نسبة المساهمة</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground w-16">{tr("colRank")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colCustomer")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">{tr("colInvoiceCount")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-emerald-700">{tr("colNetSales")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colShare")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={5} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : top.length === 0
-                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">لا توجد مبيعات في هذه الفترة</td></tr>
+                ? <tr><td colSpan={5} className="py-12 text-center text-muted-foreground">{tr("noRows")}</td></tr>
                 : top.map((r: any) => (
                     <tr key={r.customerId ?? `null-${r.rank}`} className="hover:bg-muted/20">
                       <td className="px-3 py-3 text-center">
@@ -126,8 +129,8 @@ export default function TopCustomers() {
                         </span>
                       </td>
                       <td className="px-3 py-3">
-                        <p className="font-medium text-sm">{r.customerNameAr}</p>
-                        {r.customerNameEn && <p className="text-[10px] text-muted-foreground">{r.customerNameEn}</p>}
+                        <p className="font-medium text-sm">{pickName(r.customerNameAr, r.customerNameEn)}</p>
+                        {(isRtl ? r.customerNameEn : r.customerNameAr) && <p className="text-[10px] text-muted-foreground">{isRtl ? r.customerNameEn : r.customerNameAr}</p>}
                       </td>
                       <td className="px-3 py-3 text-center tabular-nums text-sm">{r.invoiceCount}</td>
                       <td className="px-3 py-3 text-center tabular-nums text-base font-bold text-emerald-700">{fmt(r.netSales)}</td>
@@ -136,7 +139,7 @@ export default function TopCustomers() {
                           <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                             <div className="h-full bg-rose-500" style={{ width: `${Math.min(100, r.share)}%` }} />
                           </div>
-                          <span className="text-xs tabular-nums w-12 text-left">{r.share.toFixed(1)}%</span>
+                          <span className={`text-xs tabular-nums w-12 ${isRtl ? "text-left" : "text-right"}`}>{r.share.toFixed(1)}%</span>
                         </div>
                       </td>
                     </tr>
