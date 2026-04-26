@@ -1,12 +1,21 @@
 // Purchase Order form — operational, finance-FREE.
 //
-// Mirrors the operational portion of the purchase invoice form (supplier,
-// branch, items, totals) but intentionally omits every accounting / posting
-// concern: no inventory/tax/discount account pickers, no LC, no expense
-// distribution, no auto-post on save. Saving here only writes rows in
-// `purchase_orders` and `purchase_order_lines` — never a journal entry,
-// stock movement, voucher, or supplier balance update. Converting to a
-// purchase invoice still requires the user to post that invoice separately.
+// LAYOUT: pixel-mirror of PurchaseInvoiceForm so that purchase orders share
+// the same width (max-w-6xl), card structure, field sizing (h-9 text-sm),
+// header band (icon tile + title + subtitle), header-data grid, lines grid,
+// totals box (w-72), and bottom action bar. The ONLY structural differences
+// from the invoice form are:
+//   1. Header has a status badge + (when converted) a clickable INV-N chip
+//   2. Bottom action bar shows Confirm / Cancel / Convert buttons
+//      contextually before the Save button (no Post button at all)
+//   3. The header grid has an "expectedDeliveryDate" field instead of LC
+//   4. The lines grid drops the weight / expenses / finalCost columns
+//   5. The totals box drops the LC-expenses row
+// All of those are required by the spec — purchase orders carry zero finance
+// state. Saving here only writes rows in `purchase_orders` /
+// `purchase_order_lines`; never a journal entry, stock movement, voucher,
+// or supplier balance update. Converting still produces a *draft* invoice
+// that the user must post separately.
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useRoute, useLocation } from "wouter";
@@ -23,9 +32,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
+import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ClipboardList, Plus, Trash2, FileText, CheckCircle, XCircle, FileCheck2 } from "lucide-react";
+import {
+  ArrowRight, ArrowLeft, ClipboardList, Plus, Trash2, FileText, ListOrdered,
+  Wallet, CreditCard, CheckCircle, XCircle, FileCheck2,
+} from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -96,7 +109,6 @@ export default function PurchaseOrderForm() {
 
   const seqPeek = useNextSequenceNumber("purchase_order", isNew);
 
-  const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("");
   const [orderDate,    setOrderDate]    = useState(today());
@@ -258,8 +270,8 @@ export default function PurchaseOrderForm() {
   }, [existing]);
 
   // Per-item unit list (for the unit picker on each line). Mirrors the
-  // pattern used by the invoice form so unit & cost auto-populate from the
-  // selected item without an extra round-trip per keystroke.
+  // invoice form so unit & cost auto-populate from the selected item
+  // without an extra round-trip per keystroke.
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
   async function fetchItemUnits(itemId: string): Promise<any[]> {
     if (itemUnitsMap[itemId]) return itemUnitsMap[itemId];
@@ -280,7 +292,17 @@ export default function PurchaseOrderForm() {
     }));
   }
 
-  async function pickItem(lineId: string, itemId: string) {
+  // Recalc all line totals when the doc-level "price includes VAT" flag flips
+  // so the user sees consistent line totals immediately.
+  useEffect(() => {
+    setLines(prev => prev.map(l => {
+      const { lineTotal } = calcLine(l, priceIncludesVat);
+      return { ...l, lineTotal: lineTotal.toFixed(2) };
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceIncludesVat]);
+
+  async function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
@@ -324,6 +346,11 @@ export default function PurchaseOrderForm() {
 
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l, priceIncludesVat); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l, priceIncludesVat); return s + (lineTotal - subtotal); }, 0);
+  const lineDiscountTotal = lines.reduce((s, l) => {
+    const noDisc = calcLine({ ...l, discount: "0" }, priceIncludesVat).lineTotal;
+    const withDisc = calcLine(l, priceIncludesVat).lineTotal;
+    return s + Math.max(0, noDisc - withDisc);
+  }, 0);
   const grossTotal     = subtotal + vatAmount;
   const docDiscountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
   const totalAmount    = grossTotal - docDiscountAmt;
@@ -409,6 +436,23 @@ export default function PurchaseOrderForm() {
       label: i.code ? `${i.code} — ${itemNameOf(i)}` : itemNameOf(i),
     })),
   ];
+  const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
+
+  // 11-column lines grid — same column widths as the invoice form, minus the
+  // weight / expenses / finalCost columns that have no meaning for an order.
+  const HEADERS = [
+    tr("lineCols.item"),
+    tr("lineCols.itemCode"),
+    tr("lineCols.warehouse"),
+    tr("lineCols.unit"),
+    tr("lineCols.qty"),
+    tr("lineCols.unitPrice"),
+    tr("lineCols.discount"),
+    tr("lineCols.vat"),
+    tr("lineCols.lineTotal"),
+    tr("lineCols.notes"),
+    "",
+  ];
 
   const STATUS_BADGES: Record<string, { labelKey: string; cls: string }> = {
     draft:     { labelKey: "status.draft",     cls: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -419,277 +463,349 @@ export default function PurchaseOrderForm() {
   const stBadge = STATUS_BADGES[orderStatus] ?? STATUS_BADGES.draft;
 
   return (
-    <div className="space-y-4" dir={isRtl ? "rtl" : "ltr"} ref={containerRef as any} onKeyDown={onKeyDown}>
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigate("/purchasing/orders")} className="gap-1.5">
-            {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
-            {tr("back")}
-          </Button>
-          <h1 className="text-xl font-bold flex items-center gap-2">
+    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/orders")}>
+          {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+        </Button>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
             <ClipboardList className="h-5 w-5 text-primary" />
-            {isNew ? tr("newOrder") : tr("editOrder")}
-          </h1>
-          {!isNew && (
-            <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", stBadge.cls)}>
-              {t(stBadge.labelKey)}
-            </span>
-          )}
-          {!isNew && convertedInvoiceId && (
-            <button type="button"
-              className="text-xs rounded-full px-2 py-0.5 font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
-              title={tr("openInvoice")}
-              onClick={() => navigate(`/purchasing/invoices/${convertedInvoiceId}`)}>
-              <FileCheck2 className="inline h-3 w-3 mr-1" />INV-{convertedInvoiceId}
-            </button>
-          )}
+          </div>
+          <div>
+            <h1 className="text-lg font-bold">{isNew ? tr("newTitle") : tr("editTitle", { id: editId })}</h1>
+            <p className="text-xs text-muted-foreground">{tr("subtitle")}</p>
+          </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          {!isNew && orderStatus === "draft" && (
-            <>
-              <Button size="sm" variant="outline" className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
-                onClick={() => statusMut.mutate("confirmed")} disabled={statusMut.isPending}>
-                <CheckCircle className="h-4 w-4" />{tr("confirm")}
-              </Button>
-              <Button size="sm" variant="outline" className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50"
-                onClick={() => { if (confirm(tr("confirmCancel"))) statusMut.mutate("cancelled"); }}
-                disabled={statusMut.isPending}>
-                <XCircle className="h-4 w-4" />{tr("cancel")}
-              </Button>
-            </>
-          )}
-          {!isNew && orderStatus === "confirmed" && !convertedInvoiceId && (
-            <Button size="sm" className="gap-1.5"
-              onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
-              disabled={convertMut.isPending}>
-              <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
-            </Button>
-          )}
-          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending || isLocked}>
-            {saveMut.isPending ? tr("saving") : isNew ? tr("saveOrder") : tr("saveEdit")}
-          </Button>
-        </div>
+        {!isNew && (
+          <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", stBadge.cls)}>
+            {t(stBadge.labelKey)}
+          </span>
+        )}
+        {!isNew && convertedInvoiceId && (
+          <button type="button"
+            className="text-xs rounded-full px-2 py-0.5 font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 inline-flex items-center gap-1"
+            title={tr("openInvoice")}
+            onClick={() => navigate(`/purchasing/invoices/${convertedInvoiceId}`)}>
+            <FileCheck2 className="h-3 w-3" />INV-{convertedInvoiceId}
+          </button>
+        )}
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="header">{tr("tabHeader")}</TabsTrigger>
-          <TabsTrigger value="lines">{tr("tabLines")} ({lines.length})</TabsTrigger>
-          <TabsTrigger value="totals">{tr("tabTotals")}</TabsTrigger>
-        </TabsList>
+      <Tabs value="header" dir={isRtl ? "rtl" : "ltr"}>
+        <Card className="border-2">
+          <CardHeader className="p-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
+              <p className="text-[11px] text-muted-foreground">
+                {tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount) })}
+              </p>
+              <TabsList className="h-8 bg-background border gap-1">
+                <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  <FileText className="h-3.5 w-3.5" />{tr("headerData")}
+                </TabsTrigger>
+              </TabsList>
+            </div>
+          </CardHeader>
 
-        <TabsContent value="header" className="space-y-3">
-          <Card>
-            <CardHeader className="text-sm font-semibold">{tr("section.order")}</CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <Label>{tr("docNumber")}</Label>
-                <Input
-                  ref={docNumberRef}
-                  value={docNumber}
-                  onChange={(e) => setDocNumber(e.target.value)}
-                  readOnly={seqPeek.hasSequence}
-                  placeholder={seqPeek.hasSequence ? "" : tr("autoPlaceholder")}
-                />
-                {seqPeek.exhausted && (
-                  <p className="text-xs text-destructive mt-1">{tr("seqExhausted")}</p>
-                )}
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-5 pb-5 space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.docNumber")}</Label>
+                  {(() => {
+                    const lockOnEdit = !isNew;
+                    const lockOnSeq  = isNew && seqPeek.hasSequence;
+                    const locked     = lockOnEdit || lockOnSeq;
+                    return (
+                      <Input
+                        ref={docNumberRef}
+                        className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
+                        placeholder={isNew && seqPeek.loading ? "…" : tr("auto")}
+                        value={docNumber}
+                        onChange={e => { if (!locked) setDocNumber(e.target.value); }}
+                        readOnly={locked}
+                        title={lockOnEdit ? tr("lockTitle") : (lockOnSeq ? `${seqPeek.sequenceCode ?? ""}` : undefined)}
+                      />
+                    );
+                  })()}
+                  {seqPeek.exhausted && (
+                    <p className="text-[11px] text-destructive">{tr("seqExhausted")}</p>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.orderDate")}</Label>
+                  <Input type="date" className="h-9 text-sm" value={orderDate} onChange={e => setOrderDate(e.target.value)} required />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.expectedDeliveryDate")}</Label>
+                  <Input type="date" className="h-9 text-sm" value={expectedDeliveryDate} onChange={e => setExpectedDeliveryDate(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.supplier")}</Label>
+                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder={tr("fields.supplierPh")} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
+                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.branch")}</Label>
+                  <Select value={branchId || undefined} onValueChange={setBranchId}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.branchPh")} /></SelectTrigger>
+                    <SelectContent>
+                      {(branches as any[]).map((b: any) => (
+                        <SelectItem key={b.id} value={String(b.id)}>{branchName(b)}{b.isMain ? tr("fields.mainBranchTag") : ""}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.currency")}</Label>
+                  {currencies.length > 0 ? (
+                    <Select value={currencyCode} onValueChange={handleCurrencyChange}>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.currencyPh")} /></SelectTrigger>
+                      <SelectContent>
+                        {currencies.map((c: any) => {
+                          const cName = isRtl ? c.nameAr : (c.nameEn ?? c.nameAr);
+                          return <SelectItem key={c.id} value={c.code}>{c.code} {cName ? `— ${cName}` : ""}</SelectItem>;
+                        })}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input className="h-9 text-sm" placeholder="SAR" value={currencyCode} onChange={e => setCurrencyCode(e.target.value)} />
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs flex items-center justify-between">
+                    <span>{tr("fields.exchangeRate")}</span>
+                    {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        1 {currencyCode} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                      </span>
+                    )}
+                  </Label>
+                  <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr"
+                    value={exchangeRate}
+                    onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
+                </div>
               </div>
-              <div>
-                <Label>{tr("orderDate")}</Label>
-                <Input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} />
-              </div>
-              <div>
-                <Label>{tr("expectedDeliveryDate")}</Label>
-                <Input type="date" value={expectedDeliveryDate} onChange={(e) => setExpectedDeliveryDate(e.target.value)} />
-              </div>
-              <div>
-                <Label>{tr("supplier")}</Label>
-                <SearchCombobox
-                  items={supplierItems}
-                  value={supplierId}
-                  onValueChange={setSupplierId}
-                  placeholder={tr("supplierPh")}
-                />
-              </div>
-              <div>
-                <Label>{tr("supplierInvoiceNumber")}</Label>
-                <Input value={supplierInvoiceNumber} onChange={(e) => setSupplierInvoiceNumber(e.target.value)} />
-              </div>
-              <div>
-                <Label>{tr("branch")}</Label>
-                <Select value={branchId} onValueChange={setBranchId}>
-                  <SelectTrigger><SelectValue placeholder={tr("branchPh")} /></SelectTrigger>
-                  <SelectContent>
-                    {branches.map((b: any) => (
-                      <SelectItem key={b.id} value={String(b.id)}>{branchName(b)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>{tr("paymentType")}</Label>
-                <Select value={paymentType} onValueChange={setPaymentType}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="credit">{tr("paymentCredit")}</SelectItem>
-                    <SelectItem value="cash">{tr("paymentCash")}</SelectItem>
-                    <SelectItem value="bank">{tr("paymentBank")}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] text-muted-foreground mt-1">{tr("paymentInformational")}</p>
-              </div>
-              <div>
-                <Label>{tr("currency")}</Label>
-                <Select value={currencyCode} onValueChange={handleCurrencyChange}>
-                  <SelectTrigger><SelectValue placeholder={tr("currencyPh")} /></SelectTrigger>
-                  <SelectContent>
-                    {currencies.map((c: any) => (
-                      <SelectItem key={c.id} value={c.code}>{c.code} — {isRtl ? c.nameAr : (c.nameEn ?? c.nameAr)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>{tr("exchangeRate")}</Label>
-                <Input type="number" step="0.0001" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} />
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{tr("fields.paymentType")}</Label>
+                  <Select value={paymentType} onValueChange={setPaymentType}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="credit">
+                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("payment.credit")}</span>
+                      </SelectItem>
+                      <SelectItem value="cash">
+                        <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />{tr("payment.cash")}</span>
+                      </SelectItem>
+                      <SelectItem value="bank">
+                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("payment.bank")}</span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground">{tr("paymentInformational")}</p>
+                </div>
+                <div className="space-y-1.5 lg:col-span-3">
+                  <Label className="text-xs">{tr("fields.notes")}</Label>
+                  <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} placeholder={tr("notesPh")} />
+                </div>
               </div>
             </CardContent>
-          </Card>
+          </TabsContent>
 
-          <Card>
-            <CardHeader className="text-sm font-semibold">{tr("section.notes")}</CardHeader>
-            <CardContent>
-              <textarea
-                className="w-full min-h-[80px] rounded-md border bg-background p-2 text-sm"
-                value={notes} onChange={(e) => setNotes(e.target.value)}
-                placeholder={tr("notesPh")}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
+          <TabsContent value="header" className="mt-0">
+            <CardContent className="pt-2 pb-5 border-t">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                <ListOrdered className="h-4 w-4" />
+                <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
+              </div>
+              {(() => {
+                const GRID_COLS = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
+                return (
+              <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-x-auto">
+                <div className="min-w-max">
+                <div
+                  className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0"
+                  style={{ gridTemplateColumns: GRID_COLS }}
+                >
+                  {HEADERS.map((h, i) => (
+                    <p
+                      key={i}
+                      className={cn(
+                        "text-[11px] font-medium truncate",
+                        h === tr("lineCols.lineTotal") ? "font-semibold text-primary" : "text-muted-foreground"
+                      )}
+                      title={h}
+                    >{h}</p>
+                  ))}
+                </div>
+                <div className="divide-y">
+                {lines.map(l => (
+                  <div key={l._id} className="px-3 py-2 hover:bg-muted/30 transition-colors">
+                    <div
+                      className="grid gap-2 items-center"
+                      style={{ gridTemplateColumns: GRID_COLS }}
+                    >
+                      {inventoryItems.length > 0 ? (
+                        <SearchCombobox
+                          items={itemComboItems}
+                          value={l.itemId}
+                          onValueChange={v => selectItem(l._id, v)}
+                          placeholder={tr("itemSearchPh")}
+                        />
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
+                          onChange={e => updateLine(l._id, "itemName", e.target.value)} />
+                      )}
+                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
+                        onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
+                      {warehouses.length > 0 ? (
+                        <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
+                          <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
+                            <SelectValue placeholder={tr("lineCols.warehouse")} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {warehouses.map((w: any) => (
+                              <SelectItem key={w.id} value={String(w.id)}>{warehouseName(w)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input className="h-8 text-xs" placeholder="—" readOnly />
+                      )}
+                      {(() => {
+                        const itemUnits = (l.itemId && itemUnitsMap[l.itemId]) ? itemUnitsMap[l.itemId] : [];
+                        const opts = itemUnits.length > 0
+                          ? itemUnits.map((iu: any) => ({
+                              value: String(iu.unitId),
+                              label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                            }))
+                          : unitItems;
+                        return units.length > 0 ? (
+                          <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
+                            <SelectContent>
+                              {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input className="h-8 text-xs" placeholder={tr("unitPh")} value={l.unit}
+                            onChange={e => updateLine(l._id, "unit", e.target.value)} />
+                        );
+                      })()}
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.qty}
+                        onChange={e => updateLine(l._id, "qty", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.unitPrice}
+                        onChange={e => updateLine(l._id, "unitPrice", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.discount}
+                        onChange={e => updateLine(l._id, "discount", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs" type="text" inputMode="decimal" value={l.vatRate}
+                        onChange={e => updateLine(l._id, "vatRate", e.target.value.replace(/[^0-9.]/g, ""))} />
+                      <Input className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono" dir="ltr" readOnly value={fmt(l.lineTotal)} />
+                      <Input className="h-8 text-xs" value={l.notes}
+                        onChange={e => updateLine(l._id, "notes", e.target.value)} />
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive"
+                        onClick={() => setLines(p => p.filter(x => x._id !== l._id))} disabled={lines.length <= 1}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                </div>
+                </div>
+              </div>
+                );
+              })()}
 
-        <TabsContent value="lines" className="space-y-3">
-          <Card>
-            <CardContent className="p-3">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/40">
-                    <tr>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>#</th>
-                      <th className={cn("px-2 py-2 font-semibold min-w-[200px]", isRtl ? "text-right" : "text-left")}>{tr("col.item")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.warehouse")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.unit")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.qty")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.unitPrice")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.discount")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.vat")}</th>
-                      <th className={cn("px-2 py-2 font-semibold", isRtl ? "text-right" : "text-left")}>{tr("col.total")}</th>
-                      <th className="px-2 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lines.map((l, idx) => {
-                      const itemUnits = l.itemId ? (itemUnitsMap[l.itemId] ?? []) : [];
-                      return (
-                        <tr key={l._id} className="border-b hover:bg-muted/20">
-                          <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
-                          <td className="px-2 py-1.5">
-                            <SearchCombobox
-                              items={itemComboItems}
-                              value={l.itemId}
-                              onValueChange={(v) => pickItem(l._id, v)}
-                              placeholder={tr("itemSearchPh")}
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Select value={l.warehouseId} onValueChange={(v) => updateLine(l._id, "warehouseId", v)}>
-                              <SelectTrigger className="h-8 text-xs min-w-[120px]"><SelectValue placeholder={tr("warehousePh")} /></SelectTrigger>
-                              <SelectContent>
-                                {warehouses.map((w: any) => (
-                                  <SelectItem key={w.id} value={String(w.id)}>{warehouseName(w)}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Select value={l.unitId} onValueChange={(v) => changeLineUnit(l._id, v)} disabled={!l.itemId}>
-                              <SelectTrigger className="h-8 text-xs min-w-[100px]"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
-                              <SelectContent>
-                                {(itemUnits.length ? itemUnits : units.filter((u: any) => true)).map((u: any) => {
-                                  const id = String(u.unitId ?? u.id);
-                                  const name = unitNameOf(u.unit ?? u);
-                                  return <SelectItem key={id} value={id}>{name}</SelectItem>;
-                                })}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input className="h-8 w-20 text-xs" type="number" step="0.001" value={l.qty}
-                              onChange={(e) => updateLine(l._id, "qty", e.target.value)} />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input className="h-8 w-24 text-xs" type="number" step="0.01" value={l.unitPrice}
-                              onChange={(e) => updateLine(l._id, "unitPrice", e.target.value)} />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input className="h-8 w-16 text-xs" type="number" step="0.01" value={l.discount}
-                              onChange={(e) => updateLine(l._id, "discount", e.target.value)} />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input className="h-8 w-16 text-xs" type="number" step="0.01" value={l.vatRate}
-                              onChange={(e) => updateLine(l._id, "vatRate", e.target.value)} />
-                          </td>
-                          <td className="px-2 py-1.5 font-mono">{fmt(l.lineTotal)}</td>
-                          <td className="px-2 py-1.5">
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive"
-                              onClick={() => setLines(prev => prev.filter(x => x._id !== l._id))}
-                              disabled={lines.length <= 1}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-3">
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={addLine}>
-                  <Plus className="h-3.5 w-3.5" />{tr("addLine")}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
+                <Plus className="h-4 w-4" />{tr("addLine")}
+              </Button>
 
-        <TabsContent value="totals" className="space-y-3">
-          <Card>
-            <CardHeader className="text-sm font-semibold">{tr("section.totals")}</CardHeader>
-            <CardContent className="space-y-2 max-w-md">
-              <div className="flex items-center gap-2 mb-3">
-                <input id="pivat" type="checkbox" checked={priceIncludesVat}
-                  onChange={(e) => setPriceIncludesVat(e.target.checked)} />
-                <Label htmlFor="pivat" className="cursor-pointer">{tr("priceIncludesVat")}</Label>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>{tr("subtotal")}</span><span className="font-mono">{fmt(subtotal)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>{tr("vat")}</span><span className="font-mono">{fmt(vatAmount)}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <Label htmlFor="docDisc">{tr("docDiscount")}</Label>
-                <Input id="docDisc" className="w-32 h-8 text-xs" type="number" step="0.01"
-                  value={docDiscount} onChange={(e) => setDocDiscount(e.target.value)} />
-              </div>
-              <div className="flex justify-between text-base font-bold border-t pt-2">
-                <span>{tr("total")}</span><span className="font-mono">{fmt(totalAmount)}</span>
+              <div className="mt-5 flex flex-wrap justify-between gap-4">
+                <label
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-xl border-2 p-3 cursor-pointer select-none transition-colors max-w-sm",
+                    priceIncludesVat ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
+                    checked={priceIncludesVat}
+                    onChange={e => setPriceIncludesVat(e.target.checked)}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold">{tr("priceIncludesVat")}</p>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      {priceIncludesVat ? tr("vatHintIncl") : tr("vatHintExcl")}
+                    </p>
+                  </div>
+                </label>
+
+                <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
+                    <span>{tr("calcMethod")}</span>
+                    <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
+                      {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{tr("subtotal")}</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{tr("vatAmount")}</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  {lineDiscountTotal > 0 && (
+                    <div className="flex justify-between text-rose-700">
+                      <span className="text-muted-foreground">{tr("itemDiscount")}</span>
+                      <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
+                    </div>
+                  )}
+                  <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
+                  <div className="flex justify-between font-bold border-t pt-2 text-base">
+                    <span>{priceIncludesVat ? tr("totalIncl") : tr("totalLabel")}</span>
+                    <span className="font-mono text-primary">{fmt(totalAmount)}</span>
+                  </div>
+                  {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
+                    <p className="text-[10px] text-muted-foreground border-t pt-1">
+                      {tr("equivIn")} {defaultCurrency?.code ?? "SAR"}: {fmt(totalAmount / Number(exchangeRate))}
+                    </p>
+                  )}
+                </div>
               </div>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
+        </Card>
       </Tabs>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/orders")}>{tr("back")}</Button>
+        {/* Status flow buttons sit next to Save so the action bar mirrors
+            the invoice form's footer placement exactly. */}
+        {!isNew && orderStatus === "draft" && (
+          <>
+            <Button variant="outline" className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
+              onClick={() => statusMut.mutate("confirmed")} disabled={statusMut.isPending}>
+              <CheckCircle className="h-4 w-4" />{tr("confirm")}
+            </Button>
+            <Button variant="outline" className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50"
+              onClick={() => { if (confirm(tr("confirmCancel"))) statusMut.mutate("cancelled"); }}
+              disabled={statusMut.isPending}>
+              <XCircle className="h-4 w-4" />{tr("cancel")}
+            </Button>
+          </>
+        )}
+        {!isNew && orderStatus === "confirmed" && !convertedInvoiceId && (
+          <Button className="gap-1.5"
+            onClick={() => { if (confirm(tr("confirmConvert"))) convertMut.mutate(); }}
+            disabled={convertMut.isPending}>
+            <FileCheck2 className="h-4 w-4" />{convertMut.isPending ? tr("converting") : tr("convert")}
+          </Button>
+        )}
+        <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending || isLocked}>
+          {saveMut.isPending ? tr("saving") : isNew ? tr("saveOrder") : tr("saveEdit")}
+        </Button>
+      </div>
     </div>
   );
 }
