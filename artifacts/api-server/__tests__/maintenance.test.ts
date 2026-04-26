@@ -3843,6 +3843,11 @@ interface EmailHistoryItem {
 }
 interface EmailHistoryResponse {
   count: number;
+  // `total` drives the "تم تحميل N من T محاولة" header and the "تحميل
+  // المزيد (X متبقّية)" button label in the SuperAdmin audit panel. It is
+  // computed against the SAME WHERE clause as the page query so the
+  // header reflects the active filters and stays constant across pages.
+  total: number;
   items: EmailHistoryItem[];
   offset: number;
   limit: number;
@@ -3962,6 +3967,129 @@ test("GET /maintenance/email-history: combines trigger + status + date filters (
   assert.equal(r.body.items[0].trigger, "manual");
   assert.equal(r.body.items[0].status, "no_transport");
   assert.equal(r.body.items[0].ranAt, "2010-03-05T03:00:00.000Z");
+});
+
+test("GET /maintenance/email-history: `total` reflects active filters and stays constant across pages", async () => {
+  await seedEmailHistoryOnce();
+  // The route returns a `total` field alongside the page slice. It powers
+  // the "تم تحميل N من T محاولة" header and the "تحميل المزيد (X متبقّية)"
+  // button label on the SuperAdmin audit panel, so it must:
+  //   1) match the seeded row count when only the safe-window from/to is
+  //      applied (i.e. no narrowing trigger/status/date filters beyond the
+  //      window the rest of this suite uses to scope shared-DB assertions),
+  //   2) stay constant across `limit`+`offset` pages — paging is a view
+  //      onto the same filtered set, the total must not drift,
+  //   3) narrow correctly when `trigger`, `status`, and `from`/`to` filters
+  //      are applied, re-using the same fixture counts as the dedicated
+  //      filter tests above so a refactor that drops a filter from the
+  //      count's WHERE clause (but leaves it on the page query) trips here.
+  // A future refactor that diverges the page WHERE from the count WHERE
+  // would otherwise silently mis-state the header without any test signal.
+
+  // (1) Baseline: window-only, no narrowing filters → total === seed size.
+  const baseline = await api<EmailHistoryResponse>(EMAIL_HIST_BASE, "GET", { token: saToken });
+  assert.equal(baseline.status, 200);
+  assert.equal(
+    baseline.body.total, EMAIL_HISTORY_SEED.length,
+    `total must equal the ${EMAIL_HISTORY_SEED.length} seeded rows when only the safe-window from/to is applied (no trigger/status/extra-date filters), got total=${baseline.body.total}`,
+  );
+
+  // (2) Pagination: walk three non-overlapping pages with limit=3 over the
+  //     same filtered set. `total` must stay pinned at the seed size on
+  //     every page and must NOT drift toward the page slice size (`count`).
+  //     If a refactor accidentally substituted `items.length` for the
+  //     count-query result, the offset>0 pages would shrink and this trips.
+  const PAGE = 3;
+  let offset = 0;
+  const seenIds = new Set<number>();
+  while (offset < EMAIL_HISTORY_SEED.length) {
+    const page = await api<EmailHistoryResponse>(
+      `${EMAIL_HIST_BASE}&limit=${PAGE}&offset=${offset}`,
+      "GET", { token: saToken },
+    );
+    assert.equal(page.status, 200, `page at offset=${offset}: expected 200, got ${page.status}`);
+    assert.equal(
+      page.body.total, EMAIL_HISTORY_SEED.length,
+      `total must stay constant at ${EMAIL_HISTORY_SEED.length} across pages; page at offset=${offset} returned total=${page.body.total}`,
+    );
+    assert.equal(page.body.offset, offset, `offset echo mismatch at offset=${offset}`);
+    assert.equal(page.body.limit,  PAGE,   `limit echo mismatch at offset=${offset}`);
+    // Sanity: no row should appear on more than one page — proves the page
+    // slice is a real slice of the same set the count is sized over.
+    for (const it of page.body.items) {
+      assert.ok(!seenIds.has(it.id), `row id=${it.id} appeared on more than one page (offset=${offset})`);
+      seenIds.add(it.id);
+    }
+    offset += PAGE;
+  }
+  assert.equal(
+    seenIds.size, EMAIL_HISTORY_SEED.length,
+    `paging must visit every seeded row exactly once; saw ${seenIds.size}/${EMAIL_HISTORY_SEED.length}`,
+  );
+
+  // (3a) `trigger` filter narrows total. Re-uses the exact counts the
+  //      dedicated trigger filter test above pins so a divergence between
+  //      page and count WHERE clauses surfaces as the same number on both
+  //      tests, not a silent drift only the header would notice.
+  for (const [trig, expected] of [["scheduled", 4], ["manual", 2], ["test", 2]] as const) {
+    const r = await api<EmailHistoryResponse>(`${EMAIL_HIST_BASE}&trigger=${trig}`, "GET", { token: saToken });
+    assert.equal(r.status, 200, `trigger=${trig}: expected 200, got ${r.status}`);
+    assert.equal(
+      r.body.total, expected,
+      `total must narrow to ${expected} when trigger=${trig} (matches the trigger filter test fixture); got total=${r.body.total}`,
+    );
+    assert.equal(
+      r.body.count, expected,
+      `count and total must agree when the page fits in one slice; trigger=${trig} count=${r.body.count} total=${r.body.total}`,
+    );
+  }
+
+  // (3b) `status` bucket narrows total. The bucket sizes mirror the
+  //      EMAIL_HISTORY_STATUS_BUCKETS mapping the status bucket test pins.
+  for (const [bucket, expected] of [["ok", 2], ["failed", 3], ["suppressed", 3]] as const) {
+    const r = await api<EmailHistoryResponse>(`${EMAIL_HIST_BASE}&status=${bucket}`, "GET", { token: saToken });
+    assert.equal(r.status, 200, `status=${bucket}: expected 200, got ${r.status}`);
+    assert.equal(
+      r.body.total, expected,
+      `total must narrow to ${expected} when status=${bucket} (matches the status bucket test fixture); got total=${r.body.total}`,
+    );
+  }
+
+  // (3c) `from`/`to` narrows total. The 2010-03-04..2010-03-06 sub-window
+  //      is the same one the date-range filter test pins to 3 rows, and
+  //      the single-day from===to case must still match the row at 03:00
+  //      UTC on that day (inclusive end-of-day).
+  const win = await api<EmailHistoryResponse>(
+    `/api/admin/maintenance/email-history?from=2010-03-04&to=2010-03-06`,
+    "GET", { token: saToken },
+  );
+  assert.equal(win.status, 200);
+  assert.equal(
+    win.body.total, 3,
+    `total must narrow to 3 for the 2010-03-04..2010-03-06 sub-window (matches the date-range filter test fixture); got total=${win.body.total}`,
+  );
+  const single = await api<EmailHistoryResponse>(
+    `/api/admin/maintenance/email-history?from=2010-03-05&to=2010-03-05`,
+    "GET", { token: saToken },
+  );
+  assert.equal(single.status, 200);
+  assert.equal(
+    single.body.total, 1,
+    `total must narrow to 1 for the single-day 2010-03-05 window; got total=${single.body.total}`,
+  );
+
+  // (3d) Combined trigger + status + date filters (AND semantics). Mirrors
+  //      the existing AND-semantics filter test (manual+failed within the
+  //      seed window → exactly 1 row at 2010-03-05).
+  const combo = await api<EmailHistoryResponse>(
+    `${EMAIL_HIST_BASE}&trigger=manual&status=failed`,
+    "GET", { token: saToken },
+  );
+  assert.equal(combo.status, 200);
+  assert.equal(
+    combo.body.total, 1,
+    `total must narrow to 1 when trigger=manual AND status=failed AND date window applied (matches the AND-semantics filter test fixture); got total=${combo.body.total}`,
+  );
 });
 
 test("GET /maintenance/email-history: 400 on invalid query input", async () => {
