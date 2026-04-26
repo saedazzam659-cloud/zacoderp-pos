@@ -84,7 +84,7 @@ const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries"];
 const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
-  { nameKey: "nav.dashboard",            href: "/",                         icon: LayoutDashboard, exact: true },
+  { nameKey: "nav.infoBoard",            href: "/",                         icon: LayoutDashboard, exact: true },
   { nameKey: "nav.registrationRequests", href: "/admin/requests",           icon: Clock },
   { nameKey: "nav.licenses",             href: "/admin/licenses",           icon: KeyRound },
   { nameKey: "nav.backupOperations",     href: "/admin/backups",            icon: HardDrive },
@@ -696,6 +696,9 @@ function ReportsNavGroup({
 }
 
 // ─── DashboardNavGroup ─────────────────────────────────────────────────────────
+// "لوحة التحكم" — pure collapsible group of settings/admin sub-items. The
+// dashboard page itself ("/") is now reached via the separate top-level
+// "لوحة المعلومات" entry rendered above this group.
 function DashboardNavGroup({
   location, onNavigate, open, onToggle,
 }: {
@@ -705,37 +708,21 @@ function DashboardNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const isActive = location === "/";
-  const isOnSub  = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
+  const isOnSub = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
   return (
     <div>
-      <div className={cn(
-        "flex items-center rounded-lg transition-colors",
-        (isActive || (isOnSub && !open))
+      <button onClick={onToggle} className={cn(
+        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        isOnSub && !open
           ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
           : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       )}>
-        <Link href="/" className="flex items-center gap-3 flex-1 px-3 py-2 text-sm font-medium" onClick={onNavigate}>
-          <LayoutDashboard className="h-4 w-4 shrink-0" />
-          <span>{t("nav.dashboard")}</span>
-        </Link>
-        <a
-          href="/"
-          target="_blank"
-          rel="noopener noreferrer"
-          title={t("nav.openInNewTab", "فتح في تبويب جديد")}
-          onClick={(e) => e.stopPropagation()}
-          className="px-2 py-2 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-        </a>
-        <button onClick={onToggle} className="px-2 py-2 rounded-lg" title={t("nav.dashboard")}>
-          {open
-            ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-            : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          }
-        </button>
-      </div>
+        <Settings className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-start">{t("nav.dashboard")}</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -985,6 +972,11 @@ function SidebarInner({
           <>
             {menuPerms.dashboard !== false && (
               <div className="space-y-0.5">
+                <NavItem
+                  item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
+                  location={location}
+                  onClick={onNavigate}
+                />
                 <DashboardNavGroup
                   location={location}
                   onNavigate={onNavigate}
@@ -1196,7 +1188,7 @@ function SidebarInner({
 type CrumbInfo = { label: string; parent?: string };
 const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
   const map: Record<string, CrumbInfo> = {
-    "/":                              { label: "nav.dashboard" },
+    "/":                              { label: "nav.infoBoard" },
     "/companies":                     { label: "nav.companies" },
     "/customers":                     { label: "nav.customers" },
     "/customers/new":                 { label: "navExtra.newCustomer",       parent: "/customers" },
@@ -1255,7 +1247,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
 
 function getBreadcrumbs(location: string, t: (k: string) => string): { label: string; href?: string }[] {
   const resolve = (label: string) => label.includes(".") ? t(label) : label;
-  if (location === "/") return [{ label: t("nav.dashboard") }];
+  if (location === "/") return [{ label: t("nav.infoBoard") }];
   const tryPaths: string[] = [];
   let current: string | undefined = location;
   while (current && current !== "/") {
@@ -1444,7 +1436,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen]           = useState(false);
   const [dashboardOpen, setDashboardOpen]     = useState(() =>
-    location === "/" ||
     ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
   );
   const [inventoryOpen, setInventoryOpen]     = useState(() => location.startsWith("/inventory") && !location.startsWith("/inventory/reports"));

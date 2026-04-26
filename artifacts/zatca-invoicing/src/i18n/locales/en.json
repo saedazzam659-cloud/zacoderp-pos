@@ -419,7 +419,8 @@
     }
   },
   "nav": {
-    "dashboard": "Dashboard",
+    "infoBoard": "Information Board",
+    "dashboard": "Control Panel",
     "registrationRequests": "Registration Requests",
     "licenses": "License",
     "backupOperations": "Backup Operations",

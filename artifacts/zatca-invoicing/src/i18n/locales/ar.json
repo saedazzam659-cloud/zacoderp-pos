@@ -419,6 +419,7 @@
     }
   },
   "nav": {
+    "infoBoard": "لوحة المعلومات",
     "dashboard": "لوحة التحكم",
     "registrationRequests": "طلبات التسجيل",
     "licenses": "ترخيص النسخة",
