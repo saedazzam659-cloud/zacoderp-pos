@@ -144,6 +144,8 @@ const purchasingSubNav: NavDef[] = [
   // supplier_groups + lc piggy-back on the suppliers permission (no dedicated module key).
   { nameKey: "nav.supplierGroups",       href: "/purchasing/supplier-groups", icon: Users,        permKey: "suppliers" },
   { nameKey: "nav.lc",                   href: "/purchasing/lc",              icon: CreditCard,   permKey: "purchase_invoices" },
+  // Purchase orders piggy-back on the purchase_invoices permission key.
+  { nameKey: "nav.purchaseOrders",       href: "/purchasing/orders",          icon: ClipboardList, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseInvoices",     href: "/purchasing/invoices",        icon: ShoppingCart, permKey: "purchase_invoices" },
   { nameKey: "nav.purchaseReturns",      href: "/purchasing/returns",         icon: RotateCcw,    permKey: "purchase_returns" },
   { nameKey: "nav.supplierSettlements",  href: "/purchasing/settlements",     icon: Banknote,     permKey: "supplier_settlements" },

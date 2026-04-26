@@ -116,6 +116,8 @@ import SupplierGroups       from "@/pages/purchasing/SupplierGroups";
 import LetterOfCredit       from "@/pages/purchasing/LetterOfCredit";
 import PurchaseInvoices     from "@/pages/purchasing/PurchaseInvoices";
 import PurchaseInvoiceForm  from "@/pages/purchasing/PurchaseInvoiceForm";
+import PurchaseOrders       from "@/pages/purchasing/PurchaseOrders";
+import PurchaseOrderForm    from "@/pages/purchasing/PurchaseOrderForm";
 import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
 // Sales Reports
@@ -339,6 +341,10 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices/new"    module="purchase_invoices" action="create" component={PurchaseInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices/:id"    module="purchase_invoices"     component={PurchaseInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices"        module="purchase_invoices"     component={PurchaseInvoices} />}
+            {/* Purchase Orders piggy-back on purchase_invoices permission — no module migration needed */}
+            {!isSuperAdmin && <PermRoute path="/purchasing/orders/new"      module="purchase_invoices" action="create" component={PurchaseOrderForm} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/orders/:id"      module="purchase_invoices"     component={PurchaseOrderForm} />}
+            {!isSuperAdmin && <PermRoute path="/purchasing/orders"          module="purchase_invoices"     component={PurchaseOrders} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/returns"         module="purchase_returns"      component={PurchaseReturns} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/settlements"     module="supplier_settlements"  component={SupplierSettlement} />}
 

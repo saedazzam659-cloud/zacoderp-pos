@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   supplierGroupsTable, lettersOfCreditTable, lcExpensesTable,
   purchaseInvoicesTable, purchaseInvoiceLinesTable,
+  purchaseOrdersTable, purchaseOrderLinesTable,
   purchaseReturnsTable, purchaseReturnLinesTable,
   supplierSettlementsTable, suppliersTable,
   cashBoxesTable, bankAccountsTable, journalEntriesTable, journalEntryLinesTable,
@@ -101,6 +102,7 @@ const router = Router();
 router.use(extractAuth);
 router.use(pathRbac([
   ["/purchase-invoices",      "purchase_invoices"],
+  ["/purchase-orders",        "purchase_invoices"],
   ["/purchase-returns",       "purchase_returns"],
   ["/supplier-settlements",   "purchase_invoices"],
   ["/letters-of-credit",      "purchase_invoices"],
@@ -737,6 +739,315 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
     }
     await cleanupDocArtifacts({ companyId: cid, refType: "purchase_invoice", refId: id, journalEntryId: (inv as any).journalEntryId });
     await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════
+// PURCHASE ORDERS — operational, FINANCE-FREE
+// ═══════════════════════════════════════════════
+// Purchase orders mirror purchase invoices for items / supplier / branch /
+// totals but are intentionally INERT financially:
+//   • POST / PUT / PATCH (status) / DELETE never write a journal entry, never
+//     move stock, never settle a supplier balance, never create a voucher.
+//   • Only POST /purchase-orders/:id/convert spawns a DRAFT purchase invoice
+//     (which still needs to be posted separately to incur any finance impact).
+//   • Status flow: draft → confirmed | cancelled, then confirmed → converted
+//     (only via /convert; the status PATCH refuses "converted" directly).
+//   • Once converted or cancelled, the order is locked against PUT/DELETE.
+router.get("/purchase-orders", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.json([]); return; }
+    const rows = await db.select().from(purchaseOrdersTable)
+      .where(and(
+        eq(purchaseOrdersTable.companyId, cid),
+        ...branchScopeSpread(req, purchaseOrdersTable.branchId, req.query.branchId),
+      ))
+      .orderBy(desc(purchaseOrdersTable.orderDate));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/purchase-orders/:id", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    const [ord] = await db.select().from(purchaseOrdersTable)
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+    if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    const lines = await db.select().from(purchaseOrderLinesTable)
+      .where(eq(purchaseOrderLinesTable.orderId, id))
+      .orderBy(asc(purchaseOrderLinesTable.id));
+    res.json({ ...ord, lines });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/purchase-orders", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const { docNumber, supplierInvoiceNumber, orderDate, expectedDeliveryDate,
+            supplierId, branchId, paymentType, currencyCode, exchangeRate,
+            subtotal, vatAmount, discountAmount, totalAmount,
+            notes, lines, priceIncludesVat } = req.body;
+    if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
+    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
+
+    let resolvedDocNumber: string | null = (docNumber && String(docNumber).trim()) || null;
+    if (!resolvedDocNumber) {
+      try {
+        resolvedDocNumber = await nextSequenceNumber(cid, "purchase_order", {
+          userId:   (req as any).authUser?.id ?? null,
+          refTable: "purchase_orders",
+          branchId: branchId ? Number(branchId) : null,
+        });
+      } catch (seqErr: any) {
+        res.status(400).json({ error: seqErr?.message ?? "تعذر توليد رقم الأمر" });
+        return;
+      }
+    }
+
+    const [ord] = await db.insert(purchaseOrdersTable).values({
+      companyId: cid, branchId: branchId ? Number(branchId) : null,
+      docNumber: resolvedDocNumber,
+      supplierInvoiceNumber: supplierInvoiceNumber || null,
+      orderDate,
+      expectedDeliveryDate: expectedDeliveryDate || null,
+      supplierId: Number(supplierId),
+      paymentType: paymentType || "credit",
+      currencyCode: currencyCode || "SAR",
+      exchangeRate: String(exchangeRate || "1"),
+      subtotal: String(subtotal || "0"),
+      vatAmount: String(vatAmount || "0"),
+      discountAmount: String(discountAmount || "0"),
+      totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
+      status: "draft",
+      notes: notes || null,
+    }).returning();
+    if (lines?.length) {
+      await db.insert(purchaseOrderLinesTable).values(
+        lines.map((l: any) => ({
+          orderId: ord.id, companyId: cid,
+          itemId: l.itemId ? Number(l.itemId) : null,
+          itemName: l.itemName, itemCode: l.itemCode || null,
+          unit: l.unit || null,
+          unitId: l.unitId ? Number(l.unitId) : null,
+          conversionFactor: String(l.conversionFactor || "1"),
+          qty: String(l.qty || "1"),
+          weight: String(l.weight || "0"),
+          unitPrice: String(l.unitPrice || "0"),
+          discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+          vatRate: String(l.vatRate || "15"),
+          lineTotal: String(l.lineTotal || "0"),
+          warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+          notes: l.notes || null,
+        }))
+      );
+    }
+    res.status(201).json(ord);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/purchase-orders/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [existing] = await db.select({ status: purchaseOrdersTable.status })
+      .from(purchaseOrdersTable)
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    if (existing.status === "converted" || existing.status === "cancelled") {
+      res.status(409).json({ error: "لا يمكن تعديل أمر شراء محوّل أو ملغي" });
+      return;
+    }
+    // docNumber is intentionally not destructured — immutable on edit.
+    const { supplierInvoiceNumber, orderDate, expectedDeliveryDate,
+            supplierId, branchId, paymentType, currencyCode, exchangeRate,
+            subtotal, vatAmount, discountAmount, totalAmount,
+            notes, lines, priceIncludesVat } = req.body;
+    if (!orderDate)  { res.status(400).json({ error: "تاريخ الأمر مطلوب" }); return; }
+    if (!supplierId) { res.status(400).json({ error: "يجب اختيار المورد" }); return; }
+    const [ord] = await db.update(purchaseOrdersTable).set({
+      branchId: branchId ? Number(branchId) : null,
+      supplierInvoiceNumber: supplierInvoiceNumber || null,
+      orderDate,
+      expectedDeliveryDate: expectedDeliveryDate || null,
+      supplierId: Number(supplierId),
+      paymentType: paymentType || "credit",
+      currencyCode: currencyCode || "SAR",
+      exchangeRate: String(exchangeRate || "1"),
+      subtotal: String(subtotal || "0"),
+      vatAmount: String(vatAmount || "0"),
+      discountAmount: String(discountAmount || "0"),
+      totalAmount: String(totalAmount || "0"),
+      priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
+      notes: notes || null, updatedAt: new Date(),
+    }).where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid))).returning();
+    if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    if (lines !== undefined) {
+      await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.orderId, id));
+      if (lines.length) {
+        await db.insert(purchaseOrderLinesTable).values(
+          lines.map((l: any) => ({
+            orderId: id, companyId: cid,
+            itemId: l.itemId ? Number(l.itemId) : null,
+            itemName: l.itemName, itemCode: l.itemCode || null,
+            unit: l.unit || null,
+            unitId: l.unitId ? Number(l.unitId) : null,
+            conversionFactor: String(l.conversionFactor || "1"),
+            qty: String(l.qty || "1"),
+            weight: String(l.weight || "0"),
+            unitPrice: String(l.unitPrice || "0"),
+            discount: String(Math.max(0, Math.min(100, Number(l.discount) || 0))),
+            vatRate: String(l.vatRate || "15"),
+            lineTotal: String(l.lineTotal || "0"),
+            warehouseId: l.warehouseId ? Number(l.warehouseId) : null,
+            notes: l.notes || null,
+          }))
+        );
+      }
+    }
+    res.json(ord);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch("/purchase-orders/:id/status", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const { status } = req.body as { status?: string };
+    // The /convert endpoint is the ONLY way to land in "converted". This
+    // PATCH is for user-driven workflow transitions (confirm / cancel).
+    const allowed = ["draft", "confirmed", "cancelled"] as const;
+    if (!status || !allowed.includes(status as any)) {
+      res.status(400).json({ error: "حالة غير صالحة" }); return;
+    }
+    const [existing] = await db.select({ status: purchaseOrdersTable.status })
+      .from(purchaseOrdersTable)
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    if (existing.status === "converted") {
+      res.status(409).json({ error: "تم تحويل الأمر إلى فاتورة بالفعل" }); return;
+    }
+    const [ord] = await db.update(purchaseOrdersTable)
+      .set({ status: status as any, updatedAt: new Date() })
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)))
+      .returning();
+    res.json(ord);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/purchase-orders/:id/convert", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [ord] = await db.select().from(purchaseOrdersTable)
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+    if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    if (ord.status !== "confirmed") {
+      res.status(409).json({ error: "يجب تأكيد الأمر قبل تحويله إلى فاتورة" }); return;
+    }
+    if (ord.convertedInvoiceId) {
+      res.status(409).json({ error: "تم تحويل الأمر إلى فاتورة بالفعل" }); return;
+    }
+    const lines = await db.select().from(purchaseOrderLinesTable)
+      .where(and(
+        eq(purchaseOrderLinesTable.orderId, id),
+        eq(purchaseOrderLinesTable.companyId, cid),
+      ))
+      .orderBy(asc(purchaseOrderLinesTable.id));
+
+    // Issue a NEW invoice docNumber from the purchase_invoice sequence
+    // (independent counter — orders and invoices have separate sequences).
+    let invDocNumber: string | null = null;
+    try {
+      invDocNumber = await nextSequenceNumber(cid, "purchase_invoice", {
+        userId:   (req as any).authUser?.id ?? null,
+        refTable: "purchase_invoices",
+        branchId: ord.branchId ?? null,
+      });
+    } catch { invDocNumber = null; }
+
+    const pType = ord.paymentType || "credit";
+    const [inv] = await db.insert(purchaseInvoicesTable).values({
+      companyId: cid,
+      branchId: ord.branchId ?? null,
+      docNumber: invDocNumber,
+      supplierInvoiceNumber: ord.supplierInvoiceNumber ?? null,
+      invoiceDate: ord.orderDate,
+      supplierId: ord.supplierId,
+      // Carry the payment-type intent over but DO NOT auto-pick cash/bank
+      // accounts here — those are operator choices made when posting.
+      paymentType: pType,
+      cashBoxId: null,
+      bankAccountId: null,
+      currencyCode: ord.currencyCode,
+      exchangeRate: ord.exchangeRate,
+      lcId: null,
+      distributionMethod: "value",
+      subtotal: ord.subtotal,
+      vatAmount: ord.vatAmount,
+      discountAmount: ord.discountAmount,
+      totalExpensesLoaded: "0",
+      totalAmount: ord.totalAmount,
+      priceIncludesVat: ord.priceIncludesVat,
+      status: "draft",
+      notes: ord.notes,
+    }).returning();
+    if (lines.length) {
+      await db.insert(purchaseInvoiceLinesTable).values(
+        lines.map(l => ({
+          invoiceId: inv.id, companyId: cid,
+          itemId: l.itemId, itemName: l.itemName, itemCode: l.itemCode,
+          unit: l.unit, unitId: l.unitId,
+          conversionFactor: l.conversionFactor ?? "1",
+          qty: l.qty, weight: l.weight ?? "0",
+          unitPrice: l.unitPrice,
+          discount: l.discount ?? "0",
+          vatRate: l.vatRate ?? "15",
+          lineTotal: l.lineTotal,
+          expenseShare: "0",
+          finalCost: "0",
+          accountId: null,
+          warehouseId: l.warehouseId,
+          notes: l.notes,
+        }))
+      );
+    }
+
+    await db.update(purchaseOrdersTable)
+      .set({ status: "converted", convertedInvoiceId: inv.id, updatedAt: new Date() })
+      .where(eq(purchaseOrdersTable.id, id));
+
+    res.status(201).json({ orderId: id, invoiceId: inv.id, invoice: inv });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/purchase-orders/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const [ord] = await db.select({ status: purchaseOrdersTable.status })
+      .from(purchaseOrdersTable)
+      .where(and(eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid)));
+    if (!ord) { res.status(404).json({ error: "أمر الشراء غير موجود" }); return; }
+    // Mirror PUT/edit lock: orders that are no longer in a mutable state
+    // (converted to an invoice, or explicitly cancelled) cannot be deleted.
+    // Cancelled rows stay around as an audit trail of the cancellation.
+    if (ord.status === "converted") {
+      res.status(409).json({ error: "لا يمكن حذف أمر شراء محوّل إلى فاتورة" });
+      return;
+    }
+    if (ord.status === "cancelled") {
+      res.status(409).json({ error: "لا يمكن حذف أمر شراء ملغي" });
+      return;
+    }
+    await db.delete(purchaseOrderLinesTable).where(eq(purchaseOrderLinesTable.orderId, id));
+    await db.delete(purchaseOrdersTable).where(and(
+      eq(purchaseOrdersTable.id, id), eq(purchaseOrdersTable.companyId, cid),
+    ));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

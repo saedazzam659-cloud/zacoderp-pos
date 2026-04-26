@@ -115,6 +115,64 @@ export const purchaseInvoiceLinesTable = pgTable("purchase_invoice_lines", {
   notes:           text("notes"),
 });
 
+// ─── Purchase Orders (operational only — NO finance side-effects) ──────────
+// Mirrors purchase_invoices' operational fields (supplier, branch, items, totals)
+// but intentionally OMITS every finance/accounting column:
+//   no cashBoxId / bankAccountId / lcId / distributionMethod
+//   no inventoryAccountId / taxAccountId / discountAccountId
+//   no journalEntryId / totalExpensesLoaded
+// Saving / editing / cancelling a purchase order MUST NEVER post a journal entry,
+// move stock, settle a supplier balance, or touch ZATCA. Only the explicit
+// "convert to invoice" action creates a DRAFT purchase_invoice (which still
+// requires the user to post it separately to incur any finance impact).
+export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", [
+  "draft", "confirmed", "cancelled", "converted",
+]);
+
+export const purchaseOrdersTable = pgTable("purchase_orders", {
+  id:                    serial("id").primaryKey(),
+  companyId:             integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  branchId:              integer("branch_id"),
+  docNumber:             text("doc_number"),
+  supplierInvoiceNumber: text("supplier_invoice_number"),
+  orderDate:             text("order_date").notNull(),
+  expectedDeliveryDate:  text("expected_delivery_date"),
+  supplierId:            integer("supplier_id").references(() => suppliersTable.id),
+  paymentType:           text("payment_type").notNull().default("credit"),
+  currencyCode:          text("currency_code").notNull().default("SAR"),
+  exchangeRate:          numeric("exchange_rate", { precision: 15, scale: 6 }).notNull().default("1"),
+  subtotal:              numeric("subtotal",     { precision: 15, scale: 2 }).notNull().default("0"),
+  vatAmount:             numeric("vat_amount",   { precision: 15, scale: 2 }).notNull().default("0"),
+  discountAmount:        numeric("discount_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  totalAmount:           numeric("total_amount", { precision: 15, scale: 2 }).notNull().default("0"),
+  priceIncludesVat:      boolean("price_includes_vat").notNull().default(false),
+  status:                purchaseOrderStatusEnum("status").notNull().default("draft"),
+  convertedInvoiceId:    integer("converted_invoice_id").references(() => purchaseInvoicesTable.id, { onDelete: "set null" }),
+  notes:                 text("notes"),
+  createdAt:             timestamp("created_at").defaultNow().notNull(),
+  updatedAt:             timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
+  id:               serial("id").primaryKey(),
+  orderId:          integer("order_id").notNull().references(() => purchaseOrdersTable.id, { onDelete: "cascade" }),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id"),
+  itemName:         text("item_name").notNull(),
+  itemCode:         text("item_code"),
+  unit:             text("unit"),
+  unitId:           integer("unit_id"),
+  conversionFactor: numeric("conversion_factor", { precision: 15, scale: 6 }).default("1"),
+  qty:              numeric("qty",        { precision: 15, scale: 4 }).notNull().default("1"),
+  weight:           numeric("weight",     { precision: 15, scale: 4 }).default("0"),
+  unitPrice:        numeric("unit_price", { precision: 15, scale: 4 }).notNull().default("0"),
+  discount:         numeric("discount",   { precision: 15, scale: 2 }).default("0"),
+  vatRate:          numeric("vat_rate",   { precision: 5,  scale: 2 }).default("15"),
+  lineTotal:        numeric("line_total", { precision: 15, scale: 2 }).notNull().default("0"),
+  warehouseId:      integer("warehouse_id"),
+  notes:            text("notes"),
+});
+
 // ─── Purchase Returns ────────────────────────────────────────────────────────
 export const purchaseReturnsTable = pgTable("purchase_returns", {
   id:            serial("id").primaryKey(),
@@ -186,5 +244,7 @@ export type LetterOfCredit       = typeof lettersOfCreditTable.$inferSelect;
 export type LcExpense            = typeof lcExpensesTable.$inferSelect;
 export type PurchaseInvoice      = typeof purchaseInvoicesTable.$inferSelect;
 export type PurchaseInvoiceLine  = typeof purchaseInvoiceLinesTable.$inferSelect;
+export type PurchaseOrder        = typeof purchaseOrdersTable.$inferSelect;
+export type PurchaseOrderLine    = typeof purchaseOrderLinesTable.$inferSelect;
 export type PurchaseReturn       = typeof purchaseReturnsTable.$inferSelect;
 export type SupplierSettlement   = typeof supplierSettlementsTable.$inferSelect;
