@@ -1079,6 +1079,186 @@ export async function runEmailHistoryAutoPrune(
   };
 }
 
+// ─── Per-table old-records auto-prune (audit_log + maintenance_runs) ─────────
+// Companion to runEmailHistoryAutoPrune that handles the two per-company
+// "old records" toolbox cards (`old-audit-logs` and `old-maintenance-runs`).
+// Both grow much faster than the email-history tables, so the same daily
+// hygiene treatment prevents the SuperAdmin panels and the maintenance
+// history accordion from slowing down between manual sweeps.
+//
+// Unlike the manual toolbox handlers in admin.ts — which scope each DELETE
+// to a single company because the operator picks one tenant in the UI — the
+// scheduled sweep deletes across ALL companies in a single statement. The
+// retention setting is system-wide and there's no per-tenant exclusion, so
+// fanning out per-company would just multiply DB round-trips for the same
+// effective result.
+//
+// One summary audit row is written per table per sweep so the maintenance-
+// history panel surfaces each prune independently. companyId=0 mirrors the
+// retention-settings PUT convention since these summaries describe a
+// system-wide action, not a tenant-scoped one.
+//
+// Audit-log self-pruning note: the summary row is written AFTER the DELETE
+// and carries created_at = NOW(), which is strictly greater than the cutoff
+// (NOW() - retentionDays). The summary therefore survives its own prune —
+// same guarantee the manual /maintenance/old-audit-logs/fix handler relies
+// on (see the comment there).
+//
+// Per-tool bounds — duplicated here from RETENTION_TOOL_BOUNDS in
+// admin.ts to avoid a circular import (admin.ts already imports from this
+// module). MUST stay in sync with that table: a stale persisted setting from
+// an older deploy (or an out-of-band UPDATE) is clamped against the same
+// per-tool window the manual toolbox cards enforce, so the scheduled sweep
+// can never delete more aggressively than the UI would let an operator do.
+// In particular, `old-audit-logs` has min=30 (NOT the global 7), so a
+// persisted row with days=10 must be clamped up to 30 here.
+const OLD_RECORDS_BOUNDS: Record<
+  "old-audit-logs" | "old-maintenance-runs",
+  { default: number; min: number; max: number }
+> = {
+  "old-audit-logs":       { default: 365, min: 30, max: 3650 },
+  "old-maintenance-runs": { default: 90,  min: 7,  max: 3650 },
+};
+
+function clampOldRecordsRetention(
+  days: unknown, bounds: { default: number; min: number; max: number },
+): number {
+  const n = Number(days);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return bounds.default;
+  if (n < bounds.min) return bounds.min;
+  if (n > bounds.max) return bounds.max;
+  return n;
+}
+
+async function getRetentionDaysForOldRecords(
+  toolKey: "old-audit-logs" | "old-maintenance-runs",
+): Promise<number> {
+  const bounds = OLD_RECORDS_BOUNDS[toolKey];
+  try {
+    const [row] = await db.select()
+      .from(maintenanceRetentionSettingsTable)
+      .where(eq(maintenanceRetentionSettingsTable.toolKey, toolKey));
+    if (!row) return bounds.default;
+    return clampOldRecordsRetention(row.days, bounds);
+  } catch (err) {
+    logger.warn({ err, toolKey }, "old-records-prune: retention lookup failed — using default");
+    return bounds.default;
+  }
+}
+
+export interface OldRecordsPruneSummary {
+  deleted: number;
+  retentionDays: number;
+  durationMs: number;
+}
+
+// Internal helper — runs one DELETE + one summary audit row. Exported wrappers
+// below pin the toolKey / table so the test suite can call each path
+// explicitly without duplicating the orchestration. Bounds + defaults come
+// from OLD_RECORDS_BOUNDS so adding a tool is a one-line config change.
+async function pruneOldRecordsTable(
+  args: {
+    toolKey: "old-audit-logs" | "old-maintenance-runs";
+    table: "audit_log" | "maintenance_runs";
+    entityType: "audit_log" | "maintenance_runs";
+    trigger: "scheduled" | "manual";
+  },
+): Promise<OldRecordsPruneSummary> {
+  const t0 = Date.now();
+  const days = await getRetentionDaysForOldRecords(args.toolKey);
+  let deleted = 0;
+  let error: string | null = null;
+
+  // Use the driver's `rowCount` instead of `RETURNING id` so the very first
+  // sweep (which may face years of accumulated rows after this feature ships)
+  // doesn't materialize a giant id list in memory just to count it. Same
+  // shape as the email-history helper above.
+  const countDeleted = (exec: unknown): number => {
+    const r = exec as { rowCount?: number | null; rows?: unknown[] };
+    if (typeof r?.rowCount === "number") return r.rowCount;
+    return Array.isArray(r?.rows) ? r.rows.length : 0;
+  };
+
+  try {
+    // Two near-identical DELETEs because the timestamp column differs
+    // (`created_at` vs `run_at`). Inlining the table + column names keeps
+    // the SQL readable and avoids smuggling identifiers through `sql.raw`.
+    const exec = args.table === "audit_log"
+      ? await db.execute(sql`
+          DELETE FROM audit_log
+           WHERE created_at < NOW() - (${days}::int || ' days')::interval
+        `)
+      : await db.execute(sql`
+          DELETE FROM maintenance_runs
+           WHERE run_at < NOW() - (${days}::int || ' days')::interval
+        `);
+    deleted = countDeleted(exec);
+  } catch (err: any) {
+    error = err?.message ?? String(err);
+    logger.error({ err, table: args.table }, "old-records-prune: DELETE failed");
+  }
+
+  const durationMs = Date.now() - t0;
+
+  // One summary audit row per sweep. Best-effort: an audit-log outage cannot
+  // mask the prune itself (rows are already deleted) so we log and move on.
+  try {
+    await db.insert(auditLogTable).values({
+      userId: null,
+      username: null,
+      role: "system",
+      companyId: 0,
+      module: "maintenance",
+      action: "auto_prune",
+      method: null,
+      path: null,
+      entityType: args.entityType,
+      entityId: null,
+      metadata: {
+        trigger: args.trigger,
+        deleted,
+        retentionDays: days,
+        durationMs,
+        ...(error ? { error } : {}),
+      },
+    });
+  } catch (err) {
+    logger.error({ err, table: args.table }, "old-records-prune: failed to write audit summary");
+  }
+
+  return { deleted, retentionDays: days, durationMs };
+}
+
+// Exported so the scheduler test suite can drive the function directly
+// without spinning up the daily-tick loop. Bounds (default 365d, min 30d,
+// max 3650d) mirror the `old-audit-logs` entry in RETENTION_TOOL_BOUNDS
+// in admin.ts via OLD_RECORDS_BOUNDS above.
+export async function runAuditLogAutoPrune(
+  trigger: "scheduled" | "manual" = "scheduled",
+): Promise<OldRecordsPruneSummary> {
+  return pruneOldRecordsTable({
+    toolKey: "old-audit-logs",
+    table: "audit_log",
+    entityType: "audit_log",
+    trigger,
+  });
+}
+
+// Exported so the scheduler test suite can drive the function directly
+// without spinning up the daily-tick loop. Bounds (default 90d, min 7d,
+// max 3650d) mirror the `old-maintenance-runs` entry in RETENTION_TOOL_BOUNDS
+// in admin.ts via OLD_RECORDS_BOUNDS above.
+export async function runMaintenanceRunsAutoPrune(
+  trigger: "scheduled" | "manual" = "scheduled",
+): Promise<OldRecordsPruneSummary> {
+  return pruneOldRecordsTable({
+    toolKey: "old-maintenance-runs",
+    table: "maintenance_runs",
+    entityType: "maintenance_runs",
+    trigger,
+  });
+}
+
 // ─── Scheduler boot (called once from index.ts) ──────────────────────────────
 let started = false;
 export function startMaintenanceScheduler() {
@@ -1107,6 +1287,25 @@ export function startMaintenanceScheduler() {
         logger.info({ pruneSummary }, "maintenance-scheduler: email-history auto-prune complete");
       } catch (err) {
         logger.error({ err }, "maintenance-scheduler: email-history auto-prune failed");
+      }
+      // Same hygiene treatment for the two per-company "old records" cards
+      // (audit_log + maintenance_runs). Both grow much faster than the
+      // email-history tables, so without a scheduled prune the SuperAdmin
+      // panels and the maintenance-history accordion slow down between
+      // manual sweeps. Each helper is wrapped independently so a failure on
+      // one does not block the other; helper-internal errors are logged
+      // there too and never escape into the outer tick.
+      try {
+        const auditPruneSummary = await runAuditLogAutoPrune("scheduled");
+        logger.info({ auditPruneSummary }, "maintenance-scheduler: audit-log auto-prune complete");
+      } catch (err) {
+        logger.error({ err }, "maintenance-scheduler: audit-log auto-prune failed");
+      }
+      try {
+        const runsPruneSummary = await runMaintenanceRunsAutoPrune("scheduled");
+        logger.info({ runsPruneSummary }, "maintenance-scheduler: maintenance-runs auto-prune complete");
+      } catch (err) {
+        logger.error({ err }, "maintenance-scheduler: maintenance-runs auto-prune failed");
       }
     } catch (e: any) {
       logger.error({ err: e }, "maintenance-scheduler: tick error");

@@ -98,6 +98,8 @@ import {
   getSuperAdminRecipients,
   dispatchCriticalDigest,
   runEmailHistoryAutoPrune,
+  runAuditLogAutoPrune,
+  runMaintenanceRunsAutoPrune,
   type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
 import { __resetEmailTransporterForTesting } from "../src/lib/email.ts";
@@ -5053,6 +5055,347 @@ test("runEmailHistoryAutoPrune: persisted retention setting overrides the defaul
       .where(and(
         eq(auditLogTable.action, "auto_prune"),
         eq(auditLogTable.entityType, "email_history"),
+        eq(auditLogTable.role, "system"),
+        eq(auditLogTable.companyId, 0),
+      ));
+    for (const r of auditRows) {
+      if (!insertedAuditLogIds.includes(r.id)) insertedAuditLogIds.push(r.id);
+    }
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  runAuditLogAutoPrune + runMaintenanceRunsAutoPrune — daily cleanup of the
+//  two per-company "old records" toolbox cards.
+// ════════════════════════════════════════════════════════════════════════════
+// These mirror the runEmailHistoryAutoPrune tests above but for the higher-
+// volume per-company tables. Without them the SuperAdmin audit panels and
+// the maintenance-history accordion grow forever between manual fixes.
+//
+// Each test seeds dated rows directly into the target table (timestamps are
+// the DELETE cutoff, so per-tenant TEST_TAG isolation isn't possible — we
+// instead select recent audit summary rows by id-watermark and clean up by id).
+
+test("runAuditLogAutoPrune: deletes audit_log rows older than the default 365-day window and writes one summary audit row", async () => {
+  await resetRetention("old-audit-logs");
+
+  // Watermark BEFORE seeding so the assertions below see only rows produced
+  // inside this test, even on a shared database.
+  const auditWatermark = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const auditCutoffId = Number(((auditWatermark as any).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const oldCreatedAt    = new Date(Date.now() - 400 * 86_400_000); // > 365d → must be deleted
+  const recentCreatedAt = new Date(Date.now() - 30  * 86_400_000); // ≤ 365d → must be kept
+
+  const seeded = await db.insert(auditLogTable).values([
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: dirtyCompanyId, module: "test", action: "auto_prune_seed",
+      entityType: "test_old", createdAt: oldCreatedAt },
+    { userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+      companyId: dirtyCompanyId, module: "test", action: "auto_prune_seed",
+      entityType: "test_recent", createdAt: recentCreatedAt },
+  ]).returning({ id: auditLogTable.id });
+  const oldAuditId    = seeded[0].id;
+  const recentAuditId = seeded[1].id;
+  // Track the "recent" row for teardown (the "old" row is deleted by the
+  // sweep itself; tracking it here is harmless because the cleanup DELETE
+  // is a no-op for missing ids).
+  insertedAuditLogIds.push(oldAuditId, recentAuditId);
+
+  const summary = await runAuditLogAutoPrune("manual");
+  // Default must come from the documented 365-day window.
+  assert.equal(summary.retentionDays, 365);
+  // At least our seeded old row was deleted; other test runs on a shared DB
+  // may have left behind additional old rows so we assert ≥ 1.
+  assert.ok(summary.deleted >= 1,
+    `expected ≥1 audit_log row deleted, got ${summary.deleted}`);
+  assert.ok(Number.isFinite(summary.durationMs) && summary.durationMs >= 0);
+
+  // Old row must be gone, recent row must survive.
+  const stillOld = await db.select({ id: auditLogTable.id })
+    .from(auditLogTable)
+    .where(eq(auditLogTable.id, oldAuditId));
+  assert.equal(stillOld.length, 0, "old audit_log row must be pruned");
+  const stillRecent = await db.select({ id: auditLogTable.id })
+    .from(auditLogTable)
+    .where(eq(auditLogTable.id, recentAuditId));
+  assert.equal(stillRecent.length, 1, "recent audit_log row must NOT be pruned");
+
+  // Exactly one summary audit row produced for THIS sweep — it must carry
+  // the deleted count + retention window in metadata so the maintenance-
+  // history panel can render them without re-querying. companyId=0 mirrors
+  // the email-history auto-prune convention since the sweep is system-wide.
+  const newAuditRows = await db.select({
+    id: auditLogTable.id,
+    module: auditLogTable.module,
+    action: auditLogTable.action,
+    role: auditLogTable.role,
+    companyId: auditLogTable.companyId,
+    entityType: auditLogTable.entityType,
+    metadata: auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${auditCutoffId}`,
+      eq(auditLogTable.action, "auto_prune"),
+      eq(auditLogTable.entityType, "audit_log"),
+    ));
+  insertedAuditLogIds.push(...newAuditRows.map((r) => r.id));
+  assert.equal(newAuditRows.length, 1,
+    `expected exactly one audit_log auto_prune row this sweep, got ${newAuditRows.length}`);
+  const audit = newAuditRows[0];
+  assert.equal(audit.module, "maintenance");
+  assert.equal(audit.role, "system");
+  assert.equal(audit.companyId, 0);
+  assert.ok(isObject(audit.metadata), "audit metadata must be a JSON object");
+  const md = audit.metadata as Record<string, any>;
+  assert.equal(md.trigger, "manual");
+  assert.equal(md.retentionDays, 365);
+  assert.equal(md.deleted, summary.deleted);
+  assert.equal(md.error, undefined, "no error metadata on the happy path");
+});
+
+test("runAuditLogAutoPrune: persisted retention setting overrides the default cutoff", async () => {
+  // Persist a tight 60-day retention so a 90d-old row gets pruned even
+  // though it would safely sit inside the default 365-day window.
+  await resetRetention("old-audit-logs");
+  await db.insert(maintenanceRetentionSettingsTable).values({
+    toolKey: "old-audit-logs",
+    days: 60,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: maintenanceRetentionSettingsTable.toolKey,
+    set: { days: 60, updatedAt: new Date() },
+  });
+
+  const createdAt90d = new Date(Date.now() - 90 * 86_400_000);
+  const [seeded] = await db.insert(auditLogTable).values({
+    userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+    companyId: dirtyCompanyId, module: "test", action: "auto_prune_seed",
+    entityType: "test_90d", createdAt: createdAt90d,
+  }).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(seeded.id);
+
+  try {
+    const summary = await runAuditLogAutoPrune("scheduled");
+    assert.equal(summary.retentionDays, 60,
+      "persisted setting must override the 365-day default");
+
+    const still = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(eq(auditLogTable.id, seeded.id));
+    assert.equal(still.length, 0,
+      "90-day-old audit row must be pruned under 60d retention");
+  } finally {
+    await resetRetention("old-audit-logs");
+    // Pick up the summary audit row this sweep wrote so teardown can clean
+    // it. Match by action+entityType to avoid touching unrelated rows on a
+    // shared DB.
+    const auditRows = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "audit_log"),
+        eq(auditLogTable.role, "system"),
+        eq(auditLogTable.companyId, 0),
+      ));
+    for (const r of auditRows) {
+      if (!insertedAuditLogIds.includes(r.id)) insertedAuditLogIds.push(r.id);
+    }
+  }
+});
+
+test("runMaintenanceRunsAutoPrune: deletes maintenance_runs rows older than the default 90-day window and writes one summary audit row", async () => {
+  await resetRetention("old-maintenance-runs");
+
+  const auditWatermark = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const auditCutoffId = Number(((auditWatermark as any).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const oldRunAt    = new Date(Date.now() - 200 * 86_400_000); // > 90d → deleted
+  const recentRunAt = new Date(Date.now() - 10  * 86_400_000); // ≤ 90d → kept
+
+  const seeded = await db.insert(maintenanceRunsTable).values([
+    { companyId: dirtyCompanyId, toolKey: "broken-refs", status: "ok",
+      count: 0, trigger: "scheduled", durationMs: 1, runAt: oldRunAt },
+    { companyId: dirtyCompanyId, toolKey: "broken-refs", status: "ok",
+      count: 0, trigger: "scheduled", durationMs: 1, runAt: recentRunAt },
+  ]).returning({ id: maintenanceRunsTable.id });
+  const oldRunId    = seeded[0].id;
+  const recentRunId = seeded[1].id;
+  insertedMaintenanceRunIds.push(oldRunId, recentRunId);
+
+  const summary = await runMaintenanceRunsAutoPrune("manual");
+  assert.equal(summary.retentionDays, 90);
+  assert.ok(summary.deleted >= 1,
+    `expected ≥1 maintenance_runs row deleted, got ${summary.deleted}`);
+  assert.ok(Number.isFinite(summary.durationMs) && summary.durationMs >= 0);
+
+  const stillOld = await db.select({ id: maintenanceRunsTable.id })
+    .from(maintenanceRunsTable)
+    .where(eq(maintenanceRunsTable.id, oldRunId));
+  assert.equal(stillOld.length, 0, "old maintenance_runs row must be pruned");
+  const stillRecent = await db.select({ id: maintenanceRunsTable.id })
+    .from(maintenanceRunsTable)
+    .where(eq(maintenanceRunsTable.id, recentRunId));
+  assert.equal(stillRecent.length, 1, "recent maintenance_runs row must NOT be pruned");
+
+  const newAuditRows = await db.select({
+    id: auditLogTable.id,
+    module: auditLogTable.module,
+    action: auditLogTable.action,
+    role: auditLogTable.role,
+    companyId: auditLogTable.companyId,
+    entityType: auditLogTable.entityType,
+    metadata: auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${auditCutoffId}`,
+      eq(auditLogTable.action, "auto_prune"),
+      eq(auditLogTable.entityType, "maintenance_runs"),
+    ));
+  insertedAuditLogIds.push(...newAuditRows.map((r) => r.id));
+  assert.equal(newAuditRows.length, 1,
+    `expected exactly one maintenance_runs auto_prune row this sweep, got ${newAuditRows.length}`);
+  const audit = newAuditRows[0];
+  assert.equal(audit.module, "maintenance");
+  assert.equal(audit.role, "system");
+  assert.equal(audit.companyId, 0);
+  assert.ok(isObject(audit.metadata), "audit metadata must be a JSON object");
+  const md = audit.metadata as Record<string, any>;
+  assert.equal(md.trigger, "manual");
+  assert.equal(md.retentionDays, 90);
+  assert.equal(md.deleted, summary.deleted);
+  assert.equal(md.error, undefined, "no error metadata on the happy path");
+});
+
+test("runMaintenanceRunsAutoPrune: persisted retention setting overrides the default cutoff", async () => {
+  // Persist a tight 30-day retention so a 60d-old row gets pruned even
+  // though it would safely sit inside the default 90-day window.
+  await resetRetention("old-maintenance-runs");
+  await db.insert(maintenanceRetentionSettingsTable).values({
+    toolKey: "old-maintenance-runs",
+    days: 30,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: maintenanceRetentionSettingsTable.toolKey,
+    set: { days: 30, updatedAt: new Date() },
+  });
+
+  const runAt60d = new Date(Date.now() - 60 * 86_400_000);
+  const [seeded] = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "broken-refs", status: "ok",
+    count: 0, trigger: "scheduled", durationMs: 1, runAt: runAt60d,
+  }).returning({ id: maintenanceRunsTable.id });
+  insertedMaintenanceRunIds.push(seeded.id);
+
+  try {
+    const summary = await runMaintenanceRunsAutoPrune("scheduled");
+    assert.equal(summary.retentionDays, 30,
+      "persisted setting must override the 90-day default");
+
+    const still = await db.select({ id: maintenanceRunsTable.id })
+      .from(maintenanceRunsTable)
+      .where(eq(maintenanceRunsTable.id, seeded.id));
+    assert.equal(still.length, 0,
+      "60-day-old maintenance_runs row must be pruned under 30d retention");
+  } finally {
+    await resetRetention("old-maintenance-runs");
+    const auditRows = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "maintenance_runs"),
+        eq(auditLogTable.role, "system"),
+        eq(auditLogTable.companyId, 0),
+      ));
+    for (const r of auditRows) {
+      if (!insertedAuditLogIds.includes(r.id)) insertedAuditLogIds.push(r.id);
+    }
+  }
+});
+
+test("runAuditLogAutoPrune: out-of-band persisted retention is clamped to the per-tool min (30) — NOT the global 7", async () => {
+  // Bypass the route's input validation so we can persist a stale/out-of-band
+  // value (days=10) — below old-audit-logs' min=30. The scheduler MUST still
+  // clamp it to 30 before deleting; otherwise stale settings rows from older
+  // deploys could let the auto-prune wipe data more aggressively than the
+  // toolbox UI would ever permit.
+  await resetRetention("old-audit-logs");
+  await db.insert(maintenanceRetentionSettingsTable).values({
+    toolKey: "old-audit-logs",
+    days: 10,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: maintenanceRetentionSettingsTable.toolKey,
+    set: { days: 10, updatedAt: new Date() },
+  });
+
+  // Seed a 20d-old audit row. Under a (mis-clamped) 7d window it would be
+  // pruned; under the correct 30d clamp it must survive.
+  const createdAt20d = new Date(Date.now() - 20 * 86_400_000);
+  const [seeded] = await db.insert(auditLogTable).values({
+    userId: saUserId, username: `${TEST_TAG}_sa`, role: "superadmin",
+    companyId: dirtyCompanyId, module: "test", action: "auto_prune_seed",
+    entityType: "test_20d_audit", createdAt: createdAt20d,
+  }).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(seeded.id);
+
+  try {
+    const summary = await runAuditLogAutoPrune("scheduled");
+    assert.equal(summary.retentionDays, 30,
+      "out-of-band days=10 must be clamped UP to the per-tool min=30, not the global 7");
+
+    const still = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(eq(auditLogTable.id, seeded.id));
+    assert.equal(still.length, 1,
+      "20-day-old audit row must NOT be pruned under the clamped 30d retention");
+  } finally {
+    await resetRetention("old-audit-logs");
+    const auditRows = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "audit_log"),
+        eq(auditLogTable.role, "system"),
+        eq(auditLogTable.companyId, 0),
+      ));
+    for (const r of auditRows) {
+      if (!insertedAuditLogIds.includes(r.id)) insertedAuditLogIds.push(r.id);
+    }
+  }
+});
+
+test("runMaintenanceRunsAutoPrune: out-of-band persisted retention is clamped to the per-tool max (3650)", async () => {
+  // Bypass the route's input validation so we can persist a stale/out-of-band
+  // value (days=99999) — above the 3650 max. The scheduler MUST clamp DOWN
+  // to 3650 so the audit row reflects the actual cutoff used.
+  await resetRetention("old-maintenance-runs");
+  await db.insert(maintenanceRetentionSettingsTable).values({
+    toolKey: "old-maintenance-runs",
+    days: 99_999,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: maintenanceRetentionSettingsTable.toolKey,
+    set: { days: 99_999, updatedAt: new Date() },
+  });
+
+  try {
+    const summary = await runMaintenanceRunsAutoPrune("scheduled");
+    assert.equal(summary.retentionDays, 3650,
+      "out-of-band days=99999 must be clamped DOWN to the per-tool max=3650");
+  } finally {
+    await resetRetention("old-maintenance-runs");
+    const auditRows = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "maintenance_runs"),
         eq(auditLogTable.role, "system"),
         eq(auditLogTable.companyId, 0),
       ));

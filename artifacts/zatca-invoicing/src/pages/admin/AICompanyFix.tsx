@@ -128,6 +128,10 @@ const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   // Combined entity for the daily email-history auto-prune (covers both
   // maintenance_email_runs and report_email_schedule_runs in one summary row).
   email_history:                   "سجل البريد",
+  // Per-table entities for the daily auto-prune of the two "old records"
+  // toolbox cards. Each writes its own summary row so the maintenance-history
+  // panel surfaces the audit-log and maintenance-runs sweeps independently.
+  audit_log:                       "سجل التدقيق",
 };
 function historyActionLabelAr(value: string): string {
   return HISTORY_ACTION_LABELS_AR[value] ?? value;
@@ -154,6 +158,7 @@ function extractRetentionInfoAr(row: any): string {
       : `${md.days} يوم`;
   }
   if (action === "auto_prune") {
+    // email-history sweep: combined summary across two tables.
     const m = md.maintenanceEmailRuns?.retentionDays;
     const r = md.reportEmailRuns?.retentionDays;
     if (typeof m === "number" && typeof r === "number") {
@@ -161,6 +166,9 @@ function extractRetentionInfoAr(row: any): string {
     }
     if (typeof m === "number") return `${m} يوم`;
     if (typeof r === "number") return `${r} يوم`;
+    // audit_log / maintenance_runs sweeps: single-table summary uses
+    // `retentionDays` at the top level (deleted count is reported separately).
+    if (typeof md.retentionDays === "number") return `${md.retentionDays} يوم`;
   }
   if (typeof md.days === "number") return `${md.days} يوم`;
   return "";
