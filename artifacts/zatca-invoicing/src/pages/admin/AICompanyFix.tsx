@@ -1137,6 +1137,10 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // dashboard banner. Powers the new red "critical alerts" panel so operators
   // can jump straight from a critical row into the tool-history modal owned
   // by this section, mirroring the amber broken-tool panel below.
+  // Auto-refresh in the background so newly raised critical alerts appear
+  // without a manual reload. Polling pauses when the tab is hidden because
+  // refetchIntervalInBackground defaults to false in TanStack Query v5, so we
+  // don't burn requests for an unattended tab.
   const criticalSummaryQ = useQuery({
     queryKey: ["maintenance-critical-summary"],
     queryFn: async () => {
@@ -1155,6 +1159,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
+    refetchInterval: 30_000,
   });
 
   // Tool-history drill-down — clicking a tool key in the broken-tool panel
@@ -1684,6 +1689,15 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   ({criticalSummaryQ.data.items.length} حالة)
                 </span>
               </span>
+              {criticalSummaryQ.dataUpdatedAt > 0 && (
+                <span
+                  className="text-[11px] text-muted-foreground tabular-nums"
+                  title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
+                  data-testid="critical-summary-last-updated"
+                >
+                  آخر تحديث: {new Date(criticalSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                </span>
+              )}
               <span className="text-[11px] text-muted-foreground mr-auto">
                 هذه الفحوصات حالتها الحالية "حرجة" — اضغط الأداة لعرض آخر 20 تشغيلاً.
               </span>
