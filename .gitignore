@@ -8,6 +8,11 @@ out-tsc
 .expo
 .expo-shared
 
+# Playwright (artifacts/api-server/__tests__/e2e/) — failure traces /
+# screenshots / videos written next to the spec; never committed.
+test-results/
+playwright-report/
+
 # dependencies
 node_modules
 
