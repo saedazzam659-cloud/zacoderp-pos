@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import ExportButtons from "@/components/ExportButtons";
@@ -11,26 +11,29 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "itemCode",     header: "كود الصنف",      width: 16 },
-  { key: "itemNameAr",   header: "اسم الصنف",      width: 30 },
-  { key: "groupName",    header: "المجموعة",        width: 20 },
-  { key: "unitName",     header: "الوحدة",          width: 14 },
-  { key: "warehouseName", header: "المخزن",         width: 22 },
-  { key: "qty",          header: "الكمية",          width: 14 },
-  { key: "avgCost",      header: "متوسط التكلفة",   width: 18 },
-  { key: "totalValue",   header: "إجمالي القيمة",   width: 20 },
-  { key: "reorderLevel", header: "حد الطلب",        width: 14 },
-  { key: "status",       header: "الحالة",          width: 14 },
-];
-
 export default function StockBalance() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`inventoryReports.stockBalance.${k}`, opts) as string;
+  const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+
   const { fmt, fmtQty, fmtCost, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const [warehouseId, setWarehouseId] = useState("");
   const [search, setSearch] = useState("");
   const [showBelowReorder, setShowBelowReorder] = useState(false);
+
+  const EXPORT_COLS = [
+    { key: "itemCode",     header: tr("exportItemCode"),  width: 16 },
+    { key: "itemName",     header: tr("exportItemName"),  width: 30 },
+    { key: "groupName",    header: t("inventoryMaster.itemGroups.colName") as string, width: 20 },
+    { key: "unitName",     header: tr("exportUnit"),      width: 14 },
+    { key: "warehouseName",header: tr("exportWarehouse"), width: 22 },
+    { key: "qty",          header: tr("exportQty"),       width: 14 },
+    { key: "avgCost",      header: tr("exportAvgCost"),   width: 18 },
+    { key: "totalValue",   header: tr("exportValue"),     width: 20 },
+  ];
 
   const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses", cid], queryFn: () => inventoryApi.getWarehouses(cid) });
   const { data: rows = [], isLoading } = useQuery({
@@ -44,7 +47,7 @@ export default function StockBalance() {
   });
 
   const filtered = rows.filter((r: any) => {
-    const matchText = !search || r.item?.nameAr?.includes(search) || r.item?.code?.includes(search);
+    const matchText = !search || r.item?.nameAr?.includes(search) || r.item?.nameEn?.toLowerCase().includes(search.toLowerCase()) || r.item?.code?.includes(search);
     const matchReorder = !showBelowReorder || Number(r.qty) < Number(r.item?.reorderLevel ?? 0);
     return matchText && matchReorder;
   });
@@ -54,45 +57,49 @@ export default function StockBalance() {
 
   const exportRows = filtered.map((r: any) => ({
     itemCode:      r.item?.code ?? "",
-    itemNameAr:    r.item?.nameAr ?? "",
-    groupName:     r.group?.nameAr ?? "",
-    unitName:      r.unit?.nameAr ?? "",
-    warehouseName: r.warehouse?.nameAr ?? "",
+    itemName:      pickName(r.item?.nameAr, r.item?.nameEn),
+    groupName:     pickName(r.group?.nameAr, r.group?.nameEn),
+    unitName:      pickName(r.unit?.nameAr, r.unit?.nameEn),
+    warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn),
     qty:           fmtQty(r.qty),
     avgCost:       fmtCost(r.avgCost),
     totalValue:    fmt(Number(r.qty) * Number(r.avgCost)),
-    reorderLevel:  fmtQty(r.item?.reorderLevel ?? 0),
-    status:        Number(r.qty) === 0 ? "نفاد" : (Number(r.item?.reorderLevel) > 0 && Number(r.qty) < Number(r.item?.reorderLevel) ? "تحت حد الطلب" : "عادي"),
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart2 className="h-6 w-6 text-primary" />رصيد المخزون</h1>
-          <p className="text-muted-foreground text-sm mt-1">أرصدة الأصناف التفصيلية بالتكلفة المتوسطة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart2 className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
-        <ExportButtons rows={exportRows} columns={EXPORT_COLS} filename={`رصيد-مخزون-${new Date().toISOString().slice(0,10)}`} title="تقرير رصيد المخزون" subtitle={warehouseId ? warehouses.find((w: any) => String(w.id) === warehouseId)?.nameAr : "جميع المخازن"} />
+        <ExportButtons
+          rows={exportRows}
+          columns={EXPORT_COLS}
+          filename={`${tr("exportFilename")}-${new Date().toISOString().slice(0,10)}`}
+          title={tr("exportTitle")}
+          subtitle={warehouseId ? pickName(warehouses.find((w: any) => String(w.id) === warehouseId)?.nameAr, warehouses.find((w: any) => String(w.id) === warehouseId)?.nameEn) : (t("inventoryReports.common.allWarehouses") as string)}
+        />
       </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-4">
-          <p className="text-xs text-muted-foreground">إجمالي قيمة المخزون</p>
+          <p className="text-xs text-muted-foreground">{tr("totalValue")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{fmtVal(totalValue)}</p>
-          <p className="text-xs text-muted-foreground">ريال سعودي</p>
+          <p className="text-xs text-muted-foreground">{isRtl ? "ريال سعودي" : "SAR"}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">عدد السجلات</p>
+          <p className="text-xs text-muted-foreground">{tr("totalItems")}</p>
           <p className="text-2xl font-bold tabular-nums mt-1">{filtered.length}</p>
-          <p className="text-xs text-muted-foreground">صنف × مخزن</p>
+          <p className="text-xs text-muted-foreground">{isRtl ? "صنف × مخزن" : "item × warehouse"}</p>
         </div>
         {belowReorderCount > 0 && (
           <div className="rounded-xl border bg-amber-50 border-amber-200 p-4">
-            <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />أصناف تحت حد الطلب</p>
+            <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{isRtl ? "أصناف تحت حد الطلب" : "Items below reorder level"}</p>
             <p className="text-2xl font-bold text-amber-700 tabular-nums mt-1">{belowReorderCount}</p>
             <button onClick={() => setShowBelowReorder(p => !p)} className="text-xs text-amber-600 underline">
-              {showBelowReorder ? "إظهار الكل" : "عرض فقط"}
+              {showBelowReorder ? (isRtl ? "إظهار الكل" : "Show all") : (isRtl ? "عرض فقط" : "Show only these")}
             </button>
           </div>
         )}
@@ -101,15 +108,15 @@ export default function StockBalance() {
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+          <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={tr("searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="w-full sm:w-72">
           <SearchCombobox
-            items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))]}
+            items={[{ value: "", label: t("inventoryReports.common.allWarehouses") as string }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
             value={warehouseId}
             onValueChange={setWarehouseId}
-            placeholder="كل المخازن"
+            placeholder={t("inventoryReports.common.allWarehouses") as string}
           />
         </div>
       </div>
@@ -120,21 +127,21 @@ export default function StockBalance() {
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">المجموعة</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden md:table-cell">المخزن</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الكمية</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground hidden lg:table-cell">الوحدة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">متوسط التكلفة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">إجمالي القيمة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الحالة</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colItem")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden sm:table-cell`}>{t("inventoryMaster.itemGroups.colName") as string}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden md:table-cell`}>{tr("colWarehouse")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colQty")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden lg:table-cell`}>{tr("colUnit")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{tr("colAvgCost")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colValue")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "الحالة" : "Status"}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(8)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : filtered.length === 0
-                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BarChart2 className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد أرصدة</td></tr>
+                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BarChart2 className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noBalance")}</td></tr>
                 : filtered.map((r: any) => {
                     const qty = Number(r.qty);
                     const reorder = Number(r.item?.reorderLevel ?? 0);
@@ -144,25 +151,25 @@ export default function StockBalance() {
                     return (
                       <tr key={r.id} className={cn("hover:bg-muted/20", isZero ? "bg-red-50/30" : isLow ? "bg-amber-50/30" : "")}>
                         <td className="px-4 py-3">
-                          <p className="font-medium text-sm">{r.item?.nameAr ?? "—"}</p>
+                          <p className="font-medium text-sm">{pickName(r.item?.nameAr, r.item?.nameEn) || "—"}</p>
                           <p className="text-[10px] text-muted-foreground font-mono">{r.item?.code}</p>
                         </td>
-                        <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{r.group?.nameAr ?? "—"}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-xs">{r.warehouse?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 hidden sm:table-cell text-xs text-muted-foreground">{pickName(r.group?.nameAr, r.group?.nameEn) || "—"}</td>
+                        <td className="px-4 py-3 hidden md:table-cell text-xs">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn("font-bold tabular-nums", isZero ? "text-red-600" : isLow ? "text-amber-600" : "")}>
                             {fmtQty(qty)}
                           </span>
                         </td>
-                        <td className="px-4 py-3 hidden lg:table-cell text-xs text-muted-foreground text-center">{r.unit?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 hidden lg:table-cell text-xs text-muted-foreground text-center">{pickName(r.unit?.nameAr, r.unit?.nameEn) || "—"}</td>
                         <td className="px-4 py-3 hidden md:table-cell text-xs tabular-nums text-center">{fmtCost(r.avgCost)}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-sm font-semibold">{fmt(totalVal)}</td>
                         <td className="px-4 py-3 text-center">
                           {isZero
-                            ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">نفاد</span>
+                            ? <span className="text-[10px] bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-medium">{isRtl ? "نفاد" : "Out"}</span>
                             : isLow
-                            ? <span className="text-[10px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 font-medium flex items-center gap-1 w-fit mx-auto"><AlertTriangle className="h-2.5 w-2.5" />تحت الحد</span>
-                            : <span className="text-[10px] bg-green-50 text-green-700 rounded-full px-2 py-0.5 font-medium">عادي</span>
+                            ? <span className="text-[10px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 font-medium flex items-center gap-1 w-fit mx-auto"><AlertTriangle className="h-2.5 w-2.5" />{isRtl ? "تحت الحد" : "Low"}</span>
+                            : <span className="text-[10px] bg-green-50 text-green-700 rounded-full px-2 py-0.5 font-medium">{isRtl ? "عادي" : "OK"}</span>
                           }
                         </td>
                       </tr>
@@ -172,9 +179,9 @@ export default function StockBalance() {
             {!isLoading && filtered.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td colSpan={6} className="px-4 py-3 text-xs font-semibold text-muted-foreground">إجمالي قيمة المخزون</td>
+                  <td colSpan={6} className={`px-4 py-3 text-xs font-semibold text-muted-foreground ${isRtl ? "text-right" : "text-left"}`}>{tr("totalValue")}</td>
                   <td className="px-4 py-3 text-center font-bold tabular-nums">
-                    {fmtVal(totalValue)} ر.س
+                    {fmtVal(totalValue)} {isRtl ? "ر.س" : "SAR"}
                   </td>
                   <td></td>
                 </tr>

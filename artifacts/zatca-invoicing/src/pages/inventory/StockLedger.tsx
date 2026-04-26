@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Input } from "@/components/ui/input";
@@ -12,29 +13,28 @@ import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useFmt } from "@/hooks/use-fmt";
 
-const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
-  transfer_out: { label: "تحويل خارج",  color: "bg-orange-50 text-orange-700" },
-  transfer_in:  { label: "تحويل داخل",  color: "bg-blue-50 text-blue-700" },
-  adjustment:   { label: "تسوية",        color: "bg-purple-50 text-purple-700" },
-  count_adj:    { label: "تعديل جرد",   color: "bg-indigo-50 text-indigo-700" },
-  sale:         { label: "مبيعات",       color: "bg-red-50 text-red-600" },
-  purchase:     { label: "مشتريات",      color: "bg-green-50 text-green-700" },
-  opening:      { label: "رصيد افتتاحي", color: "bg-slate-50 text-slate-600" },
+const TX_TYPE_COLOR: Record<string, string> = {
+  transfer_out: "bg-orange-50 text-orange-700",
+  transfer_in:  "bg-blue-50 text-blue-700",
+  adjustment:   "bg-purple-50 text-purple-700",
+  count_adj:    "bg-indigo-50 text-indigo-700",
+  sale:         "bg-red-50 text-red-600",
+  purchase:     "bg-green-50 text-green-700",
+  opening:      "bg-slate-50 text-slate-600",
+  return_in:    "bg-teal-50 text-teal-700",
+  return_out:   "bg-pink-50 text-pink-700",
 };
 
-const EXPORT_COLS = [
-  { key: "txDate",       header: "التاريخ",        width: 14 },
-  { key: "txType",       header: "نوع الحركة",     width: 18 },
-  { key: "itemCode",     header: "كود الصنف",      width: 16 },
-  { key: "itemNameAr",   header: "اسم الصنف",      width: 30 },
-  { key: "warehouseName", header: "المخزن",         width: 22 },
-  { key: "qty",          header: "الكمية",          width: 14 },
-  { key: "costPrice",    header: "سعر التكلفة",     width: 16 },
-  { key: "totalCost",    header: "إجمالي التكلفة",  width: 18 },
-  { key: "balanceQty",   header: "رصيد الكمية",     width: 16 },
-];
-
 export default function StockLedger() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`inventoryReports.stockLedger.${k}`, opts) as string;
+  const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+  const txLabel = (txType: string) => {
+    const v = t(`inventoryReports.stockLedger.txType.${txType}`, { defaultValue: "" }) as string;
+    return v || txType;
+  };
+
   const { fmt, fmtQty } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -60,65 +60,81 @@ export default function StockLedger() {
     },
   });
 
+  const EXPORT_COLS = [
+    { key: "txDate",       header: tr("exportDate"),       width: 14 },
+    { key: "txType",       header: tr("exportTxType"),     width: 18 },
+    { key: "itemCode",     header: tr("exportItemCode"),   width: 16 },
+    { key: "itemName",     header: tr("exportItemName"),   width: 30 },
+    { key: "warehouseName",header: tr("exportWarehouse"),  width: 22 },
+    { key: "qty",          header: tr("exportQty"),        width: 14 },
+    { key: "costPrice",    header: tr("exportCostPrice"),  width: 16 },
+    { key: "totalCost",    header: tr("exportTotalCost"),  width: 18 },
+  ];
+
   const exportRows = rows.map((r: any) => ({
     txDate:        r.txDate,
-    txType:        TX_TYPE_LABEL[r.txType]?.label ?? r.txType,
+    txType:        txLabel(r.txType),
     itemCode:      r.item?.code ?? "",
-    itemNameAr:    r.item?.nameAr ?? "",
-    warehouseName: r.warehouse?.nameAr ?? "",
+    itemName:      pickName(r.item?.nameAr, r.item?.nameEn),
+    warehouseName: pickName(r.warehouse?.nameAr, r.warehouse?.nameEn),
     qty:           fmtQty(r.qty),
     costPrice:     fmt(r.costPrice),
     totalCost:     fmt(r.totalCost),
-    balanceQty:    fmtQty(r.balanceQty),
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary" />دفتر حركة المخزون</h1>
-          <p className="text-muted-foreground text-sm mt-1">سجل كامل لجميع حركات المخزون مع الأرصدة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary" />{tr("title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{tr("subtitle")}</p>
         </div>
-        <ExportButtons rows={exportRows} columns={EXPORT_COLS} filename={`دفتر-حركة-${applied.from}-${applied.to}`} title="دفتر حركة المخزون" subtitle={`${applied.from} إلى ${applied.to}`} />
+        <ExportButtons
+          rows={exportRows}
+          columns={EXPORT_COLS}
+          filename={`${tr("exportFilename")}-${applied.from}-${applied.to}`}
+          title={tr("exportTitle")}
+          subtitle={tr("exportSubtitleRange", { from: applied.from, to: applied.to })}
+        />
       </div>
 
       {/* Filters */}
       <div className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2 mb-4">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">فلترة الحركات</h2>
+          <h2 className="text-sm font-semibold">{t("inventoryReports.common.filters") as string}</h2>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="space-y-1.5">
-            <Label>من تاريخ</Label>
+            <Label>{t("inventoryReports.common.from") as string}</Label>
             <Input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>إلى تاريخ</Label>
+            <Label>{t("inventoryReports.common.to") as string}</Label>
             <Input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} />
           </div>
           <div className="space-y-1.5">
-            <Label>الصنف</Label>
+            <Label>{t("inventoryReports.common.item") as string}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "كل الأصناف" }, ...(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))]}
+              items={[{ value: "", label: isRtl ? "كل الأصناف" : "All Items" }, ...(items as any[]).map((it: any) => ({ value: String(it.id), code: it.code, label: pickName(it.nameAr, it.nameEn), labelEn: it.nameEn }))]}
               value={filters.itemId}
               onValueChange={v => setFilters(p => ({ ...p, itemId: v }))}
-              placeholder="كل الأصناف"
+              placeholder={isRtl ? "كل الأصناف" : "All Items"}
             />
           </div>
           <div className="space-y-1.5">
-            <Label>المخزن</Label>
+            <Label>{t("inventoryReports.common.warehouse") as string}</Label>
             <SearchCombobox
-              items={[{ value: "", label: "كل المخازن" }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))]}
+              items={[{ value: "", label: t("inventoryReports.common.allWarehouses") as string }, ...(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: pickName(w.nameAr, w.nameEn) }))]}
               value={filters.warehouseId}
               onValueChange={v => setFilters(p => ({ ...p, warehouseId: v }))}
-              placeholder="كل المخازن"
+              placeholder={t("inventoryReports.common.allWarehouses") as string}
             />
           </div>
         </div>
         <div className="flex justify-end mt-4">
           <Button size="sm" onClick={() => setApplied({ ...filters })} className="gap-2">
-            <Search className="h-3.5 w-3.5" />عرض الحركات
+            <Search className="h-3.5 w-3.5" />{t("inventoryReports.common.show") as string}
           </Button>
         </div>
       </div>
@@ -126,41 +142,41 @@ export default function StockLedger() {
       {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b bg-muted/20 flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{isLoading ? "..." : `${rows.length} حركة (آخر 500)`}</span>
-          <span className="text-xs text-muted-foreground">{applied.from} ← {applied.to}</span>
+          <span className="text-xs text-muted-foreground">{isLoading ? "..." : `${rows.length} ${isRtl ? "حركة (آخر 500)" : "movements (last 500)"}`}</span>
+          <span className="text-xs text-muted-foreground">{applied.from} → {applied.to}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">التاريخ</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">نوع الحركة</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-4 py-3 text-right font-semibold text-muted-foreground">المخزن</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الكمية</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">سعر التكلفة</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">الإجمالي</th>
-                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">رصيد الكمية</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colDate")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colTxType")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colItem")}</th>
+                <th className={`px-4 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("colWarehouse")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colQty")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colCostPrice")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{tr("colTotalCost")}</th>
+                <th className="px-4 py-3 text-center font-semibold text-muted-foreground">{isRtl ? "رصيد الكمية" : "Balance Qty"}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(8)].map((_, i) => <tr key={i}><td colSpan={8} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : rows.length === 0
-                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />لا توجد حركات في هذه الفترة</td></tr>
+                ? <tr><td colSpan={8} className="py-12 text-center text-muted-foreground"><BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noMoves")}</td></tr>
                 : rows.map((r: any) => {
-                    const tx = TX_TYPE_LABEL[r.txType] ?? { label: r.txType, color: "bg-slate-50 text-slate-600" };
+                    const color = TX_TYPE_COLOR[r.txType] ?? "bg-slate-50 text-slate-600";
                     return (
                       <tr key={r.id} className="hover:bg-muted/20">
                         <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{r.txDate}</td>
                         <td className="px-4 py-3">
-                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", tx.color)}>{tx.label}</span>
+                          <span className={cn("text-[10px] font-medium rounded-full px-2 py-0.5", color)}>{txLabel(r.txType)}</span>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="font-medium text-xs">{r.item?.nameAr ?? "—"}</p>
+                          <p className="font-medium text-xs">{pickName(r.item?.nameAr, r.item?.nameEn) || "—"}</p>
                           <p className="text-[10px] text-muted-foreground font-mono">{r.item?.code}</p>
                         </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{r.warehouse?.nameAr ?? "—"}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">{pickName(r.warehouse?.nameAr, r.warehouse?.nameEn) || "—"}</td>
                         <td className={cn("px-4 py-3 text-center tabular-nums text-sm font-bold", Number(r.qty) >= 0 ? "text-green-600" : "text-red-600")}>
                           {Number(r.qty) >= 0 ? "+" : ""}{fmtQty(r.qty)}
                         </td>

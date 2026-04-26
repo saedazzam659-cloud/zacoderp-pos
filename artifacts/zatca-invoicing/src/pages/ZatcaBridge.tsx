@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle2, XCircle, Clock, Send, Sparkles, ArrowLeftRight,
-  Search, FileText, Loader2, AlertTriangle, ChevronLeft,
+  Search, FileText, Loader2, AlertTriangle, ChevronLeft, ChevronRight,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -26,6 +27,7 @@ type BridgeRow = {
   invoiceDate: string;
   customerId: number | null;
   customerNameAr: string | null;
+  customerNameEn?: string | null;
   customerVatNumber: string | null;
   totalAmount: string | number;
   vatAmount: string | number;
@@ -43,6 +45,12 @@ type AiExplain = { explanation: string; fixes: string[]; summary: string; source
 
 export default function ZatcaBridge() {
   const { user, token } = useAuth();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`zatcaPages.bridge.${k}`, opts) as string;
+  const locale = isRtl ? "ar-SA" : "en-US";
+  const pickName = (ar?: string | null, en?: string | null) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
+
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -76,18 +84,18 @@ export default function ZatcaBridge() {
         body: JSON.stringify({ companyId: cid }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data?.error || "فشل الإرسال");
+      if (!r.ok) throw new Error(data?.error || tr("submitFailed"));
       return data;
     },
     onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["zatca-bridge", cid] });
       if (data.status === "approved") {
-        toast({ title: "تمت الموافقة", description: `الفاتورة معتمدة لدى ZATCA — UUID: ${data.uuid}` });
+        toast({ title: tr("approvedToast"), description: tr("approvedToastDesc", { uuid: data.uuid }) });
       } else {
-        toast({ title: "رُفضت الفاتورة", description: `${data.errors?.length || 0} خطأ. اضغط على الشارة الحمراء لعرض السبب.`, variant: "destructive" });
+        toast({ title: tr("rejectedToast"), description: tr("rejectedToastDesc", { count: data.errors?.length || 0 }), variant: "destructive" });
       }
     },
-    onError: (e: any) => toast({ title: "خطأ", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: tr("errorToast"), description: e.message, variant: "destructive" }),
   });
 
   const stats = useMemo(() => {
@@ -108,6 +116,7 @@ export default function ZatcaBridge() {
       return (
         (r.docNumber ?? "").toLowerCase().includes(s) ||
         (r.customerNameAr ?? "").toLowerCase().includes(s) ||
+        (r.customerNameEn ?? "").toLowerCase().includes(s) ||
         (r.customerVatNumber ?? "").toLowerCase().includes(s)
       );
     });
@@ -132,8 +141,9 @@ export default function ZatcaBridge() {
             totalAmount: row.totalAmount,
             vatAmount: row.vatAmount,
             status: row.status,
-            customer: row.customerNameAr ? {
+            customer: row.customerNameAr || row.customerNameEn ? {
               nameAr: row.customerNameAr,
+              nameEn: row.customerNameEn,
               vatNumber: row.customerVatNumber,
             } : null,
           },
@@ -154,10 +164,12 @@ export default function ZatcaBridge() {
     try { return JSON.parse(s); } catch { return []; }
   };
 
-  const fmtMoney = (v: any) => Number(v || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtMoney = (v: any) => Number(v || 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const ChevronEnd = isRtl ? ChevronLeft : ChevronRight;
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="p-6 space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -165,10 +177,8 @@ export default function ZatcaBridge() {
             <ArrowLeftRight className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">جسر العملاء/المبيعات ↔ هيئة الزكاة (ZATCA)</h1>
-            <p className="text-sm text-muted-foreground">
-              تتبّع حالة فواتير المبيعات لدى ZATCA. اضغط على الشارة الحمراء لمعرفة السبب وكيفية التصحيح.
-            </p>
+            <h1 className="text-2xl font-bold">{tr("title")}</h1>
+            <p className="text-sm text-muted-foreground">{tr("subtitle")}</p>
           </div>
         </div>
       </div>
@@ -182,7 +192,7 @@ export default function ZatcaBridge() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm text-muted-foreground">إجمالي الفواتير</div>
+                <div className="text-sm text-muted-foreground">{tr("kpiTotal")}</div>
                 <div className="text-3xl font-bold mt-1">{stats.total}</div>
               </div>
               <FileText className="h-10 w-10 text-muted-foreground/40" />
@@ -197,7 +207,7 @@ export default function ZatcaBridge() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm text-emerald-700 dark:text-emerald-300">معتمدة من ZATCA</div>
+                <div className="text-sm text-emerald-700 dark:text-emerald-300">{tr("kpiApproved")}</div>
                 <div className="text-3xl font-bold mt-1 text-emerald-600 dark:text-emerald-400">{stats.approved}</div>
               </div>
               <CheckCircle2 className="h-10 w-10 text-emerald-500" />
@@ -212,7 +222,7 @@ export default function ZatcaBridge() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm text-red-700 dark:text-red-300">مرفوضة</div>
+                <div className="text-sm text-red-700 dark:text-red-300">{tr("kpiRejected")}</div>
                 <div className="text-3xl font-bold mt-1 text-red-600 dark:text-red-400">{stats.rejected}</div>
               </div>
               <XCircle className="h-10 w-10 text-red-500" />
@@ -227,7 +237,7 @@ export default function ZatcaBridge() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm text-amber-700 dark:text-amber-300">بانتظار الإرسال</div>
+                <div className="text-sm text-amber-700 dark:text-amber-300">{tr("kpiPending")}</div>
                 <div className="text-3xl font-bold mt-1 text-amber-600 dark:text-amber-400">{stats.pending}</div>
               </div>
               <Clock className="h-10 w-10 text-amber-500" />
@@ -240,14 +250,14 @@ export default function ZatcaBridge() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <CardTitle className="text-lg">فواتير المبيعات</CardTitle>
+            <CardTitle className="text-lg">{tr("salesInvoices")}</CardTitle>
             <div className="relative w-full md:w-80">
-              <Search className="h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Search className={`h-4 w-4 absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 text-muted-foreground`} />
               <Input
-                placeholder="بحث برقم الفاتورة، اسم العميل، الرقم الضريبي..."
+                placeholder={tr("searchPh")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pr-9"
+                className={isRtl ? "pr-9" : "pl-9"}
               />
             </div>
           </div>
@@ -255,64 +265,65 @@ export default function ZatcaBridge() {
         <CardContent>
           {isLoading ? (
             <div className="text-center py-12 text-muted-foreground">
-              <Loader2 className="h-6 w-6 animate-spin inline-block ml-2" /> جاري التحميل...
+              <Loader2 className="h-6 w-6 animate-spin inline-block ml-2" /> {tr("loading")}
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <FileText className="h-10 w-10 mx-auto mb-2 opacity-30" />
-              لا توجد فواتير لعرضها
+              {tr("noInvoices")}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-right">رقم الفاتورة</TableHead>
-                    <TableHead className="text-right">التاريخ</TableHead>
-                    <TableHead className="text-right">العميل</TableHead>
-                    <TableHead className="text-right">الرقم الضريبي</TableHead>
-                    <TableHead className="text-right">الإجمالي</TableHead>
-                    <TableHead className="text-right">الترحيل</TableHead>
-                    <TableHead className="text-right">حالة ZATCA</TableHead>
-                    <TableHead className="text-right">إجراء</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colInvoiceNumber")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colDate")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colCustomer")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colVatNumber")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colTotal")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colPosting")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colZatcaStatus")}</TableHead>
+                    <TableHead className={isRtl ? "text-right" : "text-left"}>{tr("colAction")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((row) => {
                     const status = row.zatcaStatus || "pending";
                     const errors = parseErrors(row.zatcaErrorMessages);
+                    const customerLabel = pickName(row.customerNameAr, row.customerNameEn);
                     return (
                       <TableRow key={row.id}>
                         <TableCell className="font-mono">{row.docNumber || `#${row.id}`}</TableCell>
                         <TableCell>{row.invoiceDate?.slice(0, 10)}</TableCell>
-                        <TableCell>{row.customerNameAr || <span className="text-muted-foreground">— نقدي —</span>}</TableCell>
+                        <TableCell>{customerLabel || <span className="text-muted-foreground">{tr("cashCustomer")}</span>}</TableCell>
                         <TableCell className="font-mono text-xs">{row.customerVatNumber || "—"}</TableCell>
-                        <TableCell className="font-semibold">{fmtMoney(row.totalAmount)} ر.س</TableCell>
+                        <TableCell className="font-semibold">{fmtMoney(row.totalAmount)} {isRtl ? "ر.س" : "SAR"}</TableCell>
                         <TableCell>
                           {row.status === "posted" ? (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950 dark:text-blue-300">مرحّلة</Badge>
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950 dark:text-blue-300">{tr("posted")}</Badge>
                           ) : (
-                            <Badge variant="outline" className="bg-gray-50 text-gray-600">مسودة</Badge>
+                            <Badge variant="outline" className="bg-gray-50 text-gray-600">{tr("draft")}</Badge>
                           )}
                         </TableCell>
                         <TableCell>
                           {status === "approved" && (
                             <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1">
-                              <CheckCircle2 className="h-3 w-3" /> معتمدة
+                              <CheckCircle2 className="h-3 w-3" /> {tr("statusApproved")}
                             </Badge>
                           )}
                           {status === "rejected" && (
                             <Badge
                               className="bg-red-600 hover:bg-red-700 text-white gap-1 cursor-pointer"
                               onClick={() => openRejection(row)}
-                              title="اضغط لعرض الشرح"
+                              title={tr("statusRejectedClickHint")}
                             >
-                              <XCircle className="h-3 w-3" /> مرفوضة ({errors.length})
+                              <XCircle className="h-3 w-3" /> {tr("statusRejected", { count: errors.length })}
                             </Badge>
                           )}
                           {status === "pending" && (
                             <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300 gap-1">
-                              <Clock className="h-3 w-3" /> بانتظار
+                              <Clock className="h-3 w-3" /> {tr("statusPending")}
                             </Badge>
                           )}
                         </TableCell>
@@ -325,7 +336,7 @@ export default function ZatcaBridge() {
                             className="gap-1"
                           >
                             <Send className="h-3.5 w-3.5" />
-                            {status === "pending" ? "إرسال إلى ZATCA" : "إعادة الإرسال"}
+                            {status === "pending" ? tr("btnSubmit") : tr("btnResubmit")}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -340,14 +351,17 @@ export default function ZatcaBridge() {
 
       {/* Rejection Dialog with AI explanation */}
       <Dialog open={!!dialogRow} onOpenChange={(o) => { if (!o) { setDialogRow(null); setAiData(null); } }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? "rtl" : "ltr"}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-600">
               <XCircle className="h-5 w-5" />
-              فاتورة مرفوضة من ZATCA — {dialogRow?.docNumber || `#${dialogRow?.id}`}
+              {tr("dialogTitle", { number: dialogRow?.docNumber || `#${dialogRow?.id}` })}
             </DialogTitle>
             <DialogDescription>
-              العميل: {dialogRow?.customerNameAr || "—"} • الإجمالي: {dialogRow ? fmtMoney(dialogRow.totalAmount) : 0} ر.س
+              {tr("dialogCustomerLine", {
+                customer: dialogRow ? (pickName(dialogRow.customerNameAr, dialogRow.customerNameEn) || "—") : "—",
+                total: dialogRow ? fmtMoney(dialogRow.totalAmount) : "0",
+              })}
             </DialogDescription>
           </DialogHeader>
 
@@ -357,7 +371,7 @@ export default function ZatcaBridge() {
               <div>
                 <h4 className="font-semibold mb-2 flex items-center gap-2 text-red-700">
                   <AlertTriangle className="h-4 w-4" />
-                  أسباب الرفض الرسمية
+                  {tr("officialReasons")}
                 </h4>
                 <div className="space-y-2">
                   {parseErrors(dialogRow.zatcaErrorMessages).map((e, i) => (
@@ -373,20 +387,20 @@ export default function ZatcaBridge() {
               <div>
                 <h4 className="font-semibold mb-2 flex items-center gap-2 text-indigo-700">
                   <Sparkles className="h-4 w-4" />
-                  الشرح والإصلاح الذكي
+                  {tr("smartExplanation")}
                 </h4>
                 {aiLoading ? (
                   <div className="p-4 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 text-center text-sm text-indigo-600">
                     <Loader2 className="h-4 w-4 inline-block animate-spin ml-2" />
-                    جاري تحليل أسباب الرفض...
+                    {tr("analyzing")}
                   </div>
                 ) : aiData ? (
                   <div className="p-4 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-3">
                     <p className="text-sm leading-relaxed">{aiData.explanation}</p>
                     {aiData.fixes?.length > 0 && (
                       <div>
-                        <div className="text-xs font-semibold text-indigo-700 mb-1.5">خطوات التصحيح:</div>
-                        <ol className="space-y-1.5 text-sm list-decimal pr-5">
+                        <div className="text-xs font-semibold text-indigo-700 mb-1.5">{tr("fixSteps")}</div>
+                        <ol className={`space-y-1.5 text-sm list-decimal ${isRtl ? "pr-5" : "pl-5"}`}>
                           {aiData.fixes.map((f, i) => (
                             <li key={i} className="leading-relaxed">{f}</li>
                           ))}
@@ -394,11 +408,11 @@ export default function ZatcaBridge() {
                       </div>
                     )}
                     {aiData.source === "rules" && (
-                      <div className="text-xs text-muted-foreground italic">شرح مبني على قواعد النظام (الذكاء الاصطناعي غير مفعّل).</div>
+                      <div className="text-xs text-muted-foreground italic">{tr("rulesSource")}</div>
                     )}
                   </div>
                 ) : (
-                  <div className="text-sm text-muted-foreground p-3">لا يوجد شرح متاح.</div>
+                  <div className="text-sm text-muted-foreground p-3">{tr("noExplanation")}</div>
                 )}
               </div>
             </div>
@@ -406,7 +420,7 @@ export default function ZatcaBridge() {
 
           <DialogFooter className="gap-2 sm:justify-between">
             <Button variant="outline" onClick={() => { setDialogRow(null); setAiData(null); }}>
-              إغلاق
+              {tr("close")}
             </Button>
             {dialogRow && (
               <Button
@@ -417,8 +431,8 @@ export default function ZatcaBridge() {
                 }}
                 className="gap-1 bg-indigo-600 hover:bg-indigo-700"
               >
-                جهّز الفاتورة للتعديل
-                <ChevronLeft className="h-4 w-4" />
+                {tr("openInvoice")}
+                <ChevronEnd className="h-4 w-4" />
               </Button>
             )}
           </DialogFooter>
