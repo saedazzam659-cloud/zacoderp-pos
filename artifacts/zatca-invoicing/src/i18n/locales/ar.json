@@ -5343,6 +5343,7 @@
   "assistant": {
     "title": "المساعد الذكي",
     "subtitle": "شرح الشاشة، اقتراحات وتنبيهات",
+    "subtitleActionable": "تكلم أو اكتب — أنا أنفذ على الشاشة",
     "openButton": "افتح المساعد الذكي",
     "closeButton": "إغلاق المساعد",
     "explanation": "شرح",
@@ -5350,11 +5351,17 @@
     "nextStep": "الخطوة التالية",
     "warning": "تنبيه",
     "ask": "اسألني عن هذه الشاشة...",
+    "askActionable": "اطلب مني أن أملأ الفاتورة وأحفظها...",
     "send": "إرسال",
     "loading": "جاري التفكير...",
     "retry": "أعد المحاولة",
     "source_ai": "بواسطة الذكاء الاصطناعي",
     "source_fallback": "شرح افتراضي",
-    "errorOccurred": "حدث خطأ"
+    "errorOccurred": "حدث خطأ",
+    "executedSteps": "تم تنفيذ:",
+    "micStart": "ابدأ التسجيل الصوتي",
+    "micStop": "أوقف التسجيل",
+    "micUnsupported": "المتصفح لا يدعم التعرف الصوتي. جرب Chrome أو Edge.",
+    "micError": "تعذر التعرف على الصوت"
   }
 }

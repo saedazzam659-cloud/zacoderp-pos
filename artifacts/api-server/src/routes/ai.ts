@@ -2197,4 +2197,263 @@ router.post("/assist", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/ai/command — voice/text → screen actions
+// ─────────────────────────────────────────────────────────────────────────
+// Accepts the same screen_context plus a description of what's controllable
+// on the current screen (fields + actions + lookup data) and the current
+// form state. Returns:
+//   { message: string, commands: Command[] }
+// where each Command is one of:
+//   { type: "set_field", field: <name>, value: <any> }
+//   { type: "call_action", action: <name>, params: { ... } }
+// The frontend executes them in order against its registered handlers.
+//
+// When the AI is unavailable or returns an unparseable response, we return
+// an empty command list with a graceful message — the user can still get a
+// passive explanation through /api/ai/assist.
+// ─────────────────────────────────────────────────────────────────────────
+router.post("/command", async (req, res) => {
+  try {
+    const userMessage = String(req.body?.user_message ?? "").slice(0, 2000);
+    const screenContext = String(req.body?.screen_context ?? "").slice(0, 200);
+    const lang = String(req.body?.lang ?? "ar");
+    const screenState = sanitizeJson(req.body?.screen_state, 8000);
+    const availableFields = Array.isArray(req.body?.available_fields)
+      ? req.body.available_fields.slice(0, 60)
+      : [];
+    const availableActions = Array.isArray(req.body?.available_actions)
+      ? req.body.available_actions.slice(0, 30)
+      : [];
+    const lookups = sanitizeJson(req.body?.lookups, 60_000);
+    const screenDescription = String(req.body?.screen_description ?? "").slice(0, 500);
+
+    if (!userMessage.trim()) {
+      res.json({
+        message:
+          lang === "en"
+            ? "Please describe what you'd like me to do."
+            : "اكتب أو انطق ما تريد أن أنفذه على الشاشة.",
+        commands: [],
+        source: "fallback",
+      });
+      return;
+    }
+
+    const noActionable = availableFields.length === 0 && availableActions.length === 0;
+
+    const fallbackMessage = () => ({
+      message:
+        lang === "en"
+          ? noActionable
+            ? "This screen doesn't expose actions I can drive yet — I can only explain it. Try going to a form like /sales/invoices/new."
+            : "I couldn't reach the AI service. Please try again in a moment."
+          : noActionable
+            ? "هذه الشاشة لا تتيح لي تنفيذ إجراءات حتى الآن — أستطيع شرحها فقط. جرّب فتح شاشة مدخلات مثل فاتورة مبيعات جديدة."
+            : "تعذر الوصول للذكاء الاصطناعي حالياً. حاول مرة أخرى بعد قليل.",
+      commands: [] as any[],
+      source: "fallback" as const,
+    });
+
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.json(fallbackMessage());
+      return;
+    }
+
+    const sysPrompt =
+      lang === "en"
+        ? `You are an action planner embedded in a Saudi multi-tenant ERP. The user is currently on screen "${screenContext}" and is talking to you in natural language. You are given:
+  - the user's message
+  - a JSON description of fields on the screen (each with a name, label, type and — when relevant — options or lookup key)
+  - a JSON description of actions you can invoke (each with a name and parameters)
+  - the current form state
+  - lookup tables that map ids to human names (e.g. customers, items)
+Your job is to return a JSON object:
+  { "message": "<short Arabic or English reply to the user>",
+    "commands": [ <ordered list of commands to execute on the screen> ] }
+Allowed command shapes:
+  { "type": "set_field", "field": "<field.name>", "value": <value> }
+  { "type": "call_action", "action": "<action.name>", "params": { ... } }
+Rules:
+  1. Only reference field.name and action.name values that actually appear in available_fields / available_actions.
+  2. For type="lookup" fields, resolve human names against the matching lookup list and return the lookup item's "id" as the value (string).
+  3. For type="select" fields, the value MUST equal one of options[].value.
+  4. For type="boolean" fields, return true or false.
+  5. Numbers (qty, price) should be sent as numbers, not strings.
+  6. Plan a minimal, sensible sequence — set fields BEFORE calling actions that depend on them.
+  7. If the user asks for something the screen cannot do (no matching field/action, or a name with no lookup match), return commands: [] and explain in "message" what is missing.
+  8. NEVER invent fields, actions, or lookup ids. If unsure, ask the user in "message".
+  9. Reply "message" should be short (1-2 sentences), in the user's language.
+ 10. The user's message may be transcribed from speech — be tolerant of small typos and approximate names.`
+        : `أنت مخطط إجراءات مدمج داخل نظام ERP سعودي متعدد المستأجرين. المستخدم على الشاشة "${screenContext}" ويتحدث معك بلغة طبيعية. تستلم:
+  - رسالة المستخدم
+  - وصف JSON للحقول الموجودة على الشاشة (لكل حقل name و label و type وأحياناً options أو lookup)
+  - وصف JSON للإجراءات التي يمكنك استدعاؤها (لكل إجراء name والمعاملات المطلوبة)
+  - حالة النموذج الحالية
+  - جداول lookup تربط المعرفات بالأسماء البشرية (عملاء، أصناف...)
+مهمتك إرجاع كائن JSON بهذا الشكل:
+  { "message": "<رد قصير للمستخدم>",
+    "commands": [ <قائمة مرتبة من الأوامر لتنفيذها> ] }
+أنواع الأوامر المسموحة:
+  { "type": "set_field", "field": "<field.name>", "value": <القيمة> }
+  { "type": "call_action", "action": "<action.name>", "params": { ... } }
+قواعد إلزامية:
+  1. استخدم فقط أسماء الحقول والإجراءات الموجودة فعلاً في available_fields / available_actions.
+  2. الحقول من نوع lookup: استخرج id من جدول الـ lookup المطابق بناءً على الاسم الذي ذكره المستخدم، وأرسل id كـ string.
+  3. الحقول من نوع select: القيمة يجب أن تساوي إحدى options[].value بالضبط.
+  4. الحقول من نوع boolean: أرسل true أو false.
+  5. الكميات والأسعار: أرسلها كأرقام (numbers) لا كنصوص.
+  6. خطّط لتسلسل بسيط ومنطقي — اضبط الحقول قبل استدعاء الإجراءات المعتمدة عليها.
+  7. لو طلب المستخدم شيئاً لا تدعمه الشاشة (لا يوجد حقل/إجراء مطابق، أو اسم لا يوجد له lookup) — أعد commands: [] واشرح في message ما هو الناقص.
+  8. لا تخترع أبداً أسماء حقول أو إجراءات أو معرفات lookup. لو غير متأكد، اسأل المستخدم في message.
+  9. message يجب أن تكون قصيرة (جملة أو جملتين) باللغة العربية.
+ 10. رسالة المستخدم قد تكون مُحوّلة من الصوت — تسامح مع الأخطاء الإملائية البسيطة وقارب الأسماء.`;
+
+    const userPrompt = JSON.stringify(
+      {
+        screen_context: screenContext,
+        screen_description: screenDescription,
+        user_message: userMessage,
+        available_fields: availableFields,
+        available_actions: availableActions,
+        screen_state: screenState,
+        lookups,
+      },
+      null,
+      2,
+    );
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 2048,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!r.ok) {
+      res.json(fallbackMessage());
+      return;
+    }
+    const data = await r.json();
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+    } catch {
+      res.json(fallbackMessage());
+      return;
+    }
+
+    // Build field-name → field-def map and lookup-key → id-set map so we can
+    // value-validate the AI's commands here (defense in depth — the client
+    // also re-validates, but stripping garbage at the boundary keeps the chat
+    // log honest and prevents nonsense commands from reaching React state).
+    const fieldDefs = new Map<string, any>(
+      availableFields.filter((f: any) => f?.name).map((f: any) => [f.name, f]),
+    );
+    const actionNames = new Set(availableActions.map((a: any) => a?.name).filter(Boolean));
+    const lookupIdSets: Record<string, Set<string>> = {};
+    if (lookups && typeof lookups === "object") {
+      for (const [key, list] of Object.entries(lookups as Record<string, any[]>)) {
+        if (Array.isArray(list)) {
+          lookupIdSets[key] = new Set(list.map((it: any) => String(it?.id)));
+        }
+      }
+    }
+
+    const validateValue = (def: any, value: any): { ok: boolean; value?: any; reason?: string } => {
+      if (!def) return { ok: false, reason: "no-def" };
+      if (def.type === "boolean") {
+        if (typeof value === "boolean") return { ok: true, value };
+        if (value === "true" || value === 1) return { ok: true, value: true };
+        if (value === "false" || value === 0 || value == null) return { ok: true, value: false };
+        return { ok: true, value: Boolean(value) };
+      }
+      if (def.type === "number") {
+        const n = typeof value === "number" ? value : parseFloat(String(value ?? ""));
+        return Number.isFinite(n) ? { ok: true, value: n } : { ok: false, reason: "nan" };
+      }
+      if (def.type === "select" && Array.isArray(def.options)) {
+        const match = def.options.find((o: any) => String(o?.value) === String(value));
+        return match
+          ? { ok: true, value: match.value }
+          : { ok: false, reason: "select-not-in-options" };
+      }
+      if (def.type === "lookup" && def.lookup) {
+        const set = lookupIdSets[def.lookup];
+        const idStr = String(value);
+        return set?.has(idStr)
+          ? { ok: true, value: idStr }
+          : { ok: false, reason: "lookup-id-not-found" };
+      }
+      if (def.type === "date") {
+        const s = String(value ?? "");
+        return /^\d{4}-\d{2}-\d{2}/.test(s)
+          ? { ok: true, value: s.slice(0, 10) }
+          : { ok: false, reason: "bad-date" };
+      }
+      // text — accept anything stringifiable
+      return { ok: true, value: value == null ? "" : String(value) };
+    };
+
+    const rawCmds = Array.isArray(parsed?.commands) ? parsed.commands : [];
+    const cleaned = rawCmds
+      .map((c: any) => {
+        if (!c || typeof c !== "object") return null;
+        if (c.type === "set_field" && typeof c.field === "string" && fieldDefs.has(c.field)) {
+          const def = fieldDefs.get(c.field);
+          const v = validateValue(def, c.value);
+          if (!v.ok) return null;
+          return { type: "set_field", field: c.field, value: v.value };
+        }
+        if (
+          c.type === "call_action" &&
+          typeof c.action === "string" &&
+          actionNames.has(c.action)
+        ) {
+          return {
+            type: "call_action",
+            action: c.action,
+            params: c.params && typeof c.params === "object" ? c.params : {},
+          };
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .slice(0, 50);
+
+    res.json({
+      message: String(parsed.message ?? "").slice(0, 1000),
+      commands: cleaned,
+      source: "ai" as const,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "AI command error" });
+  }
+});
+
+/**
+ * Stringifies a value, then truncates if it exceeds maxBytes. Used to keep
+ * lookup payloads from blowing up the LLM prompt.
+ */
+function sanitizeJson(v: any, maxBytes: number): any {
+  if (v === undefined || v === null) return null;
+  try {
+    const s = JSON.stringify(v);
+    if (s.length <= maxBytes) return v;
+    return JSON.parse(s.slice(0, maxBytes - 50) + (Array.isArray(v) ? "...]" : "...}"));
+  } catch {
+    return null;
+  }
+}
+
 export default router;

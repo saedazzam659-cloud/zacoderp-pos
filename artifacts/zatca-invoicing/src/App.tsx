@@ -76,6 +76,7 @@ import PosMonitoring from "@/pages/pos/Monitoring";
 import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { Loader2 } from "lucide-react";
 // Inventory
 import InventoryDashboard from "@/pages/inventory/InventoryDashboard";
@@ -438,7 +439,9 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AuthProvider>
-            <AppRoutes />
+            <ScreenActionsProvider>
+              <AppRoutes />
+            </ScreenActionsProvider>
           </AuthProvider>
         </WouterRouter>
         <Toaster />

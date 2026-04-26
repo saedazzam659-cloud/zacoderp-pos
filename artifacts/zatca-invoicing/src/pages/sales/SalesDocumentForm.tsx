@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useRegisterScreenActions, type ScreenActionsRegistration } from "@/contexts/ScreenActionsContext";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
@@ -1093,6 +1094,363 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     total: d.totalAmount ?? 0,
     currencyCode: d.currencyCode ?? "",
   }));
+
+  // ── Voice / AI screen-action registration ───────────────────────────
+  // Lets the global ScreenAssistant drive this form via spoken or typed
+  // commands. The AI plans a sequence of {set_field|call_action} commands
+  // and we apply them through the callbacks below.
+  //
+  // We rebuild the registration object every render — the context stores
+  // it in a REF (not React state) so this is cheap and the AI always sees
+  // the freshest customer/item/state values when it plans.
+  // ────────────────────────────────────────────────────────────────────
+  // Capture handleSave + the lookup arrays in refs so the registration's
+  // callbacks always see the latest closures even when the registration
+  // object is reused across renders (saves us from re-publishing the entire
+  // ref on every keystroke while still avoiding stale state).
+  const handleSaveRef = useRef<() => void>(() => {});
+  // handleSave is hoisted via function-declaration semantics so it's safe
+  // to reference here even though it's declared further down in the file.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  handleSaveRef.current = handleSave;
+
+  const screenActionsCtx = useMemo(() => {
+    const screenContext = isInvoice
+      ? "sales.invoices.new"
+      : isOrder
+        ? "sales.orders.new"
+        : "sales.quotations.new";
+
+    const findItem = (idOrName: string | number | undefined | null) => {
+      if (idOrName === null || idOrName === undefined || idOrName === "") return null;
+      const s = String(idOrName).trim().toLowerCase();
+      const list = inventoryItems as any[];
+      // Try id match first (most reliable when AI sent a lookup id).
+      const byId = list.find((it: any) => String(it.id) === String(idOrName));
+      if (byId) return byId;
+      // Then code match.
+      const byCode = list.find((it: any) => String(it.code ?? "").trim().toLowerCase() === s);
+      if (byCode) return byCode;
+      // Then exact name match (Arabic or English).
+      const byName = list.find(
+        (it: any) =>
+          String(it.nameAr ?? "").trim().toLowerCase() === s ||
+          String(it.nameEn ?? "").trim().toLowerCase() === s,
+      );
+      if (byName) return byName;
+      // Last resort: partial name match.
+      const byPartial = list.find(
+        (it: any) =>
+          String(it.nameAr ?? "").toLowerCase().includes(s) ||
+          String(it.nameEn ?? "").toLowerCase().includes(s),
+      );
+      return byPartial ?? null;
+    };
+
+    const buildLineFromItem = (
+      item: any,
+      qty: number | string,
+      unitPrice?: number | string | null,
+      discount?: number | string | null,
+    ): DocLine => {
+      const finalPrice = unitPrice !== undefined && unitPrice !== null && unitPrice !== ""
+        ? String(unitPrice)
+        : String(item.salePrice ?? "0");
+      return {
+        _id: crypto.randomUUID(),
+        itemId: String(item.id),
+        itemName: item.nameAr ?? item.nameEn ?? "",
+        itemCode: String(item.code ?? ""),
+        unitId: item.unitId ? String(item.unitId) : "",
+        unit: item.unit?.nameAr ?? item.unit?.code ?? "",
+        conversionFactor: "1",
+        warehouseId: "",
+        qty: String(qty ?? 1),
+        unitPrice: finalPrice,
+        discount: String(discount ?? "0"),
+        vatRate: String(item.vatRate ?? "15"),
+        lineTotal: "0",
+        notes: "",
+        appliedOfferId: null,
+        appliedOfferName: null,
+        engineUnitPrice: null,
+        engineDiscount: null,
+        baseUnitPrice: finalPrice,
+      };
+    };
+
+    const reg: ScreenActionsRegistration = {
+      screenContext,
+      description: isInvoice
+        ? "نموذج إنشاء فاتورة مبيعات: العميل، نوع الدفع، الأصناف، ثم الحفظ والترحيل."
+        : isOrder
+          ? "نموذج أمر بيع: العميل، الأصناف، نوع الدفع، ثم الحفظ."
+          : "نموذج عرض سعر مبيعات: العميل، الأصناف، الصلاحية، ثم الحفظ.",
+      fields: [
+        {
+          name: "customerId",
+          label: t("salesDocForm.customer"),
+          type: "lookup",
+          lookup: "customers",
+          description: "معرّف العميل (يجب اختياره من قائمة customers).",
+        },
+        ...(usesOps
+          ? ([
+              {
+                name: "paymentType",
+                label: t("salesDocForm.paymentType"),
+                type: "select",
+                options: [
+                  { value: "credit", label: "آجل / Credit" },
+                  { value: "cash", label: "نقدي / Cash" },
+                  { value: "bank", label: "بنكي / Bank" },
+                ],
+                description:
+                  "credit = آجل (اعتماد على الذمة)، cash = نقدي (يحتاج cashBoxId)، bank = بنكي (يحتاج bankAccountId).",
+              },
+              {
+                name: "cashBoxId",
+                label: t("salesDocForm.cashBox") ?? "صندوق النقدية",
+                type: "lookup",
+                lookup: "cashBoxes",
+                description: "اختياري — استخدمه فقط عندما paymentType=cash.",
+              },
+              {
+                name: "bankAccountId",
+                label: t("salesDocForm.bankAccount") ?? "حساب البنك",
+                type: "lookup",
+                lookup: "bankAccounts",
+                description: "اختياري — استخدمه فقط عندما paymentType=bank.",
+              },
+              {
+                name: "salesRepId",
+                label: t("salesDocForm.salesRep") ?? "المندوب",
+                type: "lookup",
+                lookup: "salesReps",
+              },
+            ] as const)
+          : []),
+        {
+          name: "docDate",
+          label: t("salesDocForm.docDate") ?? "تاريخ المستند",
+          type: "date",
+          description: "بصيغة YYYY-MM-DD.",
+        },
+        {
+          name: "notes",
+          label: t("salesDocForm.notes") ?? "ملاحظات",
+          type: "text",
+        },
+        {
+          name: "priceIncludesVat",
+          label: t("salesDocForm.priceIncludesVat") ?? "السعر شامل الضريبة",
+          type: "boolean",
+        },
+      ],
+      actions: [
+        {
+          name: "addLine",
+          label: t("salesDocForm.addLine") ?? "إضافة بند",
+          description:
+            "يضيف بند فاتورة. يجب تمرير item (id من lookup items أو الاسم) و qty (كمية رقمية). unitPrice و discount اختياريان.",
+          params: [
+            { name: "item", type: "string", required: true, lookup: "items" },
+            { name: "qty", type: "number", required: true },
+            { name: "unitPrice", type: "number", required: false },
+            { name: "discount", type: "number", required: false },
+          ],
+        },
+        {
+          name: "clearLines",
+          label: "مسح كل البنود",
+          description: "يحذف كل البنود ويترك سطراً فارغاً.",
+        },
+        {
+          name: "removeLine",
+          label: "حذف بند",
+          description: "يحذف بنداً واحداً عبر لـ index صفري (lineIndex) أو item (id/اسم).",
+          params: [
+            { name: "lineIndex", type: "number", required: false },
+            { name: "item", type: "string", required: false, lookup: "items" },
+          ],
+        },
+        {
+          name: "save",
+          label: isInvoice
+            ? t("salesDocForm.saveInvoice") ?? "حفظ الفاتورة"
+            : isOrder
+              ? t("salesDocForm.saveOrder") ?? "حفظ الأمر"
+              : t("salesDocForm.saveQuotation") ?? "حفظ العرض",
+          description: isInvoice
+            ? "يحفظ الفاتورة ويرحلها تلقائياً (إذا كان الترحيل التلقائي مفعلاً على مستوى الشركة)."
+            : "يحفظ المستند.",
+          destructive: true,
+        },
+      ],
+      lookups: {
+        customers: (customers as any[]).map((c: any) => ({
+          id: String(c.id),
+          name: c.nameAr ?? c.nameEn ?? `#${c.id}`,
+          meta: { code: c.code, vatNumber: c.vatNumber },
+        })),
+        items: (inventoryItems as any[]).map((it: any) => ({
+          id: String(it.id),
+          name: it.nameAr ?? it.nameEn ?? `#${it.id}`,
+          meta: {
+            code: it.code,
+            salePrice: it.salePrice,
+            vatRate: it.vatRate,
+            unit: it.unit?.nameAr ?? it.unit?.code ?? null,
+          },
+        })),
+        ...(usesOps
+          ? {
+              salesReps: (salesReps as any[]).map((r: any) => ({
+                id: String(r.id),
+                name: r.nameAr ?? r.nameEn ?? `#${r.id}`,
+              })),
+              cashBoxes: (cashBoxes as any[]).map((b: any) => ({
+                id: String(b.id),
+                name: b.nameAr ?? b.nameEn ?? `#${b.id}`,
+              })),
+              bankAccounts: (bankAccounts as any[]).map((b: any) => ({
+                id: String(b.id),
+                name: b.nameAr ?? b.nameEn ?? b.accountNumber ?? `#${b.id}`,
+              })),
+            }
+          : {}),
+      },
+      getState: () => ({
+        customerId,
+        paymentType: usesOps ? paymentType : undefined,
+        cashBoxId: usesOps ? cashBoxId : undefined,
+        bankAccountId: usesOps ? bankAccountId : undefined,
+        salesRepId: usesOps ? salesRepId : undefined,
+        docDate,
+        notes,
+        priceIncludesVat,
+        lineCount: lines.length,
+        // Trim to first 20 lines so even large carts don't bloat the prompt.
+        lines: lines.slice(0, 20).map((l) => ({
+          itemId: l.itemId,
+          itemName: l.itemName,
+          qty: l.qty,
+          unitPrice: l.unitPrice,
+          discount: l.discount,
+          lineTotal: l.lineTotal,
+        })),
+      }),
+      setField: (name: string, value: any) => {
+        switch (name) {
+          case "customerId":
+            setCustomerId(value === null || value === undefined ? "" : String(value));
+            break;
+          case "paymentType":
+            if (usesOps) setPaymentType(String(value ?? "credit"));
+            break;
+          case "cashBoxId":
+            if (usesOps) setCashBoxId(value === null || value === undefined ? "" : String(value));
+            break;
+          case "bankAccountId":
+            if (usesOps)
+              setBankAccountId(value === null || value === undefined ? "" : String(value));
+            break;
+          case "salesRepId":
+            if (usesOps)
+              setSalesRepId(value === null || value === undefined ? "" : String(value));
+            break;
+          case "docDate":
+            if (value) setDocDate(String(value));
+            break;
+          case "notes":
+            setNotes(String(value ?? ""));
+            break;
+          case "priceIncludesVat":
+            setPriceIncludesVat(Boolean(value));
+            break;
+          default:
+            throw new Error(`Unknown field: ${name}`);
+        }
+      },
+      callAction: async (name: string, params: Record<string, any>) => {
+        switch (name) {
+          case "addLine": {
+            const itemKey = params.item ?? params.itemId ?? params.itemName;
+            const item = findItem(itemKey);
+            if (!item) {
+              throw new Error(`الصنف غير موجود: ${itemKey}`);
+            }
+            const qty = Number(params.qty ?? 1) || 1;
+            const newL = buildLineFromItem(
+              item,
+              qty,
+              params.unitPrice ?? params.price,
+              params.discount,
+            );
+            setLines((prev) => {
+              // If only an empty placeholder line exists, replace it.
+              if (prev.length === 1 && !prev[0].itemId) return [newL];
+              return [...prev, newL];
+            });
+            setFocusLineId(newL._id);
+            break;
+          }
+          case "clearLines": {
+            const fresh = newLine();
+            setLines([fresh]);
+            setFocusLineId(fresh._id);
+            break;
+          }
+          case "removeLine": {
+            if (params.lineIndex !== undefined && params.lineIndex !== null) {
+              const idx = Number(params.lineIndex);
+              setLines((prev) => {
+                if (prev.length <= 1) return prev;
+                return prev.filter((_, i) => i !== idx);
+              });
+            } else if (params.item !== undefined) {
+              const item = findItem(params.item);
+              if (!item) throw new Error(`الصنف غير موجود: ${params.item}`);
+              setLines((prev) => {
+                if (prev.length <= 1) return prev;
+                const filtered = prev.filter((l) => String(l.itemId) !== String(item.id));
+                return filtered.length > 0 ? filtered : prev;
+              });
+            }
+            break;
+          }
+          case "save": {
+            handleSaveRef.current();
+            break;
+          }
+          default:
+            throw new Error(`Unknown action: ${name}`);
+        }
+      },
+    };
+    return reg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isInvoice,
+    isOrder,
+    usesOps,
+    t,
+    customers,
+    inventoryItems,
+    salesReps,
+    cashBoxes,
+    bankAccounts,
+    customerId,
+    paymentType,
+    cashBoxId,
+    bankAccountId,
+    salesRepId,
+    docDate,
+    notes,
+    priceIncludesVat,
+    lines,
+  ]);
+  useRegisterScreenActions(screenActionsCtx);
 
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-5 max-w-6xl mx-auto">

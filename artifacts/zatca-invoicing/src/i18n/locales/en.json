@@ -5258,6 +5258,7 @@
   "assistant": {
     "title": "AI Assistant",
     "subtitle": "Explains the screen, suggests next steps, flags issues",
+    "subtitleActionable": "Speak or type — I'll fill the screen for you",
     "openButton": "Open AI assistant",
     "closeButton": "Close assistant",
     "explanation": "Explanation",
@@ -5265,11 +5266,17 @@
     "nextStep": "Next step",
     "warning": "Warning",
     "ask": "Ask about this screen...",
+    "askActionable": "Tell me to fill and save the invoice...",
     "send": "Send",
     "loading": "Thinking...",
     "retry": "Retry",
     "source_ai": "by AI",
     "source_fallback": "default guidance",
-    "errorOccurred": "Something went wrong"
+    "errorOccurred": "Something went wrong",
+    "executedSteps": "Done:",
+    "micStart": "Start voice input",
+    "micStop": "Stop recording",
+    "micUnsupported": "Voice input is not supported in this browser. Try Chrome or Edge.",
+    "micError": "Voice recognition failed"
   }
 }
