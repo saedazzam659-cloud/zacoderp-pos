@@ -17,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { DocNavigator } from "@/components/DocNavigator";
+import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -214,24 +216,23 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     enabled: !!user,
   });
 
-  // Smart invoice navigator (sales invoices only).
-  // Loads a lightweight summary of every sales invoice for the current
+  // Smart document navigator (works for invoice / order / quotation modes).
+  // Loads a lightweight summary of every doc-of-this-mode for the current
   // company so the user can:
-  //   1. Search/load any invoice from a single combobox by number, customer
-  //      name, or even fragments of date/total (the combobox does fuzzy
-  //      matching across the rich label text).
-  //   2. Step backward/forward through invoices with prev/next arrows
-  //      using the canonical ordering (newest id first).
-  // The query is gated to invoice mode so quotations/orders don't pay for
-  // an unused fetch. Reuses the same cache key as the list page so opening
-  // the navigator is instant when the user already visited the list.
-  const { data: allInvoices = [] } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid],
+  //   1. Search/load any doc from a single combobox by number, customer
+  //      name, or even fragments of date/total (fuzzy match across the
+  //      rich label text).
+  //   2. Step backward/forward through docs with prev/next arrows using
+  //      the canonical ordering (newest id first).
+  // Cache key matches the list page (`apiPath`), so opening the navigator
+  // is instant once the user has visited the list.
+  const { data: allDocs = [] } = useQuery<any[]>({
+    queryKey: [apiPath, cid],
     queryFn: async () => {
-      const r = await fetch(cid ? `${API}/api/sales/sales-invoices?companyId=${cid}` : `${API}/api/sales/sales-invoices`, { headers: authH });
+      const r = await fetch(cid ? `${API}/api/sales/${apiPath}?companyId=${cid}` : `${API}/api/sales/${apiPath}`, { headers: authH });
       return r.json();
     },
-    enabled: !!user && isInvoice,
+    enabled: !!user,
   });
   const { data: currencies = [] } = useQuery<any[]>({
     queryKey: ["currencies", cid],
@@ -1073,31 +1074,24 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     </div>
   );
 
-  // ── Smart invoice navigator data ───────────────────────────────────
-  // Sorted newest-first by id (canonical doc order). Built once per
-  // allInvoices change so the combobox + prev/next agree on ordering.
-  // navIndex = -1 when on /new or when the current id isn't in the list
-  // (e.g. just deleted by another tab) — prev/next arrows fall back to
-  // the newest invoice in that case.
-  const sortedInvoices = isInvoice
-    ? [...(allInvoices as any[])].sort((a, b) => Number(b.id) - Number(a.id))
-    : [];
+  // ── Smart document navigator data ──────────────────────────────────
+  // Build the rich combobox/prev-next items for the current mode. Customer
+  // + date + total in the searchable label lets the user find a doc by
+  // typing any recognizable fragment (e.g. "أحمد", "04-26", "1500").
+  // The date column differs per mode (invoiceDate / orderDate / quotationDate).
   const customerNameById = (id: any) => {
     const c = (customers as any[]).find((c: any) => Number(c.id) === Number(id));
     return c ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : "—";
   };
-  const navIndex = sortedInvoices.findIndex(inv => Number(inv.id) === Number(editId));
-  const prevInvoice = navIndex >= 0 && navIndex < sortedInvoices.length - 1 ? sortedInvoices[navIndex + 1] : null;
-  const nextInvoice = navIndex > 0 ? sortedInvoices[navIndex - 1] : null;
-  // Combobox items are intentionally rich — putting customer + date + total
-  // in the searchable label lets the user find an invoice by typing any
-  // recognizable fragment (e.g. "أحمد", "04-26", "1500"), which is the
-  // "smart load" experience the user asked for.
-  const invoiceNavItems = sortedInvoices.map((inv: any) => ({
-    value: String(inv.id),
-    code: inv.docNumber ?? `INV-${inv.id}`,
-    label: customerNameById(inv.customerId),
-    description: `${inv.invoiceDate ?? ""} · ${fmt(inv.totalAmount ?? 0)} ${inv.currencyCode ?? ""}`,
+  const navDateField = isInvoice ? "invoiceDate" : isOrder ? "orderDate" : "quotationDate";
+  const navFallbackPrefix = isInvoice ? "INV-" : isOrder ? "SO-" : "SQ-";
+  const docNavItems = (allDocs as any[]).map((d: any) => ({
+    id: d.id,
+    docNumber: d.docNumber,
+    partyName: customerNameById(d.customerId),
+    date: d[navDateField] ?? "",
+    total: d.totalAmount ?? 0,
+    currencyCode: d.currencyCode ?? "",
   }));
 
   return (
@@ -1115,73 +1109,22 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             <p className="text-xs text-muted-foreground">{subtitle}</p>
           </div>
         </div>
-        {isInvoice && editId && (existing as any) && (() => {
-          // Posted/unposted badge — visible only when editing an existing
-          // sales invoice. Three states map to the underlying invoice status:
-          //   "posted"    → green   "مرحّلة"
-          //   "cancelled" → gray    "ملغية"
-          //   anything else (draft / null) → amber "غير مرحّلة"
-          // Reuses the global `status.*` i18n keys so the wording matches
-          // the rest of the app (lists, reports, badges).
-          const st = String((existing as any).status ?? "draft");
-          const cls =
-            st === "posted"    ? "bg-green-50 text-green-700 border-green-200" :
-            st === "cancelled" ? "bg-muted text-muted-foreground border-border" :
-                                 "bg-amber-50 text-amber-700 border-amber-200";
-          const label = st === "posted"    ? t("status.posted")
-                      : st === "cancelled" ? t("status.cancelled")
-                      :                       t("status.draft");
-          return (
-            <span
-              className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium", cls)}
-              data-testid="invoice-posting-status"
-              title={st === "posted" ? t("status.posted") : t("status.draft")}
-            >
-              {label}
-            </span>
-          );
-        })()}
-        {isInvoice && (
-          <div className="ms-auto flex items-center gap-2 min-w-0">
-            {/* Prev = older invoice (RTL: right-pointing chevron, LTR: left). */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-9 gap-1.5 px-2.5"
-              disabled={!prevInvoice}
-              title={prevInvoice ? `${prevInvoice.docNumber ?? `INV-${prevInvoice.id}`}` : t("salesDocForm.navigator.prevDisabled")}
-              onClick={() => prevInvoice && navigate(`${basePath}/${prevInvoice.id}`)}
-              data-enter-skip="true"
-            >
-              {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
-              <span className="text-xs">{t("salesDocForm.navigator.prev")}</span>
-            </Button>
-            <div className="w-64 max-w-[60vw]">
-              <SearchCombobox
-                items={invoiceNavItems}
-                value={editId ? String(editId) : ""}
-                onValueChange={(v) => { if (v) navigate(`${basePath}/${v}`); }}
-                placeholder={t("salesDocForm.navigator.placeholder")}
-                searchPlaceholder={t("salesDocForm.navigator.searchPlaceholder")}
-                emptyText={t("salesDocForm.navigator.empty")}
-              />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-9 gap-1.5 px-2.5"
-              disabled={!nextInvoice}
-              title={nextInvoice ? `${nextInvoice.docNumber ?? `INV-${nextInvoice.id}`}` : t("salesDocForm.navigator.nextDisabled")}
-              onClick={() => nextInvoice && navigate(`${basePath}/${nextInvoice.id}`)}
-              data-enter-skip="true"
-            >
-              <span className="text-xs">{t("salesDocForm.navigator.next")}</span>
-              {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
-            </Button>
-          </div>
+        {/* Status pill — visible whenever editing an existing doc (any mode).
+            Status enum varies per mode; <DocStatusBadge> handles them all. */}
+        {editId && (existing as any) && (
+          <DocStatusBadge status={(existing as any).status} />
         )}
+        {/* Smart prev/next + search navigator — shown for every mode.
+            Visible on /new as well so the user can jump to any existing
+            doc; prev/next arrows just disable when there's no current
+            anchor. */}
+        <DocNavigator
+          items={docNavItems}
+          currentId={editId}
+          basePath={basePath}
+          fallbackPrefix={navFallbackPrefix}
+          className="ms-auto"
+        />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>

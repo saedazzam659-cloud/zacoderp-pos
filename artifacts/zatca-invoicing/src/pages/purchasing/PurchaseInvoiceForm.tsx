@@ -13,6 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { DocNavigator } from "@/components/DocNavigator";
+import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
@@ -150,6 +152,17 @@ export default function PurchaseInvoiceForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventoryAccountId, taxAccountId, discountAccountId]);
 
+  // Smart document navigator — list of all purchase invoices for the
+  // current company (lightweight). Same cache key as the list page so
+  // opening the navigator is instant if the user already visited the list.
+  const { data: allPurchaseInvoices = [] } = useQuery<any[]>({
+    queryKey: ["purchase-invoices", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/purchasing/purchase-invoices?companyId=${cid}` : `${API}/api/purchasing/purchase-invoices`, { headers: authH });
+      return r.json();
+    },
+    enabled: !!user,
+  });
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
@@ -589,7 +602,7 @@ export default function PurchaseInvoiceForm() {
 
   return (
     <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
           {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
         </Button>
@@ -602,6 +615,31 @@ export default function PurchaseInvoiceForm() {
             <p className="text-xs text-muted-foreground">{tr("subtitle")}</p>
           </div>
         </div>
+        {/* Posted/draft/cancelled status pill — visible only when editing
+            an existing purchase invoice. */}
+        {!isNew && (existing as any) && (
+          <DocStatusBadge status={(existing as any).status} />
+        )}
+        {/* Smart prev/next + search navigator across every purchase invoice
+            of the current company. Lets the user step through docs or jump
+            to one by typing a recognizable fragment. */}
+        <DocNavigator
+          items={(allPurchaseInvoices as any[]).map((d: any) => {
+            const s = (suppliers as any[]).find((s: any) => Number(s.id) === Number(d.supplierId));
+            return {
+              id: d.id,
+              docNumber: d.docNumber,
+              partyName: s ? (s.nameAr ?? s.nameEn ?? `#${s.id}`) : "—",
+              date: d.invoiceDate ?? "",
+              total: d.totalAmount ?? 0,
+              currencyCode: d.currencyCode ?? "",
+            };
+          })}
+          currentId={editId}
+          basePath="/purchasing/invoices"
+          fallbackPrefix="PI-"
+          className="ms-auto"
+        />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>

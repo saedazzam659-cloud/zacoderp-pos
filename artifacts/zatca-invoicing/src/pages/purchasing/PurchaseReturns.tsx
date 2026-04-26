@@ -13,6 +13,8 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { DocNavigator } from "@/components/DocNavigator";
+import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { cn } from "@/lib/utils";
@@ -640,10 +642,44 @@ export default function PurchaseReturns() {
       </div>
 
       {/* ── Form ────────────────────────────────────────── */}
-      {showForm && (
+      {showForm && (() => {
+        // Look up the currently-edited return so we can render its status
+        // pill inline with the form title. On a fresh /new there's no
+        // "current" return — the badge + navigator are skipped in that case.
+        const currentRet = editingId
+          ? (returns_ as any[]).find((r: any) => Number(r.id) === Number(editingId))
+          : null;
+        const supplierNameById = (id: any) => {
+          const s = (suppliers as any[]).find((s: any) => Number(s.id) === Number(id));
+          return s ? (s.nameAr ?? s.nameEn ?? `#${s.id}`) : "—";
+        };
+        return (
+        <>
+          {editingId && (returns_ as any[]).length > 0 && (
+            <div className="flex justify-end">
+              <DocNavigator
+                items={(returns_ as any[]).map((d: any) => ({
+                  id: d.id,
+                  docNumber: d.docNumber,
+                  partyName: supplierNameById(d.supplierId),
+                  date: d.returnDate ?? "",
+                  total: d.totalAmount ?? 0,
+                  currencyCode: d.currencyCode ?? "",
+                }))}
+                currentId={editingId}
+                onSelect={(id) => startEdit(Number(id))}
+                fallbackPrefix="PR-"
+              />
+            </div>
+          )}
         <FormPanel
           icon={RotateCcw}
-          title={editingId ? tr("editTitle") : tr("newTitle")}
+          title={
+            <span className="inline-flex items-center gap-2 flex-wrap">
+              {editingId ? tr("editTitle") : tr("newTitle")}
+              {currentRet && <DocStatusBadge status={currentRet.status} />}
+            </span>
+          }
           subtitle={form.invoiceId
             ? <>{tr("fromInvoiceHint")} <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> {tr("fromInvoiceTail")}</>
             : tr("createSubtitle")}
@@ -1060,7 +1096,9 @@ export default function PurchaseReturns() {
             </TabsContent>
           </Tabs>
         </FormPanel>
-      )}
+        </>
+        );
+      })()}
 
       {/* ── List ─────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">

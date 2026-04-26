@@ -17,6 +17,8 @@ import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, Lis
 import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { DocNavigator } from "@/components/DocNavigator";
+import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -631,10 +633,44 @@ export default function SalesReturns() {
         </Button>
       </div>
 
-      {showForm && (
+      {showForm && (() => {
+        // Look up the currently-edited return so we can render its status
+        // pill inline with the form title. On a fresh /new there's no
+        // "current" return — the badge + navigator are skipped in that case.
+        const currentRet = editingId
+          ? (returns_ as any[]).find((r: any) => Number(r.id) === Number(editingId))
+          : null;
+        const customerNameById = (id: any) => {
+          const c = (customers as any[]).find((c: any) => Number(c.id) === Number(id));
+          return c ? (c.nameAr ?? c.nameEn ?? `#${c.id}`) : "—";
+        };
+        return (
+        <>
+          {editingId && (returns_ as any[]).length > 0 && (
+            <div className="flex justify-end">
+              <DocNavigator
+                items={(returns_ as any[]).map((d: any) => ({
+                  id: d.id,
+                  docNumber: d.docNumber,
+                  partyName: customerNameById(d.customerId),
+                  date: d.returnDate ?? "",
+                  total: d.totalAmount ?? 0,
+                  currencyCode: d.currencyCode ?? "",
+                }))}
+                currentId={editingId}
+                onSelect={(id) => editReturn(Number(id))}
+                fallbackPrefix="SR-"
+              />
+            </div>
+          )}
         <FormPanel
           icon={RotateCcw}
-          title={t("salesReturns.formTitle")}
+          title={
+            <span className="inline-flex items-center gap-2 flex-wrap">
+              {t("salesReturns.formTitle")}
+              {currentRet && <DocStatusBadge status={currentRet.status} />}
+            </span>
+          }
           subtitle={form.invoiceId
             ? t("salesReturns.formSubtitleFromInvoice", { number: invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `SI-${form.invoiceId}` })
             : t("salesReturns.formSubtitleDefault")}
@@ -891,7 +927,9 @@ export default function SalesReturns() {
             </TabsContent>
           </Tabs>
         </FormPanel>
-      )}
+        </>
+        );
+      })()}
 
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>

@@ -61,7 +61,12 @@
     "cancelled": "Cancelled",
     "completed": "Completed",
     "paid": "Paid",
-    "active": "Active"
+    "active": "Active",
+    "sent": "Sent",
+    "accepted": "Accepted",
+    "rejected": "Rejected",
+    "converted": "Converted",
+    "confirmed": "Confirmed"
   },
   "salesInvoices": {
     "title": "Sales Invoices",
@@ -4613,5 +4618,14 @@
         "denied": "Access Denied"
       }
     }
+  },
+  "docNavigator": {
+    "placeholder": "Search documents...",
+    "searchPlaceholder": "Type document number or party name...",
+    "empty": "No matching documents",
+    "prev": "Previous",
+    "next": "Next",
+    "prevDisabled": "You're at the oldest document",
+    "nextDisabled": "You're at the newest document"
   }
 }

@@ -31,6 +31,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import { DocNavigator } from "@/components/DocNavigator";
+import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -142,6 +144,18 @@ export default function PurchaseOrderForm() {
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
+    enabled: !!user,
+  });
+
+  // Smart document navigator — list of all purchase orders for the
+  // current company. Cache key matches the list page so opening the
+  // navigator is instant once the user has visited the list.
+  const { data: allPurchaseOrders = [] } = useQuery<any[]>({
+    queryKey: ["purchase-orders", cid],
+    queryFn: async () => {
+      const r = await fetch(cid ? `${API}/api/purchasing/purchase-orders?companyId=${cid}` : `${API}/api/purchasing/purchase-orders`, { headers: authH });
+      return r.json();
+    },
     enabled: !!user,
   });
 
@@ -454,14 +468,6 @@ export default function PurchaseOrderForm() {
     "",
   ];
 
-  const STATUS_BADGES: Record<string, { labelKey: string; cls: string }> = {
-    draft:     { labelKey: "status.draft",     cls: "bg-amber-50 text-amber-700 border-amber-200" },
-    confirmed: { labelKey: "status.confirmed", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-    cancelled: { labelKey: "status.cancelled", cls: "bg-muted text-muted-foreground border-border" },
-    converted: { labelKey: "status.converted", cls: "bg-green-50 text-green-700 border-green-200" },
-  };
-  const stBadge = STATUS_BADGES[orderStatus] ?? STATUS_BADGES.draft;
-
   return (
     <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3 flex-wrap">
@@ -477,11 +483,26 @@ export default function PurchaseOrderForm() {
             <p className="text-xs text-muted-foreground">{tr("subtitle")}</p>
           </div>
         </div>
-        {!isNew && (
-          <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", stBadge.cls)}>
-            {t(stBadge.labelKey)}
-          </span>
-        )}
+        {!isNew && <DocStatusBadge status={orderStatus} />}
+        {/* Smart prev/next + search navigator across every purchase order
+            of the current company. */}
+        <DocNavigator
+          items={(allPurchaseOrders as any[]).map((d: any) => {
+            const s = (suppliers as any[]).find((s: any) => Number(s.id) === Number(d.supplierId));
+            return {
+              id: d.id,
+              docNumber: d.docNumber,
+              partyName: s ? (s.nameAr ?? s.nameEn ?? `#${s.id}`) : "—",
+              date: d.orderDate ?? "",
+              total: d.totalAmount ?? 0,
+              currencyCode: d.currencyCode ?? "",
+            };
+          })}
+          currentId={editId}
+          basePath="/purchasing/orders"
+          fallbackPrefix="PO-"
+          className="ms-auto"
+        />
         {!isNew && convertedInvoiceId && (
           <button type="button"
             className="text-xs rounded-full px-2 py-0.5 font-medium border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 inline-flex items-center gap-1"

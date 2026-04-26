@@ -61,7 +61,12 @@
     "cancelled": "ملغية",
     "completed": "مكتمل",
     "paid": "مدفوعة",
-    "active": "نشط"
+    "active": "نشط",
+    "sent": "مُرسلة",
+    "accepted": "مقبولة",
+    "rejected": "مرفوضة",
+    "converted": "محوَّلة",
+    "confirmed": "مؤكدة"
   },
   "salesInvoices": {
     "title": "فواتير المبيعات",
@@ -4719,5 +4724,14 @@
         "denied": "محاولة وصول مرفوضة"
       }
     }
+  },
+  "docNavigator": {
+    "placeholder": "ابحث عن مستند...",
+    "searchPlaceholder": "اكتب رقم المستند أو اسم الطرف...",
+    "empty": "لا توجد مستندات مطابقة",
+    "prev": "السابق",
+    "next": "التالي",
+    "prevDisabled": "أنت في أقدم مستند",
+    "nextDisabled": "أنت في أحدث مستند"
   }
 }
