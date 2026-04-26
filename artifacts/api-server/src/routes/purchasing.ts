@@ -11,7 +11,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
-import { pathRbac } from "../middleware/permissions.js";
+import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -437,6 +437,16 @@ router.put("/purchase-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // POSTED-DOC LOCK — same rule as sales: a posted purchase invoice is
+    // immutable until an admin explicitly unposts it.
+    const [existing] = await db.select({ status: purchaseInvoicesTable.status })
+      .from(purchaseInvoicesTable)
+      .where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (existing.status === "posted") {
+      res.status(409).json({ error: "لا يمكن تعديل فاتورة مُرحَّلة. قم بفك الترحيل أولاً." });
+      return;
+    }
     // docNumber is intentionally not destructured — immutable on edit.
     const { supplierInvoiceNumber, invoiceDate, supplierId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             lcId, distributionMethod, subtotal, vatAmount, discountAmount, totalExpensesLoaded,
@@ -642,7 +652,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
 // ─── UNPOST purchase invoice (فك الترحيل) ───────────────────────────────────
 // Reverses stock movements, zeroes-out the journal entry lines (audit trail),
 // then deletes the JE and sets the invoice back to draft.
-router.patch("/purchase-invoices/:id/unpost", async (req, res) => {
+router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1042,7 +1052,7 @@ router.patch("/purchase-returns/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST purchase return (فك الترحيل) ────────────────────────────────────
-router.patch("/purchase-returns/:id/unpost", async (req, res) => {
+router.patch("/purchase-returns/:id/unpost", requireAdminRole, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

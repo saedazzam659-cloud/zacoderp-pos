@@ -8,7 +8,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -164,17 +164,25 @@ router.post("/:id/post", async (req, res) => {
   }
 });
 
-router.post("/:id/unpost", async (req, res) => {
-  const id = parseInt(req.params.id);
-  const [existing] = await db.select().from(receiptVouchersTable).where(eq(receiptVouchersTable.id, id));
+router.post("/:id/unpost", requireAdminRole, async (req, res) => {
+  const id = parseInt(req.params.id as string);
+  // Multi-tenant guard — admins from one tenant must not unpost another
+  // tenant's voucher even if they happen to know the ID.
+  const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const [existing] = await db.select().from(receiptVouchersTable)
+    .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid)));
   if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
   if (existing.status !== "posted") { res.status(400).json({ error: "السند ليس مرحّلاً" }); return; }
   if (existing.journalEntryId) {
-    await db.delete(journalEntriesTable).where(eq(journalEntriesTable.id, existing.journalEntryId));
+    await db.delete(journalEntriesTable).where(and(
+      eq(journalEntriesTable.id, existing.journalEntryId),
+      eq(journalEntriesTable.companyId, cid),
+    ));
   }
   const [row] = await db.update(receiptVouchersTable)
     .set({ status: "draft", journalEntryId: null })
-    .where(eq(receiptVouchersTable.id, id)).returning();
+    .where(and(eq(receiptVouchersTable.id, id), eq(receiptVouchersTable.companyId, cid))).returning();
   res.json(row);
 });
 

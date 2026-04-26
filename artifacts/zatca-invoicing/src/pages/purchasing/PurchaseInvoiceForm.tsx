@@ -21,6 +21,7 @@ import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
+import { PostedDocumentBanner } from "@/components/PostedDocumentBanner";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -580,6 +581,9 @@ export default function PurchaseInvoiceForm() {
   ];
   const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
 
+  // Posted-doc lock — admin-only unpost button + read-only form when posted.
+  const isPosted = !isNew && (existing as any)?.status === "posted";
+
   return (
     <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir="rtl">
       {/* Header */}
@@ -598,6 +602,16 @@ export default function PurchaseInvoiceForm() {
         </div>
       </div>
 
+      {!isNew && (
+        <PostedDocumentBanner
+          status={(existing as any)?.status}
+          unpostUrl={`${API}/api/purchasing/purchase-invoices/${editId}/unpost`}
+          unpostMethod="PATCH"
+          invalidateKeys={[["purchase-invoice", editId], ["purchase-invoices"]]}
+        />
+      )}
+
+      <fieldset disabled={isPosted} className={isPosted ? "opacity-70 pointer-events-none" : undefined}>
       <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
         <Card className="border-2">
           <CardHeader className="p-0">
@@ -1095,12 +1109,16 @@ export default function PurchaseInvoiceForm() {
         </Card>
       </Tabs>
 
+      </fieldset>
+
       {/* Footer actions */}
       <div className="flex justify-end gap-2">
         <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
-        <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
-        </Button>
+        {!isPosted && (
+          <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
+            {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
+          </Button>
+        )}
       </div>
     </div>
   );

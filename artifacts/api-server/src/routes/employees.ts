@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { employeesTable, employeeContractsTable, employeeLeavesTable, employeeAttendanceTable, employeeLoansTable, payrollRunsTable, payrollLinesTable } from "@workspace/db";
 import { and, eq, asc, desc, sql, lte, gte, or, isNotNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requireAdminRole } from "../middleware/permissions.js";
 import { buildPayrollJournal, buildLoanDisbursementJournal, buildEosPaymentJournal } from "../lib/hr-journals.js";
 import { journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
 
@@ -1041,7 +1042,7 @@ router.get("/payroll/runs/:id/journal", async (req, res) => {
 });
 
 // Unpost a payroll run — deletes its JE and reverts loan paidAmounts
-router.post("/payroll/runs/:id/unpost", async (req, res) => {
+router.post("/payroll/runs/:id/unpost", requireAdminRole, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

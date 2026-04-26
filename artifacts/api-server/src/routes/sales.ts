@@ -12,7 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
-import { pathRbac } from "../middleware/permissions.js";
+import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
@@ -448,6 +448,18 @@ router.put("/sales-invoices/:id", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
+    // POSTED-DOC LOCK: a sales invoice that has been posted (status='posted')
+    // is immutable from the edit screen. The user must explicitly call the
+    // unpost endpoint (admin-only) before any further changes are accepted.
+    // This is the server-side gate; the UI also disables the form.
+    const [existing] = await db.select({ status: salesInvoicesTable.status })
+      .from(salesInvoicesTable)
+      .where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
+    if (existing.status === "posted") {
+      res.status(409).json({ error: "لا يمكن تعديل فاتورة مُرحَّلة. قم بفك الترحيل أولاً." });
+      return;
+    }
     // docNumber is intentionally not destructured here — it is immutable on
     // edit (see the .set() below).
     const { invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
@@ -762,7 +774,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST sales invoice (فك الترحيل) ──────────────────────────────────────
-router.patch("/sales-invoices/:id/unpost", async (req, res) => {
+router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
@@ -1278,7 +1290,7 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
 });
 
 // ─── UNPOST sales return (فك الترحيل) ───────────────────────────────────────
-router.patch("/sales-returns/:id/unpost", async (req, res) => {
+router.patch("/sales-returns/:id/unpost", requireAdminRole, async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);

@@ -71,3 +71,10 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 - **openssl:** Used for CSR generation for ZATCA.
 - **OpenAI:** For AI-powered suggestions and validations.
 - **xlsx (SheetJS):** Excel/CSV parsing and generation for Import/Export center.
+
+## Posted Document Lock (April 2026)
+- Any document with `status='posted'` is read-only on the edit screen across all modules: sales invoices, sales returns, purchase invoices, purchase returns, receipt/payment vouchers, cash transfers, stock transfers/adjustments/counts, payroll runs.
+- Backend enforcement: every PUT/DELETE on document tables returns 409 if status='posted' (sales/purchasing PUT routes now have a guard that selects `status` first and rejects posted records). Vouchers, transfers, adjustments and counts already had this guard.
+- Unpost endpoints (`/unpost`) are gated by the new `requireAdminRole` middleware (admin/superadmin/manager only) and enforce multi-tenant `companyId` checks.
+- Frontend: a shared `<PostedDocumentBanner>` component (`src/components/PostedDocumentBanner.tsx`) renders an emerald lock banner with an admin-only "فك الترحيل" (Unpost) button + AlertDialog confirmation. Integrated into `SalesDocumentForm` (invoices + returns) and `PurchaseInvoiceForm`. The form body is wrapped in `<fieldset disabled={isPosted}>` and the Save button is hidden when posted.
+- Cash/inventory/HR list-modal screens already hid edit actions for posted rows; the new backend admin gate completes their protection.
