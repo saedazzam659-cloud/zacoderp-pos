@@ -136,6 +136,36 @@ function historyEntityTypeLabelAr(value: string): string {
   return HISTORY_ENTITY_TYPE_LABELS_AR[value] ?? value;
 }
 
+// Task #64: derive a friendly Arabic retention-period summary from a row's
+// metadata for the new "مدة الاحتفاظ" column. Mirrors the server-side
+// `retentionInfoCsv` helper so the on-screen value always matches the CSV.
+//   - edit_retention      → "{previousDays} → {days} يوم" (delta when known)
+//   - auto_prune          → combines the two email-history retentions
+//   - fix / export_csv on old_* / dormant_users → "{days} يوم"
+//   - anything else       → "" (rendered as "—" by the cell)
+function extractRetentionInfoAr(row: any): string {
+  const md = row?.metadata;
+  if (!md || typeof md !== "object") return "";
+  const action = row?.action;
+  if (action === "edit_retention" && typeof md.days === "number") {
+    const prev = typeof md.previousDays === "number" ? md.previousDays : null;
+    return prev !== null && prev !== md.days
+      ? `${prev} → ${md.days} يوم`
+      : `${md.days} يوم`;
+  }
+  if (action === "auto_prune") {
+    const m = md.maintenanceEmailRuns?.retentionDays;
+    const r = md.reportEmailRuns?.retentionDays;
+    if (typeof m === "number" && typeof r === "number") {
+      return m === r ? `${m} يوم` : `صيانة: ${m} يوم • تقارير: ${r} يوم`;
+    }
+    if (typeof m === "number") return `${m} يوم`;
+    if (typeof r === "number") return `${r} يوم`;
+  }
+  if (typeof md.days === "number") return `${md.days} يوم`;
+  return "";
+}
+
 function renderMarkdown(md: string) {
   // Lightweight markdown: headings, bold, lists. No code blocks needed.
   const html = md
@@ -672,7 +702,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const offset = typeof pageParam === "number" ? pageParam : 0;
       const r = await fetch(
         `${API}/api/admin/maintenance/history?companyId=${companyId}`
-          + `&limit=${HISTORY_PAGE_SIZE}&offset=${offset}${historyFilterParams()}`,
+          + `&limit=${HISTORY_PAGE_SIZE}&offset=${offset}&includeSystem=1${historyFilterParams()}`,
         { headers },
       );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب السجل");
@@ -699,7 +729,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
     mutationFn: async () => {
       if (!companyId) throw new Error("اختر الشركة أولاً");
       const r = await fetch(
-        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv${historyFilterParams()}`,
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv&includeSystem=1${historyFilterParams()}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!r.ok) {
@@ -737,7 +767,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
     queryKey: ["maintenance-history-facets", companyId, historyTick],
     queryFn: async () => {
       const r = await fetch(
-        `${API}/api/admin/maintenance/history/facets?companyId=${companyId}`,
+        `${API}/api/admin/maintenance/history/facets?companyId=${companyId}&includeSystem=1`,
         { headers },
       );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الخيارات");
@@ -2771,21 +2801,44 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                         <th className="px-2 py-1 text-right">المستخدم</th>
                         <th className="px-2 py-1 text-right">الفئة</th>
                         <th className="px-2 py-1 text-right">الإجراء</th>
+                        {/* Task #64: surface the retention window that was
+                            applied at execution time (or the from→to delta
+                            on `edit_retention` rows) so audits don't have
+                            to dig into the raw JSON details cell. */}
+                        <th className="px-2 py-1 text-right">مدة الاحتفاظ</th>
                         <th className="px-2 py-1 text-right">التفاصيل</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {historyItems.map((row: any) => (
-                        <tr key={row.id}>
-                          <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
-                          <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
-                          <td className="px-2 py-1">{row.entityType || "—"}</td>
-                          <td className="px-2 py-1">{row.action}</td>
-                          <td className="px-2 py-1 font-mono text-[10px] text-muted-foreground truncate max-w-[280px]">
-                            {row.metadata ? JSON.stringify(row.metadata) : "—"}
-                          </td>
-                        </tr>
-                      ))}
+                      {historyItems.map((row: any) => {
+                        const retention = extractRetentionInfoAr(row);
+                        return (
+                          <tr key={row.id}>
+                            <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
+                            <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
+                            <td className="px-2 py-1">{row.entityType ? historyEntityTypeLabelAr(row.entityType) : "—"}</td>
+                            <td className="px-2 py-1">{historyActionLabelAr(row.action)}</td>
+                            <td
+                              className={
+                                "px-2 py-1 whitespace-nowrap "
+                                + (row.action === "edit_retention"
+                                  ? "font-semibold text-amber-800"
+                                  : "")
+                              }
+                              title={
+                                row.action === "edit_retention" && row?.metadata?.toolKey
+                                  ? `الأداة: ${row.metadata.toolKey}`
+                                  : undefined
+                              }
+                            >
+                              {retention || "—"}
+                            </td>
+                            <td className="px-2 py-1 font-mono text-[10px] text-muted-foreground truncate max-w-[280px]">
+                              {row.metadata ? JSON.stringify(row.metadata) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

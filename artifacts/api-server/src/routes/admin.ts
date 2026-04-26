@@ -20,7 +20,7 @@ import {
   severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
 } from "../lib/maintenanceScheduler.js";
 import { emailConfigured } from "../lib/email.js";
-import { eq, and, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
+import { eq, and, or, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { buildSystemTree, type SystemTree, type Scope } from "../lib/systemRegistry.js";
@@ -3524,6 +3524,36 @@ async function resolveRetentionDays(
   }
 }
 
+// Task #64: derive an Arabic retention-period summary from a maintenance
+// audit row's metadata for the new "مدة الاحتفاظ" CSV column. Mirrors the
+// frontend helper (`extractRetentionInfoAr` in AICompanyFix.tsx) so the
+// downloaded file always matches the on-screen value.
+//   - edit_retention      → "{previousDays} → {days} يوم" (delta when known)
+//   - auto_prune          → combines the two email-history retentions
+//   - fix / export_csv on old_* / dormant_users → "{days} يوم"
+//   - anything else       → "" (Excel-friendly empty cell)
+function retentionInfoCsv(action: string | null, metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object") return "";
+  const md = metadata as Record<string, any>;
+  if (action === "edit_retention" && typeof md.days === "number") {
+    const prev = typeof md.previousDays === "number" ? md.previousDays : null;
+    return prev !== null && prev !== md.days
+      ? `${prev} → ${md.days} يوم`
+      : `${md.days} يوم`;
+  }
+  if (action === "auto_prune") {
+    const m = md.maintenanceEmailRuns?.retentionDays;
+    const r = md.reportEmailRuns?.retentionDays;
+    if (typeof m === "number" && typeof r === "number") {
+      return m === r ? `${m} يوم` : `صيانة: ${m} يوم • تقارير: ${r} يوم`;
+    }
+    if (typeof m === "number") return `${m} يوم`;
+    if (typeof r === "number") return `${r} يوم`;
+  }
+  if (typeof md.days === "number") return `${md.days} يوم`;
+  return "";
+}
+
 async function logMaint(
   req: Request, companyId: number, action: string,
   entityType: string, metadata: Record<string, any>,
@@ -4348,9 +4378,19 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
     : null;
   const actionFilter     = typeof req.query.action     === "string" ? req.query.action.trim().slice(0, 64)     : "";
   const entityTypeFilter = typeof req.query.entityType === "string" ? req.query.entityType.trim().slice(0, 64) : "";
+  // Opt-in flag (task #64): when "1"/"true", also surface system-wide
+  // maintenance audit rows (companyId=0). The retention-settings PUT and the
+  // daily email-history auto-prune both log to companyId=0 because they are
+  // global, not tenant-scoped — so without this flag they never appear in
+  // any company's "سجل الصيانة" panel. Default-off keeps existing API
+  // contracts (and tests) untouched.
+  const includeSystem = req.query.includeSystem === "1" || req.query.includeSystem === "true";
 
+  const tenantOrSystem = includeSystem
+    ? (or(eq(auditLogTable.companyId, g.companyId), eq(auditLogTable.companyId, 0)) as SQL)
+    : eq(auditLogTable.companyId, g.companyId);
   const conds: SQL[] = [
-    eq(auditLogTable.companyId, g.companyId),
+    tenantOrSystem,
     eq(auditLogTable.module, "maintenance"),
   ];
   if (fromDate) conds.push(gte(auditLogTable.createdAt, fromDate));
@@ -4369,12 +4409,17 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
         .from(auditLogTable)
         .where(where)
         .orderBy(desc(auditLogTable.createdAt));
-      const headers = ["التاريخ", "المستخدم", "الفئة", "الإجراء", "التفاصيل"];
+      // Task #64: surface the retention window that was active for each
+      // entry as its own column so admins auditing offline (Excel) can sort
+      // / filter on it without parsing the JSON details cell. The same
+      // string is used by the on-screen table — see the frontend helper.
+      const headers = ["التاريخ", "المستخدم", "الفئة", "الإجراء", "مدة الاحتفاظ", "التفاصيل"];
       const csvRows = rows.map((r) => [
         csvDate(r.createdAt),
         r.username ?? "",
         r.entityType ?? "",
         r.action ?? "",
+        retentionInfoCsv(r.action, r.metadata),
         r.metadata ? JSON.stringify(r.metadata) : "",
       ]);
       await logMaint(req, g.companyId, "export_csv", "maintenance_history", {
@@ -4424,21 +4469,29 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
 //     back to "no options" and admins can still use the date filters.
 router.get("/maintenance/history/facets", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
+  // Mirror the /maintenance/history flag (task #64): when set, also pull in
+  // distinct values from system-wide rows (companyId=0) so options like
+  // `edit_retention` / `auto_prune` show up in the dropdowns. Default-off
+  // preserves existing behaviour for anyone calling the endpoint directly.
+  const includeSystem = req.query.includeSystem === "1" || req.query.includeSystem === "true";
   try {
     // Two cheap DISTINCT scans — the audit_log already has an index covering
     // (company_id, module). NULL / blank values are filtered out so the UI
     // never renders an empty-string SelectItem.
+    const companyFilter = includeSystem
+      ? sql`(company_id = ${g.companyId} OR company_id = 0)`
+      : sql`company_id = ${g.companyId}`;
     const exec = await db.execute<{ kind: string; value: string }>(sql`
       SELECT 'action' AS kind, action AS value
         FROM ${auditLogTable}
-       WHERE company_id = ${g.companyId}
+       WHERE ${companyFilter}
          AND module = 'maintenance'
          AND action IS NOT NULL AND action <> ''
        GROUP BY action
       UNION ALL
       SELECT 'entityType' AS kind, entity_type AS value
         FROM ${auditLogTable}
-       WHERE company_id = ${g.companyId}
+       WHERE ${companyFilter}
          AND module = 'maintenance'
          AND entity_type IS NOT NULL AND entity_type <> ''
        GROUP BY entity_type

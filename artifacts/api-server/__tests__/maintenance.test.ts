@@ -3749,6 +3749,59 @@ test("GET /maintenance/history (JSON): ?from / ?to scope by createdAt (inclusive
   assert.equal(combined.body.nextOffset, 2);
 });
 
+test("GET /maintenance/history (JSON): ?includeSystem=1 surfaces companyId=0 system-wide audit rows alongside the tenant's", async () => {
+  await seedHistoryOnce();
+  // Seed one system-wide row (companyId=0) as if the retention-settings PUT
+  // had logged it. Without ?includeSystem this row must NOT appear in the
+  // tenant's history; with ?includeSystem=1 it must show up. Captures task
+  // #64's surface for `edit_retention` / `auto_prune` summaries which the
+  // PUT and the daily auto-prune both write at companyId=0.
+  const farFuture = new Date("2010-04-30T03:00:00.000Z");
+  const [sys] = await db.insert(auditLogTable).values({
+    userId:    saUserId,
+    username:  `${TEST_TAG}_sa_sys`,
+    role:      "superadmin",
+    companyId: 0,
+    module:    "maintenance",
+    action:    "edit_retention",
+    method:    "PUT",
+    path:      "/api/admin/maintenance/retention-settings/old-audit-logs",
+    entityType: "maintenance_retention",
+    entityId:  "old-audit-logs",
+    statusCode: 200,
+    ip:        "127.0.0.1",
+    metadata:  { toolKey: "old-audit-logs", days: 200, previousDays: 365, defaultDays: 365 },
+    createdAt: farFuture,
+  }).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(sys.id);
+
+  // Without the flag → original behaviour (only the tenant's 8 seeded rows).
+  const noFlag = await api<HistoryResponse>(HIST_PATH(), "GET", { token: saToken });
+  assert.equal(noFlag.status, 200);
+  assert.equal(noFlag.body.count, HISTORY_SEED.length,
+    "default behaviour must remain unchanged when includeSystem is absent");
+  for (const it of noFlag.body.items) {
+    assert.notEqual((it.metadata as any)?.previousDays, 365,
+      "system-wide row must not leak into the default per-company view");
+  }
+
+  // With ?includeSystem=1 → the seeded system row appears alongside the
+  // tenant rows and the surfaced metadata still carries previousDays so the
+  // UI can render the from→to delta. Use a generous limit so the seeded row
+  // is in the response even when other tests have left additional system
+  // rows behind on a shared DB. The count is asserted as ≥ tenant+1 (not
+  // strict) for the same reason.
+  const withFlag = await api<HistoryResponse>(HIST_PATH("includeSystem=1&limit=200"), "GET", { token: saToken });
+  assert.equal(withFlag.status, 200);
+  assert.ok(withFlag.body.count >= HISTORY_SEED.length + 1,
+    `includeSystem=1 must surface ≥ ${HISTORY_SEED.length + 1} rows (tenant + the seeded system row); got ${withFlag.body.count}`);
+  const surfaced = withFlag.body.items.find((it) => it.id === sys.id);
+  assert.ok(surfaced, "the seeded system-wide row must appear in the includeSystem result");
+  assert.equal(surfaced!.action, "edit_retention");
+  assert.equal((surfaced!.metadata as any)?.previousDays, 365);
+  assert.equal((surfaced!.metadata as any)?.days, 200);
+});
+
 test("GET /maintenance/history (JSON): rejects invalid ?from / ?to and clamps negative ?offset", async () => {
   await seedHistoryOnce();
   // Bad date shape on either bound → 400. Both arms of the validator.
@@ -3769,6 +3822,71 @@ test("GET /maintenance/history (JSON): rejects invalid ?from / ?to and clamps ne
   assert.equal(negOffset.body.items.length, 3, "clamped page should still be a full page");
   assert.equal(negOffset.body.items[0].createdAt, "2010-04-08T03:00:00.000Z",
     "clamped offset=0 should still yield the most-recent row first");
+});
+
+// Placed last in the history block on purpose: hitting ?format=csv writes a
+// fresh `export_csv` audit row at NOW into the seeded tenant, which would
+// shift the most-recent timestamp the JSON-shape tests above hard-code.
+test("GET /maintenance/history: ?format=csv includes the new 'مدة الاحتفاظ' column with edit_retention deltas and old_* days values", async () => {
+  await seedHistoryOnce();
+  // Seed two extra rows that exercise both retention shapes the new column
+  // is supposed to render:
+  //   1) edit_retention with previousDays!=days → "365 → 200 يوم" delta
+  //   2) fix on old_audit_logs with `days`     → "180 يوم" single value
+  // Both are scoped to this tenant (companyId=historyCompanyId) so the
+  // assertion doesn't depend on the includeSystem flag.
+  const editRow = await db.insert(auditLogTable).values({
+    userId:    saUserId,
+    username:  `${TEST_TAG}_sa_csv`,
+    role:      "superadmin",
+    companyId: historyCompanyId!,
+    module:    "maintenance",
+    action:    "edit_retention",
+    method:    "PUT",
+    path:      "/api/admin/maintenance/retention-settings/old-audit-logs",
+    entityType: "maintenance_retention",
+    entityId:  "old-audit-logs",
+    statusCode: 200,
+    ip:        "127.0.0.1",
+    metadata:  { toolKey: "old-audit-logs", days: 200, previousDays: 365, defaultDays: 365 },
+    createdAt: new Date("2010-04-20T03:00:00.000Z"),
+  }).returning({ id: auditLogTable.id });
+  const fixRow = await db.insert(auditLogTable).values({
+    userId:    saUserId,
+    username:  `${TEST_TAG}_sa_csv`,
+    role:      "superadmin",
+    companyId: historyCompanyId!,
+    module:    "maintenance",
+    action:    "fix",
+    method:    "POST",
+    path:      "/api/admin/maintenance/old-audit-logs",
+    entityType: "old_audit_logs",
+    entityId:  null,
+    statusCode: 200,
+    ip:        "127.0.0.1",
+    metadata:  { deleted: 7, days: 180 },
+    createdAt: new Date("2010-04-21T03:00:00.000Z"),
+  }).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(editRow[0].id, fixRow[0].id);
+
+  const r = await api(HIST_PATH("format=csv"), "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.text.slice(0, 200)}`);
+  assert.match(r.headers.get("content-type") ?? "", /text\/csv/i, "Content-Type must be text/csv");
+
+  // Header row must include the new column. Also re-asserts the original
+  // headers still exist so a future column rename doesn't silently drop one.
+  const headerLine = r.text.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0];
+  for (const h of ["التاريخ", "المستخدم", "الفئة", "الإجراء", "مدة الاحتفاظ", "التفاصيل"]) {
+    assert.ok(headerLine.includes(h), `CSV header row must include "${h}", got: ${headerLine}`);
+  }
+
+  // The CSV body must contain the rendered retention strings the on-screen
+  // helper produces — the from→to delta for edit_retention and the single-
+  // value form for the old_* fix row.
+  assert.ok(r.text.includes("365 → 200 يوم"),
+    `CSV must include the edit_retention from→to delta; body sample: ${r.text.slice(0, 400)}`);
+  assert.ok(r.text.includes("180 يوم"),
+    `CSV must include the single-value retention for the old_* fix row; body sample: ${r.text.slice(0, 400)}`);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
