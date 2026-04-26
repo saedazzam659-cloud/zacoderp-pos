@@ -281,6 +281,27 @@ export interface MaintenanceErrorDigestRow {
   runAt:       Date | string;
 }
 
+// Companion shape for the third (recovered-tool) section appended to the
+// digest. Mirrors `MaintenanceErrorDigestRow` in spirit but in the positive
+// direction: the named tool was previously broken (its prior run was an
+// 'error') and its latest run completed without error within the recency
+// window. Rendered as a small green "recovered tools" block so SuperAdmins
+// get explicit confirmation that a fix landed — without it, a recovered
+// tool just silently disappears from the error section.
+export interface MaintenanceRecoveryDigestRow {
+  companyId:       number;
+  companyName:     string;
+  toolKey:         string;
+  toolLabelAr:     string;
+  // Status of the recovery run itself: "ok" / "warn" / "critical" — never
+  // "error" by definition. Surfaced so a recovery to "warn"/"critical" reads
+  // honestly ("ran successfully but found findings") instead of implying a
+  // clean bill of health.
+  currentStatus:   string;
+  previousErrorAt: Date | string;
+  recoveredAt:     Date | string;
+}
+
 export interface SendMaintenanceDigestOpts {
   to: string[];
   rows: MaintenanceDigestRow[];
@@ -291,6 +312,8 @@ export interface SendMaintenanceDigestOpts {
   truncated?: boolean;
   /** Tools whose latest run errored within the recency window (last 7d). Optional. */
   errorRows?: MaintenanceErrorDigestRow[];
+  /** Tools whose latest run recovered (error → non-error) within the recency window. Optional. */
+  recoveryRows?: MaintenanceRecoveryDigestRow[];
 }
 
 export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestOpts) {
@@ -381,6 +404,64 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
         }).join("")}
       </tbody>
     </table>`;
+  // Optional third section: tools that recovered (error → non-error) within
+  // the recency window. Rendered in green (#15803d / #dcfce7) so it visually
+  // contrasts with the red criticals and amber errors above — at a glance
+  // the SuperAdmin sees "this is the good news" without having to read.
+  // We map currentStatus → an Arabic badge so a recovery to warn/critical
+  // doesn't masquerade as a clean bill of health.
+  const recoveryRowsList = opts.recoveryRows ?? [];
+  const distinctRecoveryCompanies = new Set(recoveryRowsList.map((r) => r.companyId)).size;
+  const recoveryRowsHtml = recoveryRowsList.length === 0 ? "" : `
+    <h3 style="font-size:14px; color:#15803d; margin-top:22px; margin-bottom:6px;">
+      أدوات صيانة تعافت آخر 7 أيام (${recoveryRowsList.length} في ${distinctRecoveryCompanies} شركة)
+    </h3>
+    <p style="font-size:12px; color:#64748b; margin:0 0 6px 0;">
+      هذه الفحوصات كانت مُعطّلة سابقاً ثم اكتمل تشغيلها بنجاح — لا حاجة لإجراء، عرض للإطمئنان.
+    </p>
+    <table style="width:100%; border-collapse:collapse; margin-top:6px; font-size:13px;">
+      <thead>
+        <tr style="background:#f0fdf4; color:#14532d;">
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #bbf7d0;">الشركة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #bbf7d0;">الأداة</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #bbf7d0;">الحالة الحالية</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #bbf7d0;">آخر خطأ</th>
+          <th style="padding:8px; text-align:right; border-bottom:2px solid #bbf7d0;">وقت التعافي</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${recoveryRowsList.map((r) => {
+          const recoveredAt = (r.recoveredAt instanceof Date ? r.recoveredAt : new Date(r.recoveredAt)).toLocaleString("ar-SA");
+          const previousErrorAt = (r.previousErrorAt instanceof Date ? r.previousErrorAt : new Date(r.previousErrorAt)).toLocaleString("ar-SA");
+          // Badge mirrors the severity badges in the criticals table so the
+          // visual idiom is consistent. "ok" stays green, warn = amber,
+          // critical = red — same colours as the row colouring above.
+          const status = r.currentStatus;
+          const statusLabel =
+            status === "ok"       ? "سليم"  :
+            status === "warn"     ? "تحذير" :
+            status === "critical" ? "حرجة"  : status;
+          const statusColor =
+            status === "ok"       ? "#15803d" :
+            status === "warn"     ? "#b45309" :
+            status === "critical" ? "#b91c1c" : "#475569";
+          const statusBg =
+            status === "ok"       ? "#dcfce7" :
+            status === "warn"     ? "#fef3c7" :
+            status === "critical" ? "#fee2e2" : "#f1f5f9";
+          return `
+            <tr>
+              <td style="padding:6px 8px; border-bottom:1px solid #dcfce7;">${escHtml(r.companyName)}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #dcfce7;">${escHtml(r.toolLabelAr)}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #dcfce7;">
+                <span style="display:inline-block; padding:1px 8px; border-radius:9999px; background:${statusBg}; color:${statusColor}; font-size:11px; font-weight:600;">${statusLabel}</span>
+              </td>
+              <td style="padding:6px 8px; border-bottom:1px solid #dcfce7; color:#64748b; font-size:12px;">${previousErrorAt}</td>
+              <td style="padding:6px 8px; border-bottom:1px solid #dcfce7; color:#15803d; font-size:12px;">${recoveredAt}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
   const body = `
     ${intro}
     <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;">
@@ -396,6 +477,7 @@ export async function sendMaintenanceCriticalDigest(opts: SendMaintenanceDigestO
       <tbody>${rowsHtml}</tbody>
     </table>
     ${errorRowsHtml}
+    ${recoveryRowsHtml}
     <p style="margin-top:18px;">
       <a href="${link}" style="display:inline-block; background:#7c3aed; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px;">
         فتح صفحة الإصلاح بالذكاء الاصطناعي

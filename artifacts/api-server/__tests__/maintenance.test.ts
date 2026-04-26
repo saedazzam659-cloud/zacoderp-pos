@@ -89,6 +89,7 @@ import {
   computeCriticalSignature,
   shouldSkipForRateLimit,
   getRecentToolErrors,
+  getRecentToolRecoveries,
   TOOL_ERROR_WINDOW_DAYS,
   severityMeetsThreshold,
   type AlertSeverity,
@@ -1727,6 +1728,139 @@ test("getRecentToolErrors: respects the limit argument", async () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//  getRecentToolRecoveries — per-(company, tool) error → non-error transitions
+// ════════════════════════════════════════════════════════════════════════════
+// Mirrors `getRecentToolErrors` but in the positive direction: surface tools
+// whose latest run completed without error AND whose immediately-prior run
+// was an error within the recency window. The four cases below are the
+// independent failure modes the digest "Recovered tools" section can hit:
+//   1. Recovered to ok inside the window → MUST appear.
+//   2. Recovered to warn/critical inside the window → MUST appear (the check
+//      ran successfully, just found findings; honest reporting matters).
+//   3. Recovered then re-broke → MUST NOT appear (latest is error; that's
+//      the error-helper's job, not ours — keeps the two helpers mutually
+//      exclusive).
+//   4. Recovery older than the window → MUST NOT appear.
+test("getRecentToolRecoveries: returns tools that flipped error → non-error within window", async () => {
+  const now = Date.now();
+  const stale = (TOOL_ERROR_WINDOW_DAYS + 2) * 86_400_000;
+
+  // Case 1 — recovered-to-ok inside the window. Latest row is ok at t-1d,
+  // immediate predecessor is an error at t-3d. MUST appear.
+  const okRecErr = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-ok",
+    status: "error", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 3 * 86_400_000), durationMs: 1,
+    error: "boom", details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const okRecOk = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-ok",
+    status: "ok", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 1 * 86_400_000), durationMs: 1,
+    error: null, details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  // Case 2 — recovered-to-warn inside the window. Operators still need this:
+  // the previously-broken check now runs, but found findings. Must appear
+  // and report `currentStatus = "warn"` so the email badge is honest.
+  const warnRecErr = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-warn",
+    status: "error", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 4 * 86_400_000), durationMs: 1,
+    error: "kaboom", details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const warnRecWarn = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-warn",
+    status: "warn", count: 7, trigger: "scheduled",
+    runAt: new Date(now - 2 * 86_400_000), durationMs: 1,
+    error: null, details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  // Case 3 — recovered then re-broke. Latest row is an error so this pair
+  // belongs to getRecentToolErrors, never to getRecentToolRecoveries.
+  const flapErr1 = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-flap",
+    status: "error", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 5 * 86_400_000), durationMs: 1,
+    error: "first", details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const flapOk = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-flap",
+    status: "ok", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 3 * 86_400_000), durationMs: 1,
+    error: null, details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const flapErr2 = await db.insert(maintenanceRunsTable).values({
+    companyId: dirtyCompanyId, toolKey: "tt-rec-flap",
+    status: "error", count: 0, trigger: "scheduled",
+    runAt: new Date(now - 1 * 86_400_000), durationMs: 1,
+    error: "again", details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  // Case 4 — recovery older than the window. Operators don't want to see
+  // ancient recoveries in this week's digest.
+  const oldRecErr = await db.insert(maintenanceRunsTable).values({
+    companyId: cleanCompanyId, toolKey: "tt-rec-stale",
+    status: "error", count: 0, trigger: "scheduled",
+    runAt: new Date(now - stale - 86_400_000), durationMs: 1,
+    error: "ancient", details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+  const oldRecOk = await db.insert(maintenanceRunsTable).values({
+    companyId: cleanCompanyId, toolKey: "tt-rec-stale",
+    status: "ok", count: 0, trigger: "scheduled",
+    runAt: new Date(now - stale), durationMs: 1,
+    error: null, details: null,
+  }).returning({ id: maintenanceRunsTable.id });
+
+  insertedMaintenanceRunIds.push(
+    okRecErr[0].id, okRecOk[0].id,
+    warnRecErr[0].id, warnRecWarn[0].id,
+    flapErr1[0].id, flapOk[0].id, flapErr2[0].id,
+    oldRecErr[0].id, oldRecOk[0].id,
+  );
+
+  const items = await getRecentToolRecoveries(50, TOOL_ERROR_WINDOW_DAYS);
+
+  // Use composite (companyId, toolKey) keys because the recovery row has no
+  // primary key column we can compare on — the projection deliberately omits
+  // `id` (only the previous-error timestamp is needed for the digest line).
+  const keys = new Set(items.map((r) => `${r.companyId}|${r.toolKey}`));
+
+  assert.ok(keys.has(`${dirtyCompanyId}|tt-rec-ok`),
+    "recovered-to-ok inside window must appear");
+  assert.ok(keys.has(`${dirtyCompanyId}|tt-rec-warn`),
+    "recovered-to-warn inside window must still appear (honest 'ran successfully' signal)");
+  assert.ok(!keys.has(`${dirtyCompanyId}|tt-rec-flap`),
+    "tool that recovered then re-broke must NOT appear (latest is 'error' — error helper's domain)");
+  assert.ok(!keys.has(`${cleanCompanyId}|tt-rec-stale`),
+    "recoveries older than the window must NOT appear");
+
+  // Shape contract: digest renderer reads currentStatus / previousErrorAt /
+  // recoveredAt. Pin these explicitly so a column rename in the SQL projection
+  // would trip the test.
+  const okRow = items.find((r) =>
+    r.companyId === dirtyCompanyId && r.toolKey === "tt-rec-ok",
+  )!;
+  assert.equal(okRow.currentStatus, "ok",
+    "currentStatus must reflect the recovery row's status, not the prior error");
+  assert.ok(okRow.previousErrorAt instanceof Date || typeof okRow.previousErrorAt === "string",
+    "previousErrorAt must be a Date or ISO string");
+  assert.ok(okRow.recoveredAt instanceof Date || typeof okRow.recoveredAt === "string",
+    "recoveredAt must be a Date or ISO string");
+
+  const warnRow = items.find((r) =>
+    r.companyId === dirtyCompanyId && r.toolKey === "tt-rec-warn",
+  )!;
+  assert.equal(warnRow.currentStatus, "warn",
+    "currentStatus must distinguish a recovery to 'warn' from a clean bill of health");
+});
+
+test("getRecentToolRecoveries: respects the limit argument", async () => {
+  const items = await getRecentToolRecoveries(1, TOOL_ERROR_WINDOW_DAYS);
+  assert.ok(items.length <= 1, `limit=1 must cap rows, got ${items.length}`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //  POST /api/admin/maintenance/run-now — auth + per-company + all-companies
 // ════════════════════════════════════════════════════════════════════════════
 interface RunNowResponse {
@@ -1738,6 +1872,10 @@ interface RunNowResponse {
     warnCount: number;
     errorCount: number;
     failedCompanies: number;
+    // Only set on the all-companies path (runMaintenanceSweep). Per-company
+    // runs build a hand-rolled summary that omits this field — the test that
+    // reads it must use the all-companies route.
+    recoveryCount?: number;
   };
 }
 
@@ -1844,6 +1982,50 @@ test("POST /maintenance/run-now: all-companies mode includes the seeded companie
     ));
   assert.ok(cleanScheduled.length >= 1,
     `all-companies sweep must have inserted manual rows for the clean company, got ${cleanScheduled.length}`);
+});
+
+// Recovery detection inside `runMaintenanceSweep` — verifies that when a tool
+// transitions from 'error' (its latest pre-sweep status) to a non-error
+// outcome during this sweep, the summary's `recoveryCount` is incremented.
+// This is the integration-level proof that the per-company prev-status
+// snapshot + comparison loop is wired correctly. The companion info-level
+// log line is a one-call side effect of the same branch and is not asserted
+// independently to avoid a logger-mock dependency.
+//
+// Setup: pre-seed an 'error' row for a real registered tool ("journal-pending")
+// on cleanCompanyId with runAt=now. The clean tenant has no journal data, so
+// the next real run of journal-pending returns count=0 (status='ok'), which
+// is a textbook recovery transition.
+test("POST /maintenance/run-now (all-companies): increments recoveryCount when a tool flips error → non-error", async () => {
+  // Pre-seeded error must be the latest row for (cleanCompanyId, journal-pending)
+  // at sweep time. We use a runAt slightly in the past (1ms) to guarantee the
+  // sweep's freshly-inserted 'ok' row sorts AFTER it under run_at DESC.
+  const seededErr = await db.insert(maintenanceRunsTable).values({
+    companyId:  cleanCompanyId,
+    toolKey:    "journal-pending",
+    status:     "error",
+    count:      0,
+    trigger:    "scheduled",
+    runAt:      new Date(Date.now() - 10),
+    durationMs: 1,
+    error:      "synthetic-pre-sweep-error",
+    details:    null,
+  }).returning({ id: maintenanceRunsTable.id });
+  insertedMaintenanceRunIds.push(seededErr[0].id);
+
+  const r = await api<RunNowResponse>("/api/admin/maintenance/run-now", "POST", {
+    token: saToken,
+    body: {},
+  });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 300)}`);
+
+  // We seeded one tool transition. Other tenants may also have happened to
+  // recover during this sweep, so use >= 1 (not == 1) to stay robust against
+  // shared-DB noise from other test runs / live tenants.
+  assert.ok(typeof r.body.summary.recoveryCount === "number",
+    `summary.recoveryCount must be present on the all-companies path, got ${typeof r.body.summary.recoveryCount}`);
+  assert.ok((r.body.summary.recoveryCount ?? 0) >= 1,
+    `recoveryCount should be >= 1 after seeding a journal-pending error → ok transition, got ${r.body.summary.recoveryCount}`);
 });
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { logger } from "./logger.js";
 import { runAllChecks, MAINTENANCE_TOOL_KEYS, type ToolRunOutcome } from "./maintenanceChecks.js";
-import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow, type MaintenanceErrorDigestRow } from "./email.js";
+import { emailConfigured, sendMaintenanceCriticalDigest, type MaintenanceDigestRow, type MaintenanceErrorDigestRow, type MaintenanceRecoveryDigestRow } from "./email.js";
 
 // Arabic display labels for each tool — kept here (and not in the React UI) so
 // the email digest reads naturally for SuperAdmins. Mirrors the labels rendered
@@ -104,6 +104,10 @@ export interface SweepSummary {
   warnCount: number;
   errorCount: number;
   failedCompanies: number;
+  // Number of (company, tool) pairs whose latest pre-sweep status was 'error'
+  // and whose new outcome is non-error. Surfaced so the scheduler tick log
+  // line includes positive feedback alongside the existing failure counters.
+  recoveryCount: number;
 }
 
 export async function runMaintenanceSweep(
@@ -113,9 +117,22 @@ export async function runMaintenanceSweep(
   const companies = await db.select({ id: companiesTable.id })
     .from(companiesTable)
     .where(eq(companiesTable.status, "active"));
-  let toolsRun = 0, criticalCount = 0, warnCount = 0, errorCount = 0, failedCompanies = 0;
+  let toolsRun = 0, criticalCount = 0, warnCount = 0, errorCount = 0, failedCompanies = 0, recoveryCount = 0;
   for (const c of companies) {
     try {
+      // Snapshot the latest pre-sweep status per tool so we can detect tools
+      // that transitioned error → ok/warn/critical during this sweep. Reading
+      // BEFORE persisting the new outcomes is essential — otherwise the just-
+      // inserted rows would shadow the previous state and every recovery
+      // would be invisible. Best-effort: a query failure here just disables
+      // recovery logging for THIS company, never aborts the sweep.
+      let prevByTool = new Map<string, { status: string; runAt: Date }>();
+      try {
+        const prev = await getLatestResultsForCompany(c.id);
+        prevByTool = new Map(prev.map((p) => [p.toolKey, { status: p.status, runAt: p.runAt }]));
+      } catch (err) {
+        logger.warn({ err, companyId: c.id }, "maintenance-sweep: pre-sweep status snapshot failed");
+      }
       const outcomes = await runAllChecks(c.id);
       await persistRunOutcomes(c.id, trigger, outcomes);
       toolsRun += outcomes.length;
@@ -123,6 +140,22 @@ export async function runMaintenanceSweep(
         if (o.status === "critical") criticalCount += 1;
         else if (o.status === "warn") warnCount += 1;
         else if (o.status === "error") errorCount += 1;
+        // Recovery transition detection. We log info-level (not warn/error) so
+        // it shows up in the operational stream as a positive confirmation —
+        // distinct from the existing "company failed" error log. Any non-error
+        // outcome (ok / warn / critical) following an error counts as a
+        // recovery: even a warn means the check ran to completion this time,
+        // which is the actionable signal operators care about.
+        const prev = prevByTool.get(o.toolKey);
+        if (prev && prev.status === "error" && o.status !== "error") {
+          recoveryCount += 1;
+          logger.info({
+            tool: o.toolKey,
+            company: c.id,
+            previousErrorAt: prev.runAt,
+            currentStatus: o.status,
+          }, "maintenance-recovery: tool recovered");
+        }
       }
     } catch (e: any) {
       failedCompanies += 1;
@@ -170,7 +203,7 @@ export async function runMaintenanceSweep(
         sql`${maintenanceScheduleTable.alertsMutedUntil} IS NOT NULL`,
       ));
   }
-  return { companies: companies.length, toolsRun, criticalCount, warnCount, errorCount, failedCompanies };
+  return { companies: companies.length, toolsRun, criticalCount, warnCount, errorCount, failedCompanies, recoveryCount };
 }
 
 // ─── Email digest dispatch ───────────────────────────────────────────────────
@@ -397,6 +430,30 @@ export async function dispatchCriticalDigest(
     logger.error({ err }, "maintenance-scheduler: failed to fetch tool errors for digest");
   }
 
+  // Tools that recovered within the recency window — appended as a small
+  // green section so SuperAdmins get explicit positive confirmation that
+  // previously-broken checks are healthy again. Capped at the same 50-row
+  // limit as the error section to keep the email scannable. Recoveries are
+  // strictly informational: they do NOT contribute to `presentSeverities`,
+  // do NOT influence the cooldown / signature, and never trigger a dispatch
+  // on their own — they only ride along with digests that would already fire.
+  const RECOVERY_ROW_CAP = 50;
+  let recoveryDigestRows: MaintenanceRecoveryDigestRow[] = [];
+  try {
+    const recs = await getRecentToolRecoveries(RECOVERY_ROW_CAP);
+    recoveryDigestRows = recs.map((r) => ({
+      companyId:       r.companyId,
+      companyName:     r.companyName,
+      toolKey:         r.toolKey,
+      toolLabelAr:     toolLabelAr(r.toolKey),
+      currentStatus:   r.currentStatus,
+      previousErrorAt: r.previousErrorAt,
+      recoveredAt:     r.recoveredAt,
+    }));
+  } catch (err) {
+    logger.error({ err }, "maintenance-scheduler: failed to fetch tool recoveries for digest");
+  }
+
   // Build the severity set actually present in this dispatch payload so
   // recipient filtering matches what the email shows. Test sends with the
   // placeholder row count as 'critical' (the only audience for a test is the
@@ -480,6 +537,7 @@ export async function dispatchCriticalDigest(
     isTest,
     truncated,
     errorRows: errorDigestRows,
+    recoveryRows: recoveryDigestRows,
   });
   if (!sendRes.ok) {
     return recordEmailOutcome({
@@ -793,6 +851,79 @@ export async function getRecentToolErrors(
      LIMIT ${limit}
   `);
   return ((exec as any).rows ?? []) as ToolErrorRow[];
+}
+
+// ─── Recent recoveries — tools that flipped error → non-error in window ──────
+// Mirrors `getRecentToolErrors` but in the positive direction: each row
+// represents a (company, tool) pair whose latest run finished without error
+// AND whose immediately-previous run was an 'error' that occurred within the
+// recency window. Used by the digest dispatch to render a green "recovered
+// tools" section so SuperAdmins get explicit confirmation that previously-
+// broken checks are healthy again — without it, a fixed tool just silently
+// disappears from the error section.
+//
+// Bounding by `recoveredAt >= now() - windowDays` matches the error helper
+// (operators care about "what changed this week", not historical churn).
+// Capping at `limit` mirrors `ERROR_ROW_CAP` so a noisy tenant can't blow
+// up the email body. We do NOT join the original error row — only the
+// previous-error timestamp is needed for the digest line.
+export interface ToolRecoveryRow {
+  companyId: number;
+  companyName: string;
+  toolKey: string;
+  // Status of the recovery row itself (always non-error: ok / warn / critical).
+  // Surfaced because a recovery to "warn"/"critical" still warrants a glance —
+  // the check ran successfully but found new findings. Operators can use this
+  // to distinguish "fully healed" from "now reporting normally with issues".
+  currentStatus: string;
+  previousErrorAt: Date;
+  recoveredAt: Date;
+}
+
+export async function getRecentToolRecoveries(
+  limit = 50,
+  windowDays: number = TOOL_ERROR_WINDOW_DAYS,
+): Promise<ToolRecoveryRow[]> {
+  // LAG window function over (company_id, tool_key) ordered by run_at gives
+  // each row its predecessor's status + run_at. We then keep only rows whose:
+  //   - own status is non-error,
+  //   - prior status was 'error',
+  //   - own run_at is the latest for the (company, tool) pair (so a tool that
+  //     recovered then re-broke is excluded — its latest row would be 'error',
+  //     and `getRecentToolErrors` covers that case),
+  //   - recovery happened inside the recency window.
+  // The `latest` CTE is the same per-(company, tool) projection used by
+  // `getRecentToolErrors` so the two helpers are mutually exclusive: a given
+  // (company, tool) pair appears in at most one of them at any time.
+  const exec = await db.execute<any>(sql`
+    WITH ranked AS (
+      SELECT id,
+             company_id,
+             tool_key,
+             status,
+             run_at,
+             LAG(status) OVER (PARTITION BY company_id, tool_key ORDER BY run_at) AS prev_status,
+             LAG(run_at) OVER (PARTITION BY company_id, tool_key ORDER BY run_at) AS prev_run_at,
+             ROW_NUMBER() OVER (PARTITION BY company_id, tool_key ORDER BY run_at DESC) AS rn
+        FROM maintenance_runs
+    )
+    SELECT r.company_id    AS "companyId",
+           c.name_ar       AS "companyName",
+           r.tool_key      AS "toolKey",
+           r.status        AS "currentStatus",
+           r.prev_run_at   AS "previousErrorAt",
+           r.run_at        AS "recoveredAt"
+      FROM ranked r
+      JOIN companies c ON c.id = r.company_id
+     WHERE r.rn = 1
+       AND r.status      <> 'error'
+       AND r.prev_status  = 'error'
+       AND c.status       = 'active'
+       AND r.run_at >= now() - ((${windowDays})::int || ' days')::interval
+     ORDER BY r.run_at DESC
+     LIMIT ${limit}
+  `);
+  return ((exec as any).rows ?? []) as ToolRecoveryRow[];
 }
 
 // ─── Scheduler boot (called once from index.ts) ──────────────────────────────
