@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -19,9 +20,19 @@ import {
 
 type Step = "upload" | "analyze" | "review" | "result";
 
+function entityLabel(e: EntityCatalogItem | undefined, isAr: boolean): string {
+  if (!e) return "";
+  return isAr ? (e.labelAr ?? e.labelEn ?? e.key) : (e.labelEn ?? e.labelAr ?? e.key);
+}
+function fieldLabel(f: { labelAr?: string; labelEn?: string; name: string }, isAr: boolean): string {
+  return isAr ? (f.labelAr ?? f.labelEn ?? f.name) : (f.labelEn ?? f.labelAr ?? f.name);
+}
+
 export default function DataImportExport() {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
+  const isAr = i18n.language?.startsWith("ar");
   const cid: number | undefined = user?.company?.id ?? user?.companyId ?? undefined;
 
   const { data: entities = [], isLoading: entitiesLoading } = useQuery({
@@ -31,19 +42,19 @@ export default function DataImportExport() {
   });
 
   return (
-    <div className="container mx-auto p-4 md:p-6 space-y-6" dir="rtl">
+    <div className="container mx-auto p-4 md:p-6 space-y-6" dir={isAr ? "rtl" : "ltr"}>
       <header className="flex items-center gap-3">
         <Database className="w-7 h-7 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold">مركز استيراد وتصدير البيانات</h1>
-          <p className="text-sm text-muted-foreground">تصدير أو استيراد بيانات النظام بأي صيغة، مع تحليل ذكي للأعمدة وحلّ المشاكل تلقائيًا.</p>
+          <h1 className="text-2xl font-bold">{t("dataIO.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("dataIO.subtitle")}</p>
         </div>
       </header>
 
-      <Tabs defaultValue="export" dir="rtl">
+      <Tabs defaultValue="export" dir={isAr ? "rtl" : "ltr"}>
         <TabsList className="grid grid-cols-2 max-w-md">
-          <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> تصدير</TabsTrigger>
-          <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> استيراد</TabsTrigger>
+          <TabsTrigger value="export"><Download className="w-4 h-4 ml-2" /> {t("dataIO.tabExport")}</TabsTrigger>
+          <TabsTrigger value="import"><Upload className="w-4 h-4 ml-2" /> {t("dataIO.tabImport")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="export" className="mt-4">
@@ -51,7 +62,7 @@ export default function DataImportExport() {
         </TabsContent>
 
         <TabsContent value="import" className="mt-4">
-          <ImportWizard entities={entities} loading={entitiesLoading} cid={cid} token={token} toast={toast} />
+          <ImportWizard entities={entities} loading={entitiesLoading} cid={cid} token={token} toast={toast} isAr={isAr} />
         </TabsContent>
       </Tabs>
     </div>
@@ -65,11 +76,12 @@ export default function DataImportExport() {
 function ExportPanel({ entities, loading, cid, token, toast }: {
   entities: EntityCatalogItem[]; loading: boolean; cid?: number; token: string | null; toast: any;
 }) {
+  const { t, i18n } = useTranslation();
+  const isAr = i18n.language?.startsWith("ar");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<"json" | "xlsx">("xlsx");
   const [busy, setBusy] = useState(false);
 
-  // Default = all on first load
   useEffect(() => {
     if (entities.length && selected.size === 0) {
       setSelected(new Set(entities.map((e) => e.key)));
@@ -87,16 +99,16 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
   const selectNone = () => setSelected(new Set());
 
   const onExport = async () => {
-    if (!cid) { toast({ title: "لا يوجد معرّف شركة", variant: "destructive" }); return; }
-    if (selected.size === 0) { toast({ title: "اختر جدولاً واحدًا على الأقل", variant: "destructive" }); return; }
+    if (!cid) { toast({ title: t("dataIO.noCompany"), variant: "destructive" }); return; }
+    if (selected.size === 0) { toast({ title: t("dataIO.selectAtLeastOne"), variant: "destructive" }); return; }
     setBusy(true);
     try {
       const blob = await exportData(token, { companyId: cid, types: Array.from(selected), format });
       const ext = format === "json" ? "json" : "xlsx";
       downloadBlob(blob, `data-export-${new Date().toISOString().slice(0, 10)}.${ext}`);
-      toast({ title: "✓ تم تنزيل ملف التصدير" });
+      toast({ title: t("dataIO.downloadSuccess") });
     } catch (e: any) {
-      toast({ title: e.message ?? "فشل التصدير", variant: "destructive" });
+      toast({ title: e.message ?? t("dataIO.exportFailed"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -105,15 +117,15 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
   return (
     <Card className="p-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">اختر البيانات المراد تصديرها</h2>
+        <h2 className="text-lg font-semibold">{t("dataIO.exportChooseTitle")}</h2>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={selectAll} disabled={loading}>تحديد الكل</Button>
-          <Button variant="outline" size="sm" onClick={selectNone} disabled={loading}>إلغاء التحديد</Button>
+          <Button variant="outline" size="sm" onClick={selectAll} disabled={loading}>{t("dataIO.selectAll")}</Button>
+          <Button variant="outline" size="sm" onClick={selectNone} disabled={loading}>{t("dataIO.selectNone")}</Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {loading && <div className="col-span-full text-center text-muted-foreground py-6">جاري التحميل…</div>}
+        {loading && <div className="col-span-full text-center text-muted-foreground py-6">{t("dataIO.loading")}</div>}
         {entities.map((e) => (
           <label
             key={e.key}
@@ -128,8 +140,8 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
               onChange={() => toggle(e.key)}
             />
             <div className="flex-1 min-w-0">
-              <div className="font-medium truncate">{e.labelAr}</div>
-              <div className="text-xs text-muted-foreground truncate">{e.labelEn}</div>
+              <div className="font-medium truncate">{entityLabel(e, isAr)}</div>
+              <div className="text-xs text-muted-foreground truncate">{isAr ? (e.labelEn ?? "") : (e.labelAr ?? "")}</div>
             </div>
           </label>
         ))}
@@ -137,7 +149,7 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
 
       <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium">الصيغة:</span>
+          <span className="text-sm font-medium">{t("dataIO.formatLabel")}</span>
           <button
             onClick={() => setFormat("xlsx")}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${format === "xlsx" ? "bg-primary text-primary-foreground border-primary" : ""}`}
@@ -153,7 +165,7 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
         </div>
         <Button onClick={onExport} disabled={busy || selected.size === 0}>
           {busy ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Download className="w-4 h-4 ml-2" />}
-          تنزيل ({selected.size} جدول)
+          {t("dataIO.downloadCount", { count: selected.size })}
         </Button>
       </div>
     </Card>
@@ -164,9 +176,10 @@ function ExportPanel({ entities, loading, cid, token, toast }: {
 // IMPORT WIZARD
 // ════════════════════════════════════════════════════════════════════════════
 
-function ImportWizard({ entities, loading, cid, token, toast }: {
-  entities: EntityCatalogItem[]; loading: boolean; cid?: number; token: string | null; toast: any;
+function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
+  entities: EntityCatalogItem[]; loading: boolean; cid?: number; token: string | null; toast: any; isAr: boolean;
 }) {
+  const { t } = useTranslation();
   const [step, setStep] = useState<Step>("upload");
   const [entityKey, setEntityKey] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
@@ -188,7 +201,7 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
   }
 
   async function onFile(file: File) {
-    if (!entityKey) { toast({ title: "اختر نوع البيانات أولاً", variant: "destructive" }); return; }
+    if (!entityKey) { toast({ title: t("dataIO.chooseTypeFirst"), variant: "destructive" }); return; }
     setFileName(file.name);
     setBusy(true);
     try {
@@ -198,17 +211,15 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
       if (isJson) {
         const text = await file.text();
         const json = JSON.parse(text);
-        // Support either { data: { entityKey: [...] } } or a direct array
         let arr: any[] = [];
         if (Array.isArray(json)) arr = json;
         else if (json && Array.isArray(json[entityKey])) arr = json[entityKey];
         else if (json?.data && Array.isArray(json.data[entityKey])) arr = json.data[entityKey];
         else if (json?.data && typeof json.data === "object") {
-          // best-effort: pick the first array
           const first = Object.values(json.data).find((v) => Array.isArray(v)) as any[] | undefined;
           arr = first ?? [];
         }
-        if (arr.length === 0) throw new Error("الملف لا يحتوي على بيانات قابلة للقراءة");
+        if (arr.length === 0) throw new Error(t("dataIO.fileNoData"));
         parsedHeaders = Array.from(arr.reduce<Set<string>>((acc, r) => { if (r && typeof r === "object") Object.keys(r).forEach((k) => acc.add(k)); return acc; }, new Set()));
         parsedRows = arr;
       } else {
@@ -216,8 +227,8 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
         const wb = XLSX.read(buf, { type: "array" });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const aoa: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: false });
-        if (aoa.length < 2) throw new Error("الملف لا يحتوي على بيانات كافية");
-        parsedHeaders = (aoa[0] ?? []).map((h: any, i: number) => (h == null || String(h).trim() === "") ? `العمود ${i + 1}` : String(h).trim());
+        if (aoa.length < 2) throw new Error(t("dataIO.fileNotEnough"));
+        parsedHeaders = (aoa[0] ?? []).map((h: any, i: number) => (h == null || String(h).trim() === "") ? t("dataIO.defaultColumn", { n: i + 1 }) : String(h).trim());
         parsedRows = aoa.slice(1).filter((r) => r && r.some((c: any) => c != null && String(c).trim() !== "")).map((r) => {
           const o: any = {};
           parsedHeaders.forEach((h, i) => { o[h] = r[i] ?? null; });
@@ -227,16 +238,18 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
       setHeaders(parsedHeaders);
       setRows(parsedRows);
 
-      // Auto-trigger AI analysis
       const result = await analyzeImport(token, { entity: entityKey, headers: parsedHeaders, sampleRows: parsedRows.slice(0, 8) });
       setAnalysis(result);
       const initialMap: Record<string, string | null> = {};
       for (const [src, m] of Object.entries(result.mapping)) initialMap[src] = m.field;
       setMapping(initialMap);
       setStep("analyze");
-      toast({ title: `✓ تم تحليل ${parsedRows.length} صف`, description: result.source === "ai" ? "تم استخدام الذكاء الاصطناعي" : "تم استخدام مطابقة تلقائية احتياطية" });
+      toast({
+        title: t("dataIO.analyzeSuccess", { count: parsedRows.length }),
+        description: result.source === "ai" ? t("dataIO.analyzeAiDesc") : t("dataIO.analyzeFallbackDesc"),
+      });
     } catch (e: any) {
-      toast({ title: e?.message ?? "فشلت قراءة الملف", variant: "destructive" });
+      toast({ title: e?.message ?? t("dataIO.readFailed"), variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -249,7 +262,7 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
       setProcessed(result);
       setStep("review");
     } catch (e: any) {
-      toast({ title: e?.message ?? "فشلت المعالجة", variant: "destructive" });
+      toast({ title: e?.message ?? t("dataIO.processFailed"), variant: "destructive" });
     } finally { setBusy(false); }
   }
 
@@ -260,46 +273,47 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
       const result = await commitImport(token, { companyId: cid, entity: entityKey, rows: processed.processed, options: { skipErrors: true } });
       setCommitResult(result);
       setStep("result");
-      toast({ title: `✓ تم: ${result.summary.inserted} جديد، ${result.summary.updated} محدّث، ${result.summary.skipped} متجاوَز` });
+      toast({ title: t("dataIO.commitSuccess", { inserted: result.summary.inserted, updated: result.summary.updated, skipped: result.summary.skipped }) });
     } catch (e: any) {
-      toast({ title: e?.message ?? "فشل التنفيذ", variant: "destructive" });
+      toast({ title: e?.message ?? t("dataIO.commitFailed"), variant: "destructive" });
     } finally { setBusy(false); }
   }
 
   function downloadReport() {
     if (!commitResult || !processed) return;
     const wb = XLSX.utils.book_new();
-    // Sheet 1: summary
     const sum = commitResult.summary;
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-      ["نوع البيانات", entity?.labelAr ?? entityKey],
-      ["تاريخ التنفيذ", commitResult.committedAt],
+      [t("dataIO.sheetDataType"), entityLabel(entity, isAr) || entityKey],
+      [t("dataIO.sheetExecutedAt"), commitResult.committedAt],
       [],
-      ["الإجمالي", sum.total],
-      ["مُدرج", sum.inserted],
-      ["مُحدَّث", sum.updated],
-      ["متجاوَز", sum.skipped],
-      ["أخطاء", sum.errors],
-    ]), "ملخص");
-    // Sheet 2: per-row log
+      [t("dataIO.sheetTotal"), sum.total],
+      [t("dataIO.sheetInserted"), sum.inserted],
+      [t("dataIO.sheetUpdated"), sum.updated],
+      [t("dataIO.sheetSkipped"), sum.skipped],
+      [t("dataIO.sheetErrors"), sum.errors],
+    ]), t("dataIO.summarySheetName"));
     const logRows = commitResult.log.map((l) => ({
-      "صف الملف": l.rowIndex + 1,
-      "الحالة": l.status === "inserted" ? "مُدرج" : l.status === "updated" ? "مُحدَّث" : l.status === "skipped" ? "متجاوَز" : "خطأ",
-      "المعرّف": l.id ?? "",
-      "السبب/الملاحظة": l.reason ?? "",
+      [t("dataIO.excelFileRow")]: l.rowIndex + 1,
+      [t("dataIO.excelStatus")]: l.status === "inserted" ? t("dataIO.statusInserted")
+        : l.status === "updated" ? t("dataIO.statusUpdated")
+        : l.status === "skipped" ? t("dataIO.statusSkipped") : t("dataIO.statusError"),
+      [t("dataIO.excelId")]: l.id ?? "",
+      [t("dataIO.excelReason")]: l.reason ?? "",
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logRows), "سجل التنفيذ");
-    // Sheet 3: issues
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logRows), t("dataIO.executionLogSheet"));
     const issueRows = processed.issues.map((i) => ({
-      "صف الملف": i.rowIndex + 1, "الحقل": i.field ?? "", "النوع": i.type, "الخطورة": i.severity,
-      "قبل": String(i.before ?? ""), "بعد": String(i.after ?? ""), "الإجراء": i.action,
-      "الثقة": Math.round(i.confidence * 100) + "%", "الرسالة": i.message,
+      [t("dataIO.excelFileRow")]: i.rowIndex + 1, [t("dataIO.excelField")]: i.field ?? "",
+      [t("dataIO.excelType")]: i.type, [t("dataIO.excelSeverity")]: i.severity,
+      [t("dataIO.excelBefore")]: String(i.before ?? ""), [t("dataIO.excelAfter")]: String(i.after ?? ""),
+      [t("dataIO.excelAction")]: i.action,
+      [t("dataIO.excelConfidence")]: Math.round(i.confidence * 100) + "%",
+      [t("dataIO.excelMessage")]: i.message,
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issueRows), "المشاكل");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issueRows), t("dataIO.issuesSheet"));
     XLSX.writeFile(wb, `import-report-${entityKey}-${Date.now()}.xlsx`);
   }
 
-  // Stepper UI
   const StepBadge = ({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) => (
     <div className={`flex items-center gap-2 ${active ? "text-primary font-semibold" : done ? "text-green-600" : "text-muted-foreground"}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs ${
@@ -309,22 +323,24 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
     </div>
   );
 
+  const ArrowIcon = isAr ? ArrowLeft : ArrowRight;
+
   return (
     <div className="space-y-4">
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-4 justify-between">
           <div className="flex items-center gap-4">
-            <StepBadge n={1} label="رفع الملف" active={step === "upload"} done={step !== "upload"} />
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-            <StepBadge n={2} label="ربط الأعمدة" active={step === "analyze"} done={["review", "result"].includes(step)} />
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-            <StepBadge n={3} label="مراجعة" active={step === "review"} done={step === "result"} />
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-            <StepBadge n={4} label="النتيجة" active={step === "result"} done={false} />
+            <StepBadge n={1} label={t("dataIO.stepUpload")} active={step === "upload"} done={step !== "upload"} />
+            <ArrowIcon className="w-4 h-4 text-muted-foreground" />
+            <StepBadge n={2} label={t("dataIO.stepMap")} active={step === "analyze"} done={["review", "result"].includes(step)} />
+            <ArrowIcon className="w-4 h-4 text-muted-foreground" />
+            <StepBadge n={3} label={t("dataIO.stepReview")} active={step === "review"} done={step === "result"} />
+            <ArrowIcon className="w-4 h-4 text-muted-foreground" />
+            <StepBadge n={4} label={t("dataIO.stepResult")} active={step === "result"} done={false} />
           </div>
           {step !== "upload" && (
             <Button variant="ghost" size="sm" onClick={reset}>
-              <X className="w-4 h-4 ml-1" /> بدء من جديد
+              <X className="w-4 h-4 ml-1" /> {t("dataIO.restart")}
             </Button>
           )}
         </div>
@@ -333,18 +349,18 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
       {step === "upload" && (
         <Card className="p-6 space-y-5">
           <div>
-            <label className="block text-sm font-medium mb-2">اختر نوع البيانات</label>
+            <label className="block text-sm font-medium mb-2">{t("dataIO.chooseDataType")}</label>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
               {entities.map((e) => (
                 <button
                   key={e.key}
                   onClick={() => setEntityKey(e.key)}
-                  className={`p-3 border rounded-lg text-right transition-colors ${
+                  className={`p-3 border rounded-lg ${isAr ? "text-right" : "text-left"} transition-colors ${
                     entityKey === e.key ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted/40"
                   }`}
                 >
-                  <div className="font-medium">{e.labelAr}</div>
-                  <div className="text-xs opacity-75">{e.labelEn}</div>
+                  <div className="font-medium">{entityLabel(e, isAr)}</div>
+                  <div className="text-xs opacity-75">{isAr ? (e.labelEn ?? "") : (e.labelAr ?? "")}</div>
                 </button>
               ))}
             </div>
@@ -353,8 +369,8 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
           <div className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors ${entityKey ? "hover:border-primary cursor-pointer" : "opacity-50"}`}
                onClick={() => entityKey && fileRef.current?.click()}>
             <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-            <div className="font-medium">{busy ? "جاري التحليل…" : "اسحب ملفًا هنا أو انقر للاختيار"}</div>
-            <div className="text-xs text-muted-foreground mt-1">يدعم: Excel (.xlsx, .xls) — CSV (.csv) — JSON</div>
+            <div className="font-medium">{busy ? t("dataIO.dropAnalyzing") : t("dataIO.dropIdle")}</div>
+            <div className="text-xs text-muted-foreground mt-1">{t("dataIO.supportedFormats")}</div>
             <input
               ref={fileRef}
               type="file"
@@ -367,11 +383,11 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
 
           {entity && (
             <div className="bg-blue-50 dark:bg-blue-950/30 p-3 rounded-lg text-sm">
-              <div className="font-medium mb-1">حقول جدول {entity.labelAr}:</div>
+              <div className="font-medium mb-1">{t("dataIO.fieldsHeader", { name: entityLabel(entity, isAr) })}</div>
               <div className="text-muted-foreground text-xs leading-relaxed">
                 {entity.fields.map((f, i) => (
                   <span key={f.name}>
-                    {f.labelAr}{f.required && <span className="text-red-600">*</span>}
+                    {fieldLabel(f, isAr)}{f.required && <span className="text-red-600">*</span>}
                     {i < entity.fields.length - 1 && " • "}
                   </span>
                 ))}
@@ -386,24 +402,24 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <h3 className="font-semibold flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary" />
-              ربط أعمدة الملف بحقول النظام
+              {t("dataIO.mappingTitle")}
             </h3>
             <div className="flex gap-3 text-sm text-muted-foreground">
               <span>{fileName}</span>
-              <Badge variant="outline">{rows.length} صف</Badge>
-              <Badge variant="outline">{analysis.source === "ai" ? "ذكاء اصطناعي" : "مطابقة احتياطية"}</Badge>
+              <Badge variant="outline">{t("dataIO.rowsCount", { count: rows.length })}</Badge>
+              <Badge variant="outline">{analysis.source === "ai" ? t("dataIO.sourceAi") : t("dataIO.sourceFallback")}</Badge>
             </div>
           </div>
           {analysis.missingRequired.length > 0 && (
             <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 p-3 rounded-lg text-sm">
               <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-200 mb-1">
-                <AlertTriangle className="w-4 h-4" /> حقول مطلوبة لم يتم اكتشافها
+                <AlertTriangle className="w-4 h-4" /> {t("dataIO.missingRequired")}
               </div>
               <div className="text-amber-700 dark:text-amber-300">
-                {analysis.missingRequired.map((m) => m.labelAr).join("، ")}
+                {analysis.missingRequired.map((m) => isAr ? (m.labelAr || m.field) : m.field).join(isAr ? "، " : ", ")}
               </div>
               <div className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-                اربط هذه الحقول يدويًا أدناه قبل المتابعة، أو سيتم تجاوز الصفوف الناقصة.
+                {t("dataIO.missingRequiredHelp")}
               </div>
             </div>
           )}
@@ -411,10 +427,10 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr>
-                  <th className="p-2 text-right">عمود الملف</th>
-                  <th className="p-2 text-right">حقل النظام</th>
-                  <th className="p-2 text-right">ثقة</th>
-                  <th className="p-2 text-right">عينة</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.fileColumn")}</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.systemField")}</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.confidenceCol")}</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.sampleCol")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -427,10 +443,10 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
                         value={mapping[h] ?? ""}
                         onChange={(e) => setMapping((m) => ({ ...m, [h]: e.target.value || null }))}
                       >
-                        <option value="">— تجاهل —</option>
+                        <option value="">{t("dataIO.ignoreOpt")}</option>
                         {entity.fields.map((f) => (
                           <option key={f.name} value={f.name}>
-                            {f.labelAr} {f.required ? "*" : ""}
+                            {fieldLabel(f, isAr)} {f.required ? "*" : ""}
                           </option>
                         ))}
                       </select>
@@ -449,18 +465,18 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
 
           <div className="flex justify-between items-center pt-2">
             <Button variant="outline" onClick={() => setStep("upload")}>
-              <ArrowRight className="w-4 h-4 ml-2" /> رجوع
+              <ArrowIcon className="w-4 h-4 ml-2 rotate-180" /> {t("dataIO.back")}
             </Button>
             <Button onClick={onProcess} disabled={busy}>
               {busy ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Eye className="w-4 h-4 ml-2" />}
-              معالجة وعرض المشاكل
+              {t("dataIO.processBtn")}
             </Button>
           </div>
         </Card>
       )}
 
       {step === "review" && processed && (
-        <ReviewPanel processed={processed} entity={entity} setProcessed={setProcessed} onCommit={onCommit} onBack={() => setStep("analyze")} busy={busy} />
+        <ReviewPanel processed={processed} entity={entity} setProcessed={setProcessed} onCommit={onCommit} onBack={() => setStep("analyze")} busy={busy} isAr={isAr} ArrowIcon={ArrowIcon} />
       )}
 
       {step === "result" && commitResult && (
@@ -474,10 +490,11 @@ function ImportWizard({ entities, loading, cid, token, toast }: {
 // REVIEW PANEL
 // ════════════════════════════════════════════════════════════════════════════
 
-function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }: {
+function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy, isAr, ArrowIcon }: {
   processed: ProcessResult; entity: EntityCatalogItem | undefined; setProcessed: (r: ProcessResult) => void;
-  onCommit: () => void; onBack: () => void; busy: boolean;
+  onCommit: () => void; onBack: () => void; busy: boolean; isAr: boolean; ArrowIcon: typeof ArrowLeft;
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<"all" | "errors" | "warnings" | "info" | "duplicates">("all");
   const issuesByRow = useMemo(() => {
     const m = new Map<number, RowIssue[]>();
@@ -505,29 +522,30 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
   }
 
   const cols = entity?.fields.filter((f) => processed.processed.some((r) => f.name in r)) ?? [];
+  const align = isAr ? "text-right" : "text-left";
 
   return (
     <div className="space-y-4">
       {/* stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatCard label="إجمالي" value={processed.stats.total} icon={<Database />} />
-        <StatCard label="أخطاء" value={processed.stats.errors} icon={<X />} tone="error" onClick={() => setFilter("errors")} active={filter === "errors"} />
-        <StatCard label="تحذيرات" value={processed.stats.warnings} icon={<AlertTriangle />} tone="warning" onClick={() => setFilter("warnings")} active={filter === "warnings"} />
-        <StatCard label="إصلاحات" value={processed.stats.info} icon={<Sparkles />} tone="info" onClick={() => setFilter("info")} active={filter === "info"} />
-        <StatCard label="مكررات" value={processed.stats.duplicates} icon={<CheckCircle2 />} tone="muted" onClick={() => setFilter("duplicates")} active={filter === "duplicates"} />
+        <StatCard label={t("dataIO.statTotal")}      value={processed.stats.total}     icon={<Database />} />
+        <StatCard label={t("dataIO.statErrors")}     value={processed.stats.errors}    icon={<X />} tone="error"   onClick={() => setFilter("errors")}     active={filter === "errors"} />
+        <StatCard label={t("dataIO.statWarnings")}   value={processed.stats.warnings}  icon={<AlertTriangle />} tone="warning" onClick={() => setFilter("warnings")}   active={filter === "warnings"} />
+        <StatCard label={t("dataIO.statFixes")}      value={processed.stats.info}      icon={<Sparkles />} tone="info"   onClick={() => setFilter("info")}        active={filter === "info"} />
+        <StatCard label={t("dataIO.statDuplicates")} value={processed.stats.duplicates} icon={<CheckCircle2 />} tone="muted" onClick={() => setFilter("duplicates")} active={filter === "duplicates"} />
       </div>
 
       <Card className="p-4">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-          <h3 className="font-semibold">معاينة قبل التنفيذ</h3>
+          <h3 className="font-semibold">{t("dataIO.previewTitle")}</h3>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">عرض:</span>
+            <span className="text-sm text-muted-foreground">{t("dataIO.viewLabel")}</span>
             <select className="px-2 py-1 text-sm border rounded bg-background" value={filter} onChange={(e) => setFilter(e.target.value as any)}>
-              <option value="all">الكل ({processed.processed.length})</option>
-              <option value="errors">أخطاء فقط</option>
-              <option value="warnings">تحذيرات فقط</option>
-              <option value="info">إصلاحات فقط</option>
-              <option value="duplicates">مكررات فقط</option>
+              <option value="all">{t("dataIO.filterAll", { count: processed.processed.length })}</option>
+              <option value="errors">{t("dataIO.filterErrors")}</option>
+              <option value="warnings">{t("dataIO.filterWarnings")}</option>
+              <option value="info">{t("dataIO.filterFixes")}</option>
+              <option value="duplicates">{t("dataIO.filterDuplicates")}</option>
             </select>
           </div>
         </div>
@@ -536,9 +554,9 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
           <table className="w-full text-sm">
             <thead className="bg-muted/40 sticky top-0">
               <tr>
-                <th className="p-2 text-right w-10">#</th>
-                <th className="p-2 text-right w-24">الحالة</th>
-                {cols.map((c) => <th key={c.name} className="p-2 text-right whitespace-nowrap">{c.labelAr}</th>)}
+                <th className={`p-2 ${align} w-10`}>#</th>
+                <th className={`p-2 ${align} w-24`}>{t("dataIO.statusCol")}</th>
+                {cols.map((c) => <th key={c.name} className={`p-2 ${align} whitespace-nowrap`}>{fieldLabel(c, isAr)}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -550,10 +568,10 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
                   <tr key={r.__rowIndex} className={`border-t ${hasError ? "bg-red-50 dark:bg-red-950/30" : hasWarn ? "bg-amber-50 dark:bg-amber-950/20" : ""}`}>
                     <td className="p-2 text-xs text-muted-foreground">{r.__rowIndex + 1}</td>
                     <td className="p-2">
-                      {hasError ? <Badge variant="destructive">خطأ</Badge>
-                        : hasWarn ? <Badge className="bg-amber-500">تحذير</Badge>
-                        : list.length ? <Badge variant="secondary">إصلاح</Badge>
-                        : <Badge variant="outline">جاهز</Badge>}
+                      {hasError ? <Badge variant="destructive">{t("dataIO.rowError")}</Badge>
+                        : hasWarn ? <Badge className="bg-amber-500">{t("dataIO.rowWarning")}</Badge>
+                        : list.length ? <Badge variant="secondary">{t("dataIO.rowFix")}</Badge>
+                        : <Badge variant="outline">{t("dataIO.rowReady")}</Badge>}
                     </td>
                     {cols.map((c) => {
                       const issue = list.find((i) => i.field === c.name);
@@ -575,7 +593,7 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
           </table>
           {filteredRows.length > 200 && (
             <div className="p-3 text-center text-xs text-muted-foreground bg-muted/20">
-              يتم عرض أول 200 صف فقط — التنفيذ سيعالج جميع الصفوف ({filteredRows.length})
+              {t("dataIO.showing200", { count: filteredRows.length })}
             </div>
           )}
         </div>
@@ -584,18 +602,18 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
       {/* issues detail */}
       {processed.issues.length > 0 && (
         <Card className="p-4">
-          <h3 className="font-semibold mb-3">تقرير المشاكل والإصلاحات</h3>
+          <h3 className="font-semibold mb-3">{t("dataIO.issuesTitle")}</h3>
           <div className="overflow-x-auto rounded border max-h-[300px]">
             <table className="w-full text-xs">
               <thead className="bg-muted/40 sticky top-0">
                 <tr>
-                  <th className="p-2 text-right">صف</th>
-                  <th className="p-2 text-right">الحقل</th>
-                  <th className="p-2 text-right">النوع</th>
-                  <th className="p-2 text-right">قبل</th>
-                  <th className="p-2 text-right">بعد</th>
-                  <th className="p-2 text-right">الإجراء</th>
-                  <th className="p-2 text-right">الثقة</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.rowCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.fieldCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.typeCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.beforeCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.afterCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.actionCol")}</th>
+                  <th className={`p-2 ${align}`}>{t("dataIO.confidenceCol")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -622,11 +640,11 @@ function ReviewPanel({ processed, entity, setProcessed, onCommit, onBack, busy }
 
       <div className="flex justify-between items-center">
         <Button variant="outline" onClick={onBack} disabled={busy}>
-          <ArrowRight className="w-4 h-4 ml-2" /> رجوع للربط
+          <ArrowIcon className="w-4 h-4 ml-2 rotate-180" /> {t("dataIO.backToMap")}
         </Button>
         <Button onClick={onCommit} disabled={busy} size="lg">
           {busy ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 ml-2" />}
-          تأكيد وتنفيذ الاستيراد
+          {t("dataIO.commitBtn")}
         </Button>
       </div>
     </div>
@@ -664,35 +682,38 @@ function StatCard({ label, value, icon, tone = "default", onClick, active }: {
 // ════════════════════════════════════════════════════════════════════════════
 
 function ResultPanel({ result, onDownload, onReset }: { result: CommitResult; onDownload: () => void; onReset: () => void }) {
+  const { t, i18n } = useTranslation();
+  const isAr = i18n.language?.startsWith("ar");
+  const dateLocale = isAr ? "ar-SA" : "en-US";
   const s = result.summary;
   return (
     <div className="space-y-4">
       <Card className="p-6 text-center bg-gradient-to-b from-green-50 to-card dark:from-green-950/40">
         <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-2" />
-        <h3 className="text-xl font-semibold mb-1">تم الاستيراد</h3>
-        <p className="text-sm text-muted-foreground">{new Date(result.committedAt).toLocaleString("ar-SA")}</p>
+        <h3 className="text-xl font-semibold mb-1">{t("dataIO.completedTitle")}</h3>
+        <p className="text-sm text-muted-foreground">{new Date(result.committedAt).toLocaleString(dateLocale)}</p>
       </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatCard label="إجمالي" value={s.total} icon={<Database />} />
-        <StatCard label="مُدرج" value={s.inserted} icon={<CheckCircle2 />} tone="info" />
-        <StatCard label="مُحدَّث" value={s.updated} icon={<Sparkles />} tone="info" />
-        <StatCard label="متجاوَز" value={s.skipped} icon={<AlertTriangle />} tone="warning" />
-        <StatCard label="أخطاء" value={s.errors} icon={<X />} tone="error" />
+        <StatCard label={t("dataIO.statTotal")}      value={s.total}    icon={<Database />} />
+        <StatCard label={t("dataIO.statusInserted")} value={s.inserted} icon={<CheckCircle2 />} tone="info" />
+        <StatCard label={t("dataIO.statusUpdated")}  value={s.updated}  icon={<Sparkles />} tone="info" />
+        <StatCard label={t("dataIO.statusSkipped")}  value={s.skipped}  icon={<AlertTriangle />} tone="warning" />
+        <StatCard label={t("dataIO.statErrors")}     value={s.errors}   icon={<X />} tone="error" />
       </div>
 
       {result.log.some((l) => l.status === "skipped" || l.status === "error") && (
         <Card className="p-4">
           <h3 className="font-semibold mb-3 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600" /> الصفوف غير المُنفّذة
+            <AlertTriangle className="w-4 h-4 text-amber-600" /> {t("dataIO.failedRowsTitle")}
           </h3>
           <div className="overflow-x-auto rounded border max-h-[300px]">
             <table className="w-full text-xs">
               <thead className="bg-muted/40 sticky top-0">
                 <tr>
-                  <th className="p-2 text-right">صف</th>
-                  <th className="p-2 text-right">الحالة</th>
-                  <th className="p-2 text-right">السبب</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.rowCol")}</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.statusCol")}</th>
+                  <th className={`p-2 ${isAr ? "text-right" : "text-left"}`}>{t("dataIO.excelReason")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -700,7 +721,7 @@ function ResultPanel({ result, onDownload, onReset }: { result: CommitResult; on
                   <tr key={idx} className="border-t">
                     <td className="p-2">{l.rowIndex + 1}</td>
                     <td className="p-2">
-                      <Badge variant={l.status === "error" ? "destructive" : "secondary"}>{l.status === "skipped" ? "متجاوَز" : "خطأ"}</Badge>
+                      <Badge variant={l.status === "error" ? "destructive" : "secondary"}>{l.status === "skipped" ? t("dataIO.statusSkipped") : t("dataIO.statusError")}</Badge>
                     </td>
                     <td className="p-2">{l.reason ?? "—"}</td>
                   </tr>
@@ -712,9 +733,9 @@ function ResultPanel({ result, onDownload, onReset }: { result: CommitResult; on
       )}
 
       <div className="flex justify-between items-center">
-        <Button variant="outline" onClick={onReset}>استيراد ملف آخر</Button>
+        <Button variant="outline" onClick={onReset}>{t("dataIO.importAnotherBtn")}</Button>
         <Button onClick={onDownload}>
-          <FileDown className="w-4 h-4 ml-2" /> تنزيل تقرير الاستيراد (Excel)
+          <FileDown className="w-4 h-4 ml-2" /> {t("dataIO.downloadReportBtn")}
         </Button>
       </div>
     </div>

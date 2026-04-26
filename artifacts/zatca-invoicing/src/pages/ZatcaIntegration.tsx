@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -17,8 +18,6 @@ import { cn } from "@/lib/utils";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface DeviceForm {
   serialNumber: string;
   deviceSerial1: string;
@@ -26,8 +25,6 @@ interface DeviceForm {
   deviceSerial3: string;
   isSandbox: boolean;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function mask(val: string | null | undefined): string {
   if (!val) return "—";
@@ -44,14 +41,13 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-// ─── Step card ────────────────────────────────────────────────────────────────
-
 function StepCard({
-  num, title, subtitle, status, children, defaultOpen,
+  num, title, subtitle, status, children, defaultOpen, completedLabel,
 }: {
   num: number; title: string; subtitle: string;
   status: "done" | "active" | "locked"; children: React.ReactNode;
   defaultOpen?: boolean;
+  completedLabel: string;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? status === "active");
 
@@ -86,7 +82,7 @@ function StepCard({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {status === "done" && (
-            <Badge className="text-xs bg-green-100 text-green-700 border-green-200 border">مكتمل</Badge>
+            <Badge className="text-xs bg-green-100 text-green-700 border-green-200 border">{completedLabel}</Badge>
           )}
           {status !== "locked" && (open
             ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -104,8 +100,6 @@ function StepCard({
   );
 }
 
-// ─── Error alert ─────────────────────────────────────────────────────────────
-
 function ErrorAlert({ message, details }: { message: string; details?: string }) {
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
@@ -120,8 +114,6 @@ function ErrorAlert({ message, details }: { message: string; details?: string })
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
 interface ZatcaIntegrationProps {
   companyId?: number;
 }
@@ -130,6 +122,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const { user, token } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { t } = useTranslation();
 
   const companyId = propCompanyId ?? user?.companyId;
   const headers: Record<string, string> = {
@@ -137,7 +130,6 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     "Content-Type": "application/json",
   };
 
-  // ── State
   const [otpOpen, setOtpOpen] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [form, setForm] = useState<DeviceForm | null>(null);
@@ -147,15 +139,14 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const [step1Error, setStep1Error] = useState<{ message: string; details?: string } | null>(null);
   const seeded = useRef(false);
 
-  // ── Load company
   const { data: company, isLoading, refetch } = useQuery({
     queryKey: ["company-zatca", companyId],
     queryFn: async () => {
-      if (!companyId) throw new Error("companyId غير محدد");
+      if (!companyId) throw new Error(t("zatcaIntegration.companyIdMissing"));
       const res = await fetch(`${API}/api/companies/${companyId}`, { headers });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.error ?? "فشل تحميل بيانات الشركة");
+        throw new Error(j.error ?? t("zatcaIntegration.loadCompanyError"));
       }
       return res.json();
     },
@@ -163,7 +154,6 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     retry: 1,
   });
 
-  // Seed form from loaded company (only once)
   useEffect(() => {
     if (company && !seeded.current) {
       seeded.current = true;
@@ -182,21 +172,18 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     setIsDirty(true);
   }
 
-  // ── Auto-fill device fields with ZATCA-compliant defaults
   function autoFill() {
     if (!company) return;
 
-    // Generate a short UUID-like token for device serial 3
     const uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
       const r = (Math.random() * 16) | 0;
       return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
     });
 
-    // Solution name: sanitize company nameEn or use standard
     const rawName = (company.nameEn ?? company.nameAr ?? "").replace(/[^a-zA-Z0-9\-]/g, "").slice(0, 20) || "ZATCA-EGS";
     const d1 = rawName;
     const d2 = `LIC-${String(company.id).padStart(6, "0")}`;
-    const d3 = uuid.split("-")[0].toUpperCase(); // e.g. A3F2C1B4
+    const d3 = uuid.split("-")[0].toUpperCase();
     const serial = `1-${d1}|2-${d2}|3-${d3}`;
 
     setForm(prev => prev ? {
@@ -208,21 +195,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     } : prev);
     setIsDirty(true);
     setStep1Error(null);
-    toast({ title: "✓ تم تعبئة الحقول تلقائياً" });
+    toast({ title: t("zatcaIntegration.autoFillSuccess") });
   }
 
-  // ── Validate form
   function validateForm(f: DeviceForm): string | null {
     if (!f.serialNumber.trim()) {
-      return "الرقم التسلسلي للجهاز (Serial Number) مطلوب";
+      return t("zatcaIntegration.errSerialRequired");
     }
     if (f.serialNumber.trim().length < 3) {
-      return "الرقم التسلسلي قصير جداً — يجب أن يكون 3 أحرف على الأقل";
+      return t("zatcaIntegration.errSerialTooShort");
     }
     return null;
   }
 
-  // ── Save device settings
   const saveDeviceMutation = useMutation({
     mutationFn: async (f: DeviceForm) => {
       const res = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
@@ -231,26 +216,24 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         body: JSON.stringify(f),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "خطأ في الحفظ");
+      if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errSaveFailed"));
       return json;
     },
     onSuccess: () => {
-      toast({ title: "✓ تم حفظ إعدادات الجهاز" });
+      toast({ title: t("zatcaIntegration.settingsSaved") });
       setIsDirty(false);
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // ── Generate CSR
   const generateCsrMutation = useMutation({
     mutationFn: async () => {
-      if (!form) throw new Error("لم يتم تحميل بيانات النموذج بعد");
+      if (!form) throw new Error(t("zatcaIntegration.formNotLoaded"));
 
       const validationError = validateForm(form);
       if (validationError) throw new Error(validationError);
 
-      // Save settings first if dirty
       if (isDirty) {
         const saveRes = await fetch(`${API}/api/companies/${companyId}/zatca-settings`, {
           method: "PATCH",
@@ -259,7 +242,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         });
         const saveJson = await saveRes.json();
         if (!saveRes.ok) {
-          throw new Error(saveJson.error ?? "فشل حفظ إعدادات الجهاز");
+          throw new Error(saveJson.error ?? t("zatcaIntegration.errSettingsSaveFailed"));
         }
       }
 
@@ -270,7 +253,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       });
       const json = await res.json();
       if (!res.ok) {
-        const err = new Error(json.error ?? "فشل توليد CSR") as any;
+        const err = new Error(json.error ?? t("zatcaIntegration.errCsrFailed")) as any;
         err.details = json.details;
         throw err;
       }
@@ -280,8 +263,8 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       setIsDirty(false);
       setStep1Error(null);
       toast({
-        title: "✓ تم توليد CSR بنجاح",
-        description: "الخطوة التالية: احصل على OTP من بوابة ZATCA",
+        title: t("zatcaIntegration.csrSuccessTitle"),
+        description: t("zatcaIntegration.csrSuccessDesc"),
       });
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
@@ -291,7 +274,6 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     },
   });
 
-  // ── Submit compliance OTP
   async function handleOtpSubmit(otp: string) {
     setComplianceLoading(true);
     try {
@@ -301,10 +283,10 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         body: JSON.stringify({ otp }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "فشل الاتصال بـ ZATCA");
+      if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errOtpFailed"));
       toast({
-        title: "✓ تم الحصول على CSID بنجاح",
-        description: "الشركة مهيأة لإصدار الفواتير التجريبية",
+        title: t("zatcaIntegration.csidSuccessTitle"),
+        description: t("zatcaIntegration.csidSuccessDesc"),
       });
       setOtpOpen(false);
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
@@ -315,7 +297,6 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
     }
   }
 
-  // ── Compliance check
   const complianceCheckMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API}/api/companies/${companyId}/compliance-check`, {
@@ -325,17 +306,16 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       });
       const json = await res.json();
       setCheckResult(json);
-      if (!res.ok) throw new Error(json.error ?? "فشل الفحص");
+      if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errCheckFailed"));
       return json;
     },
     onSuccess: () => toast({
-      title: "✓ نجح الفحص التجريبي",
-      description: "الفاتورة صحيحة — يمكنك الانتقال للإنتاج",
+      title: t("zatcaIntegration.checkSuccessTitle"),
+      description: t("zatcaIntegration.checkSuccessDesc"),
     }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // ── Get Production CSID
   const productionCsidMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API}/api/companies/${companyId}/production-csid`, {
@@ -344,20 +324,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         body: JSON.stringify({}),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "فشل استخراج PCSID");
+      if (!res.ok) throw new Error(json.error ?? t("zatcaIntegration.errPcsidFailed"));
       return json;
     },
     onSuccess: () => {
       toast({
-        title: "✓ تم الحصول على PCSID",
-        description: "الشركة مرتبطة بالإنتاج بالكامل",
+        title: t("zatcaIntegration.pcsidSuccessTitle"),
+        description: t("zatcaIntegration.pcsidSuccessDesc"),
       });
       qc.invalidateQueries({ queryKey: ["company-zatca", companyId] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  // ── Loading
   if (isLoading || !company) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -372,8 +351,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
   const hasCsid  = !!company.zatcaCsidToken;
   const hasPcsid = !!company.zatcaPcsidToken;
 
-  // Status uses form.isSandbox (reflects the user's current selection, not just DB state)
-  const envLabel = form.isSandbox ? "اختبارية" : "إنتاج";
+  const envLabel = form.isSandbox ? t("zatcaIntegration.envSandbox") : t("zatcaIntegration.envProd");
 
   const step1Status = hasCsr ? "done" : "active";
   const step2Status = !hasCsr ? "locked" : hasCsid ? "done" : "active";
@@ -388,14 +366,14 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         <div>
           <div className="flex items-center gap-2 mb-1">
             <ShieldCheck className="h-5 w-5 text-primary" />
-            <h1 className="text-xl font-bold">ربط هيئة الزكاة والدخل (ZATCA)</h1>
+            <h1 className="text-xl font-bold">{t("zatcaIntegration.title")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            ربط منظومة الفاتورة الإلكترونية بخدمات FATOORA وفق متطلبات المرحلة الثانية
+            {t("zatcaIntegration.subtitle")}
           </p>
         </div>
         <Button variant="outline" size="sm" className="gap-2" onClick={() => refetch()}>
-          <RefreshCw className="h-3.5 w-3.5" />تحديث
+          <RefreshCw className="h-3.5 w-3.5" />{t("zatcaIntegration.refresh")}
         </Button>
       </div>
 
@@ -403,7 +381,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="font-semibold text-sm flex items-center gap-2">
-            <Zap className="h-4 w-4 text-primary" />حالة الربط الحالية
+            <Zap className="h-4 w-4 text-primary" />{t("zatcaIntegration.currentStatus")}
           </h2>
           <Badge className={cn("text-xs border font-medium",
             hasPcsid  ? "bg-green-100 text-green-800 border-green-300" :
@@ -411,16 +389,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             hasCsr    ? "bg-amber-100 text-amber-800 border-amber-300" :
             "bg-muted text-muted-foreground border-border"
           )}>
-            {hasPcsid ? "مرتبط بالإنتاج" : hasCsid ? "مرتبط بالاختبار" : hasCsr ? "CSR جاهز" : "غير مرتبط"}
+            {hasPcsid ? t("zatcaIntegration.statusProdLinked")
+              : hasCsid ? t("zatcaIntegration.statusSandboxLinked")
+              : hasCsr ? t("zatcaIntegration.statusCsrReady")
+              : t("zatcaIntegration.statusNotLinked")}
           </Badge>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "البيئة", value: envLabel,                             ok: true,    icon: Globe },
-            { label: "CSR",    value: hasCsr ? "مولَّد" : "لم يولَّد",     ok: hasCsr,  icon: Key },
-            { label: "CSID",   value: hasCsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasCsid, icon: ShieldCheck },
-            { label: "PCSID",  value: hasPcsid ? "مُستخرَج" : "لم يُستخرَج", ok: hasPcsid, icon: Lock },
+            { label: t("zatcaIntegration.envLabel"), value: envLabel,                                                          ok: true,    icon: Globe },
+            { label: t("zatcaIntegration.csr"),      value: hasCsr ? t("zatcaIntegration.generated") : t("zatcaIntegration.notGenerated"),  ok: hasCsr,  icon: Key },
+            { label: t("zatcaIntegration.csid"),     value: hasCsid ? t("zatcaIntegration.extracted") : t("zatcaIntegration.notExtracted"), ok: hasCsid, icon: ShieldCheck },
+            { label: t("zatcaIntegration.pcsid"),    value: hasPcsid ? t("zatcaIntegration.extracted") : t("zatcaIntegration.notExtracted"),ok: hasPcsid,icon: Lock },
           ].map(({ label, value, ok, icon: Icon }) => (
             <div key={label} className="flex items-center gap-2 p-3 rounded-lg bg-muted/40 border">
               <StatusDot ok={ok} />
@@ -435,12 +416,12 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         {hasCsid && (
           <div className="space-y-1.5 border-t pt-3">
             <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">CSID (مُشفَّر)</span>
+              <span className="text-muted-foreground">{t("zatcaIntegration.csidEncrypted")}</span>
               <span className="font-mono text-muted-foreground" dir="ltr">{mask(company.zatcaCsidToken)}</span>
             </div>
             {hasPcsid && (
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">PCSID (مُشفَّر)</span>
+                <span className="text-muted-foreground">{t("zatcaIntegration.pcsidEncrypted")}</span>
                 <span className="font-mono text-muted-foreground" dir="ltr">{mask(company.zatcaPcsidToken)}</span>
               </div>
             )}
@@ -454,18 +435,19 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         {/* Step 1 — Device Config + CSR */}
         <StepCard
           num={1}
-          title="إعداد الجهاز وتوليد CSR"
-          subtitle="حدّد رقم الجهاز والبيئة، ثم ولِّد مفتاح ECDSA وطلب الشهادة"
+          title={t("zatcaIntegration.step1Title")}
+          subtitle={t("zatcaIntegration.step1Subtitle")}
           status={step1Status}
           defaultOpen={!hasCsr}
+          completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
             {/* Sandbox toggle */}
             <div className="flex items-center justify-between p-3 rounded-lg border bg-background">
               <div>
-                <p className="text-sm font-medium">بيئة الاختبار (Sandbox)</p>
+                <p className="text-sm font-medium">{t("zatcaIntegration.sandboxToggleTitle")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  فعّل هذا الخيار أثناء الاختبار. أوقفه عند الانتقال للإنتاج.
+                  {t("zatcaIntegration.sandboxToggleDesc")}
                 </p>
               </div>
               <Switch
@@ -478,7 +460,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2 flex items-center justify-between gap-2">
                 <Label className="text-xs">
-                  الرقم التسلسلي للجهاز (Serial Number)
+                  {t("zatcaIntegration.serialLabel")}
                   <span className="text-red-500 mr-1">*</span>
                 </Label>
                 <Button
@@ -489,56 +471,61 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                   onClick={autoFill}
                 >
                   <Wand2 className="h-3 w-3" />
-                  تعبئة تلقائية
+                  {t("zatcaIntegration.autoFill")}
                 </Button>
               </div>
               <div className="sm:col-span-2 space-y-1.5">
                 <Input
                   value={form.serialNumber}
                   onChange={e => updateForm({ serialNumber: e.target.value })}
-                  placeholder="مثال: 1-TST|2-TAX|3-EGS"
+                  placeholder={t("zatcaIntegration.serialPlaceholder")}
                   dir="ltr"
                   className="h-9 font-mono text-sm"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  يُستخدم كـ <span className="font-mono">Common Name</span> في شهادة SSL — مثال:{" "}
-                  <span className="font-mono text-primary">1-TST|2-TAX|3-EGS</span>
+                  <Trans
+                    i18nKey="zatcaIntegration.serialHint"
+                    components={[
+                      <span key="cn" className="font-mono" />,
+                      <span key="ex" className="font-mono text-primary" />,
+                    ]}
+                  />
                 </p>
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">
-                  Device Serial 1 <span className="font-normal">(اسم الحل البرمجي)</span>
+                  {t("zatcaIntegration.ds1Label")} <span className="font-normal">{t("zatcaIntegration.ds1Hint")}</span>
                 </Label>
                 <Input
                   value={form.deviceSerial1}
                   dir="ltr"
                   className="h-9 font-mono text-sm"
-                  placeholder="Solution Name"
+                  placeholder={t("zatcaIntegration.ds1Placeholder")}
                   onChange={e => updateForm({ deviceSerial1: e.target.value })}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">
-                  Device Serial 2 <span className="font-normal">(رقم الترخيص)</span>
+                  {t("zatcaIntegration.ds2Label")} <span className="font-normal">{t("zatcaIntegration.ds2Hint")}</span>
                 </Label>
                 <Input
                   value={form.deviceSerial2}
                   dir="ltr"
                   className="h-9 font-mono text-sm"
-                  placeholder="License Number"
+                  placeholder={t("zatcaIntegration.ds2Placeholder")}
                   onChange={e => updateForm({ deviceSerial2: e.target.value })}
                 />
               </div>
               <div className="sm:col-span-2 space-y-1.5">
                 <Label className="text-xs text-muted-foreground">
-                  Device Serial 3 <span className="font-normal">(المعرف الفريد / UUID)</span>
+                  {t("zatcaIntegration.ds3Label")} <span className="font-normal">{t("zatcaIntegration.ds3Hint")}</span>
                 </Label>
                 <Input
                   value={form.deviceSerial3}
                   dir="ltr"
                   className="h-9 font-mono text-sm"
-                  placeholder="UUID or Device ID"
+                  placeholder={t("zatcaIntegration.ds3Placeholder")}
                   onChange={e => updateForm({ deviceSerial3: e.target.value })}
                 />
               </div>
@@ -551,7 +538,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             {isDirty && !step1Error && (
               <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                يوجد تغييرات غير محفوظة — ستُحفظ تلقائياً عند توليد CSR
+                {t("zatcaIntegration.dirtyWarning")}
               </div>
             )}
 
@@ -568,7 +555,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                   ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   : <Cpu className="h-3.5 w-3.5" />
                 }
-                حفظ الإعدادات
+                {t("zatcaIntegration.saveSettings")}
               </Button>
               <Button
                 type="button"
@@ -581,8 +568,8 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                 }}
               >
                 {generateCsrMutation.isPending
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />جاري التوليد...</>
-                  : <><Key className="h-3.5 w-3.5" />{hasCsr ? "إعادة توليد CSR" : "توليد CSR"}</>
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />{t("zatcaIntegration.generating")}</>
+                  : <><Key className="h-3.5 w-3.5" />{hasCsr ? t("zatcaIntegration.regenerateCsr") : t("zatcaIntegration.generateCsr")}</>
                 }
               </Button>
             </div>
@@ -590,7 +577,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
             {hasCsr && (
               <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                تم توليد CSR بنجاح. يمكنك الآن الانتقال للخطوة الثانية.
+                {t("zatcaIntegration.csrSuccessInline")}
               </div>
             )}
           </div>
@@ -599,22 +586,33 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         {/* Step 2 — Compliance CSID */}
         <StepCard
           num={2}
-          title="شهادة الامتثال (CSID)"
-          subtitle="احصل على OTP من بوابة ZATCA وأدخله للحصول على شهادة الامتثال"
+          title={t("zatcaIntegration.step2Title")}
+          subtitle={t("zatcaIntegration.step2Subtitle")}
           status={step2Status}
           defaultOpen={hasCsr && !hasCsid}
+          completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
             <div className="p-4 rounded-lg bg-background border space-y-3 text-sm">
               <p className="font-medium flex items-center gap-2">
                 <Globe className="h-4 w-4 text-primary shrink-0" />
-                خطوات الحصول على OTP من بوابة ZATCA:
+                {t("zatcaIntegration.otpStepsTitle")}
               </p>
               <ol className="list-decimal list-inside space-y-1.5 text-muted-foreground text-xs pr-1">
-                <li>ادخل بوابة فاتورة ZATCA على <span className="font-mono text-primary">fatoora.zatca.gov.sa</span></li>
-                <li>سجّل الدخول بحساب الشركة المعتمد</li>
-                <li>انتقل إلى <strong>ربط الأجهزة</strong> ← <strong>إضافة جهاز</strong></li>
-                <li>سيُرسَل رمز OTP مكوّن من 6 أرقام على الجوال المسجّل</li>
+                <li>
+                  <Trans
+                    i18nKey="zatcaIntegration.otpStep1"
+                    components={[<span key="url" className="font-mono text-primary" />]}
+                  />
+                </li>
+                <li>{t("zatcaIntegration.otpStep2")}</li>
+                <li>
+                  <Trans
+                    i18nKey="zatcaIntegration.otpStep3"
+                    components={{ strong: <strong /> }}
+                  />
+                </li>
+                <li>{t("zatcaIntegration.otpStep4")}</li>
               </ol>
               <a
                 href="https://fatoora.zatca.gov.sa"
@@ -623,14 +621,14 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                 className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                فتح بوابة ZATCA FATOORA
+                {t("zatcaIntegration.openZatcaPortal")}
               </a>
             </div>
 
             {hasCsid ? (
               <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                تم استخراج شهادة الامتثال CSID بنجاح
+                {t("zatcaIntegration.csidExtractedSuccess")}
               </div>
             ) : (
               <Button
@@ -640,7 +638,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                 disabled={!hasCsr}
               >
                 <ShieldCheck className="h-4 w-4" />
-                إدخال OTP والربط بـ ZATCA
+                {t("zatcaIntegration.enterOtpButton")}
               </Button>
             )}
           </div>
@@ -649,21 +647,22 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         {/* Step 3 — Compliance Check */}
         <StepCard
           num={3}
-          title="الفحص التجريبي"
-          subtitle="اختبر فاتورة تجريبية قبل الانتقال لبيئة الإنتاج (اختياري لكن يُنصح به)"
+          title={t("zatcaIntegration.step3Title")}
+          subtitle={t("zatcaIntegration.step3Subtitle")}
           status={step3Status}
           defaultOpen={hasCsid && !hasPcsid}
+          completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex gap-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <span>أدخل رقم فاتورة موجودة في النظام لاختبار الامتثال قبل الانتقال للإنتاج</span>
+              <span>{t("zatcaIntegration.step3Hint")}</span>
             </div>
             <div className="flex gap-2">
               <Input
                 value={checkInvoiceId}
                 onChange={e => setCheckInvoiceId(e.target.value)}
-                placeholder="رقم معرف الفاتورة (Invoice ID)"
+                placeholder={t("zatcaIntegration.invoiceIdPlaceholder")}
                 type="number"
                 dir="ltr"
                 className="h-9 max-w-xs font-mono"
@@ -680,7 +679,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                   ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   : <FileText className="h-3.5 w-3.5" />
                 }
-                فحص تجريبي
+                {t("zatcaIntegration.runCheck")}
               </Button>
             </div>
 
@@ -696,7 +695,7 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                     ? <CheckCircle2 className="h-4 w-4 shrink-0" />
                     : <AlertCircle className="h-4 w-4 shrink-0" />
                   }
-                  {checkResult.success ? "نجح الفحص التجريبي" : "فشل الفحص التجريبي"}
+                  {checkResult.success ? t("zatcaIntegration.checkSuccess") : t("zatcaIntegration.checkFailed")}
                 </p>
                 {checkResult.validationResults?.errorMessages?.length > 0 && (
                   <ul className="list-disc list-inside text-xs space-y-0.5 pr-1">
@@ -716,24 +715,22 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
         {/* Step 4 — Production CSID */}
         <StepCard
           num={4}
-          title="شهادة الإنتاج (PCSID)"
-          subtitle="احصل على شهادة الإنتاج لبدء إرسال الفواتير الرسمية لـ ZATCA"
+          title={t("zatcaIntegration.step4Title")}
+          subtitle={t("zatcaIntegration.step4Subtitle")}
           status={step4Status}
           defaultOpen={hasCsid && !hasPcsid}
+          completedLabel={t("zatcaIntegration.completedBadge")}
         >
           <div className="space-y-4">
             <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800 flex gap-2">
               <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <span>
-                بعد الحصول على PCSID، ستُرسَل جميع الفواتير الجديدة تلقائياً لـ ZATCA.
-                تأكد من اجتياز الفحص التجريبي أولاً.
-              </span>
+              <span>{t("zatcaIntegration.step4Hint")}</span>
             </div>
 
             {hasPcsid ? (
               <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                تم استخراج شهادة الإنتاج PCSID بنجاح — الشركة مرتبطة بالكامل
+                {t("zatcaIntegration.pcsidExtractedSuccess")}
               </div>
             ) : (
               <Button
@@ -743,8 +740,8 @@ export default function ZatcaIntegration({ companyId: propCompanyId }: ZatcaInte
                 onClick={() => productionCsidMutation.mutate()}
               >
                 {productionCsidMutation.isPending
-                  ? <><Loader2 className="h-4 w-4 animate-spin" />جاري الاستخراج...</>
-                  : <><Lock className="h-4 w-4" />استخراج شهادة الإنتاج</>
+                  ? <><Loader2 className="h-4 w-4 animate-spin" />{t("zatcaIntegration.extracting")}</>
+                  : <><Lock className="h-4 w-4" />{t("zatcaIntegration.extractPcsid")}</>
                 }
               </Button>
             )}

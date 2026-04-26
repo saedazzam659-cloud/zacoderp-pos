@@ -351,7 +351,7 @@ export default function GeneralSettings() {
           </TabsTrigger>
           <TabsTrigger value="printText" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Printer className="h-4 w-4" />
-            نص الطباعة
+            {t("pages.generalSettings.printText")}
           </TabsTrigger>
         </TabsList>
 
@@ -668,7 +668,7 @@ export default function GeneralSettings() {
             <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm">
               <span className="text-muted-foreground">{t("pages.generalSettings.example")}: </span>
               <span className="font-mono font-medium">
-                {(1234.56789).toFixed(decimals)} {t("common.currency.sar")}
+                {(1234.56789).toFixed(decimals)} {t("common.currencySAR")}
               </span>
             </div>
           </div>
@@ -849,13 +849,15 @@ export default function GeneralSettings() {
 
 // ─── Sub-component: Print Footer customization tab ────────────────────────
 function PrintFooterTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { t, i18n } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const cid = user?.company?.id ?? user?.companyId;
   const company = user?.company ?? {};
+  const isAr = i18n.language?.startsWith("ar");
 
-  const DEFAULT_INVOICE = "شكراً لزيارتكم — نتمنى لكم يوماً سعيداً";
-  const DEFAULT_RETURN  = "تم استلام المرتجع — شكراً لتعاملكم";
+  const DEFAULT_INVOICE = t("pages.generalSettings.printFooterDefaultInvoice");
+  const DEFAULT_RETURN  = t("pages.generalSettings.printFooterDefaultReturn");
 
   const [invoiceFooter, setInvoiceFooter] = useState<string>(company.printFooterInvoice ?? DEFAULT_INVOICE);
   const [returnFooter,  setReturnFooter]  = useState<string>(company.printFooterReturn  ?? DEFAULT_RETURN);
@@ -867,7 +869,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
     setReturnFooter(company.printFooterReturn ?? DEFAULT_RETURN);
     setShowTimestamp(company.printShowTimestamp !== false);
     setShowZatca(company.printShowZatcaBrand !== false);
-  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand]);
+  }, [company.printFooterInvoice, company.printFooterReturn, company.printShowTimestamp, company.printShowZatcaBrand, DEFAULT_INVOICE, DEFAULT_RETURN]);
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -887,7 +889,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "تعذّر الحفظ");
+      if (!res.ok) throw new Error(json.error ?? t("pages.generalSettings.printFooterSaveError"));
       return json;
     },
     onSuccess: (data) => {
@@ -904,7 +906,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
         }));
       }
       qc.invalidateQueries({ queryKey: ["auth-me"] });
-      toast({ title: "تم حفظ نص الطباعة بنجاح" });
+      toast({ title: t("pages.generalSettings.printFooterSaveSuccess") });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -919,17 +921,18 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
   const invoiceLen = invoiceFooter.length;
   const returnLen  = returnFooter.length;
   const overLimit  = invoiceLen > 200 || returnLen > 200;
+  const previewLocale = isAr ? "ar-SA" : "en-US";
 
   return (
     <>
       <div className="rounded-xl border bg-card p-5 space-y-2">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Printer className="h-4 w-4 text-muted-foreground" />
-          تخصيص نص تذييل الطباعة
+          {t("pages.generalSettings.printFooterTitle")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          يتحكم في الجزء السفلي من إيصالات الطباعة الحرارية (شكر العميل، الطابع الزمني، علامة ZATCA).
-          النصوص تظهر في نهاية الإيصال أسفل رمز QR.
+          {t("pages.generalSettings.printFooterDescLine1")}{" "}
+          {t("pages.generalSettings.printFooterDescLine2")}
         </p>
       </div>
 
@@ -937,7 +940,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
         {/* Invoice footer */}
         <div className="space-y-2">
           <Label htmlFor="invoice-footer" className="font-medium">
-            نص شكر العميل — فاتورة المبيعات
+            {t("pages.generalSettings.printFooterInvoiceLabel")}
           </Label>
           <Input
             id="invoice-footer"
@@ -949,7 +952,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             className={cn(invoiceLen > 200 && "border-destructive")}
           />
           <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">يظهر في تذييل فواتير المبيعات</span>
+            <span className="text-muted-foreground">{t("pages.generalSettings.printFooterInvoiceHint")}</span>
             <span className={cn(invoiceLen > 200 ? "text-destructive font-medium" : "text-muted-foreground")}>
               {invoiceLen} / 200
             </span>
@@ -959,7 +962,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
         {/* Return footer */}
         <div className="space-y-2">
           <Label htmlFor="return-footer" className="font-medium">
-            نص شكر العميل — مرتجع المبيعات
+            {t("pages.generalSettings.printFooterReturnLabel")}
           </Label>
           <Input
             id="return-footer"
@@ -971,7 +974,7 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             className={cn(returnLen > 200 && "border-destructive")}
           />
           <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">يظهر في تذييل إيصالات المرتجعات</span>
+            <span className="text-muted-foreground">{t("pages.generalSettings.printFooterReturnHint")}</span>
             <span className={cn(returnLen > 200 ? "text-destructive font-medium" : "text-muted-foreground")}>
               {returnLen} / 200
             </span>
@@ -984,9 +987,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             <div className="space-y-0.5">
               <div className="font-medium text-sm flex items-center gap-2">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                إظهار تاريخ ووقت الطباعة
+                {t("pages.generalSettings.printFooterShowTimestamp")}
               </div>
-              <p className="text-xs text-muted-foreground">عرض سطر "طُبع: ..." في أسفل الإيصال</p>
+              <p className="text-xs text-muted-foreground">{t("pages.generalSettings.printFooterShowTimestampHint")}</p>
             </div>
             <Switch checked={showTimestamp} onCheckedChange={setShowTimestamp} />
           </div>
@@ -995,9 +998,9 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
             <div className="space-y-0.5">
               <div className="font-medium text-sm flex items-center gap-2">
                 <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
-                إظهار توقيع "ZATCA e-Invoicing"
+                {t("pages.generalSettings.printFooterShowZatca")}
               </div>
-              <p className="text-xs text-muted-foreground">عرض علامة النظام كسطر إضافي في التذييل</p>
+              <p className="text-xs text-muted-foreground">{t("pages.generalSettings.printFooterShowZatcaHint")}</p>
             </div>
             <Switch checked={showZatca} onCheckedChange={setShowZatca} />
           </div>
@@ -1008,22 +1011,22 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
       <div className="rounded-xl border bg-card p-5 space-y-3">
         <h3 className="font-medium text-sm flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-muted-foreground" />
-          معاينة التذييل
+          {t("pages.generalSettings.printFooterPreviewTitle")}
         </h3>
         <div className="grid md:grid-cols-2 gap-3">
           <div className="rounded-lg border bg-white p-4 text-center" dir="rtl" style={{ fontFamily: "'Courier New', monospace" }}>
-            <div className="text-xs text-muted-foreground mb-2 font-sans">📄 الفاتورة</div>
+            <div className="text-xs text-muted-foreground mb-2 font-sans">📄 {t("pages.generalSettings.printFooterPreviewInvoice")}</div>
             <div className="border-t-2 border-black pt-2 text-xs space-y-1 text-black">
               <div className="font-semibold">{invoiceFooter || DEFAULT_INVOICE}</div>
-              {showTimestamp && <div className="text-[11px]">طُبع: {new Date().toLocaleString("ar-SA")}</div>}
+              {showTimestamp && <div className="text-[11px]">{t("pages.generalSettings.printFooterPrintedAt", { date: new Date().toLocaleString(previewLocale) })}</div>}
               {showZatca && <div className="text-[10px] opacity-70">ZATCA e-Invoicing</div>}
             </div>
           </div>
           <div className="rounded-lg border bg-white p-4 text-center" dir="rtl" style={{ fontFamily: "'Courier New', monospace" }}>
-            <div className="text-xs text-muted-foreground mb-2 font-sans">↩️ المرتجع</div>
+            <div className="text-xs text-muted-foreground mb-2 font-sans">↩️ {t("pages.generalSettings.printFooterPreviewReturn")}</div>
             <div className="border-t-2 border-red-700 pt-2 text-xs space-y-1 text-black">
               <div className="font-semibold">{returnFooter || DEFAULT_RETURN}</div>
-              {showTimestamp && <div className="text-[11px]">طُبع: {new Date().toLocaleString("ar-SA")}</div>}
+              {showTimestamp && <div className="text-[11px]">{t("pages.generalSettings.printFooterPrintedAt", { date: new Date().toLocaleString(previewLocale) })}</div>}
               {showZatca && <div className="text-[10px] opacity-70">ZATCA e-Invoicing</div>}
             </div>
           </div>
@@ -1033,12 +1036,12 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={resetToDefault} disabled={saveMut.isPending}>
           <Repeat className="h-4 w-4 ml-2" />
-          استعادة الافتراضي
+          {t("pages.generalSettings.printFooterRestoreDefault")}
         </Button>
         <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || overLimit}>
           {saveMut.isPending
-            ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />جاري الحفظ...</>
-            : <><Save className="h-4 w-4 ml-2" />حفظ</>}
+            ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />{t("pages.generalSettings.printFooterSaving")}</>
+            : <><Save className="h-4 w-4 ml-2" />{t("pages.generalSettings.printFooterSave")}</>}
         </Button>
       </div>
     </>

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,20 +20,11 @@ import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
 import { exportToExcel, printSectionsAsPDF } from "@/lib/export";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
 const API = import.meta.env.VITE_API_URL ?? "";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtNum(n: number) {
   return n.toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function fmtSAR(n: number) {
-  return `${fmtNum(n)} ر.س`;
-}
-
-// ─── Period config ────────────────────────────────────────────────────────────
 
 type PeriodKey = "this_month" | "last_month" | "q1" | "q2" | "q3" | "q4" | "this_year";
 
@@ -43,31 +35,23 @@ function lastDay(y: number, month: number) {
   return new Date(y, month + 1, 0).toISOString().slice(0, 10);
 }
 
-const PERIODS: { key: PeriodKey; label: string; from: string; to: string }[] = [
+const PERIOD_DEFS: { key: PeriodKey; from: string; to: string }[] = [
   {
-    key: "this_month", label: "الشهر الحالي",
+    key: "this_month",
     from: `${Y}-${String(now.getMonth() + 1).padStart(2, "0")}-01`,
     to: lastDay(Y, now.getMonth()),
   },
   {
-    key: "last_month", label: "الشهر الماضي",
+    key: "last_month",
     from: `${Y}-${String(now.getMonth()).padStart(2, "0")}-01`,
     to: lastDay(Y, now.getMonth() - 1),
   },
-  { key: "q1", label: `الربع الأول ${Y}`,    from: `${Y}-01-01`, to: `${Y}-03-31` },
-  { key: "q2", label: `الربع الثاني ${Y}`,   from: `${Y}-04-01`, to: `${Y}-06-30` },
-  { key: "q3", label: `الربع الثالث ${Y}`,   from: `${Y}-07-01`, to: `${Y}-09-30` },
-  { key: "q4", label: `الربع الرابع ${Y}`,   from: `${Y}-10-01`, to: `${Y}-12-31` },
-  { key: "this_year", label: `السنة الكاملة ${Y}`, from: `${Y}-01-01`, to: `${Y}-12-31` },
+  { key: "q1", from: `${Y}-01-01`, to: `${Y}-03-31` },
+  { key: "q2", from: `${Y}-04-01`, to: `${Y}-06-30` },
+  { key: "q3", from: `${Y}-07-01`, to: `${Y}-09-30` },
+  { key: "q4", from: `${Y}-10-01`, to: `${Y}-12-31` },
+  { key: "this_year", from: `${Y}-01-01`, to: `${Y}-12-31` },
 ];
-
-function arabicDate(iso: string) {
-  return new Date(iso).toLocaleDateString("ar-SA-u-nu-latn", {
-    year: "numeric", month: "long", day: "numeric",
-  });
-}
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface VATData {
   period: { from: string; to: string };
@@ -84,9 +68,6 @@ interface VATData {
     exempt:        { base: number; vat: number };
     total:         { base: number; vat: number };
   };
-  // Per-side returns surfaced as positive deductions; already netted into
-  // outputTax / inputTax above. Optional for backwards compatibility with
-  // older API responses.
   returns?: {
     sales:     { base: number; vat: number; count: number };
     purchases: { base: number; vat: number; count: number };
@@ -96,7 +77,7 @@ interface VATData {
   invoiceBreakdown: { standardTypeCount: number; simplifiedTypeCount: number; totalCount: number };
 }
 
-async function fetchVAT(from: string, to: string, token: string | null): Promise<VATData> {
+async function fetchVAT(from: string, to: string, token: string | null, errMsg: string): Promise<VATData> {
   const qs = `from=${from}&to=${to}`;
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -106,12 +87,10 @@ async function fetchVAT(from: string, to: string, token: string | null): Promise
   });
   if (!res.ok) {
     const msg = await res.json().catch(() => null);
-    throw new Error(msg?.error ?? "فشل في تحميل بيانات الإقرار. يرجى المحاولة مرة أخرى.");
+    throw new Error(msg?.error ?? errMsg);
   }
   return res.json();
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SectionHeader({
   color, icon: Icon, title,
@@ -129,14 +108,14 @@ function SectionHeader({
   );
 }
 
-function TableHeader() {
+function TableHeader({ t }: { t: (k: string) => string }) {
   return (
     <thead>
       <tr className="text-xs font-semibold text-muted-foreground bg-muted/50 border-b border-border">
-        <th className="w-10 px-3 py-2.5 text-center">#</th>
-        <th className="px-5 py-2.5 text-right">البيان</th>
-        <th className="px-5 py-2.5 text-left w-48 border-r border-border/50">الأساس الخاضع للضريبة</th>
-        <th className="px-5 py-2.5 text-left w-44">مبلغ الضريبة (ر.س)</th>
+        <th className="w-10 px-3 py-2.5 text-center">{t("vatDeclaration.colNum")}</th>
+        <th className="px-5 py-2.5 text-right">{t("vatDeclaration.colDescription")}</th>
+        <th className="px-5 py-2.5 text-left w-48 border-r border-border/50">{t("vatDeclaration.colTaxableBase")}</th>
+        <th className="px-5 py-2.5 text-left w-44">{t("vatDeclaration.colVatAmount")}</th>
       </tr>
     </thead>
   );
@@ -152,11 +131,13 @@ function TRow({
   highlight?: "green" | "blue" | "total";
   subtext?: string;
 }) {
-  const rowClass = {
-    green: "bg-emerald-50/70 dark:bg-emerald-950/20 font-semibold",
-    blue:  "bg-blue-50/70 dark:bg-blue-950/20 font-semibold",
-    total: "bg-slate-100 dark:bg-slate-800/50 font-bold border-t-2 border-border",
-  }[highlight ?? ""] ?? "hover:bg-muted/30";
+  const rowClass = highlight
+    ? ({
+        green: "bg-emerald-50/70 dark:bg-emerald-950/20 font-semibold",
+        blue:  "bg-blue-50/70 dark:bg-blue-950/20 font-semibold",
+        total: "bg-slate-100 dark:bg-slate-800/50 font-bold border-t-2 border-border",
+      } as const)[highlight]
+    : "hover:bg-muted/30";
 
   return (
     <tr className={cn("border-b border-border/40 text-sm transition-colors", rowClass)}>
@@ -185,22 +166,57 @@ function InfoPill({ label, value, icon: Icon }: { label: string; value: string; 
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function VATDeclaration() {
   const { user, token } = useAuth();
+  const { t, i18n } = useTranslation();
   const [selectedKey, setSelectedKey] = useState<PeriodKey>("this_month");
+
+  const isAr = i18n.language?.startsWith("ar");
+  const dateLocale = isAr ? "ar-SA-u-nu-latn" : "en-US";
+
+  const periodLabel = (k: PeriodKey): string => {
+    switch (k) {
+      case "this_month": return t("vatDeclaration.periodThisMonth");
+      case "last_month": return t("vatDeclaration.periodLastMonth");
+      case "q1":         return t("vatDeclaration.periodQ1", { year: Y });
+      case "q2":         return t("vatDeclaration.periodQ2", { year: Y });
+      case "q3":         return t("vatDeclaration.periodQ3", { year: Y });
+      case "q4":         return t("vatDeclaration.periodQ4", { year: Y });
+      case "this_year":  return t("vatDeclaration.periodFullYear", { year: Y });
+    }
+  };
+
+  const PERIODS = useMemo(
+    () => PERIOD_DEFS.map(p => ({ ...p, label: periodLabel(p.key) })),
+    [i18n.language],
+  );
+
   const period = PERIODS.find(p => p.key === selectedKey) ?? PERIODS[0];
+
+  function fmtSAR(n: number) {
+    return `${fmtNum(n)} ${t("vatDeclaration.sar")}`;
+  }
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleDateString(dateLocale, {
+      year: "numeric", month: "long", day: "numeric",
+    });
+  }
+
+  const errMsg = t("vatDeclaration.loadError");
 
   const { data, isLoading, error } = useQuery<VATData>({
     queryKey: ["vat-declaration", period.from, period.to, token],
-    queryFn: () => fetchVAT(period.from, period.to, token),
+    queryFn: () => fetchVAT(period.from, period.to, token, errMsg),
     enabled: !!token,
   });
 
   const netVat      = data?.netVat ?? 0;
   const netPositive = netVat >= 0;
-  const companyName = data?.company?.nameAr ?? user?.company?.nameAr ?? "—";
+  const companyName = (isAr ? data?.company?.nameAr : (data?.company?.nameEn ?? data?.company?.nameAr))
+    ?? (isAr ? user?.company?.nameAr : (user?.company?.nameEn ?? user?.company?.nameAr))
+    ?? "—";
+  const altCompanyName = isAr ? data?.company?.nameEn : data?.company?.nameAr;
   const vatNumber   = data?.company?.vatNumber;
   const crNumber    = data?.company?.crNumber;
 
@@ -210,8 +226,8 @@ export default function VATDeclaration() {
       {/* ── TOP TOOLBAR ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5 no-print">
         <div>
-          <h1 className="text-xl font-bold">الإقرار الضريبي على القيمة المضافة</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">هيئة الزكاة والضريبة والجمارك — نموذج الإقرار الدوري</p>
+          <h1 className="text-xl font-bold">{t("vatDeclaration.title")}</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">{t("vatDeclaration.subtitle")}</p>
         </div>
         <div className="flex items-end gap-2">
           <Select value={selectedKey} onValueChange={v => setSelectedKey(v as PeriodKey)}>
@@ -228,7 +244,7 @@ export default function VATDeclaration() {
           {data && <VATExportMenu data={data} period={period} />}
           <Button size="sm" variant="outline" className="gap-2 h-9" onClick={() => window.print()}>
             <Printer className="h-3.5 w-3.5" />
-            طباعة
+            {t("vatDeclaration.print")}
           </Button>
         </div>
       </div>
@@ -244,7 +260,7 @@ export default function VATDeclaration() {
       {error && (
         <div className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-destructive text-sm">
           <AlertCircle className="h-5 w-5 shrink-0" />
-          فشل في تحميل بيانات الإقرار. يرجى المحاولة مرة أخرى.
+          {t("vatDeclaration.loadError")}
         </div>
       )}
 
@@ -260,27 +276,27 @@ export default function VATDeclaration() {
                 </div>
                 <div>
                   <p className="font-bold text-base leading-tight">{companyName}</p>
-                  {data.company?.nameEn && (
-                    <p className="text-xs text-primary-foreground/70 mt-0.5">{data.company.nameEn}</p>
+                  {altCompanyName && (
+                    <p className="text-xs text-primary-foreground/70 mt-0.5">{altCompanyName}</p>
                   )}
                 </div>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-sm text-primary-foreground/90">
                 {vatNumber && (
                   <div>
-                    <span className="text-primary-foreground/60 text-xs">الرقم الضريبي</span>
+                    <span className="text-primary-foreground/60 text-xs">{t("vatDeclaration.vatNumber")}</span>
                     <p className="font-mono font-semibold tracking-wide">{vatNumber}</p>
                   </div>
                 )}
                 {crNumber && (
                   <div>
-                    <span className="text-primary-foreground/60 text-xs">السجل التجاري</span>
+                    <span className="text-primary-foreground/60 text-xs">{t("vatDeclaration.crNumber")}</span>
                     <p className="font-mono">{crNumber}</p>
                   </div>
                 )}
                 {data.company?.city && (
                   <div>
-                    <span className="text-primary-foreground/60 text-xs">المدينة</span>
+                    <span className="text-primary-foreground/60 text-xs">{t("vatDeclaration.city")}</span>
                     <p>{data.company.city}</p>
                   </div>
                 )}
@@ -290,13 +306,13 @@ export default function VATDeclaration() {
 
           {/* ── PERIOD STRIP ─────────────────────────────────────────────────── */}
           <div className="bg-muted/40 border-b border-border px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-2">
-            <InfoPill icon={CalendarRange} label="الفترة الضريبية"  value={period.label} />
-            <InfoPill label="من"          value={arabicDate(period.from)} />
-            <InfoPill label="إلى"         value={arabicDate(period.to)} />
+            <InfoPill icon={CalendarRange} label={t("vatDeclaration.taxPeriod")}  value={period.label} />
+            <InfoPill label={t("vatDeclaration.fromDate")} value={fmtDate(period.from)} />
+            <InfoPill label={t("vatDeclaration.toDate")}   value={fmtDate(period.to)} />
             <div className="mr-auto flex gap-x-5 gap-y-2 flex-wrap">
-              <InfoPill icon={Hash}       label="إجمالي الفواتير"       value={`${data.invoiceBreakdown.totalCount} فاتورة`} />
-              <InfoPill icon={ReceiptText} label="ضريبية"               value={`${data.invoiceBreakdown.standardTypeCount}`} />
-              <InfoPill icon={ReceiptText} label="مبسطة"                value={`${data.invoiceBreakdown.simplifiedTypeCount}`} />
+              <InfoPill icon={Hash}        label={t("vatDeclaration.totalInvoices")}    value={t("vatDeclaration.invoicesUnit", { count: data.invoiceBreakdown.totalCount })} />
+              <InfoPill icon={ReceiptText} label={t("vatDeclaration.taxInvoiceShort")}  value={`${data.invoiceBreakdown.standardTypeCount}`} />
+              <InfoPill icon={ReceiptText} label={t("vatDeclaration.simplifiedShort")} value={`${data.invoiceBreakdown.simplifiedTypeCount}`} />
             </div>
           </div>
 
@@ -306,13 +322,13 @@ export default function VATDeclaration() {
             <div className="px-6 py-4">
               <div className="flex items-center gap-2 mb-1">
                 <ArrowUpFromLine className="h-4 w-4 text-emerald-600" />
-                <span className="text-xs text-muted-foreground font-medium">ضريبة المخرجات</span>
+                <span className="text-xs text-muted-foreground font-medium">{t("vatDeclaration.outputVat")}</span>
               </div>
               <p className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {fmtNum(data.outputTax.total.vat)}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                وعاء: {fmtNum(data.outputTax.total.base)} ر.س
+                {t("vatDeclaration.baseLabel")}: {fmtNum(data.outputTax.total.base)} {t("vatDeclaration.sar")}
               </p>
             </div>
 
@@ -320,13 +336,13 @@ export default function VATDeclaration() {
             <div className="px-6 py-4">
               <div className="flex items-center gap-2 mb-1">
                 <ArrowDownToLine className="h-4 w-4 text-blue-600" />
-                <span className="text-xs text-muted-foreground font-medium">ضريبة المدخلات</span>
+                <span className="text-xs text-muted-foreground font-medium">{t("vatDeclaration.inputVat")}</span>
               </div>
               <p className="text-2xl font-bold tabular-nums text-blue-700 dark:text-blue-400">
                 {fmtNum(data.inputTax.total.vat)}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                وعاء: {fmtNum(data.inputTax.total.base)} ر.س
+                {t("vatDeclaration.baseLabel")}: {fmtNum(data.inputTax.total.base)} {t("vatDeclaration.sar")}
               </p>
             </div>
 
@@ -335,7 +351,7 @@ export default function VATDeclaration() {
               <div className="flex items-center gap-2 mb-1">
                 <Scale className={cn("h-4 w-4", netPositive ? "text-red-600" : "text-green-600")} />
                 <span className="text-xs text-muted-foreground font-medium">
-                  {netPositive ? "صافي مستحق السداد" : "فائض مستحق الاسترداد"}
+                  {netPositive ? t("vatDeclaration.netDueLabel") : t("vatDeclaration.refundDueLabel")}
                 </span>
               </div>
               <p className={cn(
@@ -345,49 +361,49 @@ export default function VATDeclaration() {
                 {fmtNum(Math.abs(netVat))}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                ر.س — صافي الضريبة
+                {t("vatDeclaration.netVatRow")}
               </p>
             </div>
           </div>
 
           {/* ── SECTION 1: OUTPUT TAX ─────────────────────────────────────────── */}
-          <SectionHeader color="green" icon={ArrowUpFromLine} title="الجزء الأول: ضريبة المخرجات — المبيعات" />
+          <SectionHeader color="green" icon={ArrowUpFromLine} title={t("vatDeclaration.outputTaxSection")} />
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <TableHeader />
+              <TableHeader t={t} />
               <tbody>
                 <TRow
                   num="1"
-                  label="المبيعات الخاضعة للضريبة بالنسبة العامة"
-                  subtext="النسبة: 15%"
+                  label={t("vatDeclaration.rowSalesStandard")}
+                  subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate15")}`}
                   base={data.outputTax.standardRated.base}
                   vat={data.outputTax.standardRated.vat}
                 />
                 <TRow
                   num="2"
-                  label="المبيعات الخاضعة لنسبة الصفر"
-                  subtext="النسبة: 0%"
+                  label={t("vatDeclaration.rowSalesZero")}
+                  subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate0")}`}
                   base={data.outputTax.zeroRated.base}
                   vat={data.outputTax.zeroRated.vat}
                 />
                 <TRow
                   num="3"
-                  label="المبيعات المعفاة من الضريبة"
+                  label={t("vatDeclaration.rowSalesExempt")}
                   base={data.outputTax.exempt.base}
                   vat={null}
                 />
                 {data.discountTotal > 0 && (
                   <TRow
                     num="4"
-                    label="إجمالي الخصومات الممنوحة"
+                    label={t("vatDeclaration.rowTotalDiscounts")}
                     base={data.discountTotal}
                     vat={null}
                   />
                 )}
                 <TRow
                   num={data.discountTotal > 0 ? "5" : "4"}
-                  label="إجمالي المبيعات"
+                  label={t("vatDeclaration.rowTotalSales")}
                   base={data.outputTax.total.base}
                   vat={data.outputTax.total.vat}
                   highlight="green"
@@ -398,36 +414,36 @@ export default function VATDeclaration() {
 
           {/* ── SECTION 2: INPUT TAX ──────────────────────────────────────────── */}
           <div className="border-t border-border">
-            <SectionHeader color="blue" icon={ArrowDownToLine} title="الجزء الثاني: ضريبة المدخلات — المشتريات" />
+            <SectionHeader color="blue" icon={ArrowDownToLine} title={t("vatDeclaration.inputTaxSection")} />
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <TableHeader />
+              <TableHeader t={t} />
               <tbody>
                 <TRow
                   num="5"
-                  label="المشتريات الخاضعة للضريبة بالنسبة العامة"
-                  subtext="النسبة: 15%"
+                  label={t("vatDeclaration.rowPurchaseStandard")}
+                  subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate15")}`}
                   base={data.inputTax.standardRated.base}
                   vat={data.inputTax.standardRated.vat}
                 />
                 <TRow
                   num="6"
-                  label="المشتريات الخاضعة لنسبة الصفر"
-                  subtext="النسبة: 0%"
+                  label={t("vatDeclaration.rowPurchaseZero")}
+                  subtext={`${t("vatDeclaration.ratePrefix")}: ${t("vatDeclaration.rate0")}`}
                   base={data.inputTax.zeroRated.base}
                   vat={data.inputTax.zeroRated.vat}
                 />
                 <TRow
                   num="7"
-                  label="المشتريات المعفاة من الضريبة"
+                  label={t("vatDeclaration.rowPurchaseExempt")}
                   base={data.inputTax.exempt.base}
                   vat={null}
                 />
                 <TRow
                   num="8"
-                  label="إجمالي المشتريات"
+                  label={t("vatDeclaration.rowTotalPurchases")}
                   base={data.inputTax.total.base}
                   vat={data.inputTax.total.vat}
                   highlight="blue"
@@ -440,26 +456,25 @@ export default function VATDeclaration() {
           <div className="flex items-start gap-2.5 px-5 py-3 bg-blue-50/80 dark:bg-blue-950/20 border-t border-blue-200/60 dark:border-blue-800/40 no-print">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
             <p className="text-xs text-blue-700 dark:text-blue-400 leading-relaxed">
-              <strong>مصادر الإقرار:</strong> يجمع النظام تلقائيًا ضريبة المخرجات من فواتير ومرتجعات المبيعات المُرحَّلة، وضريبة المدخلات من فواتير ومرتجعات المشتريات المُرحَّلة. لا تُحتسب المسودات أو الفواتير الملغاة.
+              <strong>{t("vatDeclaration.noteIntro")}</strong> {t("vatDeclaration.noteText")}
             </p>
           </div>
 
           {/* ── SECTION 3: NET VAT ────────────────────────────────────────────── */}
           <div className="border-t border-border">
-            <SectionHeader color="slate" icon={Scale} title="الجزء الثالث: صافي الضريبة المستحقة" />
+            <SectionHeader color="slate" icon={Scale} title={t("vatDeclaration.netVatSection")} />
           </div>
 
           <div className="px-6 py-5 border-t border-border/40">
-            {/* Calculation rows */}
             <div className="rounded-xl border border-border overflow-hidden max-w-lg">
               <div className="flex items-center justify-between px-5 py-3 border-b border-border/60 bg-emerald-50/60 dark:bg-emerald-950/20">
-                <span className="text-sm text-emerald-800 dark:text-emerald-300">ضريبة المخرجات (مجموع البند 1)</span>
+                <span className="text-sm text-emerald-800 dark:text-emerald-300">{t("vatDeclaration.outputVatTotalLine")}</span>
                 <span className="font-mono font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                   {fmtSAR(data.outputTax.total.vat)}
                 </span>
               </div>
               <div className="flex items-center justify-between px-5 py-3 border-b border-border/60 bg-blue-50/60 dark:bg-blue-950/20">
-                <span className="text-sm text-blue-800 dark:text-blue-300">ضريبة المدخلات (مجموع البند 8)</span>
+                <span className="text-sm text-blue-800 dark:text-blue-300">{t("vatDeclaration.inputVatTotalLine")}</span>
                 <span className="font-mono font-semibold tabular-nums text-blue-800 dark:text-blue-300">
                   ({fmtSAR(data.inputTax.total.vat)})
                 </span>
@@ -471,7 +486,7 @@ export default function VATDeclaration() {
                   : "bg-green-600 text-white",
               )}>
                 <span className="font-semibold text-sm">
-                  {netPositive ? "صافي الضريبة المستحقة للسداد" : "فائض الضريبة المستحق للاسترداد"}
+                  {netPositive ? t("vatDeclaration.netDueRow") : t("vatDeclaration.refundDueRow")}
                 </span>
                 <span className="font-mono font-bold text-lg tabular-nums">
                   {fmtSAR(Math.abs(netVat))}
@@ -481,16 +496,16 @@ export default function VATDeclaration() {
 
             {/* Invoice breakdown chips */}
             <div className="flex flex-wrap gap-3 mt-5">
-              <Chip icon={BadgePercent} label="إجمالي المبيعات (الوعاء)" value={fmtSAR(data.outputTax.total.base)} />
-              <Chip icon={FileText}     label="فواتير ضريبية (B2B)"      value={`${data.invoiceBreakdown.standardTypeCount} فاتورة`} />
-              <Chip icon={FileText}     label="فواتير مبسطة (B2C)"       value={`${data.invoiceBreakdown.simplifiedTypeCount} فاتورة`} />
+              <Chip icon={BadgePercent} label={t("vatDeclaration.chipTotalSalesBase")} value={fmtSAR(data.outputTax.total.base)} />
+              <Chip icon={FileText}     label={t("vatDeclaration.chipTaxInvoiceB2B")}  value={t("vatDeclaration.invoicesUnit", { count: data.invoiceBreakdown.standardTypeCount })} />
+              <Chip icon={FileText}     label={t("vatDeclaration.chipSimplifiedB2C")}  value={t("vatDeclaration.invoicesUnit", { count: data.invoiceBreakdown.simplifiedTypeCount })} />
             </div>
           </div>
 
           {/* ── PRINT FOOTER ─────────────────────────────────────────────────── */}
           <div className="hidden print:block border-t border-border px-6 py-4 text-center text-xs text-muted-foreground">
-            <p>هذا الإقرار مُعدّ بواسطة نظام الفاتورة الإلكترونية المتوافق مع متطلبات هيئة الزكاة والضريبة والجمارك</p>
-            <p className="mt-1">تاريخ الطباعة: {new Date().toLocaleDateString("ar-SA-u-nu-latn")}</p>
+            <p>{t("vatDeclaration.printFooter1")}</p>
+            <p className="mt-1">{t("vatDeclaration.printedOn", { date: new Date().toLocaleDateString(dateLocale) })}</p>
           </div>
         </div>
       )}
@@ -502,8 +517,8 @@ export default function VATDeclaration() {
             <FileText className="h-8 w-8 text-muted-foreground/50" />
           </div>
           <div>
-            <p className="font-semibold text-muted-foreground">لا توجد فواتير مُصدَرة في هذه الفترة</p>
-            <p className="text-sm text-muted-foreground/60 mt-1">جرّب اختيار فترة زمنية مختلفة</p>
+            <p className="font-semibold text-muted-foreground">{t("vatDeclaration.emptyTitle")}</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">{t("vatDeclaration.emptyHint")}</p>
           </div>
         </div>
       )}
@@ -530,24 +545,29 @@ function Chip({ icon: Icon, label, value }: { icon: React.ElementType; label: st
   );
 }
 
-// ─── VAT Declaration Export Menu ──────────────────────────────────────────────
-
 function VATExportMenu({
   data, period,
 }: {
   data: VATData;
   period: { label: string; from: string; to: string };
 }) {
-  const companyName = data.company?.nameAr ?? "";
+  const { t, i18n } = useTranslation();
+  const isAr = i18n.language?.startsWith("ar");
+  const companyName = (isAr ? data.company?.nameAr : (data.company?.nameEn ?? data.company?.nameAr)) ?? "";
   const { dp } = useFmt();
 
   const VAT_COLS = [
-    { key: "section", header: "القسم",                      width: 14 },
-    { key: "num",     header: "#",                           width: 6  },
-    { key: "label",   header: "البيان",                      width: 50 },
-    { key: "base",    header: "الأساس الخاضع للضريبة (ر.س)", width: 28 },
-    { key: "vat",     header: "مبلغ الضريبة (ر.س)",          width: 24 },
+    { key: "section", header: t("vatDeclaration.exportColSection"), width: 14 },
+    { key: "num",     header: t("vatDeclaration.colNum"),           width: 6  },
+    { key: "label",   header: t("vatDeclaration.exportColLabel"),   width: 50 },
+    { key: "base",    header: t("vatDeclaration.exportColBase"),    width: 28 },
+    { key: "vat",     header: t("vatDeclaration.exportColVat"),     width: 24 },
   ];
+
+  const SEC_INFO   = t("vatDeclaration.exportSectionInfo");
+  const SEC_OUTPUT = t("vatDeclaration.exportSectionOutput");
+  const SEC_INPUT  = t("vatDeclaration.exportSectionInput");
+  const SEC_NET    = t("vatDeclaration.exportSectionNet");
 
   function fmtN(n: number) {
     return n.toFixed(dp);
@@ -555,101 +575,105 @@ function VATExportMenu({
 
   function buildRows() {
     const rows: Record<string, unknown>[] = [
-      // Meta rows
-      { section: "معلومات الإقرار", num: "", label: "الشركة",            base: companyName,                                     vat: "" },
-      { section: "معلومات الإقرار", num: "", label: "الرقم الضريبي",     base: data.company?.vatNumber ?? "",                   vat: "" },
-      { section: "معلومات الإقرار", num: "", label: "الفترة الضريبية",   base: period.label,                                    vat: "" },
-      { section: "معلومات الإقرار", num: "", label: "من تاريخ",          base: period.from,                                     vat: "" },
-      { section: "معلومات الإقرار", num: "", label: "إلى تاريخ",         base: period.to,                                       vat: "" },
-      { section: "معلومات الإقرار", num: "", label: "عدد الفواتير",      base: data.invoiceBreakdown.totalCount,                vat: "" },
-      // Separator
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportCompany"),       base: companyName,                                     vat: "" },
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportVatNumber"),     base: data.company?.vatNumber ?? "",                   vat: "" },
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportTaxPeriod"),     base: period.label,                                    vat: "" },
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportFromDate"),      base: period.from,                                     vat: "" },
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportToDate"),        base: period.to,                                       vat: "" },
+      { section: SEC_INFO, num: "", label: t("vatDeclaration.exportInvoiceCount"),  base: data.invoiceBreakdown.totalCount,                vat: "" },
       { section: "", num: "", label: "", base: "", vat: "" },
-      // Section 1
-      { section: "ضريبة المخرجات", num: "1", label: "المبيعات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
-      { section: "ضريبة المخرجات", num: "2", label: "المبيعات الخاضعة لنسبة الصفر %",               base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
-      { section: "ضريبة المخرجات", num: "3", label: "المبيعات المعفاة من الضريبة",                  base: fmtN(data.outputTax.exempt.base),        vat: "—" },
-      { section: "ضريبة المخرجات", num: "4", label: "إجمالي المبيعات",                               base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
-      // Separator
+      { section: SEC_OUTPUT, num: "1", label: t("vatDeclaration.exportRowSalesStandard"), base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
+      { section: SEC_OUTPUT, num: "2", label: t("vatDeclaration.exportRowSalesZero"),     base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
+      { section: SEC_OUTPUT, num: "3", label: t("vatDeclaration.exportRowSalesExempt"),   base: fmtN(data.outputTax.exempt.base),        vat: "—" },
+      { section: SEC_OUTPUT, num: "4", label: t("vatDeclaration.exportRowTotalSales"),    base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
       { section: "", num: "", label: "", base: "", vat: "" },
-      // Section 2
-      { section: "ضريبة المدخلات", num: "5", label: "المشتريات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
-      { section: "ضريبة المدخلات", num: "6", label: "المشتريات الخاضعة لنسبة الصفر %",                base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
-      { section: "ضريبة المدخلات", num: "7", label: "المشتريات المعفاة من الضريبة",                   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
-      { section: "ضريبة المدخلات", num: "8", label: "إجمالي المشتريات",                                base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
-      // Separator
+      { section: SEC_INPUT, num: "5", label: t("vatDeclaration.exportRowPurchaseStandard"), base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
+      { section: SEC_INPUT, num: "6", label: t("vatDeclaration.exportRowPurchaseZero"),     base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
+      { section: SEC_INPUT, num: "7", label: t("vatDeclaration.exportRowPurchaseExempt"),   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
+      { section: SEC_INPUT, num: "8", label: t("vatDeclaration.exportRowTotalPurchases"),   base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
       { section: "", num: "", label: "", base: "", vat: "" },
-      // Section 3
-      { section: "صافي الضريبة", num: "", label: "ضريبة المخرجات",              base: fmtN(data.outputTax.total.vat), vat: "" },
-      { section: "صافي الضريبة", num: "", label: "ضريبة المدخلات (مطروحة)",     base: fmtN(data.inputTax.total.vat),  vat: "" },
-      { section: "صافي الضريبة", num: "", label: "صافي الضريبة المستحقة (ر.س)", base: fmtN(data.netVat),              vat: "" },
+      { section: SEC_NET, num: "", label: t("vatDeclaration.outputVat"),                   base: fmtN(data.outputTax.total.vat), vat: "" },
+      { section: SEC_NET, num: "", label: t("vatDeclaration.exportInputVatDeducted"),      base: fmtN(data.inputTax.total.vat),  vat: "" },
+      { section: SEC_NET, num: "", label: t("vatDeclaration.exportNetVatDue"),             base: fmtN(data.netVat),              vat: "" },
     ];
     return rows;
   }
 
   function handleExcel() {
-    exportToExcel(buildRows(), VAT_COLS, `اقرار-ضريبي-${period.from}-${period.to}`, "الإقرار الضريبي");
+    exportToExcel(
+      buildRows(),
+      VAT_COLS,
+      `${t("vatDeclaration.exportFilenamePrefix")}-${period.from}-${period.to}`,
+      t("vatDeclaration.exportSheetName"),
+    );
   }
 
-  const INFO_COLS  = [{ key: "label", header: "البيان", width: 40 }, { key: "base", header: "القيمة", width: 40 }];
-  const TABLE_COLS = [
-    { key: "num",   header: "#",                              width: 6  },
-    { key: "label", header: "البيان",                         width: 54 },
-    { key: "base",  header: "الأساس الخاضع للضريبة (ر.س)",   width: 28 },
-    { key: "vat",   header: "مبلغ الضريبة (ر.س)",            width: 24 },
+  const INFO_COLS  = [
+    { key: "label", header: t("vatDeclaration.exportColLabel"),  width: 40 },
+    { key: "base",  header: t("vatDeclaration.exportColValue"),  width: 40 },
   ];
-  const NET_COLS = [{ key: "label", header: "البيان", width: 54 }, { key: "base", header: "المبلغ (ر.س)", width: 28 }];
+  const TABLE_COLS = [
+    { key: "num",   header: t("vatDeclaration.colNum"),           width: 6  },
+    { key: "label", header: t("vatDeclaration.exportColLabel"),   width: 54 },
+    { key: "base",  header: t("vatDeclaration.exportColBase"),    width: 28 },
+    { key: "vat",   header: t("vatDeclaration.exportColVat"),     width: 24 },
+  ];
+  const NET_COLS = [
+    { key: "label", header: t("vatDeclaration.exportColLabel"),     width: 54 },
+    { key: "base",  header: t("vatDeclaration.exportNetAmount"),    width: 28 },
+  ];
 
   function handlePDF() {
     printSectionsAsPDF(
       [
         {
-          title: "معلومات الإقرار",
+          title: t("vatDeclaration.exportSectionInfo"),
           color: "#1e40af",
           columns: INFO_COLS,
           rows: [
-            { label: "اسم الشركة",        base: companyName },
-            { label: "الرقم الضريبي",      base: data.company?.vatNumber ?? "" },
-            { label: "الفترة الضريبية",    base: period.label },
-            { label: "من تاريخ",          base: period.from },
-            { label: "إلى تاريخ",         base: period.to },
-            { label: "عدد الفواتير",       base: String(data.invoiceBreakdown.totalCount) },
+            { label: t("vatDeclaration.exportCompanyName"), base: companyName },
+            { label: t("vatDeclaration.exportVatNumber"),   base: data.company?.vatNumber ?? "" },
+            { label: t("vatDeclaration.exportTaxPeriod"),   base: period.label },
+            { label: t("vatDeclaration.exportFromDate"),    base: period.from },
+            { label: t("vatDeclaration.exportToDate"),      base: period.to },
+            { label: t("vatDeclaration.exportInvoiceCount"), base: String(data.invoiceBreakdown.totalCount) },
           ],
         },
         {
-          title: "القسم الأول: ضريبة المخرجات (المبيعات)",
+          title: t("vatDeclaration.printSection1"),
           color: "#15803d",
           columns: TABLE_COLS,
           rows: [
-            { num: "1", label: "المبيعات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
-            { num: "2", label: "المبيعات الخاضعة لنسبة الصفر %",               base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
-            { num: "3", label: "المبيعات المعفاة من الضريبة",                  base: fmtN(data.outputTax.exempt.base),        vat: "—" },
-            { num: "4", label: "إجمالي المبيعات",                               base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
+            { num: "1", label: t("vatDeclaration.exportRowSalesStandard"), base: fmtN(data.outputTax.standardRated.base), vat: fmtN(data.outputTax.standardRated.vat) },
+            { num: "2", label: t("vatDeclaration.exportRowSalesZero"),     base: fmtN(data.outputTax.zeroRated.base),     vat: fmtN(data.outputTax.zeroRated.vat) },
+            { num: "3", label: t("vatDeclaration.exportRowSalesExempt"),   base: fmtN(data.outputTax.exempt.base),        vat: "—" },
+            { num: "4", label: t("vatDeclaration.exportRowTotalSales"),    base: fmtN(data.outputTax.total.base),         vat: fmtN(data.outputTax.total.vat) },
           ],
         },
         {
-          title: "القسم الثاني: ضريبة المدخلات (المشتريات)",
+          title: t("vatDeclaration.printSection2"),
           color: "#1d4ed8",
           columns: TABLE_COLS,
           rows: [
-            { num: "5", label: "المشتريات الخاضعة للضريبة بالنسبة العامة (15%)", base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
-            { num: "6", label: "المشتريات الخاضعة لنسبة الصفر %",                base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
-            { num: "7", label: "المشتريات المعفاة من الضريبة",                   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
-            { num: "8", label: "إجمالي المشتريات",                                base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
+            { num: "5", label: t("vatDeclaration.exportRowPurchaseStandard"), base: fmtN(data.inputTax.standardRated.base), vat: fmtN(data.inputTax.standardRated.vat) },
+            { num: "6", label: t("vatDeclaration.exportRowPurchaseZero"),     base: fmtN(data.inputTax.zeroRated.base),     vat: fmtN(data.inputTax.zeroRated.vat) },
+            { num: "7", label: t("vatDeclaration.exportRowPurchaseExempt"),   base: fmtN(data.inputTax.exempt.base),        vat: "—" },
+            { num: "8", label: t("vatDeclaration.exportRowTotalPurchases"),   base: fmtN(data.inputTax.total.base),         vat: fmtN(data.inputTax.total.vat) },
           ],
         },
         {
-          title: "القسم الثالث: صافي الضريبة المستحقة",
+          title: t("vatDeclaration.printSection3"),
           color: "#7c3aed",
           columns: NET_COLS,
           rows: [
-            { label: "ضريبة المخرجات",                base: fmtN(data.outputTax.total.vat) },
-            { label: "ضريبة المدخلات (القابلة للخصم)", base: fmtN(data.inputTax.total.vat) },
-            { label: "صافي الضريبة المستحقة (ر.س)",    base: fmtN(data.netVat) },
+            { label: t("vatDeclaration.outputVat"),                       base: fmtN(data.outputTax.total.vat) },
+            { label: t("vatDeclaration.exportInputVatDeductible"),        base: fmtN(data.inputTax.total.vat) },
+            { label: t("vatDeclaration.exportNetVatDue"),                 base: fmtN(data.netVat) },
           ],
         },
       ],
-      "الإقرار الضريبي على القيمة المضافة",
-      `${companyName} — ${period.label} (${period.from} إلى ${period.to})`,
+      t("vatDeclaration.printDocTitle"),
+      `${companyName} — ${period.label} (${period.from} ${t("vatDeclaration.toDate")} ${period.to})`,
     );
   }
 
@@ -658,20 +682,20 @@ function VATExportMenu({
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="outline" className="gap-2 h-9">
           <Download className="h-3.5 w-3.5" />
-          تصدير
+          {t("vatDeclaration.exportLabel")}
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">تصدير الإقرار</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-xs text-muted-foreground">{t("vatDeclaration.exportMenuLabel")}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={handleExcel}>
           <FileSpreadsheet className="h-4 w-4 text-green-600" />
-          Excel (.xlsx)
+          {t("vatDeclaration.excel")}
         </DropdownMenuItem>
         <DropdownMenuItem className="gap-2.5 cursor-pointer" onClick={handlePDF}>
           <FileText className="h-4 w-4 text-red-500" />
-          PDF (.pdf)
+          {t("vatDeclaration.pdf")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
