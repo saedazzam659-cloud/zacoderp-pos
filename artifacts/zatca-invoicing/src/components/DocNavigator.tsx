@@ -82,26 +82,44 @@ export function DocNavigator({
 
   return (
     <div className={cn("flex items-center gap-2 min-w-0", className)}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-9 gap-1.5 px-2.5"
-        disabled={!prev}
-        title={prev ? `${prev.docNumber ?? `${fallbackPrefix}${prev.id}`}` : t("docNavigator.prevDisabled")}
-        onClick={() => prev && go(prev.id)}
-        data-enter-skip="true"
-      >
-        {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
-        <span className="text-xs">{t("docNavigator.prev")}</span>
-      </Button>
-      <span
-        className="text-xs text-muted-foreground tabular-nums whitespace-nowrap select-none"
-        title={positionLabel}
-        data-testid="doc-navigator-counter"
-      >
-        {positionLabel}
-      </span>
+      {/* Tight navigation cluster: prev | counter pill | next.
+          Grouping these three together makes the position counter
+          visually inseparable from the arrows it describes. */}
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 gap-1.5 px-2.5"
+          disabled={!prev}
+          title={prev ? `${prev.docNumber ?? `${fallbackPrefix}${prev.id}`}` : t("docNavigator.prevDisabled")}
+          onClick={() => prev && go(prev.id)}
+          data-enter-skip="true"
+        >
+          {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
+          <span className="text-xs">{t("docNavigator.prev")}</span>
+        </Button>
+        <span
+          className="inline-flex items-center justify-center h-9 min-w-[3.5rem] px-2.5 rounded-md border bg-muted/40 text-xs font-medium text-foreground tabular-nums whitespace-nowrap select-none"
+          title={positionLabel}
+          data-testid="doc-navigator-counter"
+        >
+          {positionLabel}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 gap-1.5 px-2.5"
+          disabled={!next}
+          title={next ? `${next.docNumber ?? `${fallbackPrefix}${next.id}`}` : t("docNavigator.nextDisabled")}
+          onClick={() => next && go(next.id)}
+          data-enter-skip="true"
+        >
+          <span className="text-xs">{t("docNavigator.next")}</span>
+          {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+        </Button>
+      </div>
       <div className="w-64 max-w-[60vw]">
         <SearchCombobox
           items={comboItems}
@@ -112,19 +130,6 @@ export function DocNavigator({
           emptyText={t("docNavigator.empty")}
         />
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-9 gap-1.5 px-2.5"
-        disabled={!next}
-        title={next ? `${next.docNumber ?? `${fallbackPrefix}${next.id}`}` : t("docNavigator.nextDisabled")}
-        onClick={() => next && go(next.id)}
-        data-enter-skip="true"
-      >
-        <span className="text-xs">{t("docNavigator.next")}</span>
-        {isRtl ? <ArrowLeft className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
-      </Button>
     </div>
   );
 }
