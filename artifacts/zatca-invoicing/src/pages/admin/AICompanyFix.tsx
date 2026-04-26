@@ -102,6 +102,10 @@ const HISTORY_ACTION_LABELS_AR: Record<string, string> = {
   edit_schedule:    "تعديل الجدولة",
   send_test_email:  "بريد تجريبي",
   edit_retention:   "تعديل مدة الاحتفاظ",
+  // Daily auto-prune of the email-history tables (maintenance + reports).
+  // Written by the scheduler — surfaced here so the maintenance-history panel
+  // shows a friendly Arabic label instead of the raw machine value.
+  auto_prune:       "تنظيف تلقائي",
 };
 const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   journal_pending:                 "قيود معلّقة",
@@ -121,6 +125,9 @@ const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   maintenance_runs:                "تشغيل الصيانة",
   maintenance_retention:           "مدة الاحتفاظ بالسجلات",
   maintenance_tool_history:        "سجل تشغيلات الأداة",
+  // Combined entity for the daily email-history auto-prune (covers both
+  // maintenance_email_runs and report_email_schedule_runs in one summary row).
+  email_history:                   "سجل البريد",
 };
 function historyActionLabelAr(value: string): string {
   return HISTORY_ACTION_LABELS_AR[value] ?? value;

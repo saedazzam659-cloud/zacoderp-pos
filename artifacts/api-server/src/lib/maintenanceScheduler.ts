@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, usersTable } from "@workspace/db";
+import { companiesTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable, auditLogTable, usersTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { logger } from "./logger.js";
@@ -931,6 +931,154 @@ export async function getRecentToolRecoveries(
   return ((exec as any).rows ?? []) as ToolRecoveryRow[];
 }
 
+// ─── Email-history auto-prune ────────────────────────────────────────────────
+// The two append-only email-history tables (`report_email_schedule_runs` and
+// `maintenance_email_runs`) grow forever otherwise: every scheduled or manual
+// dispatch (success, failure, suppression) appends a row, so the SuperAdmin
+// audit panels gradually slow down on long-running deployments. The toolbox
+// "fix" buttons can purge them manually, but that only runs when an operator
+// clicks. This helper runs once per scheduled sweep so retention is enforced
+// even when nobody opens the toolbox.
+//
+// Retention is read from `maintenance_retention_settings` (the same table the
+// SuperAdmin retention controls write to) and falls back to 90 days — the
+// same default the toolbox cards display. Bounds (7..3650) mirror the
+// RETENTION_TOOL_BOUNDS table in admin.ts so a stale settings row from an
+// older deploy can't bypass the input validation.
+//
+// Each sweep writes a single summary row to `audit_log` so SuperAdmins can
+// see when the auto-prune ran and how many rows it removed without parsing
+// server logs. Recorded under company 0 (system-wide) since both tables are
+// global, matching the convention used by the retention-settings PUT path.
+const EMAIL_HISTORY_RETENTION_DEFAULT_DAYS = 90;
+const EMAIL_HISTORY_RETENTION_MIN_DAYS = 7;
+const EMAIL_HISTORY_RETENTION_MAX_DAYS = 3650;
+
+function clampRetention(days: unknown, fallback: number): number {
+  const n = Number(days);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return fallback;
+  if (n < EMAIL_HISTORY_RETENTION_MIN_DAYS) return EMAIL_HISTORY_RETENTION_MIN_DAYS;
+  if (n > EMAIL_HISTORY_RETENTION_MAX_DAYS) return EMAIL_HISTORY_RETENTION_MAX_DAYS;
+  return n;
+}
+
+// Reads the persisted retention for `toolKey`, clamps it against the shared
+// bounds, and falls back to 90 days when the row is missing or the SELECT
+// errors (e.g. pre-`pnpm db:push` deploy). Mirrors `getRetentionDays` in
+// admin.ts but kept local to avoid a circular import (admin.ts already
+// imports from this module).
+async function getEmailHistoryRetentionDays(toolKey: string): Promise<number> {
+  try {
+    const [row] = await db.select()
+      .from(maintenanceRetentionSettingsTable)
+      .where(eq(maintenanceRetentionSettingsTable.toolKey, toolKey));
+    if (!row) return EMAIL_HISTORY_RETENTION_DEFAULT_DAYS;
+    return clampRetention(row.days, EMAIL_HISTORY_RETENTION_DEFAULT_DAYS);
+  } catch (err) {
+    logger.warn({ err, toolKey }, "email-history-prune: retention lookup failed — using default");
+    return EMAIL_HISTORY_RETENTION_DEFAULT_DAYS;
+  }
+}
+
+export interface EmailHistoryPruneSummary {
+  reportEmailRunsDeleted: number;
+  reportEmailRunsRetentionDays: number;
+  maintenanceEmailRunsDeleted: number;
+  maintenanceEmailRunsRetentionDays: number;
+  durationMs: number;
+}
+
+// Prunes both email-history tables in one pass and writes a single summary
+// audit row. Each DELETE is wrapped independently so a failure on one table
+// (e.g. the report scheduler artifact hasn't been deployed yet and the table
+// is missing) doesn't block the other. Failures are logged and surfaced in
+// the audit metadata under `errors[]` so operators can see partial sweeps in
+// the maintenance history panel.
+//
+// Exported so the scheduler test suite can drive the function directly
+// without spinning up the daily-tick loop.
+export async function runEmailHistoryAutoPrune(
+  trigger: "scheduled" | "manual" = "scheduled",
+): Promise<EmailHistoryPruneSummary> {
+  const t0 = Date.now();
+  const reportDays = await getEmailHistoryRetentionDays("old-report-email-runs");
+  const maintDays  = await getEmailHistoryRetentionDays("old-maintenance-email-runs");
+  const errors: Array<{ table: string; error: string }> = [];
+
+  // Use the driver's `rowCount` instead of `RETURNING id` so the very first
+  // sweep (which may face years of accumulated rows after this feature ships)
+  // doesn't materialize a giant id list in memory just to count it. node-pg
+  // populates `rowCount` reliably for DELETE; we fall back to `rows.length`
+  // defensively in case a future driver swap drops it.
+  const countDeleted = (exec: unknown): number => {
+    const r = exec as { rowCount?: number | null; rows?: unknown[] };
+    if (typeof r?.rowCount === "number") return r.rowCount;
+    return Array.isArray(r?.rows) ? r.rows.length : 0;
+  };
+
+  let reportDeleted = 0;
+  try {
+    const exec = await db.execute(sql`
+      DELETE FROM report_email_schedule_runs
+       WHERE ran_at < NOW() - (${reportDays}::int || ' days')::interval
+    `);
+    reportDeleted = countDeleted(exec);
+  } catch (err: any) {
+    errors.push({ table: "report_email_schedule_runs", error: err?.message ?? String(err) });
+    logger.error({ err }, "email-history-prune: report_email_schedule_runs DELETE failed");
+  }
+
+  let maintDeleted = 0;
+  try {
+    const exec = await db.execute(sql`
+      DELETE FROM maintenance_email_runs
+       WHERE ran_at < NOW() - (${maintDays}::int || ' days')::interval
+    `);
+    maintDeleted = countDeleted(exec);
+  } catch (err: any) {
+    errors.push({ table: "maintenance_email_runs", error: err?.message ?? String(err) });
+    logger.error({ err }, "email-history-prune: maintenance_email_runs DELETE failed");
+  }
+
+  const durationMs = Date.now() - t0;
+
+  // One summary audit row per sweep. Best-effort: an audit-log outage cannot
+  // mask the prune itself (rows are already deleted) so we log and move on.
+  // companyId=0 mirrors the retention-settings PUT convention since both
+  // tables are system-wide, not tenant-scoped.
+  try {
+    await db.insert(auditLogTable).values({
+      userId: null,
+      username: null,
+      role: "system",
+      companyId: 0,
+      module: "maintenance",
+      action: "auto_prune",
+      method: null,
+      path: null,
+      entityType: "email_history",
+      entityId: null,
+      metadata: {
+        trigger,
+        reportEmailRuns: { deleted: reportDeleted, retentionDays: reportDays },
+        maintenanceEmailRuns: { deleted: maintDeleted, retentionDays: maintDays },
+        durationMs,
+        errors: errors.length > 0 ? errors : undefined,
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, "email-history-prune: failed to write audit summary");
+  }
+
+  return {
+    reportEmailRunsDeleted: reportDeleted,
+    reportEmailRunsRetentionDays: reportDays,
+    maintenanceEmailRunsDeleted: maintDeleted,
+    maintenanceEmailRunsRetentionDays: maintDays,
+    durationMs,
+  };
+}
+
 // ─── Scheduler boot (called once from index.ts) ──────────────────────────────
 let started = false;
 export function startMaintenanceScheduler() {
@@ -948,6 +1096,18 @@ export function startMaintenanceScheduler() {
       if (!isDailyDue(new Date(), cfg)) return;
       const summary = await runMaintenanceSweep("scheduled");
       logger.info({ summary }, "maintenance-scheduler: scheduled sweep complete");
+      // Auto-prune the two email-history tables once per scheduled sweep so
+      // the SuperAdmin audit panels don't quietly accumulate years of rows
+      // when nobody clicks the manual "fix" buttons. Best-effort: any
+      // failure is logged inside the helper itself and never escapes — the
+      // sweep already succeeded, so we don't want to mask its success or
+      // double-fire next tick.
+      try {
+        const pruneSummary = await runEmailHistoryAutoPrune("scheduled");
+        logger.info({ pruneSummary }, "maintenance-scheduler: email-history auto-prune complete");
+      } catch (err) {
+        logger.error({ err }, "maintenance-scheduler: email-history auto-prune failed");
+      }
     } catch (e: any) {
       logger.error({ err: e }, "maintenance-scheduler: tick error");
       try {

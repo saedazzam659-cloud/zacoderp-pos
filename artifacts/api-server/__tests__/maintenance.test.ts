@@ -66,6 +66,7 @@ import {
   maintenanceScheduleTable,
   maintenanceEmailRunsTable,
   maintenanceRetentionSettingsTable,
+  reportEmailScheduleRunsTable,
 } from "@workspace/db";
 
 import app from "../src/app.ts";
@@ -96,6 +97,7 @@ import {
   severityMeetsThreshold,
   getSuperAdminRecipients,
   dispatchCriticalDigest,
+  runEmailHistoryAutoPrune,
   type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
 import nodemailer from "nodemailer";
@@ -3767,4 +3769,199 @@ test("GET /maintenance/history (JSON): rejects invalid ?from / ?to and clamps ne
   assert.equal(negOffset.body.items.length, 3, "clamped page should still be a full page");
   assert.equal(negOffset.body.items[0].createdAt, "2010-04-08T03:00:00.000Z",
     "clamped offset=0 should still yield the most-recent row first");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  runEmailHistoryAutoPrune — daily cleanup of email-history tables
+// ════════════════════════════════════════════════════════════════════════════
+// Protects the scheduled hygiene path that prunes both append-only email-
+// history tables (`maintenance_email_runs` + `report_email_schedule_runs`).
+// Without it the SuperAdmin audit panels grow forever between manual fixes.
+//
+// Each test seeds dated rows directly into both tables (timestamps are the
+// DELETE cutoff, so per-tenant TEST_TAG isolation isn't possible — we
+// instead select recent audit rows by id-watermark and clean up by id).
+
+test("runEmailHistoryAutoPrune: deletes rows older than the default 90-day window from both tables and writes one audit summary", async () => {
+  // Reset retention so the function uses the documented 90-day default.
+  await resetRetention("old-maintenance-email-runs");
+  await resetRetention("old-report-email-runs");
+
+  // Watermark BEFORE we seed / run so the cleanup query (and the audit-row
+  // assertion below) only see rows produced inside this test.
+  const auditWatermark = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const auditCutoffId = Number(((auditWatermark as any).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const oldRanAt    = new Date(Date.now() - 200 * 86_400_000); // > 90d → must be deleted
+  const recentRanAt = new Date(Date.now() - 10  * 86_400_000); // ≤ 90d → must be kept
+
+  const [oldMaint] = await db.insert(maintenanceEmailRunsTable).values({
+    ranAt: oldRanAt, trigger: "scheduled", status: "ok",
+    recipients: 1, criticalCount: 0,
+    error: null, reason: "digest_sent", criticalSignature: `${TEST_TAG}_old_maint`,
+  }).returning({ id: maintenanceEmailRunsTable.id });
+  const [recentMaint] = await db.insert(maintenanceEmailRunsTable).values({
+    ranAt: recentRanAt, trigger: "scheduled", status: "ok",
+    recipients: 1, criticalCount: 0,
+    error: null, reason: "digest_sent", criticalSignature: `${TEST_TAG}_recent_maint`,
+  }).returning({ id: maintenanceEmailRunsTable.id });
+  insertedMaintenanceEmailRunIds.push(oldMaint.id, recentMaint.id);
+
+  const [oldReport] = await db.insert(reportEmailScheduleRunsTable).values({
+    ranAt: oldRanAt, trigger: "scheduled", status: "ok",
+    reports: ["operational-summary"], recipients: 2,
+    message: `${TEST_TAG}_old_report`,
+  }).returning({ id: reportEmailScheduleRunsTable.id });
+  const [recentReport] = await db.insert(reportEmailScheduleRunsTable).values({
+    ranAt: recentRanAt, trigger: "scheduled", status: "ok",
+    reports: ["operational-summary"], recipients: 2,
+    message: `${TEST_TAG}_recent_report`,
+  }).returning({ id: reportEmailScheduleRunsTable.id });
+
+  try {
+    const summary = await runEmailHistoryAutoPrune("manual");
+    // Defaults must come from RETENTION_TOOL_BOUNDS (90d for both tables).
+    assert.equal(summary.maintenanceEmailRunsRetentionDays, 90);
+    assert.equal(summary.reportEmailRunsRetentionDays, 90);
+    // Each side must have deleted at least our seeded old row. Other test
+    // runs on a shared DB may have also left old rows behind, so we assert
+    // ≥ 1 (not strict equality).
+    assert.ok(summary.maintenanceEmailRunsDeleted >= 1,
+      `expected ≥1 maintenance email run deleted, got ${summary.maintenanceEmailRunsDeleted}`);
+    assert.ok(summary.reportEmailRunsDeleted >= 1,
+      `expected ≥1 report email run deleted, got ${summary.reportEmailRunsDeleted}`);
+    assert.ok(Number.isFinite(summary.durationMs) && summary.durationMs >= 0);
+
+    // Old rows must be gone, recent rows must survive.
+    const stillOldMaint = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(eq(maintenanceEmailRunsTable.id, oldMaint.id));
+    assert.equal(stillOldMaint.length, 0, "old maintenance_email_runs row must be pruned");
+    const stillRecentMaint = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(eq(maintenanceEmailRunsTable.id, recentMaint.id));
+    assert.equal(stillRecentMaint.length, 1, "recent maintenance_email_runs row must NOT be pruned");
+
+    const stillOldReport = await db.select({ id: reportEmailScheduleRunsTable.id })
+      .from(reportEmailScheduleRunsTable)
+      .where(eq(reportEmailScheduleRunsTable.id, oldReport.id));
+    assert.equal(stillOldReport.length, 0, "old report_email_schedule_runs row must be pruned");
+    const stillRecentReport = await db.select({ id: reportEmailScheduleRunsTable.id })
+      .from(reportEmailScheduleRunsTable)
+      .where(eq(reportEmailScheduleRunsTable.id, recentReport.id));
+    assert.equal(stillRecentReport.length, 1, "recent report_email_schedule_runs row must NOT be pruned");
+
+    // Exactly one audit summary row produced for THIS sweep — and it must
+    // carry the deleted counts + retention windows in metadata so the
+    // maintenance-history panel can render them without re-querying.
+    const newAuditRows = await db.select({
+      id: auditLogTable.id,
+      module: auditLogTable.module,
+      action: auditLogTable.action,
+      role: auditLogTable.role,
+      companyId: auditLogTable.companyId,
+      entityType: auditLogTable.entityType,
+      metadata: auditLogTable.metadata,
+    })
+      .from(auditLogTable)
+      .where(and(
+        sql`${auditLogTable.id} > ${auditCutoffId}`,
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "email_history"),
+      ));
+    insertedAuditLogIds.push(...newAuditRows.map((r) => r.id));
+    assert.equal(newAuditRows.length, 1,
+      `expected exactly one auto_prune audit row this sweep, got ${newAuditRows.length}`);
+    const audit = newAuditRows[0];
+    assert.equal(audit.module, "maintenance");
+    assert.equal(audit.role, "system");
+    assert.equal(audit.companyId, 0);
+    assert.ok(isObject(audit.metadata), "audit metadata must be a JSON object");
+    const md = audit.metadata as Record<string, any>;
+    assert.equal(md.trigger, "manual");
+    assert.equal(md.maintenanceEmailRuns?.retentionDays, 90);
+    assert.equal(md.reportEmailRuns?.retentionDays, 90);
+    assert.equal(md.maintenanceEmailRuns?.deleted, summary.maintenanceEmailRunsDeleted);
+    assert.equal(md.reportEmailRuns?.deleted, summary.reportEmailRunsDeleted);
+    assert.equal(md.errors, undefined, "no error metadata on the happy path");
+  } finally {
+    // Recent rows survived the prune — reclaim them so the row-level
+    // teardown picks them up. (The old rows are already gone via the prune
+    // itself; tracking their ids in `insertedMaintenanceEmailRunIds` is
+    // harmless because the cleanup DELETE is a no-op for missing ids.)
+    await db.delete(reportEmailScheduleRunsTable)
+      .where(inArray(reportEmailScheduleRunsTable.id, [oldReport.id, recentReport.id]));
+  }
+});
+
+test("runEmailHistoryAutoPrune: persisted retention setting overrides the default cutoff", async () => {
+  // Persist a tight 30-day retention for maintenance_email_runs so a row 60d
+  // old gets pruned even though it would be safely inside the default 90-day
+  // window. report_email_schedule_runs keeps the 90d default so we can prove
+  // the two tools are read independently — its 60d row must NOT be pruned.
+  await resetRetention("old-maintenance-email-runs");
+  await resetRetention("old-report-email-runs");
+  await db.insert(maintenanceRetentionSettingsTable).values({
+    toolKey: "old-maintenance-email-runs",
+    days: 30,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: maintenanceRetentionSettingsTable.toolKey,
+    set: { days: 30, updatedAt: new Date() },
+  });
+
+  const ranAt60d = new Date(Date.now() - 60 * 86_400_000);
+  const [maintRow] = await db.insert(maintenanceEmailRunsTable).values({
+    ranAt: ranAt60d, trigger: "scheduled", status: "ok",
+    recipients: 1, criticalCount: 0,
+    error: null, reason: "digest_sent", criticalSignature: `${TEST_TAG}_60d_maint`,
+  }).returning({ id: maintenanceEmailRunsTable.id });
+  insertedMaintenanceEmailRunIds.push(maintRow.id);
+  const [reportRow] = await db.insert(reportEmailScheduleRunsTable).values({
+    ranAt: ranAt60d, trigger: "scheduled", status: "ok",
+    reports: ["operational-summary"], recipients: 1,
+    message: `${TEST_TAG}_60d_report`,
+  }).returning({ id: reportEmailScheduleRunsTable.id });
+
+  try {
+    const summary = await runEmailHistoryAutoPrune("scheduled");
+    assert.equal(summary.maintenanceEmailRunsRetentionDays, 30,
+      "persisted setting must override the 90-day default");
+    assert.equal(summary.reportEmailRunsRetentionDays, 90,
+      "untouched tool keeps the 90-day default");
+
+    // The 60-day-old maintenance row was outside the 30d window → pruned.
+    const stillMaint = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(eq(maintenanceEmailRunsTable.id, maintRow.id));
+    assert.equal(stillMaint.length, 0,
+      "60-day-old maintenance row must be pruned under 30d retention");
+
+    // The 60-day-old report row was inside the 90d default → kept.
+    const stillReport = await db.select({ id: reportEmailScheduleRunsTable.id })
+      .from(reportEmailScheduleRunsTable)
+      .where(eq(reportEmailScheduleRunsTable.id, reportRow.id));
+    assert.equal(stillReport.length, 1,
+      "60-day-old report row must NOT be pruned under 90d retention");
+  } finally {
+    await db.delete(reportEmailScheduleRunsTable)
+      .where(eq(reportEmailScheduleRunsTable.id, reportRow.id));
+    await resetRetention("old-maintenance-email-runs");
+    // Belt-and-brace: pick up the audit row this sweep wrote so teardown
+    // can clean it. Match by action+entityType to avoid touching unrelated
+    // audit_log rows on a shared DB.
+    const auditRows = await db.select({ id: auditLogTable.id })
+      .from(auditLogTable)
+      .where(and(
+        eq(auditLogTable.action, "auto_prune"),
+        eq(auditLogTable.entityType, "email_history"),
+        eq(auditLogTable.role, "system"),
+        eq(auditLogTable.companyId, 0),
+      ));
+    for (const r of auditRows) {
+      if (!insertedAuditLogIds.includes(r.id)) insertedAuditLogIds.push(r.id);
+    }
+  }
 });
