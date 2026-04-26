@@ -88,6 +88,43 @@ function emailReasonLabelAr(reason: string | null): string {
   }
 }
 
+// Friendly Arabic labels for the `action` and `entity_type` values written to
+// `audit_log` by maintenance code paths. Used by the history filter dropdowns
+// (task #47) — the dropdown options themselves come from the live audit log,
+// these maps just decorate known values with a friendly label. Anything not
+// listed falls back to the raw machine value, which is still useful (the new
+// option appears in the dropdown the moment it is logged for the first time).
+const HISTORY_ACTION_LABELS_AR: Record<string, string> = {
+  fix:              "إصلاح",
+  export_csv:       "تصدير CSV",
+  run_now_one:      "تشغيل لشركة",
+  run_now_all:      "تشغيل للكل",
+  edit_schedule:    "تعديل الجدولة",
+  send_test_email:  "بريد تجريبي",
+};
+const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
+  journal_pending:                 "قيود معلّقة",
+  broken_refs:                     "مراجع مكسورة",
+  unlinked_accounts:               "حسابات غير مربوطة",
+  sequence_gaps:                   "فجوات التسلسل",
+  dormant_users:                   "مستخدمون خاملون",
+  negative_stock:                  "رصيد سالب",
+  stock_balance_drift:             "انحراف رصيد المخزون",
+  unbalanced_entries:              "قيود غير متوازنة",
+  old_audit_logs:                  "سجلات تدقيق قديمة",
+  old_maintenance_runs:            "عمليات صيانة قديمة",
+  old_maintenance_email_runs:      "سجل بريد الصيانة القديم",
+  maintenance_history:             "سجل الصيانة",
+  maintenance_schedule:            "جدولة الصيانة",
+  maintenance_runs:                "تشغيل الصيانة",
+};
+function historyActionLabelAr(value: string): string {
+  return HISTORY_ACTION_LABELS_AR[value] ?? value;
+}
+function historyEntityTypeLabelAr(value: string): string {
+  return HISTORY_ENTITY_TYPE_LABELS_AR[value] ?? value;
+}
+
 function renderMarkdown(md: string) {
   // Lightweight markdown: headings, bold, lists. No code blocks needed.
   const html = md
@@ -673,6 +710,29 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
+
+  // Filter-dropdown options driven by the actual values currently present in
+  // `audit_log` for the selected company (task #47). Without this, every new
+  // maintenance check or admin operation would silently disappear from the
+  // dropdowns until someone remembered to add a hard-coded `<SelectItem>`.
+  // The 5-minute staleTime keeps typing in adjacent inputs from triggering a
+  // refetch while still reflecting freshly-logged actions on the next visit.
+  const historyFacetsQ = useQuery<{ actions: string[]; entityTypes: string[] }>({
+    queryKey: ["maintenance-history-facets", companyId, historyTick],
+    queryFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/history/facets?companyId=${companyId}`,
+        { headers },
+      );
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب الخيارات");
+      return r.json();
+    },
+    enabled: !!companyId && historyOpen,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const facetActions     = historyFacetsQ.data?.actions     ?? [];
+  const facetEntityTypes = historyFacetsQ.data?.entityTypes ?? [];
 
   // Schedule config (single global row) — drives the auto-scan toggle / time.
   const scheduleQ = useQuery({
@@ -2221,12 +2281,16 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all">كل الإجراءات</SelectItem>
-                    <SelectItem value="fix">إصلاح (fix)</SelectItem>
-                    <SelectItem value="export_csv">تصدير CSV</SelectItem>
-                    <SelectItem value="run_now_one">تشغيل لشركة</SelectItem>
-                    <SelectItem value="run_now_all">تشغيل للكل</SelectItem>
-                    <SelectItem value="edit_schedule">تعديل الجدولة</SelectItem>
-                    <SelectItem value="send_test_email">بريد تجريبي</SelectItem>
+                    {/* Options come from the company's actual audit log so a
+                        new logMaint("…") call surfaces here automatically.
+                        We union in the currently-selected value so a stale
+                        filter still renders its label even when no row in
+                        the visible window matches it any more. */}
+                    {Array.from(new Set([...facetActions, ...(historyAction ? [historyAction] : [])]))
+                      .sort((a, b) => a.localeCompare(b))
+                      .map((a) => (
+                        <SelectItem key={a} value={a}>{historyActionLabelAr(a)}</SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2242,20 +2306,11 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all">كل الفئات</SelectItem>
-                    <SelectItem value="journal_pending">قيود معلّقة</SelectItem>
-                    <SelectItem value="broken_refs">مراجع مكسورة</SelectItem>
-                    <SelectItem value="unlinked_accounts">حسابات غير مربوطة</SelectItem>
-                    <SelectItem value="sequence_gaps">فجوات التسلسل</SelectItem>
-                    <SelectItem value="dormant_users">مستخدمون خاملون</SelectItem>
-                    <SelectItem value="negative_stock">رصيد سالب</SelectItem>
-                    <SelectItem value="stock_balance_drift">انحراف رصيد المخزون</SelectItem>
-                    <SelectItem value="unbalanced_entries">قيود غير متوازنة</SelectItem>
-                    <SelectItem value="old_audit_logs">سجلات تدقيق قديمة</SelectItem>
-                    <SelectItem value="old_maintenance_runs">عمليات صيانة قديمة</SelectItem>
-                    <SelectItem value="old_maintenance_email_runs">سجل بريد الصيانة القديم</SelectItem>
-                    <SelectItem value="maintenance_history">سجل الصيانة</SelectItem>
-                    <SelectItem value="maintenance_schedule">جدولة الصيانة</SelectItem>
-                    <SelectItem value="maintenance_runs">تشغيل الصيانة</SelectItem>
+                    {Array.from(new Set([...facetEntityTypes, ...(historyEntityType ? [historyEntityType] : [])]))
+                      .sort((a, b) => a.localeCompare(b))
+                      .map((e) => (
+                        <SelectItem key={e} value={e}>{historyEntityTypeLabelAr(e)}</SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

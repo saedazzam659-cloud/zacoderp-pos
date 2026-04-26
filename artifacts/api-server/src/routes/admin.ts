@@ -4206,6 +4206,49 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// 6b. Maintenance history filter facets — distinct action / entityType values
+//     currently present in `audit_log` for the selected company. Drives the
+//     two filter dropdowns in the history accordion so adding a new
+//     maintenance check or admin operation (any new logMaint call) shows up
+//     as a filter option without a UI code change. Empty arrays are returned
+//     when the company has no maintenance audit rows yet — the client falls
+//     back to "no options" and admins can still use the date filters.
+router.get("/maintenance/history/facets", requireSuperAdmin, async (req, res) => {
+  const g = maintGuard(req, res); if (!g) return;
+  try {
+    // Two cheap DISTINCT scans — the audit_log already has an index covering
+    // (company_id, module). NULL / blank values are filtered out so the UI
+    // never renders an empty-string SelectItem.
+    const exec = await db.execute<{ kind: string; value: string }>(sql`
+      SELECT 'action' AS kind, action AS value
+        FROM ${auditLogTable}
+       WHERE company_id = ${g.companyId}
+         AND module = 'maintenance'
+         AND action IS NOT NULL AND action <> ''
+       GROUP BY action
+      UNION ALL
+      SELECT 'entityType' AS kind, entity_type AS value
+        FROM ${auditLogTable}
+       WHERE company_id = ${g.companyId}
+         AND module = 'maintenance'
+         AND entity_type IS NOT NULL AND entity_type <> ''
+       GROUP BY entity_type
+    `);
+    const rows = (exec as any).rows ?? [];
+    const actions: string[]     = [];
+    const entityTypes: string[] = [];
+    for (const r of rows) {
+      if (r.kind === "action")          actions.push(r.value);
+      else if (r.kind === "entityType") entityTypes.push(r.value);
+    }
+    actions.sort((a, b) => a.localeCompare(b));
+    entityTypes.sort((a, b) => a.localeCompare(b));
+    res.json({ actions, entityTypes });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "فشل جلب خيارات الفلاتر" });
+  }
+});
+
 // ─── Scheduled maintenance scans ─────────────────────────────────────────────
 // GET /maintenance/latest?companyId=X — most recent scheduled/manual run per
 // tool for one company. Drives the "آخر فحص" badge on every tool card.
