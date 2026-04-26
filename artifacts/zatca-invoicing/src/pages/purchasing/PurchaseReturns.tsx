@@ -1,18 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { AccountCombobox } from "@/components/AccountCombobox";
-import { Plus, Trash2, RotateCcw, X, CheckCircle2, Printer, Send, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, Calculator, FileText, ListOrdered, Copy } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DiscountRow } from "@/components/DiscountRow";
@@ -21,7 +19,6 @@ import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface ReturnLine {
@@ -60,6 +57,16 @@ const EMPTY = {
 };
 
 export default function PurchaseReturns() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2 });
+  const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseReturns.${k}`, opts) as string;
+  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
+  const itemName = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
+  const branchName = (b: any) => isRtl ? (b?.nameAr ?? b?.nameEn ?? `#${b?.id}`) : (b?.nameEn ?? b?.nameAr ?? `#${b?.id}`);
+  const unitName = (u: any) => isRtl ? (u?.nameAr ?? u?.nameEn ?? "") : (u?.nameEn ?? u?.nameAr ?? "");
+  const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
+
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -72,8 +79,6 @@ export default function PurchaseReturns() {
   const [form, setForm]         = useState<any>(EMPTY);
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
 
-  // Auto-load next return number from the central sequence engine when
-  // creating new. Only fires while the form is open + not editing.
   const seqPeek = useNextSequenceNumber("purchase_return", showForm && editingId == null);
   useEffect(() => {
     if (!showForm || editingId != null) return;
@@ -99,7 +104,6 @@ export default function PurchaseReturns() {
   const docNumberRef = useRef<HTMLInputElement>(null);
   const [printData, setPrintData] = useState<any>(null);
 
-  // ── Lookups ─────────────────────────────────────────────
   const { data: returns_ = [], isLoading } = useQuery<any[]>({
     queryKey: ["purchase-returns", cid],
     queryFn: async () => {
@@ -151,14 +155,12 @@ export default function PurchaseReturns() {
     enabled: !!user,
   });
 
-  // ── Supplier balances (for credit settlement) ────────────
   const { data: supplierBalances = [] } = useQuery<any[]>({
     queryKey: ["supplier-balances", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/suppliers/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user && !!cid && form.paymentType === "credit",
   });
 
-  // ── Cash boxes + balances (for cash refund) ──────────────
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: authH }); return r.json(); },
@@ -180,7 +182,6 @@ export default function PurchaseReturns() {
     enabled: !!user && !!cid && form.paymentType === "bank",
   });
 
-  // ── Branches ─────────────────────────────────────────────
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`, { headers: authH }); return r.json(); },
@@ -199,7 +200,6 @@ export default function PurchaseReturns() {
     setLines(prev => prev.map((l: any) => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
   }, [defaultWarehouse?.id, hasEmptyWarehouse]);
 
-  // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
   function getLatestRate(selectedCode: string): string {
@@ -227,7 +227,6 @@ export default function PurchaseReturns() {
     setForm((p: any) => ({ ...p, currencyCode: defaultCurrency.code }));
   }, [showForm, defaultCurrency?.code]);
 
-  // ── Mutations ────────────────────────────────────────────
   const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-returns"] });
 
   const saveMut = useMutation({
@@ -243,12 +242,12 @@ export default function PurchaseReturns() {
       if (!isEdit && j?.id && (j.status ?? "draft") === "draft") {
         const pr = await fetch(`${API}/api/purchasing/purchase-returns/${j.id}/post`, { method: "PATCH", headers });
         const pj = await pr.json().catch(() => ({}));
-        if (!pr.ok) throw new Error(`تم الحفظ ولكن فشل الترحيل: ${pj.error || pr.statusText}`);
+        if (!pr.ok) throw new Error(tr("toasts.savedNoPost", { err: pj.error || pr.statusText }));
         return pj;
       }
       return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: editingId ? "✓ تم تعديل المرتجع" : "✓ تم إنشاء المرتجع وترحيله" }); },
+    onSuccess: () => { invalidate(); reset(); toast({ title: editingId ? tr("toasts.edited") : tr("toasts.createdAndPosted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -257,7 +256,7 @@ export default function PurchaseReturns() {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
-    onSuccess: () => { invalidate(); toast({ title: "✓ تم ترحيل المرتجع وتحديث المخزون" }); },
+    onSuccess: () => { invalidate(); toast({ title: tr("toasts.posted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -266,7 +265,7 @@ export default function PurchaseReturns() {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/unpost`, { method: "PATCH", headers });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
-    onSuccess: () => { invalidate(); toast({ title: "✓ تم فك ترحيل المرتجع وعكس حركة المخزون" }); },
+    onSuccess: () => { invalidate(); toast({ title: tr("toasts.unposted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -275,14 +274,14 @@ export default function PurchaseReturns() {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}`, { method: "DELETE", headers });
       if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
     },
-    onSuccess: () => { invalidate(); toast({ title: "✓ تم الحذف" }); },
+    onSuccess: () => { invalidate(); toast({ title: tr("toasts.deleted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   async function startEdit(retId: number) {
     try {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
-      if (!res.ok) { toast({ title: "تعذّر تحميل المرتجع", variant: "destructive" }); return; }
+      if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
       setEditingId(retId);
       setForm({
@@ -322,14 +321,14 @@ export default function PurchaseReturns() {
       })) : [newLine()]);
       setShowForm(true);
     } catch (e: any) {
-      toast({ title: e.message || "خطأ في التحميل", variant: "destructive" });
+      toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
     }
   }
 
   async function duplicateReturn(retId: number) {
     try {
       const res = await fetch(`${API}/api/purchasing/purchase-returns/${retId}`, { headers: authH });
-      if (!res.ok) { toast({ title: "تعذّر تحميل المرتجع", variant: "destructive" }); return; }
+      if (!res.ok) { toast({ title: tr("toasts.loadFail"), variant: "destructive" }); return; }
       const full = await res.json();
       setEditingId(null);
       setForm({
@@ -368,9 +367,9 @@ export default function PurchaseReturns() {
         notes:       l.notes ?? "",
       })) : [newLine()]);
       setShowForm(true);
-      toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
+      toast({ title: tr("toasts.duplicated") });
     } catch (e: any) {
-      toast({ title: e.message || "خطأ في التحميل", variant: "destructive" });
+      toast({ title: e.message || tr("toasts.loadError"), variant: "destructive" });
     }
   }
 
@@ -402,7 +401,6 @@ export default function PurchaseReturns() {
     setLines([newLine()]);
     setEditingId(null);
     setShowForm(false);
-    // clear fromInvoice param from URL without navigation
     const url = new URL(window.location.href);
     url.searchParams.delete("fromInvoice");
     window.history.replaceState({}, "", url.toString());
@@ -415,7 +413,6 @@ export default function PurchaseReturns() {
     setPrintData({ type: "return", doc: full, lines: full.lines ?? [], supplier, company: user?.company ?? null });
   }
 
-  // Load a purchase invoice and populate the return form with its data
   async function loadInvoiceIntoForm(invId: string | number, opts: { openForm?: boolean } = {}) {
     if (!invId) return;
     try {
@@ -432,7 +429,7 @@ export default function PurchaseReturns() {
         bankAccountId: inv.bankAccountId ? String(inv.bankAccountId) : "",
         currencyCode:  inv.currencyCode  ?? prev.currencyCode ?? defaultCurrency?.code ?? "",
         exchangeRate:  inv.exchangeRate  ? String(inv.exchangeRate) : "1",
-        notes: `مرتجع من الفاتورة ${inv.docNumber ?? `PI-${inv.id}`}`,
+        notes: tr("toasts.returnFromInvoice", { doc: inv.docNumber ?? `PI-${inv.id}` }),
         priceIncludesVat: !!inv.priceIncludesVat,
         inventoryAccountId: inv.inventoryAccountId ? String(inv.inventoryAccountId) : prev.inventoryAccountId,
         taxAccountId:       inv.taxAccountId       ? String(inv.taxAccountId)       : prev.taxAccountId,
@@ -460,7 +457,6 @@ export default function PurchaseReturns() {
     } catch (_) { /* silent */ }
   }
 
-  // ── Pre-fill form from purchase invoice via ?fromInvoice URL param ─
   const prefilledRef = useRef(false);
   useEffect(() => {
     if (prefilledRef.current) return;
@@ -471,7 +467,6 @@ export default function PurchaseReturns() {
     loadInvoiceIntoForm(invId, { openForm: true });
   }, [user, currencies.length]);
 
-  // ── Line helpers ─────────────────────────────────────────
   function calcLineTotal(l: ReturnLine, priceIncludesVat = false) {
     const qty   = Number(l.qty) || 0;
     const price = Number(l.unitPrice) || 0;
@@ -508,7 +503,6 @@ export default function PurchaseReturns() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.priceIncludesVat]);
 
-  // Cache item-specific unit prices: itemId → rows
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
   async function fetchItemUnits(itemId: string): Promise<any[]> {
     if (itemUnitsMap[itemId]) return itemUnitsMap[itemId];
@@ -527,7 +521,7 @@ export default function PurchaseReturns() {
       const updated: ReturnLine = {
         ...l,
         unitId: newUnitId,
-        unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
+        unit: unitName(row?.unit) || unitName(globalUnit) || "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: row?.costPrice != null ? String(row.costPrice) : l.unitPrice,
       };
@@ -546,10 +540,10 @@ export default function PurchaseReturns() {
       const updated: ReturnLine = {
         ...l,
         itemId:    String(item.id),
-        itemName:  item.nameAr ?? "",
+        itemName:  itemName(item),
         itemCode:  item.code   ?? "",
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
-        unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
+        unit:      unitName(base?.unit) || unitName(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: String(base?.costPrice ?? item.costPrice ?? "0"),
         vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
@@ -587,36 +581,61 @@ export default function PurchaseReturns() {
     });
   }
 
-  // ── Combobox data ────────────────────────────────────────
   const supplierItems = [
-    { value: "", label: "— بدون مورد —" },
-    ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr })),
+    { value: "", label: tr("noSupplierOpt") },
+    ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
   ];
   const invoiceItems = [
-    { value: "", label: "— بدون فاتورة —" },
+    { value: "", label: tr("noInvoiceOpt") },
     ...invoices.map((i: any) => ({ value: String(i.id), label: i.docNumber ?? `PI-${i.id}` })),
   ];
   const itemComboItems = [
-    { value: "", label: "— اختر صنف —" },
+    { value: "", label: tr("selectItemOpt") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
-      label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr,
+      label: i.code ? `${i.code} — ${itemName(i)}` : itemName(i),
     })),
   ];
-  const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, s.nameAr]));
+  const supMap = Object.fromEntries(suppliers.map((s: any) => [s.id, supName(s)]));
+
+  const lineColHeaders = [
+    tr("lineCols.item"),
+    tr("lineCols.itemCode"),
+    tr("lineCols.warehouse"),
+    tr("lineCols.unit"),
+    tr("lineCols.qty"),
+    tr("lineCols.price"),
+    tr("lineCols.discount"),
+    tr("lineCols.vat"),
+    tr("lineCols.total"),
+    tr("lineCols.notes"),
+    "",
+  ];
+  const listColHeaders = [
+    tr("listCols.number"),
+    tr("listCols.date"),
+    tr("listCols.supplier"),
+    tr("listCols.currency"),
+    tr("listCols.subtotal"),
+    tr("listCols.vat"),
+    tr("listCols.total"),
+    tr("listCols.journal"),
+    tr("listCols.status"),
+    tr("listCols.actions"),
+  ];
 
   return (
-    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6" dir="rtl">
+    <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <RotateCcw className="h-6 w-6 text-primary" />مرتجعات المشتريات
+            <RotateCcw className="h-6 w-6 text-primary" />{tr("title")}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">إدارة مرتجعات الموردين — عند الترحيل يُنقص رصيد المخزون تلقائياً</p>
+          <p className="text-sm text-muted-foreground mt-1">{tr("subtitle")}</p>
         </div>
         <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />مرتجع جديد
+          <Plus className="h-4 w-4" />{tr("newReturn")}
         </Button>
       </div>
 
@@ -624,65 +643,66 @@ export default function PurchaseReturns() {
       {showForm && (
         <FormPanel
           icon={RotateCcw}
-          title={editingId ? "تعديل مرتجع مشتريات" : "مرتجع مشتريات جديد"}
+          title={editingId ? tr("editTitle") : tr("newTitle")}
           subtitle={form.invoiceId
-            ? <>مستند من فاتورة رقم <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> — يمكنك تعديل الكميات قبل الحفظ</>
-            : "إرجاع أصناف من فاتورة مشتريات وتقليل المخزون"}
+            ? <>{tr("fromInvoiceHint")} <span className="font-mono text-orange-600">{invoices.find((i: any) => String(i.id) === form.invoiceId)?.docNumber ?? `PI-${form.invoiceId}`}</span> {tr("fromInvoiceTail")}</>
+            : tr("createSubtitle")}
           width="6xl"
           onClose={reset}
           onSave={() => handleSubmit({ preventDefault() {} } as any)}
           saving={saveMut.isPending}
           saveDisabled={!form.returnDate}
-          saveLabel="حفظ المرتجع"
+          saveLabel={tr("saveLabel")}
         >
-          <Tabs defaultValue="header" dir="rtl" className="space-y-4">
+          <Tabs defaultValue="header" dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
             <TabsList className="h-9 bg-muted/40 border gap-1">
               <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+                <FileText className="h-3.5 w-3.5" />{tr("headerData")}
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="header" className="mt-0 space-y-4">
             <FormGrid cols={4}>
-              <Field label="رقم المرتجع"><Input
+              <Field label={tr("returnNumber")}><Input
                 ref={docNumberRef}
-                placeholder={seqPeek.loading ? "…" : "تلقائي"}
+                placeholder={seqPeek.loading ? "…" : t("common.auto")}
                 dir="ltr"
                 className={cn("text-left", (editingId != null || seqPeek.hasSequence) && "bg-muted/40 cursor-not-allowed")}
                 value={form.docNumber}
                 onChange={e => { if (editingId == null && !seqPeek.hasSequence) setForm((p: any) => ({ ...p, docNumber: e.target.value })); }}
                 readOnly={editingId != null || seqPeek.hasSequence}
-                title={editingId != null ? "الرقم محفوظ — لا يمكن تعديله" : (seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                title={editingId != null ? t("purchasingPages.purchaseInvoiceForm.lockTitle") : (seqPeek.hasSequence ? `${seqPeek.sequenceCode ?? ""}` : undefined)}
               /></Field>
-              <Field label="التاريخ" required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
-              <Field label="المورد">
-                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder="المورد..." />
+              <Field label={t("common.date")} required><Input type="date" value={form.returnDate} onChange={e => setForm((p: any) => ({ ...p, returnDate: e.target.value }))} /></Field>
+              <Field label={tr("supplierLabel")}>
+                <SearchCombobox items={supplierItems} value={form.supplierId} onValueChange={v => setForm((p: any) => ({ ...p, supplierId: v }))} placeholder={tr("supplierPlaceholder")} />
               </Field>
               <SupplierVatControl
                 suppliers={suppliers}
                 supplierId={form.supplierId}
                 onSupplierChange={(v) => setForm((p: any) => ({ ...p, supplierId: v }))}
               />
-              <Field label="فاتورة المشتريات"><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder="رقم الفاتورة..." /></Field>
-              <Field label="رقم فاتورة المورد"><Input placeholder="رقم الفاتورة لدى المورد" value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
-              <Field label="الفرع">
+              <Field label={tr("supplierInvoiceLabel")}><SearchCombobox items={invoiceItems} value={form.invoiceId} onValueChange={v => { setForm((p: any) => ({ ...p, invoiceId: v })); if (v) loadInvoiceIntoForm(v); }} placeholder={tr("invoiceNumberPh")} /></Field>
+              <Field label={tr("supplierInvoiceNumber")}><Input placeholder={tr("supplierInvoiceNumberPh")} value={form.supplierInvoiceNumber} onChange={e => setForm((p: any) => ({ ...p, supplierInvoiceNumber: e.target.value }))} /></Field>
+              <Field label={tr("branch")}>
                 <Select value={form.branchId || undefined} onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}>
-                  <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t("purchasingPages.purchaseInvoiceForm.fields.branchPh")} /></SelectTrigger>
                   <SelectContent>
                     {(branches as any[]).map((b: any) => (
-                      <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                      <SelectItem key={b.id} value={String(b.id)}>{branchName(b)}{b.isMain ? tr("mainBranch") : ""}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="العملة">
+              <Field label={tr("currency")}>
                 {currencies.length > 0 ? (
                   <Select value={form.currencyCode || undefined} onValueChange={handleCurrencyChange}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="العملة..." /></SelectTrigger>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("currencyPh")} /></SelectTrigger>
                     <SelectContent>
-                      {currencies.map((c: any) => (
-                        <SelectItem key={c.id} value={c.code}>{c.code}{c.nameAr ? ` — ${c.nameAr}` : ""}</SelectItem>
-                      ))}
+                      {currencies.map((c: any) => {
+                        const cName = isRtl ? c.nameAr : (c.nameEn ?? c.nameAr);
+                        return <SelectItem key={c.id} value={c.code}>{c.code}{cName ? ` — ${cName}` : ""}</SelectItem>;
+                      })}
                     </SelectContent>
                   </Select>
                 ) : (
@@ -691,7 +711,7 @@ export default function PurchaseReturns() {
               </Field>
               <Field
                 label={<span className="flex items-center justify-between w-full">
-                  <span>سعر الصرف</span>
+                  <span>{tr("exchangeRate")}</span>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
                     <span className="text-[10px] text-muted-foreground font-normal">= {Number(form.exchangeRate) > 0 ? (1 / Number(form.exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code}</span>
                   )}
@@ -699,7 +719,7 @@ export default function PurchaseReturns() {
               >
                 <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
               </Field>
-              <Field label="نوع التسوية" required>
+              <Field label={tr("settlementType")} required>
                 <Select
                   value={form.paymentType}
                   onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v, cashBoxId: v === "cash" ? p.cashBoxId : "", bankAccountId: v === "bank" ? p.bankAccountId : "" }))}
@@ -707,21 +727,21 @@ export default function PurchaseReturns() {
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="credit">
-                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />على الحساب (تخفيض ذمّة المورد)</span>
+                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("settlement.credit")}</span>
                     </SelectItem>
                     <SelectItem value="cash">
-                      <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />نقدي (استرداد للخزنة)</span>
+                      <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />{tr("settlement.cash")}</span>
                     </SelectItem>
                     <SelectItem value="bank">
-                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />بنكي (استرداد لحساب بنكي)</span>
+                      <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("settlement.bank")}</span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="ملاحظات"><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
+              <Field label={tr("notes")}><Input value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
             </FormGrid>
 
-            {/* Payment link panel: credit (supplier), cash (cash box), or bank (bank account) */}
+            {/* Payment link panel */}
             {form.paymentType === "bank" ? (
               (() => {
                 const balMap: Record<number, number> = Object.fromEntries(
@@ -729,10 +749,10 @@ export default function PurchaseReturns() {
                 );
                 const activeBanks = (bankAccounts as any[]).filter((b: any) => b.isActive !== false);
                 const items = [
-                  { value: "", label: "— اختر الحساب البنكي —" },
+                  { value: "", label: tr("selectBank") },
                   ...activeBanks.map((b: any) => ({
                     value: String(b.id),
-                    label: `${b.nameAr ?? b.nameEn ?? `#${b.id}`} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
+                    label: `${branchName(b)} — ${tr("balanceLabel")}: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
                   })),
                 ];
                 const sel = activeBanks.find((b: any) => String(b.id) === form.bankAccountId);
@@ -741,8 +761,8 @@ export default function PurchaseReturns() {
                 return (
                   <div className="space-y-2">
                     <div className="grid md:grid-cols-2 gap-3">
-                      <Field label="الحساب البنكي" required>
-                        <SearchCombobox items={items} value={form.bankAccountId} onValueChange={v => setForm((p: any) => ({ ...p, bankAccountId: v }))} placeholder="اختر الحساب البنكي..." />
+                      <Field label={tr("bankAccount")} required>
+                        <SearchCombobox items={items} value={form.bankAccountId} onValueChange={v => setForm((p: any) => ({ ...p, bankAccountId: v }))} placeholder={tr("bankAccountPh")} />
                       </Field>
                     </div>
                     <div className={cn(
@@ -753,16 +773,16 @@ export default function PurchaseReturns() {
                       <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
                       {!form.bankAccountId ? (
                         <div className="text-xs">
-                          <p className="font-semibold">استرداد بنكي — اختر الحساب البنكي لإيداع المبلغ المُسترد</p>
-                          <p className="opacity-80 mt-0.5">عند ترحيل المرتجع سيتم إضافة قيمته إلى رصيد الحساب البنكي.</p>
+                          <p className="font-semibold">{tr("bankRefundTitle")}</p>
+                          <p className="opacity-80 mt-0.5">{tr("bankRefundDesc")}</p>
                         </div>
                       ) : (
                         <div className="text-xs flex-1">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                            <span className="font-semibold">الحساب: <strong>{sel?.nameAr ?? sel?.nameEn}</strong></span>
-                            <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />الرصيد: <strong className="font-mono">{fmt(bal)}</strong></span>
-                            <span className="flex items-center gap-1">+ المُسترد: <strong className="font-mono">{fmt(totalAmount)}</strong></span>
-                            <span className="flex items-center gap-1 border-r pr-3 mr-1">الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}</span>
+                            <span className="font-semibold">{tr("accountLabel")}: <strong>{branchName(sel)}</strong></span>
+                            <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />{tr("balanceLabel")}: <strong className="font-mono">{fmt(bal)}</strong></span>
+                            <span className="flex items-center gap-1">{tr("plusRefund")}: <strong className="font-mono">{fmt(totalAmount)}</strong></span>
+                            <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>{tr("balanceAfterPost")}: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}</span>
                           </div>
                         </div>
                       )}
@@ -786,24 +806,24 @@ export default function PurchaseReturns() {
                     <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
                     {!form.supplierId ? (
                       <div className="text-xs">
-                        <p className="font-semibold">تسوية على الحساب — اختر المورد لتخفيض رصيده</p>
-                        <p className="opacity-80 mt-0.5">سيتم تقليل الذمّة الدائنة للمورد بقيمة المرتجع.</p>
+                        <p className="font-semibold">{tr("creditTitle")}</p>
+                        <p className="opacity-80 mt-0.5">{tr("creditDesc")}</p>
                       </div>
                     ) : (
                       <div className="text-xs flex-1">
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span className="font-semibold">المورد: <strong>{sup?.nameAr ?? "—"}</strong></span>
+                          <span className="font-semibold">{tr("supplierLabel")}: <strong>{supName(sup)}</strong></span>
                           <span className="flex items-center gap-1">
                             <TrendingUp className="h-3 w-3" />
-                            الرصيد الحالي: <strong className="font-mono">{fmt(currentBal)}</strong> {form.currencyCode}
+                            {tr("currentBalance")}: <strong className="font-mono">{fmt(currentBal)}</strong> {form.currencyCode}
                           </span>
                           <span className="flex items-center gap-1">
                             <TrendingDown className="h-3 w-3" />
-                            − قيمة المرتجع: <strong className="font-mono">{fmt(refund)}</strong>
+                            {tr("minusReturn")}: <strong className="font-mono">{fmt(refund)}</strong>
                           </span>
-                          <span className="flex items-center gap-1 border-r pr-3 mr-1">
-                            الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
-                            {newBal < 0 && <span className="text-emerald-700 mr-1">(المورد مدين لنا)</span>}
+                          <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>
+                            {tr("balanceAfterPost")}: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
+                            {newBal < 0 && <span className={cn("text-emerald-700", isRtl ? "mr-1" : "ml-1")}>{tr("supplierOwesUs")}</span>}
                           </span>
                         </div>
                       </div>
@@ -818,10 +838,10 @@ export default function PurchaseReturns() {
                 );
                 const activeBoxes = (cashBoxes as any[]).filter((b: any) => b.isActive);
                 const cashBoxItems = [
-                  { value: "", label: "— اختر الخزنة —" },
+                  { value: "", label: tr("selectCashBoxOpt") },
                   ...activeBoxes.map((b: any) => ({
                     value: String(b.id),
-                    label: `${b.nameAr} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
+                    label: `${branchName(b)} — ${tr("balanceLabel")}: ${fmt(balMap[b.id] ?? 0)} ${form.currencyCode || "SAR"}`,
                   })),
                 ];
                 const selBox = activeBoxes.find((b: any) => String(b.id) === form.cashBoxId);
@@ -832,8 +852,8 @@ export default function PurchaseReturns() {
                 return (
                   <div className="space-y-2">
                     <div className="grid md:grid-cols-2 gap-3">
-                      <Field label="الخزنة" required>
-                        <SearchCombobox items={cashBoxItems} value={form.cashBoxId} onValueChange={v => setForm((p: any) => ({ ...p, cashBoxId: v }))} placeholder="اختر الخزنة..." />
+                      <Field label={tr("cashBox")} required>
+                        <SearchCombobox items={cashBoxItems} value={form.cashBoxId} onValueChange={v => setForm((p: any) => ({ ...p, cashBoxId: v }))} placeholder={tr("cashBoxPh")} />
                       </Field>
                     </div>
                     <div className={cn(
@@ -845,27 +865,27 @@ export default function PurchaseReturns() {
                       <Wallet className="h-4 w-4 mt-0.5 shrink-0" />
                       {!form.cashBoxId ? (
                         <div className="text-xs">
-                          <p className="font-semibold">استرداد نقدي — اختر الخزنة لإيداع المبلغ المُسترد</p>
-                          <p className="opacity-80 mt-0.5">عند ترحيل المرتجع سيتم إضافة قيمته إلى رصيد الخزنة.</p>
+                          <p className="font-semibold">{tr("cashRefundTitle")}</p>
+                          <p className="opacity-80 mt-0.5">{tr("cashRefundDesc")}</p>
                         </div>
                       ) : (
                         <div className="text-xs flex-1">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                            <span className="font-semibold">الخزنة: <strong>{selBox?.nameAr}</strong></span>
+                            <span className="font-semibold">{tr("cashBox")}: <strong>{branchName(selBox)}</strong></span>
                             <span className="flex items-center gap-1">
                               <TrendingUp className="h-3 w-3" />
-                              الرصيد: <strong className="font-mono">{fmt(boxBal)}</strong>
+                              {tr("balanceLabel")}: <strong className="font-mono">{fmt(boxBal)}</strong>
                             </span>
                             <span className="flex items-center gap-1">
-                              + المُسترد: <strong className="font-mono">{fmt(totalAmount)}</strong>
+                              {tr("plusRefund")}: <strong className="font-mono">{fmt(totalAmount)}</strong>
                             </span>
-                            <span className="flex items-center gap-1 border-r pr-3 mr-1">
-                              الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
+                            <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>
+                              {tr("balanceAfterPost")}: <strong className="font-mono">{fmt(newBal)}</strong> {form.currencyCode}
                             </span>
                           </div>
                           {overMax && (
                             <p className="mt-1.5 text-[11px] font-semibold">
-                              ⚠ الرصيد سيتجاوز الحد الأقصى للخزنة ({fmt(maxBal)}) بمقدار {fmt(newBal - maxBal)}
+                              {tr("exceedMaxWarn", { max: fmt(maxBal), over: fmt(newBal - maxBal) })}
                             </p>
                           )}
                         </div>
@@ -873,7 +893,7 @@ export default function PurchaseReturns() {
                     </div>
                     {activeBoxes.length === 0 && (
                       <p className="text-[11px] text-muted-foreground">
-                        لا توجد خزن نشطة. يرجى إضافة خزنة من <strong>النقد والبنوك ← الخزن</strong>.
+                        {tr("noCashBoxes")}<strong>{tr("cashBanksMenu")}</strong>.
                       </p>
                     )}
                   </div>
@@ -888,7 +908,7 @@ export default function PurchaseReturns() {
             <div data-enter-nav-container="lines" className="space-y-1.5">
               <div className="border-t pt-4 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />
-                <span>أصناف المرتجع ({lines.filter(l => l.itemId || l.itemName).length})</span>
+                <span>{tr("linesTitle")} ({lines.filter(l => l.itemId || l.itemName).length})</span>
               </div>
               {(() => {
                 const GRID_COLS_PR = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
@@ -896,8 +916,8 @@ export default function PurchaseReturns() {
               <div className="rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
               <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: GRID_COLS_PR }}>
-                {["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "السعر", "خصم%", "ضريبة%", "الإجمالي", "ملاحظات", ""].map((h, i) => (
-                  <p key={i} className={cn("text-[11px] font-medium truncate", h === "الإجمالي" ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
+                {lineColHeaders.map((h, i) => (
+                  <p key={i} className={cn("text-[11px] font-medium truncate", h === tr("lineCols.total") ? "font-semibold text-primary" : "text-muted-foreground")} title={h}>{h}</p>
                 ))}
               </div>
               <div className="divide-y">
@@ -909,22 +929,22 @@ export default function PurchaseReturns() {
                         items={itemComboItems}
                         value={l.itemId}
                         onValueChange={v => selectItem(l._id, v)}
-                        placeholder="اختر صنف..."
+                        placeholder={tr("selectItemCombo")}
                       />
                     ) : (
-                      <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                      <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                         onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                     )}
-                    <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                    <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={t("common.auto")} value={l.itemCode}
                       onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                     {warehouses.length > 0 ? (
                       <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
                         <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                          <SelectValue placeholder="اختر مستودع..." />
+                          <SelectValue placeholder={tr("lineCols.warehouse")} />
                         </SelectTrigger>
                         <SelectContent>
                           {warehouses.map((w: any) => (
-                            <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                            <SelectItem key={w.id} value={String(w.id)}>{warehouseName(w)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -936,18 +956,18 @@ export default function PurchaseReturns() {
                       const opts = itemUnits.length > 0
                         ? itemUnits.map((iu: any) => ({
                             value: String(iu.unitId),
-                            label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
+                            label: `${unitName(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${iu.conversionFactor})` : ""}`,
                           }))
-                        : (units as any[]).map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+                        : (units as any[]).map((u: any) => ({ value: String(u.id), label: unitName(u) }));
                       return units.length > 0 ? (
                         <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
                           <SelectContent>
                             {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                        <Input className="h-8 text-xs" placeholder={tr("unitPh")} value={l.unit}
                           onChange={e => updateLine(l._id, "unit", e.target.value)} />
                       );
                     })()}
@@ -977,7 +997,7 @@ export default function PurchaseReturns() {
 
               <Button type="button" variant="outline" size="sm" className="gap-2"
                 onClick={addLine}>
-                <Plus className="h-4 w-4" />إضافة صنف
+                <Plus className="h-4 w-4" />{tr("addLine")}
               </Button>
             </div>
 
@@ -997,44 +1017,42 @@ export default function PurchaseReturns() {
                   onChange={e => setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }))}
                 />
                 <div className="space-y-0.5">
-                  <p className="text-xs font-semibold">السعر شامل الضريبة</p>
+                  <p className="text-xs font-semibold">{tr("priceIncludesVat")}</p>
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    {priceIncludesVat
-                      ? "السعر المُدخل يتضمن الضريبة — يستخرج النظام قيمة الضريبة من المبلغ"
-                      : "السعر المُدخل بدون ضريبة — يضيف النظام الضريبة فوق المبلغ"}
+                    {priceIncludesVat ? tr("vatHintIncl") : tr("vatHintExcl")}
                   </p>
                 </div>
               </label>
 
               <div className="w-72 text-sm border rounded-xl p-3 bg-muted/30 space-y-2">
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
-                  <span>طريقة الحساب</span>
+                  <span>{tr("calcMethod")}</span>
                   <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                    {priceIncludesVat ? "شامل الضريبة" : "غير شامل الضريبة"}
+                    {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">المجموع شامل الضريبة</span>
+                  <span className="text-muted-foreground">{tr("subtotalIncl")}</span>
                   <span className="font-mono">{fmt(grossTotal)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">قيمة الضريبة</span>
+                  <span className="text-muted-foreground">{tr("vatAmount")}</span>
                   <span className="font-mono text-amber-700">{fmt(vatAmount)}</span>
                 </div>
                 {lineDiscountTotal > 0 && (
                   <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
-                    <span className="text-muted-foreground">خصم الأصناف</span>
+                    <span className="text-muted-foreground">{tr("itemDiscount")}</span>
                     <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                   </div>
                 )}
                 <DiscountRow gross={grossTotal} value={form.discountAmount ?? "0"} onChange={v => setForm((p: any) => ({ ...p, discountAmount: v }))} />
                 <div className="flex justify-between font-bold border-t pt-2 text-base">
-                  <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
+                  <span>{tr("totalLabel")}{priceIncludesVat ? ` ${tr("totalIncl").replace(tr("totalLabel"), "").trim() || ""}` : ""}</span>
                   <span className="font-mono text-primary">{fmt(totalAmount)}</span>
                 </div>
                 {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
                   <p className="text-[10px] text-muted-foreground border-t pt-1">
-                    المكافئ بـ {defaultCurrency?.code}: {fmt(totalAmount / Number(form.exchangeRate))}
+                    {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount / Number(form.exchangeRate))}
                   </p>
                 )}
               </div>
@@ -1047,15 +1065,15 @@ export default function PurchaseReturns() {
       {/* ── List ─────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? (
-          <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل...</div>
+          <div className="p-12 text-center text-muted-foreground text-sm">{tr("loading")}</div>
         ) : returns_.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground text-sm">لا توجد مرتجعات بعد</div>
+          <div className="p-12 text-center text-muted-foreground text-sm">{tr("noReturns")}</div>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 border-b">
-                {["رقم المرتجع","التاريخ","المورد","العملة","المجموع","الضريبة","الإجمالي","القيد","الحالة","إجراءات"].map(h => (
-                  <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>
+                {listColHeaders.map(h => (
+                  <th key={h} className={cn("px-3 py-3 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1063,7 +1081,7 @@ export default function PurchaseReturns() {
               {returns_.map(r => (
                 <tr key={r.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
                   onDoubleClick={() => startEdit(r.id)}
-                  title={r.status === "draft" ? "انقر مرتين للتعديل" : "انقر مرتين للعرض (فك الترحيل أولاً للتعديل)"}>
+                  title={r.status === "draft" ? tr("rowDoubleClickEdit") : tr("rowDoubleClickView")}>
                   <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber ?? `PR-${r.id}`}</td>
                   <td className="px-3 py-2.5">{r.returnDate}</td>
                   <td className="px-3 py-2.5">{supMap[r.supplierId] ?? "—"}</td>
@@ -1076,7 +1094,7 @@ export default function PurchaseReturns() {
                       <button
                         type="button"
                         className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
-                        title="عرض القيد المحاسبي"
+                        title={tr("viewJournalTip")}
                         onClick={() => { window.location.href = `/accounting/journals/${r.journalEntryId}?tab=lines`; }}>
                         JE-{r.journalEntryId}
                       </button>
@@ -1090,23 +1108,23 @@ export default function PurchaseReturns() {
                         ? "bg-green-50 text-green-700 border-green-200"
                         : "bg-amber-50 text-amber-700 border-amber-200"
                     )}>
-                      {r.status === "posted" ? "مرحّل" : "مسودة"}
+                      {r.status === "posted" ? tr("postedM") : tr("draft")}
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10"
-                        title="طباعة المرتجع" onClick={() => openPrint(r)}>
+                        title={tr("printTip")} onClick={() => openPrint(r)}>
                         <Printer className="h-3.5 w-3.5" />
                       </Button>
                       {r.status === "draft" && (
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-700 hover:bg-blue-50"
-                          title="تعديل المرتجع" onClick={() => startEdit(r.id)}>
+                          title={tr("editTip")} onClick={() => startEdit(r.id)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       )}
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                        title="نسخة مماثلة" onClick={() => duplicateReturn(r.id)}>
+                        title={tr("duplicateTip")} onClick={() => duplicateReturn(r.id)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
                       {r.status === "draft" && (
@@ -1116,7 +1134,7 @@ export default function PurchaseReturns() {
                           disabled={postMut.isPending}
                           onClick={() => postMut.mutate(r.id)}
                         >
-                          <CheckCircle2 className="h-3.5 w-3.5" />ترحيل
+                          <CheckCircle2 className="h-3.5 w-3.5" />{tr("postShort")}
                         </Button>
                       )}
                       {r.status === "posted" && (
@@ -1124,14 +1142,14 @@ export default function PurchaseReturns() {
                           variant="outline" size="sm"
                           className="h-7 text-xs gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
                           disabled={unpostMut.isPending}
-                          onClick={() => { if (confirm("سيتم فك ترحيل المرتجع وحذف القيد المحاسبي وعكس حركة المخزون. متابعة؟")) unpostMut.mutate(r.id); }}
+                          onClick={() => { if (confirm(tr("confirmUnpost"))) unpostMut.mutate(r.id); }}
                         >
-                          <Undo2 className="h-3.5 w-3.5" />فك الترحيل
+                          <Undo2 className="h-3.5 w-3.5" />{tr("unpostShort")}
                         </Button>
                       )}
                       {r.status === "draft" && (
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={() => { if (confirm("حذف المرتجع؟")) deleteMut.mutate(r.id); }}>
+                          onClick={() => { if (confirm(tr("confirmDelete"))) deleteMut.mutate(r.id); }}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
@@ -1152,4 +1170,3 @@ export default function PurchaseReturns() {
     </div>
   );
 }
-

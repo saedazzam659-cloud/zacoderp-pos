@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
-import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
@@ -10,20 +10,17 @@ import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
-import { AccountCombobox } from "@/components/AccountCombobox";
 import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingCart, Plus, Trash2, FileText, ListOrdered, AlertCircle, Wallet, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface InvoiceLine {
@@ -70,6 +67,16 @@ function calcLine(l: InvoiceLine, priceIncludesVat = false) {
 }
 
 export default function PurchaseInvoiceForm() {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const fmt = (n: any) => Number(n || 0).toLocaleString(isRtl ? "ar-SA" : "en-US", { minimumFractionDigits: 2 });
+  const tr = (k: string, opts?: any): string => t(`purchasingPages.purchaseInvoiceForm.${k}`, opts) as string;
+  const supName = (s: any) => isRtl ? (s?.nameAr ?? s?.nameEn ?? "") : (s?.nameEn ?? s?.nameAr ?? "");
+  const itemNameOf = (i: any) => isRtl ? (i?.nameAr ?? i?.nameEn ?? "") : (i?.nameEn ?? i?.nameAr ?? "");
+  const branchName = (b: any) => isRtl ? (b?.nameAr ?? b?.nameEn ?? `#${b?.id}`) : (b?.nameEn ?? b?.nameAr ?? `#${b?.id}`);
+  const unitNameOf = (u: any) => isRtl ? (u?.nameAr ?? u?.nameEn ?? "") : (u?.nameEn ?? u?.nameAr ?? "");
+  const warehouseName = (w: any) => isRtl ? (w?.nameAr ?? w?.nameEn ?? "") : (w?.nameEn ?? w?.nameAr ?? "");
+
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -117,7 +124,6 @@ export default function PurchaseInvoiceForm() {
   const { containerRef, onKeyDown } = useEnterNavigation(() => handleSave());
   const docNumberRef = useRef<HTMLInputElement>(null);
 
-  // Accounting accounts (used to build the journal entry on post)
   const [inventoryAccountId, setInventoryAccountId] = useState("");
   const [taxAccountId,       setTaxAccountId]       = useState("");
   const [discountAccountId,  setDiscountAccountId]  = useState("");
@@ -144,7 +150,6 @@ export default function PurchaseInvoiceForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventoryAccountId, taxAccountId, discountAccountId]);
 
-  // ── Lookups ─────────────────────────────────────────────
   const { data: suppliers = [] } = useQuery<any[]>({
     queryKey: ["suppliers", cid],
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/suppliers?companyId=${cid}` : `${API}/api/suppliers`, { headers: authH }); return r.json(); },
@@ -205,14 +210,12 @@ export default function PurchaseInvoiceForm() {
     setLines(prev => prev.map(l => l.warehouseId ? l : { ...l, warehouseId: String(defaultWarehouse.id) }));
   }, [defaultWarehouse?.id, hasEmptyWarehouse]);
 
-  // ── Supplier balances (for credit payment) ───────────────
   const { data: supplierBalances = [] } = useQuery<any[]>({
     queryKey: ["supplier-balances", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/suppliers/balances?companyId=${cid}`, { headers: authH }); return r.json(); },
     enabled: !!user && !!cid && paymentType === "credit",
   });
 
-  // ── Cash boxes + balances (for cash payment) ─────────────
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: async () => { const r = await fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: authH }); return r.json(); },
@@ -234,7 +237,6 @@ export default function PurchaseInvoiceForm() {
     enabled: !!user && !!cid && paymentType === "bank",
   });
 
-  // ── Currency helpers ─────────────────────────────────────
   const defaultCurrency = currencies.find((c: any) => c.isDefault) ?? currencies[0];
 
   function getLatestRate(selectedCode: string): string {
@@ -258,13 +260,11 @@ export default function PurchaseInvoiceForm() {
     setExchangeRate(getLatestRate(code));
   }
 
-  // Set default currency on first load
   useEffect(() => {
     if (!isNew || !defaultCurrency || currencyCode) return;
     setCurrencyCode(defaultCurrency.code);
   }, [isNew, defaultCurrency?.code]);
 
-  // ── Load existing invoice ────────────────────────────────
   const { data: existing, isLoading: loadingEdit } = useQuery({
     queryKey: ["purchase-invoice", editId],
     queryFn: async () => {
@@ -274,7 +274,6 @@ export default function PurchaseInvoiceForm() {
     enabled: !!editId,
   });
 
-  // Auto-populate from the central sequence engine when creating new.
   useEffect(() => {
     if (!isNew) return;
     if (seqPeek.hasSequence && seqPeek.number) setDocNumber(seqPeek.number);
@@ -321,7 +320,6 @@ export default function PurchaseInvoiceForm() {
     })) : [newLine()]);
   }, [existing]);
 
-  // ── Duplicate from another invoice (?from=<id> on /new) ──
   const duplicatedRef = useRef(false);
   useEffect(() => {
     if (!isNew || duplicatedRef.current || !user) return;
@@ -372,7 +370,7 @@ export default function PurchaseInvoiceForm() {
           finalCost:   String(l.finalCost ?? "0"),
           notes:       l.notes ?? "",
         })) : [newLine()]);
-        toast({ title: "✓ تم إنشاء نسخة مماثلة — راجع البيانات قبل الحفظ" });
+        toast({ title: tr("duplicated") });
         const url = new URL(window.location.href);
         url.searchParams.delete("from");
         window.history.replaceState({}, "", url.toString());
@@ -381,7 +379,6 @@ export default function PurchaseInvoiceForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, user, cid]);
 
-  // ── Line helpers ─────────────────────────────────────────
   function updateLine(id: string, field: keyof InvoiceLine, value: string) {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l;
@@ -399,7 +396,6 @@ export default function PurchaseInvoiceForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [priceIncludesVat]);
 
-  // Cache item-specific unit prices: itemId → rows
   const [itemUnitsMap, setItemUnitsMap] = useState<Record<string, any[]>>({});
   async function fetchItemUnits(itemId: string): Promise<any[]> {
     if (itemUnitsMap[itemId]) return itemUnitsMap[itemId];
@@ -420,10 +416,10 @@ export default function PurchaseInvoiceForm() {
       const updated: InvoiceLine = {
         ...l,
         itemId:    String(item.id),
-        itemName:  item.nameAr ?? "",
+        itemName:  itemNameOf(item),
         itemCode:  item.code   ?? "",
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
-        unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
+        unit:      unitNameOf(base?.unit) || unitNameOf(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
         unitPrice: trimTrailingZeros(base?.costPrice ?? item.costPrice ?? "0"),
         vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
@@ -442,7 +438,7 @@ export default function PurchaseInvoiceForm() {
       const updated: InvoiceLine = {
         ...l,
         unitId: newUnitId,
-        unit: row?.unit?.nameAr ?? globalUnit?.nameAr ?? "",
+        unit: unitNameOf(row?.unit) || unitNameOf(globalUnit) || "",
         conversionFactor: String(row?.conversionFactor ?? "1"),
         unitPrice: row?.costPrice != null ? trimTrailingZeros(row.costPrice) : l.unitPrice,
       };
@@ -453,32 +449,31 @@ export default function PurchaseInvoiceForm() {
 
   async function distributeExpenses() {
     if (!selectedLc || !lines.length) {
-      toast({ title: "اختر اعتماداً مستندياً أولاً", variant: "destructive" });
+      toast({ title: tr("selectLcFirst"), variant: "destructive" });
       return;
     }
     const totalBase = distMethod === "qty"
       ? lines.reduce((s, l) => s + (Number(l.qty) || 0), 0)
       : lines.reduce((s, l) => s + (Number(l.lineTotal) || 0), 0);
     if (!totalBase) {
-      toast({ title: "أدخل كميات أو أسعار للأصناف قبل التوزيع", variant: "destructive" });
+      toast({ title: tr("enterLinesFirst"), variant: "destructive" });
       return;
     }
 
-    // Fetch LC detail to get its expenses (list endpoint omits them).
     let totalLcExpenses = 0;
     try {
       const url = `${API}/api/purchasing/letters-of-credit/${selectedLc.id}${cid ? `?companyId=${cid}` : ""}`;
       const r = await fetch(url, { headers: authH });
-      if (!r.ok) throw new Error("فشل تحميل بيانات الاعتماد");
+      if (!r.ok) throw new Error(tr("lcLoadFail"));
       const detail = await r.json();
       totalLcExpenses = (detail.expenses ?? []).reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
     } catch (err: any) {
-      toast({ title: err.message || "فشل تحميل بيانات الاعتماد", variant: "destructive" });
+      toast({ title: err.message || tr("lcLoadFail"), variant: "destructive" });
       return;
     }
 
     if (totalLcExpenses <= 0) {
-      toast({ title: "لا توجد مصاريف على هذا الاعتماد لتوزيعها", variant: "destructive" });
+      toast({ title: tr("lcNoExpenses"), variant: "destructive" });
       return;
     }
 
@@ -488,10 +483,9 @@ export default function PurchaseInvoiceForm() {
       const finalCost = Number(l.lineTotal) + share;
       return { ...l, expenseShare: share.toFixed(2), finalCost: finalCost.toFixed(2) };
     }));
-    toast({ title: "تم توزيع مصاريف الاعتماد", description: `الإجمالي الموزع: ${fmt(totalLcExpenses)} ${selectedLc.currencyCode ?? ""}` });
+    toast({ title: tr("lcDistributed"), description: tr("lcDistributedDesc", { total: fmt(totalLcExpenses), cur: selectedLc.currencyCode ?? "" }) });
   }
 
-  // ── Totals ───────────────────────────────────────────────
   const subtotal       = lines.reduce((s, l) => { const { subtotal } = calcLine(l, priceIncludesVat); return s + subtotal; }, 0);
   const vatAmount      = lines.reduce((s, l) => { const { lineTotal, subtotal } = calcLine(l, priceIncludesVat); return s + (lineTotal - subtotal); }, 0);
   const lineDiscountTotal = lines.reduce((s, l) => {
@@ -505,7 +499,6 @@ export default function PurchaseInvoiceForm() {
   const totalExpLoaded = lines.reduce((s, l) => s + (Number(l.expenseShare) || 0), 0);
   const selectedLc     = lcs.find((lc: any) => String(lc.id) === lcId);
 
-  // ── Save ─────────────────────────────────────────────────
   const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
@@ -513,14 +506,13 @@ export default function PurchaseInvoiceForm() {
       const res = await fetch(url, { method: editId ? "PUT" : "POST", headers, body: JSON.stringify(data) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error);
 
-      // Auto-post (ترحيل) after save only when enabled system-wide and still draft
       if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
         const postRes = await fetch(`${API}/api/purchasing/purchase-invoices/${j.id}/post`, {
           method: "PATCH", headers,
         });
         const postJson = await postRes.json().catch(() => ({}));
         if (!postRes.ok) {
-          throw new Error(`تم الحفظ ولكن فشل الترحيل: ${postJson.error || postRes.statusText}`);
+          throw new Error(tr("savedNotPosted", { err: postJson.error || postRes.statusText }));
         }
         return postJson;
       }
@@ -529,8 +521,8 @@ export default function PurchaseInvoiceForm() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
       toast({ title: autoPostingEnabled
-        ? (isNew ? "✓ تم إنشاء الفاتورة وترحيلها" : "✓ تم الحفظ والترحيل")
-        : (isNew ? "✓ تم إنشاء الفاتورة (مسودة — بحاجة إلى ترحيل يدوي)" : "✓ تم الحفظ (مسودة — بحاجة إلى ترحيل يدوي)")
+        ? (isNew ? tr("createdAndPosted") : tr("savedAndPosted"))
+        : (isNew ? tr("createdDraft") : tr("savedDraft"))
       });
       navigate("/purchasing/invoices");
     },
@@ -558,67 +550,80 @@ export default function PurchaseInvoiceForm() {
     });
   }
 
-  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">جارٍ التحميل...</div>;
+  if (!isNew && loadingEdit) return <div className="flex items-center justify-center h-64 text-muted-foreground">{tr("loadingEdit")}</div>;
 
-  // ── Combobox data ────────────────────────────────────────
   const supplierItems = [
-    { value: "", label: "— بدون مورد —" },
-    ...suppliers.map((s: any) => ({ value: String(s.id), label: s.nameAr })),
+    { value: "", label: tr("noSupplierOpt") },
+    ...suppliers.map((s: any) => ({ value: String(s.id), label: supName(s) })),
   ];
   const lcItems = [
-    { value: "", label: "— بدون اعتماد —" },
+    { value: "", label: tr("noLcOpt") },
     ...lcs.filter((l: any) => l.status !== "closed").map((l: any) => ({
       value: String(l.id), label: `${l.lcNumber} (${l.currencyCode} ${fmt(l.totalAmount)})`,
     })),
   ];
   const itemComboItems = [
-    { value: "", label: "— اختر صنف —" },
+    { value: "", label: tr("itemSearchPh") },
     ...inventoryItems.map((i: any) => ({
       value: String(i.id),
-      label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr,
+      label: i.code ? `${i.code} — ${itemNameOf(i)}` : itemNameOf(i),
     })),
   ];
-  const unitItems = units.map((u: any) => ({ value: String(u.id), label: u.nameAr }));
+  const unitItems = units.map((u: any) => ({ value: String(u.id), label: unitNameOf(u) }));
+
+  const HEADERS = [
+    tr("lineCols.item"),
+    tr("lineCols.itemCode"),
+    tr("lineCols.warehouse"),
+    tr("lineCols.unit"),
+    tr("lineCols.qty"),
+    tr("lineCols.weight"),
+    tr("lineCols.unitPrice"),
+    tr("lineCols.discount"),
+    tr("lineCols.vat"),
+    tr("lineCols.expenses"),
+    tr("lineCols.finalCost"),
+    tr("lineCols.notes"),
+    "",
+  ];
 
   return (
-    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir="rtl">
-      {/* Header */}
+    <div ref={containerRef} onKeyDown={onKeyDown} className="space-y-5 max-w-6xl mx-auto" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/purchasing/invoices")}>
-          <ArrowRight className="h-4 w-4" />
+          {isRtl ? <ArrowRight className="h-4 w-4" /> : <ArrowLeft className="h-4 w-4" />}
         </Button>
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
             <ShoppingCart className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-bold">{isNew ? "فاتورة مشتريات جديدة" : `تعديل الفاتورة #${editId}`}</h1>
-            <p className="text-xs text-muted-foreground">إنشاء فاتورة مشتريات مع تحميل مصاريف الاعتماد</p>
+            <h1 className="text-lg font-bold">{isNew ? tr("newTitle") : tr("editTitle", { id: editId })}</h1>
+            <p className="text-xs text-muted-foreground">{tr("subtitle")}</p>
           </div>
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl">
+      <Tabs value={activeTab} onValueChange={setActiveTab} dir={isRtl ? "rtl" : "ltr"}>
         <Card className="border-2">
           <CardHeader className="p-0">
             <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/20">
               <p className="text-[11px] text-muted-foreground">
-                {`${lines.filter(l => l.itemName).length} صنف — إجمالي: ${fmt(totalAmount + totalExpLoaded)}`}
+                {tr("linesSummary", { count: lines.filter(l => l.itemName).length, total: fmt(totalAmount + totalExpLoaded) })}
               </p>
               <TabsList className="h-8 bg-background border gap-1">
                 <TabsTrigger value="header" className="h-7 px-3 text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <FileText className="h-3.5 w-3.5" />البيانات الرأسية
+                  <FileText className="h-3.5 w-3.5" />{tr("headerData")}
                 </TabsTrigger>
               </TabsList>
             </div>
           </CardHeader>
 
-          {/* ── Header Tab ──────────────────────────────────── */}
           <TabsContent value="header" className="mt-0">
             <CardContent className="pt-5 pb-5 space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">رقم الفاتورة</Label>
+                  <Label className="text-xs">{tr("fields.invoiceNumber")}</Label>
                   {(() => {
                     const lockOnEdit = !isNew;
                     const lockOnSeq  = isNew && seqPeek.hasSequence;
@@ -627,80 +632,78 @@ export default function PurchaseInvoiceForm() {
                       <Input
                         ref={docNumberRef}
                         className={cn("h-9 text-sm", locked && "bg-muted/40 cursor-not-allowed")}
-                        placeholder={isNew && seqPeek.loading ? "…" : "تلقائي"}
+                        placeholder={isNew && seqPeek.loading ? "…" : tr("auto")}
                         value={docNumber}
                         onChange={e => { if (!locked) setDocNumber(e.target.value); }}
                         readOnly={locked}
-                        title={lockOnEdit ? "الرقم محفوظ — لا يمكن تعديله" : (lockOnSeq ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined)}
+                        title={lockOnEdit ? tr("lockTitle") : (lockOnSeq ? `${seqPeek.sequenceCode ?? ""}` : undefined)}
                       />
                     );
                   })()}
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">التاريخ *</Label>
+                  <Label className="text-xs">{tr("fields.date")}</Label>
                   <Input type="date" className="h-9 text-sm" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">المورد</Label>
-                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder="اختر المورد..." />
+                  <Label className="text-xs">{tr("fields.supplier")}</Label>
+                  <SearchCombobox items={supplierItems} value={supplierId} onValueChange={setSupplierId} placeholder={tr("fields.supplierPh")} />
                 </div>
                 <SupplierVatControl suppliers={suppliers} supplierId={supplierId} onSupplierChange={setSupplierId} />
                 <div className="space-y-1.5">
-                  <Label className="text-xs">رقم فاتورة المورد</Label>
-                  <Input className="h-9 text-sm" placeholder="رقم الفاتورة لدى المورد" value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
+                  <Label className="text-xs">{tr("fields.supplierInvoiceNumber")}</Label>
+                  <Input className="h-9 text-sm" placeholder={tr("fields.supplierInvoiceNumberPh")} value={supplierInvoiceNumber} onChange={e => setSupplierInvoiceNumber(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">الفرع</Label>
+                  <Label className="text-xs">{tr("fields.branch")}</Label>
                   <Select value={branchId || undefined} onValueChange={setBranchId}>
-                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="اختر الفرع..." /></SelectTrigger>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.branchPh")} /></SelectTrigger>
                     <SelectContent>
                       {(branches as any[]).map((b: any) => (
-                        <SelectItem key={b.id} value={String(b.id)}>{b.nameAr ?? b.nameEn ?? `#${b.id}`}{b.isMain ? " (الرئيسي)" : ""}</SelectItem>
+                        <SelectItem key={b.id} value={String(b.id)}>{branchName(b)}{b.isMain ? tr("fields.mainBranchTag") : ""}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">الاعتماد المستندي (اختياري)</Label>
-                  <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder="— بدون اعتماد —" />
+                  <Label className="text-xs">{tr("fields.lc")}</Label>
+                  <SearchCombobox items={lcItems} value={lcId} onValueChange={setLcId} placeholder={tr("fields.lcPh")} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">ملاحظات</Label>
+                  <Label className="text-xs">{tr("fields.notes")}</Label>
                   <Input className="h-9 text-sm" value={notes} onChange={e => setNotes(e.target.value)} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">نوع الدفع *</Label>
+                  <Label className="text-xs">{tr("fields.paymentType")}</Label>
                   <Select value={paymentType} onValueChange={(v) => { setPaymentType(v); if (v !== "cash") setCashBoxId(""); if (v !== "bank") setBankAccountId(""); }}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="credit">
-                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />آجل (على الحساب)</span>
+                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("payment.credit")}</span>
                       </SelectItem>
                       <SelectItem value="cash">
-                        <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />نقدي (من الخزنة)</span>
+                        <span className="flex items-center gap-2"><Wallet className="h-3.5 w-3.5" />{tr("payment.cash")}</span>
                       </SelectItem>
                       <SelectItem value="bank">
-                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />بنكي (من حساب بنكي)</span>
+                        <span className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />{tr("payment.bank")}</span>
                       </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                {/* Currency from currencies screen */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs">العملة</Label>
+                  <Label className="text-xs">{tr("fields.currency")}</Label>
                   {currencies.length > 0 ? (
                     <Select value={currencyCode} onValueChange={handleCurrencyChange}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="العملة..." /></SelectTrigger>
+                      <SelectTrigger className="h-9 text-sm"><SelectValue placeholder={tr("fields.currencyPh")} /></SelectTrigger>
                       <SelectContent>
-                        {currencies.map((c: any) => (
-                          <SelectItem key={c.id} value={c.code}>
-                            {c.code} {c.nameAr ? `— ${c.nameAr}` : ""}
-                          </SelectItem>
-                        ))}
+                        {currencies.map((c: any) => {
+                          const cName = isRtl ? c.nameAr : (c.nameEn ?? c.nameAr);
+                          return <SelectItem key={c.id} value={c.code}>{c.code} {cName ? `— ${cName}` : ""}</SelectItem>;
+                        })}
                       </SelectContent>
                     </Select>
                   ) : (
@@ -708,10 +711,9 @@ export default function PurchaseInvoiceForm() {
                   )}
                 </div>
 
-                {/* Exchange rate — auto-filled from currency screen rates */}
                 <div className="space-y-1.5">
                   <Label className="text-xs flex items-center justify-between">
-                    <span>سعر الصرف</span>
+                    <span>{tr("fields.exchangeRate")}</span>
                     {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
                       <span className="text-[10px] text-muted-foreground font-normal">
                         1 {currencyCode} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
@@ -724,20 +726,19 @@ export default function PurchaseInvoiceForm() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs">طريقة التوزيع</Label>
+                  <Label className="text-xs">{tr("fields.distributeMethod")}</Label>
                   <Select value={distMethod} onValueChange={setDistMethod}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="value">حسب القيمة</SelectItem>
-                      <SelectItem value="qty">حسب الكمية</SelectItem>
-                      <SelectItem value="weight">حسب الوزن</SelectItem>
-                      <SelectItem value="manual">يدوي</SelectItem>
+                      <SelectItem value="value">{tr("distribute.value")}</SelectItem>
+                      <SelectItem value="qty">{tr("distribute.qty")}</SelectItem>
+                      <SelectItem value="weight">{tr("distribute.weight")}</SelectItem>
+                      <SelectItem value="manual">{tr("distribute.manual")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              {/* Payment link: supplier (credit), cash box (cash), or bank (bank) */}
               {paymentType === "bank" ? (
                 (() => {
                   const balMap: Record<number, number> = Object.fromEntries(
@@ -745,10 +746,10 @@ export default function PurchaseInvoiceForm() {
                   );
                   const activeBanks = (bankAccounts as any[]).filter((b: any) => b.isActive !== false);
                   const items = [
-                    { value: "", label: "— اختر الحساب البنكي —" },
+                    { value: "", label: tr("selectBank") },
                     ...activeBanks.map((b: any) => ({
                       value: String(b.id),
-                      label: `${b.nameAr ?? b.nameEn ?? `#${b.id}`} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${currencyCode}`,
+                      label: `${branchName(b)} — ${tr("balanceLabel")}: ${fmt(balMap[b.id] ?? 0)} ${currencyCode}`,
                     })),
                   ];
                   const sel = activeBanks.find((b: any) => String(b.id) === bankAccountId);
@@ -759,8 +760,8 @@ export default function PurchaseInvoiceForm() {
                   return (
                     <div className="space-y-2">
                       <div className="space-y-1.5">
-                        <Label className="text-xs">الحساب البنكي *</Label>
-                        <SearchCombobox items={items} value={bankAccountId} onValueChange={setBankAccountId} placeholder="اختر الحساب البنكي..." />
+                        <Label className="text-xs">{tr("bankAccount")}</Label>
+                        <SearchCombobox items={items} value={bankAccountId} onValueChange={setBankAccountId} placeholder={tr("bankAccountPh")} />
                       </div>
                       <div className={cn(
                         "rounded-lg border p-3 flex items-start gap-3",
@@ -771,19 +772,19 @@ export default function PurchaseInvoiceForm() {
                         <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
                         {!bankAccountId ? (
                           <div className="text-xs">
-                            <p className="font-semibold">الدفع بنكي — اختر الحساب البنكي لخصم المبلغ منه</p>
-                            <p className="opacity-80 mt-0.5">عند ترحيل الفاتورة سيتم خصم القيمة من رصيد الحساب البنكي المختار.</p>
+                            <p className="font-semibold">{tr("bankPayTitle")}</p>
+                            <p className="opacity-80 mt-0.5">{tr("bankPayDesc")}</p>
                           </div>
                         ) : (
                           <div className="text-xs flex-1">
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                              <span className="font-semibold">الحساب: <strong>{sel?.nameAr ?? sel?.nameEn}</strong></span>
-                              <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />الرصيد: <strong className="font-mono">{fmt(bal)}</strong></span>
-                              <span className="flex items-center gap-1"><TrendingDown className="h-3 w-3" />المسحوب: <strong className="font-mono">{fmt(totalDue)}</strong></span>
-                              <span className="flex items-center gap-1 border-r pr-3 mr-1">المتبقي: <strong className="font-mono">{fmt(remaining)}</strong></span>
+                              <span className="font-semibold">{tr("accountLabel")}: <strong>{branchName(sel)}</strong></span>
+                              <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3" />{tr("balanceLabel")}: <strong className="font-mono">{fmt(bal)}</strong></span>
+                              <span className="flex items-center gap-1"><TrendingDown className="h-3 w-3" />{tr("withdrawn")}: <strong className="font-mono">{fmt(totalDue)}</strong></span>
+                              <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>{tr("remaining")}: <strong className="font-mono">{fmt(remaining)}</strong></span>
                             </div>
                             {insufficient && (
-                              <p className="mt-1.5 text-[11px] font-semibold">⚠ الرصيد غير كافٍ</p>
+                              <p className="mt-1.5 text-[11px] font-semibold">{tr("balanceInsufficient")}</p>
                             )}
                           </div>
                         )}
@@ -809,28 +810,28 @@ export default function PurchaseInvoiceForm() {
                       <CreditCard className="h-4 w-4 mt-0.5 shrink-0" />
                       {!supplierId ? (
                         <div className="text-xs">
-                          <p className="font-semibold">الدفع آجل — اختر المورد لربط الفاتورة بحسابه</p>
-                          <p className="opacity-80 mt-0.5">سيتم تسجيل المبلغ على حساب المورد كذمّة دائنة.</p>
+                          <p className="font-semibold">{tr("creditTitle")}</p>
+                          <p className="opacity-80 mt-0.5">{tr("creditDesc")}</p>
                         </div>
                       ) : (
                         <div className="text-xs flex-1">
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                            <span className="font-semibold">المورد: <strong>{sup?.nameAr ?? "—"}</strong></span>
+                            <span className="font-semibold">{tr("supplierLabel")}: <strong>{supName(sup)}</strong></span>
                             <span className="flex items-center gap-1">
                               <TrendingUp className="h-3 w-3" />
-                              الرصيد الحالي: <strong className="font-mono">{fmt(currentBal)}</strong> {currencyCode}
+                              {tr("currentBalance")}: <strong className="font-mono">{fmt(currentBal)}</strong> {currencyCode}
                             </span>
                             <span className="flex items-center gap-1">
-                              + قيمة الفاتورة: <strong className="font-mono">{fmt(totalAmount + totalExpLoaded)}</strong>
+                              {tr("plusInvoice")}: <strong className="font-mono">{fmt(totalAmount + totalExpLoaded)}</strong>
                             </span>
-                            <span className="flex items-center gap-1 border-r pr-3 mr-1">
-                              الرصيد بعد الترحيل: <strong className="font-mono">{fmt(newBal)}</strong> {currencyCode}
+                            <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>
+                              {tr("balanceAfterPost")}: <strong className="font-mono">{fmt(newBal)}</strong> {currencyCode}
                             </span>
                           </div>
                           {creditLimit > 0 && (
                             <p className={cn("mt-1.5 text-[11px]", overLimit ? "font-semibold" : "opacity-80")}>
-                              {overLimit ? "⚠ " : ""}سقف الائتمان: <strong className="font-mono">{fmt(creditLimit)}</strong>
-                              {overLimit && ` — تجاوز بمقدار ${fmt(newBal - creditLimit)}`}
+                              {overLimit ? "⚠ " : ""}{tr("creditLimit")}: <strong className="font-mono">{fmt(creditLimit)}</strong>
+                              {overLimit && ` — ${tr("exceededBy", { amt: fmt(newBal - creditLimit) })}`}
                             </p>
                           )}
                         </div>
@@ -845,10 +846,10 @@ export default function PurchaseInvoiceForm() {
                   );
                   const activeBoxes = (cashBoxes as any[]).filter((b: any) => b.isActive);
                   const cashBoxItems = [
-                    { value: "", label: "— اختر الخزنة —" },
+                    { value: "", label: tr("selectCashBoxOpt") },
                     ...activeBoxes.map((b: any) => ({
                       value: String(b.id),
-                      label: `${b.nameAr} — رصيد: ${fmt(balMap[b.id] ?? 0)} ${currencyCode}`,
+                      label: `${branchName(b)} — ${tr("balanceLabel")}: ${fmt(balMap[b.id] ?? 0)} ${currencyCode}`,
                     })),
                   ];
                   const selBox = activeBoxes.find((b: any) => String(b.id) === cashBoxId);
@@ -859,8 +860,8 @@ export default function PurchaseInvoiceForm() {
                   return (
                     <div className="space-y-2">
                       <div className="space-y-1.5">
-                        <Label className="text-xs">الخزنة *</Label>
-                        <SearchCombobox items={cashBoxItems} value={cashBoxId} onValueChange={setCashBoxId} placeholder="اختر الخزنة..." />
+                        <Label className="text-xs">{tr("cashBox")}</Label>
+                        <SearchCombobox items={cashBoxItems} value={cashBoxId} onValueChange={setCashBoxId} placeholder={tr("cashBoxPh")} />
                       </div>
                       <div className={cn(
                         "rounded-lg border p-3 flex items-start gap-3",
@@ -871,28 +872,28 @@ export default function PurchaseInvoiceForm() {
                         <Wallet className="h-4 w-4 mt-0.5 shrink-0" />
                         {!cashBoxId ? (
                           <div className="text-xs">
-                            <p className="font-semibold">الدفع نقدي — اختر الخزنة لخصم المبلغ منها</p>
-                            <p className="opacity-80 mt-0.5">عند ترحيل الفاتورة سيتم خصم القيمة من رصيد الخزنة المختارة.</p>
+                            <p className="font-semibold">{tr("cashPayTitle")}</p>
+                            <p className="opacity-80 mt-0.5">{tr("cashPayDesc")}</p>
                           </div>
                         ) : (
                           <div className="text-xs flex-1">
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                              <span className="font-semibold">الخزنة: <strong>{selBox?.nameAr}</strong></span>
+                              <span className="font-semibold">{tr("cashBox").replace(" *", "")}: <strong>{branchName(selBox)}</strong></span>
                               <span className="flex items-center gap-1">
                                 <TrendingUp className="h-3 w-3" />
-                                الرصيد: <strong className="font-mono">{fmt(boxBal)}</strong>
+                                {tr("balanceLabel")}: <strong className="font-mono">{fmt(boxBal)}</strong>
                               </span>
                               <span className="flex items-center gap-1">
                                 <TrendingDown className="h-3 w-3" />
-                                المسحوب: <strong className="font-mono">{fmt(totalDue)}</strong>
+                                {tr("withdrawn")}: <strong className="font-mono">{fmt(totalDue)}</strong>
                               </span>
-                              <span className="flex items-center gap-1 border-r pr-3 mr-1">
-                                المتبقي: <strong className={cn("font-mono", insufficient && "font-bold")}>{fmt(remaining)}</strong> {currencyCode}
+                              <span className={cn("flex items-center gap-1", isRtl ? "border-r pr-3 mr-1" : "border-l pl-3 ml-1")}>
+                                {tr("remaining")}: <strong className={cn("font-mono", insufficient && "font-bold")}>{fmt(remaining)}</strong> {currencyCode}
                               </span>
                             </div>
                             {insufficient && (
                               <p className="mt-1.5 text-[11px] font-semibold">
-                                ⚠ رصيد الخزنة غير كافٍ — العجز {fmt(Math.abs(remaining))} {currencyCode}
+                                {tr("cashInsufficient", { amt: `${fmt(Math.abs(remaining))} ${currencyCode}` })}
                               </p>
                             )}
                           </div>
@@ -900,7 +901,7 @@ export default function PurchaseInvoiceForm() {
                       </div>
                       {activeBoxes.length === 0 && (
                         <p className="text-[11px] text-muted-foreground">
-                          لا توجد خزن نشطة. يرجى إضافة خزنة من <strong>النقد والبنوك ← الخزن</strong>.
+                          {tr("noCashBoxes")}<strong>{tr("cashBanksMenu")}</strong>.
                         </p>
                       )}
                     </div>
@@ -908,15 +909,14 @@ export default function PurchaseInvoiceForm() {
                 })()
               )}
 
-              {/* LC info banner */}
               {selectedLc && (
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
-                    الاعتماد: <strong>{selectedLc.lcNumber}</strong> | المتبقي: <strong>{fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))}</strong> {selectedLc.currencyCode}
+                    {tr("lcInfo", { lc: selectedLc.lcNumber, remaining: `${fmt(Number(selectedLc.totalAmount) - Number(selectedLc.usedAmount))} ${selectedLc.currencyCode}` })}
                   </span>
-                  <Button type="button" size="sm" variant="outline" className="mr-auto h-6 text-xs border-blue-300 text-blue-700" onClick={distributeExpenses}>
-                    توزيع المصاريف
+                  <Button type="button" size="sm" variant="outline" className={cn("h-6 text-xs border-blue-300 text-blue-700", isRtl ? "mr-auto" : "ml-auto")} onClick={distributeExpenses}>
+                    {tr("lcDistribute")}
                   </Button>
                 </div>
               )}
@@ -924,16 +924,14 @@ export default function PurchaseInvoiceForm() {
             </CardContent>
           </TabsContent>
 
-          {/* ── Lines section (rendered below header data in same tab) ─── */}
           <TabsContent value="header" className="mt-0">
             <CardContent className="pt-2 pb-5 border-t">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
                 <ListOrdered className="h-4 w-4" />
-                <span>الأصناف ({lines.filter(l => l.itemName).length})</span>
+                <span>{tr("linesTitle")} ({lines.filter(l => l.itemName).length})</span>
               </div>
               {(() => {
                 const GRID_COLS = "220px 110px 160px 120px 90px 80px 110px 80px 80px 110px 130px 180px 40px";
-                const HEADERS = ["الصنف", "كود الصنف", "المستودع", "الوحدة", "الكمية", "وزن", "سعر الوحدة", "خصم%", "ضريبة%", "مصاريف", "التكلفة النهائية", "ملاحظات", ""];
                 return (
               <div data-enter-nav-container="lines" className="mb-3 rounded-xl border bg-card overflow-x-auto">
                 <div className="min-w-max">
@@ -946,7 +944,7 @@ export default function PurchaseInvoiceForm() {
                       key={i}
                       className={cn(
                         "text-[11px] font-medium truncate",
-                        h === "التكلفة النهائية" ? "font-semibold text-primary" : "text-muted-foreground"
+                        h === tr("lineCols.finalCost") ? "font-semibold text-primary" : "text-muted-foreground"
                       )}
                       title={h}
                     >{h}</p>
@@ -964,22 +962,22 @@ export default function PurchaseInvoiceForm() {
                           items={itemComboItems}
                           value={l.itemId}
                           onValueChange={v => selectItem(l._id, v)}
-                          placeholder="اختر أو ابحث عن صنف..."
+                          placeholder={tr("itemSearchPh")}
                         />
                       ) : (
-                        <Input className="h-8 text-xs" placeholder="اسم الصنف" value={l.itemName}
+                        <Input className="h-8 text-xs" placeholder={tr("itemNamePh")} value={l.itemName}
                           onChange={e => updateLine(l._id, "itemName", e.target.value)} />
                       )}
-                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder="تلقائي" value={l.itemCode}
+                      <Input className="h-8 text-xs bg-muted/40" readOnly={!!l.itemId} placeholder={tr("auto")} value={l.itemCode}
                         onChange={e => updateLine(l._id, "itemCode", e.target.value)} />
                       {warehouses.length > 0 ? (
                         <Select value={l.warehouseId || undefined} onValueChange={v => updateLine(l._id, "warehouseId", v)}>
                           <SelectTrigger className={cn("h-8 text-xs", l.itemId && !l.warehouseId && "border-amber-400")}>
-                            <SelectValue placeholder="اختر مستودع..." />
+                            <SelectValue placeholder={tr("lineCols.warehouse")} />
                           </SelectTrigger>
                           <SelectContent>
                             {warehouses.map((w: any) => (
-                              <SelectItem key={w.id} value={String(w.id)}>{w.nameAr}</SelectItem>
+                              <SelectItem key={w.id} value={String(w.id)}>{warehouseName(w)}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -991,18 +989,18 @@ export default function PurchaseInvoiceForm() {
                         const opts = itemUnits.length > 0
                           ? itemUnits.map((iu: any) => ({
                               value: String(iu.unitId),
-                              label: `${iu.unit?.nameAr ?? ""}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
+                              label: `${unitNameOf(iu.unit)}${Number(iu.conversionFactor) !== 1 ? ` (×${trimTrailingZeros(iu.conversionFactor)})` : ""}`,
                             }))
                           : unitItems;
                         return units.length > 0 ? (
                           <Select value={l.unitId || undefined} onValueChange={v => changeLineUnit(l._id, v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="الوحدة" /></SelectTrigger>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={tr("unitPh")} /></SelectTrigger>
                             <SelectContent>
                               {opts.map((u: any) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         ) : (
-                          <Input className="h-8 text-xs" placeholder="وحدة" value={l.unit}
+                          <Input className="h-8 text-xs" placeholder={tr("unitPh")} value={l.unit}
                             onChange={e => updateLine(l._id, "unit", e.target.value)} />
                         );
                       })()}
@@ -1034,10 +1032,9 @@ export default function PurchaseInvoiceForm() {
               })()}
 
               <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addLine}>
-                <Plus className="h-4 w-4" />إضافة صنف
+                <Plus className="h-4 w-4" />{tr("addLine")}
               </Button>
 
-              {/* Totals */}
               <div className="mt-5 flex flex-wrap justify-between gap-4">
                 <label
                   data-testid="price-includes-vat-toggle"
@@ -1053,39 +1050,37 @@ export default function PurchaseInvoiceForm() {
                     onChange={e => setPriceIncludesVat(e.target.checked)}
                   />
                   <div className="space-y-0.5">
-                    <p className="text-xs font-semibold">السعر شامل الضريبة</p>
+                    <p className="text-xs font-semibold">{tr("priceIncludesVat")}</p>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                      {priceIncludesVat
-                        ? "السعر المُدخل يتضمن الضريبة — يستخرج النظام قيمة الضريبة من المبلغ"
-                        : "السعر المُدخل بدون ضريبة — يضيف النظام الضريبة فوق المبلغ"}
+                      {priceIncludesVat ? tr("vatHintIncl") : tr("vatHintExcl")}
                     </p>
                   </div>
                 </label>
 
                 <div className="w-72 space-y-2 text-sm border rounded-xl p-4 bg-muted/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground -mt-1">
-                    <span>طريقة الحساب</span>
+                    <span>{tr("calcMethod")}</span>
                     <span className={cn("font-semibold px-2 py-0.5 rounded", priceIncludesVat ? "bg-primary/10 text-primary" : "bg-muted text-foreground/70")}>
-                      {priceIncludesVat ? "شامل الضريبة" : "غير شامل الضريبة"}
+                      {priceIncludesVat ? tr("inclVat") : tr("exclVat")}
                     </span>
                   </div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">المجموع الفرعي</span><span className="font-mono">{fmt(subtotal)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">الضريبة</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{tr("subtotal")}</span><span className="font-mono">{fmt(subtotal)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{tr("vatAmount")}</span><span className="font-mono text-amber-700">{fmt(vatAmount)}</span></div>
                   {lineDiscountTotal > 0 && (
                     <div className="flex justify-between text-rose-700" data-testid="line-discount-total">
-                      <span className="text-muted-foreground">خصم الأصناف</span>
+                      <span className="text-muted-foreground">{tr("itemDiscount")}</span>
                       <span className="font-mono">−{fmt(lineDiscountTotal)}</span>
                     </div>
                   )}
                   <DiscountRow gross={grossTotal} value={docDiscount} onChange={setDocDiscount} />
-                  <div className="flex justify-between"><span className="text-muted-foreground">مصاريف الاعتماد</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{tr("lcExpenses")}</span><span className="font-mono text-blue-700">{fmt(totalExpLoaded)}</span></div>
                   <div className="flex justify-between font-bold border-t pt-2 text-base">
-                    <span>الإجمالي{priceIncludesVat ? " (شامل)" : ""}</span>
+                    <span>{priceIncludesVat ? tr("totalIncl") : tr("totalLabel")}</span>
                     <span className="font-mono text-primary">{fmt(totalAmount + totalExpLoaded)}</span>
                   </div>
                   {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
                     <p className="text-[10px] text-muted-foreground border-t pt-1">
-                      المكافئ بـ {defaultCurrency?.code ?? "SAR"}: {fmt((totalAmount + totalExpLoaded) / Number(exchangeRate))}
+                      {tr("equivIn")} {defaultCurrency?.code ?? "SAR"}: {fmt((totalAmount + totalExpLoaded) / Number(exchangeRate))}
                     </p>
                   )}
                 </div>
@@ -1095,14 +1090,12 @@ export default function PurchaseInvoiceForm() {
         </Card>
       </Tabs>
 
-      {/* Footer actions */}
       <div className="flex justify-end gap-2">
-        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>إلغاء</Button>
+        <Button variant="outline" data-enter-skip="true" onClick={() => navigate("/purchasing/invoices")}>{tr("cancel")}</Button>
         <Button data-enter-submit="true" onClick={handleSave} disabled={saveMut.isPending}>
-          {saveMut.isPending ? "جاري الحفظ..." : isNew ? "حفظ الفاتورة" : "حفظ التعديل"}
+          {saveMut.isPending ? tr("saving") : isNew ? tr("saveInvoice") : tr("saveEdit")}
         </Button>
       </div>
     </div>
   );
 }
-

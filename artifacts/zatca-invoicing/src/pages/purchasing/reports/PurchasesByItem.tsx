@@ -11,19 +11,10 @@ import { useTranslation } from "react-i18next";
 import { Package, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "itemCode",       header: "كود الصنف",        width: 14 },
-  { key: "itemName",       header: "اسم الصنف",        width: 30 },
-  { key: "unit",           header: "الوحدة",           width: 10 },
-  { key: "qty",            header: "الكمية المشتراة",  width: 14 },
-  { key: "totalPurchases", header: "إجمالي الشراء",    width: 16 },
-  { key: "invoiceCount",   header: "عدد الفواتير",     width: 14 },
-  { key: "share",          header: "نسبة المساهمة",    width: 14 },
-];
-
 export default function PurchasesByItem() {
   const { fmt, fmtQty } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -34,13 +25,23 @@ export default function PurchasesByItem() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
+  const EXPORT_COLS = [
+    { key: "itemCode",       header: t("purchasingReports.byItem.itemCode"),       width: 14 },
+    { key: "itemName",       header: t("purchasingReports.byItem.itemName"),       width: 30 },
+    { key: "unit",           header: t("purchasingReports.byItem.unit"),           width: 10 },
+    { key: "qty",            header: t("purchasingReports.byItem.qty"),            width: 14 },
+    { key: "totalPurchases", header: t("purchasingReports.byItem.totalPurchases"), width: 16 },
+    { key: "invoiceCount",   header: t("purchasingReports.byItem.invoiceCount"),   width: 14 },
+    { key: "share",          header: t("purchasingReports.byItem.share"),          width: 14 },
+  ];
+
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["purchases-by-item", cid, from, to, branchId],
     queryFn: () => purchaseAnalyticsApi.byItem(cid, from, to, branchId),
   });
 
   const filtered = (rows as any[]).filter(r =>
-    !search || r.itemName?.includes(search) || r.itemCode?.includes(search)
+    !search || r.itemName?.includes(search) || r.itemName?.toLowerCase().includes(search.toLowerCase()) || r.itemCode?.includes(search)
   );
 
   const grandPurchases = filtered.reduce((s, r) => s + r.totalPurchases, 0);
@@ -57,43 +58,43 @@ export default function PurchasesByItem() {
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />المشتريات حسب الصنف</h1>
-          <p className="text-muted-foreground text-sm mt-1">ترتيب الأصناف حسب قيمة المشتريات لتحديد الأعلى تكلفة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{t("purchasingReports.byItem.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("purchasingReports.byItem.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`المشتريات-حسب-الصنف-${from}-${to}`}
-          title="تقرير المشتريات حسب الصنف"
-          subtitle={`من ${from} إلى ${to}  |  إجمالي ${fmt(grandPurchases)} ر.س`}
+          filename={`${t("purchasingReports.byItem.filename")}-${from}-${to}`}
+          title={t("purchasingReports.byItem.exportTitle")}
+          subtitle={t("purchasingReports.byItem.subtitleTotal", { from, to, total: fmt(grandPurchases) })}
         />
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl border bg-purple-50 border-purple-200 p-3">
-          <p className="text-[11px] text-purple-700">عدد الأصناف المشتراة</p>
+          <p className="text-[11px] text-purple-700">{t("purchasingReports.byItem.itemsCount")}</p>
           <p className="text-xl font-bold text-purple-700 tabular-nums mt-1">{filtered.length}</p>
         </div>
         <div className="rounded-xl border bg-card p-3">
-          <p className="text-[11px] text-muted-foreground">إجمالي الكمية</p>
+          <p className="text-[11px] text-muted-foreground">{t("purchasingReports.byItem.totalQty")}</p>
           <p className="text-xl font-bold tabular-nums mt-1">{fmtQty(grandQty)}</p>
         </div>
         <div className="rounded-xl border bg-primary/5 border-primary/10 p-3">
-          <p className="text-[11px] text-muted-foreground">إجمالي القيمة</p>
+          <p className="text-[11px] text-muted-foreground">{t("purchasingReports.byItem.totalValue")}</p>
           <p className="text-xl font-bold tabular-nums mt-1">{fmt(grandPurchases)}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
-          <Label>من تاريخ</Label>
+          <Label>{t("purchasingPages.common.fromDate")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
-          <Label>إلى تاريخ</Label>
+          <Label>{t("purchasingPages.common.toDate")}</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -101,10 +102,10 @@ export default function PurchasesByItem() {
           <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
-          <Label>بحث</Label>
+          <Label>{t("purchasingReports.byItem.search")}</Label>
           <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input className="pr-9" placeholder="بحث بالكود أو الاسم..." value={search} onChange={e => setSearch(e.target.value)} />
+            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+            <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("purchasingReports.byItem.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
       </div>
@@ -114,19 +115,19 @@ export default function PurchasesByItem() {
           <table className="w-full text-sm min-w-[800px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">الصنف</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground hidden sm:table-cell">الوحدة</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">الكمية</th>
-                <th className="px-3 py-3 text-center font-semibold text-blue-700">إجمالي الشراء</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">عدد الفواتير</th>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">نسبة المساهمة</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingReports.byItem.item")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground hidden sm:table-cell`}>{t("purchasingReports.byItem.unit")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">{t("purchasingReports.byItem.qtyShort")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-blue-700">{t("purchasingReports.byItem.totalPurchases")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground hidden md:table-cell">{t("purchasingReports.byItem.invoiceCount")}</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingReports.byItem.share")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : filtered.length === 0
-                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">لا توجد مشتريات في هذه الفترة</td></tr>
+                ? <tr><td colSpan={6} className="py-12 text-center text-muted-foreground">{t("purchasingReports.byItem.noData")}</td></tr>
                 : filtered.map((r: any, i: number) => {
                     const share = grandPurchases > 0 ? (r.totalPurchases / grandPurchases) * 100 : 0;
                     return (
@@ -144,7 +145,7 @@ export default function PurchasesByItem() {
                             <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                               <div className="h-full bg-primary" style={{ width: `${Math.min(100, share)}%` }} />
                             </div>
-                            <span className="text-xs tabular-nums w-12 text-left">{share.toFixed(1)}%</span>
+                            <span className={`text-xs tabular-nums w-12 ${isRtl ? "text-left" : "text-right"}`}>{share.toFixed(1)}%</span>
                           </div>
                         </td>
                       </tr>
@@ -154,7 +155,7 @@ export default function PurchasesByItem() {
             {!isLoading && filtered.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td colSpan={2} className="px-3 py-3 text-xs font-bold">الإجمالي</td>
+                  <td colSpan={2} className="px-3 py-3 text-xs font-bold">{t("purchasingReports.byItem.total")}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums">{fmtQty(grandQty)}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums text-blue-700">{fmt(grandPurchases)}</td>
                   <td className="px-3 py-3 hidden md:table-cell"></td>

@@ -11,16 +11,10 @@ import { useTranslation } from "react-i18next";
 import { RotateCcw, Search } from "lucide-react";
 import { useFmt } from "@/hooks/use-fmt";
 
-const EXPORT_COLS = [
-  { key: "supplierNameAr", header: "المورد",          width: 30 },
-  { key: "returnCount",    header: "عدد المرتجعات",   width: 14 },
-  { key: "totalVat",       header: "ض.ق.م",           width: 14 },
-  { key: "totalAmount",    header: "إجمالي المرتجعات", width: 18 },
-];
-
 export default function PurchaseReturnsReport() {
   const { fmt } = useFmt();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const today = new Date().toISOString().slice(0, 10);
@@ -31,12 +25,21 @@ export default function PurchaseReturnsReport() {
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
   const [search, setSearch] = useState("");
 
+  const EXPORT_COLS = [
+    { key: "supplierNameAr", header: t("purchasingReports.purchaseReturns.supplier"),    width: 30 },
+    { key: "returnCount",    header: t("purchasingReports.purchaseReturns.returnCount"), width: 14 },
+    { key: "totalVat",       header: t("purchasingReports.purchaseReturns.vat"),         width: 14 },
+    { key: "totalAmount",    header: t("purchasingReports.purchaseReturns.totalReturns"), width: 18 },
+  ];
+
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["returns-by-supplier", cid, from, to, branchId],
     queryFn: () => purchaseAnalyticsApi.returnsBySupplier(cid, from, to, branchId),
   });
 
-  const filtered = (rows as any[]).filter(r => !search || r.supplierNameAr?.includes(search));
+  const filtered = (rows as any[]).filter(r =>
+    !search || r.supplierNameAr?.includes(search) || r.supplierNameEn?.toLowerCase().includes(search.toLowerCase())
+  );
   const totals = filtered.reduce((s, r) => ({
     returnCount: s.returnCount + r.returnCount,
     totalVat: s.totalVat + r.totalVat,
@@ -44,50 +47,50 @@ export default function PurchaseReturnsReport() {
   }), { returnCount: 0, totalVat: 0, totalAmount: 0 });
 
   const exportRows = filtered.map(r => ({
-    supplierNameAr: r.supplierNameAr,
+    supplierNameAr: isRtl ? (r.supplierNameAr ?? r.supplierNameEn) : (r.supplierNameEn ?? r.supplierNameAr),
     returnCount:    r.returnCount,
     totalVat:       fmt(r.totalVat),
     totalAmount:    fmt(r.totalAmount),
   }));
 
   return (
-    <div className="space-y-6" dir="rtl">
+    <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><RotateCcw className="h-6 w-6 text-orange-500" />تقرير مرتجعات المشتريات</h1>
-          <p className="text-muted-foreground text-sm mt-1">ملخص مرتجعات المشتريات لكل مورد خلال الفترة المحددة</p>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><RotateCcw className="h-6 w-6 text-orange-500" />{t("purchasingReports.purchaseReturns.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("purchasingReports.purchaseReturns.subtitle")}</p>
         </div>
         <ExportButtons
           rows={exportRows}
           columns={EXPORT_COLS}
-          filename={`مرتجعات-المشتريات-${from}-${to}`}
-          title="تقرير مرتجعات المشتريات"
-          subtitle={`من ${from} إلى ${to}  |  إجمالي ${fmt(totals.totalAmount)} ر.س`}
+          filename={`${t("purchasingReports.purchaseReturns.filename")}-${from}-${to}`}
+          title={t("purchasingReports.purchaseReturns.exportTitle")}
+          subtitle={t("purchasingReports.purchaseReturns.subtitleTotal", { from, to, total: fmt(totals.totalAmount) })}
         />
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl border bg-orange-50 border-orange-200 p-3">
-          <p className="text-[11px] text-orange-700">عدد المرتجعات</p>
+          <p className="text-[11px] text-orange-700">{t("purchasingReports.purchaseReturns.returnCount")}</p>
           <p className="text-xl font-bold text-orange-700 tabular-nums mt-1">{totals.returnCount}</p>
         </div>
         <div className="rounded-xl border bg-amber-50 border-amber-200 p-3">
-          <p className="text-[11px] text-amber-700">ض.ق.م المردودة</p>
+          <p className="text-[11px] text-amber-700">{t("purchasingReports.purchaseReturns.vatReturned")}</p>
           <p className="text-xl font-bold text-amber-700 tabular-nums mt-1">{fmt(totals.totalVat)}</p>
         </div>
         <div className="rounded-xl border bg-rose-50 border-rose-200 p-3">
-          <p className="text-[11px] text-rose-700">إجمالي المرتجعات</p>
+          <p className="text-[11px] text-rose-700">{t("purchasingReports.purchaseReturns.totalReturns")}</p>
           <p className="text-xl font-bold text-rose-700 tabular-nums mt-1">{fmt(totals.totalAmount)}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
-          <Label>من تاريخ</Label>
+          <Label>{t("purchasingPages.common.fromDate")}</Label>
           <Input type="date" value={from} onChange={e => setFrom(e.target.value)} />
         </div>
         <div className="space-y-1.5">
-          <Label>إلى تاريخ</Label>
+          <Label>{t("purchasingPages.common.toDate")}</Label>
           <Input type="date" value={to} onChange={e => setTo(e.target.value)} />
         </div>
         <div className="space-y-1.5">
@@ -95,10 +98,10 @@ export default function PurchaseReturnsReport() {
           <BranchFilter value={branchId} onChange={setBranchId} />
         </div>
         <div className="space-y-1.5">
-          <Label>بحث</Label>
+          <Label>{t("purchasingReports.purchaseReturns.search")}</Label>
           <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input className="pr-9" placeholder="بحث باسم المورد..." value={search} onChange={e => setSearch(e.target.value)} />
+            <Search className={`absolute ${isRtl ? "right-3" : "left-3"} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
+            <Input className={isRtl ? "pr-9" : "pl-9"} placeholder={t("purchasingReports.purchaseReturns.searchPh")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
       </div>
@@ -108,22 +111,22 @@ export default function PurchaseReturnsReport() {
           <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-muted/50 border-b">
               <tr>
-                <th className="px-3 py-3 text-right font-semibold text-muted-foreground">المورد</th>
-                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">عدد المرتجعات</th>
-                <th className="px-3 py-3 text-center font-semibold text-amber-700 hidden sm:table-cell">ض.ق.م</th>
-                <th className="px-3 py-3 text-center font-semibold text-rose-700">إجمالي المرتجعات</th>
+                <th className={`px-3 py-3 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{t("purchasingReports.purchaseReturns.supplier")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-muted-foreground">{t("purchasingReports.purchaseReturns.returnCount")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-amber-700 hidden sm:table-cell">{t("purchasingReports.purchaseReturns.vat")}</th>
+                <th className="px-3 py-3 text-center font-semibold text-rose-700">{t("purchasingReports.purchaseReturns.totalReturns")}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading
                 ? [...Array(6)].map((_, i) => <tr key={i}><td colSpan={4} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
                 : filtered.length === 0
-                ? <tr><td colSpan={4} className="py-12 text-center text-muted-foreground">لا توجد مرتجعات في هذه الفترة</td></tr>
+                ? <tr><td colSpan={4} className="py-12 text-center text-muted-foreground">{t("purchasingReports.purchaseReturns.noData")}</td></tr>
                 : filtered.map((r: any, i: number) => (
                     <tr key={r.supplierId ?? `null-${i}`} className="hover:bg-muted/20">
                       <td className="px-3 py-3">
-                        <p className="font-medium text-sm">{r.supplierNameAr}</p>
-                        {r.supplierNameEn && <p className="text-[10px] text-muted-foreground">{r.supplierNameEn}</p>}
+                        <p className="font-medium text-sm">{isRtl ? (r.supplierNameAr ?? r.supplierNameEn) : (r.supplierNameEn ?? r.supplierNameAr)}</p>
+                        {(isRtl ? r.supplierNameEn : r.supplierNameAr) && <p className="text-[10px] text-muted-foreground">{isRtl ? r.supplierNameEn : r.supplierNameAr}</p>}
                       </td>
                       <td className="px-3 py-3 text-center tabular-nums text-sm">{r.returnCount}</td>
                       <td className="px-3 py-3 text-center tabular-nums text-xs hidden sm:table-cell">{fmt(r.totalVat)}</td>
@@ -134,7 +137,7 @@ export default function PurchaseReturnsReport() {
             {!isLoading && filtered.length > 0 && (
               <tfoot className="bg-muted/30 border-t">
                 <tr>
-                  <td className="px-3 py-3 text-xs font-bold">الإجمالي</td>
+                  <td className="px-3 py-3 text-xs font-bold">{t("purchasingReports.purchaseReturns.total")}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums">{totals.returnCount}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums hidden sm:table-cell">{fmt(totals.totalVat)}</td>
                   <td className="px-3 py-3 text-center font-bold tabular-nums text-rose-700">{fmt(totals.totalAmount)}</td>
