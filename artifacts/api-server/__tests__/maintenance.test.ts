@@ -4480,6 +4480,164 @@ test("GET /maintenance/history: ?format=csv includes the new 'مدة الاحت�
     `CSV must include the single-value retention for the old_* fix row; body sample: ${r.text.slice(0, 400)}`);
 });
 
+// Task #75: complement the existing "مدة الاحتفاظ" content test above with a
+// dedicated guardrail for the rest of the CSV branch's contract — pinned in
+// the same shape as the /maintenance/email-history CSV test:
+//   • Content-Type: text/csv (+ a UTF-8 BOM the route prepends so Excel
+//     renders Arabic).
+//   • EXACT Arabic header row in the documented order
+//     (التاريخ / المستخدم / الفئة / الإجراء / مدة الاحتفاظ / التفاصيل).
+//     Splitting the header line on "," and asserting the array catches both
+//     a column rename AND a column reorder in a single assertion.
+//   • One CSV data line per filtered audit_log entry, demonstrated by
+//     comparing against the JSON branch's count for the SAME filter set
+//     (so a regression that drifts the two branches apart trips this test).
+//   • The four documented filters (from / to / action / entityType) narrow
+//     the CSV exactly the way they narrow JSON — exercised with two distinct
+//     filter sets so a subtle bug in any single dimension shows up.
+//   • A single `export_csv` audit_log row is written per export call,
+//     tagged with the calling SA's userId, action='export_csv',
+//     module='maintenance', entityType='maintenance_history', and a
+//     metadata.filters object that echoes the applied filter set verbatim
+//     (unset filters serialised as `null`, not omitted).
+test("GET /maintenance/history: ?format=csv pins content-type, exact Arabic header order, audit-row side-effect, and per-filter row parity with JSON", async () => {
+  await seedHistoryOnce();
+
+  // Filter set A: all four filter dimensions at once. The seeded mix has
+  // exactly one row matching action=fix + entityType=journal_pending in the
+  // day-1 → day-8 window — a stable count regardless of how many extra
+  // export_csv audit rows the test above (or any other test in the suite)
+  // has already written back to historyCompanyId at NOW.
+  const filtersA = "from=2010-04-01&to=2010-04-08&action=fix&entityType=journal_pending";
+  const jsonA = await api<HistoryResponse>(HIST_PATH(filtersA), "GET", { token: saToken });
+  assert.equal(jsonA.status, 200);
+  assert.equal(jsonA.body.count, 1,
+    "preflight: filtersA must match exactly the day-1 fix/journal_pending row");
+
+  // Filter set B: entityType only. The seeded set carries two rows with
+  // entityType='retention_settings' (days 7 + 8). The previous CSV test in
+  // this block seeds a separate entityType='maintenance_retention' row, so
+  // the two filter values do NOT collide and the count stays at 2.
+  const filtersB = "entityType=retention_settings";
+  const jsonB = await api<HistoryResponse>(HIST_PATH(filtersB), "GET", { token: saToken });
+  assert.equal(jsonB.status, 200);
+  assert.equal(jsonB.body.count, 2,
+    "preflight: filtersB must match the two seeded retention_settings rows");
+
+  // Watermark audit_log so the side-effect assertions below see only the
+  // export rows the next two CSV calls write — same shared-DB safety
+  // pattern the email-history CSV test uses.
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  // ── CSV with filters A ──────────────────────────────────────────────────
+  const csvA = await api(HIST_PATH(`${filtersA}&format=csv`), "GET", { token: saToken });
+  assert.equal(csvA.status, 200, `expected 200, got ${csvA.status}: ${csvA.text.slice(0, 200)}`);
+  assert.match(csvA.headers.get("content-type") ?? "", /text\/csv/i, "Content-Type must be text/csv");
+
+  // EXACT header row, in the documented order. Captures both a column
+  // rename AND a column reorder in a single assertion. The route prepends
+  // a UTF-8 BOM (Excel needs it for Arabic) — strip it before splitting.
+  const linesA = csvA.text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const headerCellsA = linesA[0].split(",");
+  assert.deepEqual(
+    headerCellsA,
+    ["التاريخ", "المستخدم", "الفئة", "الإجراء", "مدة الاحتفاظ", "التفاصيل"],
+    `CSV header row must match the exact documented Arabic order, got: ${linesA[0]}`,
+  );
+
+  // Per-filter parity: one CSV data line per row the JSON branch returned
+  // for the same filter set. Drifting the two branches apart trips this.
+  const dataA = linesA.slice(1).filter((l) => l.length > 0);
+  assert.equal(dataA.length, jsonA.body.count,
+    `CSV row count must equal the JSON-filtered count for filtersA; got ${dataA.length} vs ${jsonA.body.count}`);
+  // Every JSON-filtered row must surface in the CSV body (timestamps are
+  // rendered through csvDate → "YYYY-MM-DD HH:mm" UTC).
+  for (const it of jsonA.body.items) {
+    const stamp = new Date(it.createdAt).toISOString().replace("T", " ").slice(0, 16);
+    assert.ok(csvA.text.includes(stamp),
+      `CSV body must include the filtersA row timestamp ${stamp}; sample: ${csvA.text.slice(0, 400)}`);
+  }
+
+  // ── CSV with filters B ──────────────────────────────────────────────────
+  const csvB = await api(HIST_PATH(`${filtersB}&format=csv`), "GET", { token: saToken });
+  assert.equal(csvB.status, 200);
+  assert.match(csvB.headers.get("content-type") ?? "", /text\/csv/i);
+  const linesB = csvB.text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const headerCellsB = linesB[0].split(",");
+  assert.deepEqual(
+    headerCellsB,
+    ["التاريخ", "المستخدم", "الفئة", "الإجراء", "مدة الاحتفاظ", "التفاصيل"],
+    "header row order must hold across calls (not just the first export of the suite)",
+  );
+  const dataB = linesB.slice(1).filter((l) => l.length > 0);
+  assert.equal(dataB.length, jsonB.body.count,
+    `CSV row count must equal the JSON-filtered count for filtersB; got ${dataB.length} vs ${jsonB.body.count}`);
+
+  // ── Audit side-effect ───────────────────────────────────────────────────
+  // Each CSV export wrote ONE export_csv row tagged with the calling SA's
+  // userId, the maintenance module/action, the maintenance_history entity
+  // type, and a metadata.filters object echoing the applied filter set
+  // (unset filters serialised as `null`, not omitted).
+  const newAuditRows = await db.select({
+    id:         auditLogTable.id,
+    action:     auditLogTable.action,
+    module:     auditLogTable.module,
+    entityType: auditLogTable.entityType,
+    userId:     auditLogTable.userId,
+    metadata:   auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.entityType, "maintenance_history"),
+    ))
+    .orderBy(auditLogTable.id);
+  assert.equal(newAuditRows.length, 2,
+    `CSV branch must write exactly one export_csv audit row per export call (expected 2, got ${newAuditRows.length})`);
+  for (const a of newAuditRows) {
+    assert.equal(a.userId, saUserId, "every export audit row must record the calling SuperAdmin");
+    assert.equal(a.action, "export_csv");
+    assert.equal(a.module, "maintenance");
+    assert.equal(a.entityType, "maintenance_history");
+    insertedAuditLogIds.push(a.id);
+  }
+
+  // Audit row #1 → filtersA echoed verbatim into metadata.filters.
+  const auditA = newAuditRows[0];
+  assert.ok(isObject(auditA.metadata), "audit row #1 metadata must be a JSON object");
+  const metaA = auditA.metadata as Record<string, unknown>;
+  assert.equal(metaA.format, "csv");
+  assert.equal(metaA.count, jsonA.body.count,
+    `audit row #1 metadata.count must equal the exported row count (${jsonA.body.count}); got ${metaA.count}`);
+  assert.ok(isObject(metaA.filters), "audit row #1 metadata.filters must be present");
+  const fA = metaA.filters as Record<string, unknown>;
+  assert.equal(fA.from,       "2010-04-01");
+  assert.equal(fA.to,         "2010-04-08");
+  assert.equal(fA.action,     "fix");
+  assert.equal(fA.entityType, "journal_pending");
+
+  // Audit row #2 → filtersB echoed; the three unset filters are recorded
+  // as `null` rather than omitted so admins reviewing audit JSON always
+  // see the full schema.
+  const auditB = newAuditRows[1];
+  assert.ok(isObject(auditB.metadata), "audit row #2 metadata must be a JSON object");
+  const metaB = auditB.metadata as Record<string, unknown>;
+  assert.equal(metaB.format, "csv");
+  assert.equal(metaB.count, jsonB.body.count,
+    `audit row #2 metadata.count must equal the exported row count (${jsonB.body.count}); got ${metaB.count}`);
+  assert.ok(isObject(metaB.filters), "audit row #2 metadata.filters must be present");
+  const fB = metaB.filters as Record<string, unknown>;
+  assert.equal(fB.from,       null, "unset 'from' must be recorded as null, not omitted");
+  assert.equal(fB.to,         null, "unset 'to' must be recorded as null, not omitted");
+  assert.equal(fB.action,     null, "unset 'action' must be recorded as null, not omitted");
+  assert.equal(fB.entityType, "retention_settings");
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //  runEmailHistoryAutoPrune — daily cleanup of email-history tables
 // ════════════════════════════════════════════════════════════════════════════
