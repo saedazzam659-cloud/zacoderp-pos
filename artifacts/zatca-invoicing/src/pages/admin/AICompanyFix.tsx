@@ -1825,6 +1825,15 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                   ({errorSummaryQ.data.items.length} حالة)
                 </span>
               </span>
+              {errorSummaryQ.dataUpdatedAt > 0 && (
+                <span
+                  className="text-[11px] text-muted-foreground tabular-nums"
+                  title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
+                  data-testid="error-summary-last-updated"
+                >
+                  آخر تحديث: {new Date(errorSummaryQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                </span>
+              )}
               <span className="text-[11px] text-muted-foreground mr-auto">
                 هذه الفحوصات لم تكتمل بسبب خطأ — لا تظهر ضمن النتائج الحرجة وتحتاج مراجعة فنية. تُحفظ آخر {errorSummaryQ.data.windowDays} أيام فقط.
               </span>
