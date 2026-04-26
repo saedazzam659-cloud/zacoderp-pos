@@ -4415,6 +4415,235 @@ test("GET /maintenance/history (JSON): rejects invalid ?from / ?to and clamps ne
     "clamped offset=0 should still yield the most-recent row first");
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/maintenance/history/facets — filter dropdown options
+// ════════════════════════════════════════════════════════════════════════════
+// Backs the two filter <Select>s ("الإجراء" / "الفئة") above the
+// "سجل الإصلاحات" accordion on the SuperAdmin AI Company Fix page. Every
+// distinct (action, entityType) pair on the company's `audit_log` rows in
+// module='maintenance' must surface as a dropdown option exactly once,
+// sorted, with NULL / blank values stripped so the UI never renders an
+// empty SelectItem (Radix throws when a SelectItem has value="").
+//
+// The block placement is intentional: the CSV tests below write fresh
+// `export_csv` audit rows into the seeded tenant, which would pollute the
+// "exact dedup'd set" assertion below. Run facets first so the
+// historyCompanyId state still matches HISTORY_SEED verbatim.
+//
+// What this protects:
+//   • Auth gates (401 without bearer, 403 for non-superadmin) — the route
+//     leans on requireSuperAdmin before maintGuard.
+//   • companyId validation (400 for missing / 0 / negative) — the maintGuard
+//     is shared with all other /maintenance/* endpoints; a regression here
+//     silently returns the wrong tenant's options.
+//   • Sorted (localeCompare) and de-duplicated `actions` and `entityTypes`
+//     arrays matching exactly the seeded HISTORY_SEED mix.
+//   • Empty arrays for a company with no module='maintenance' audit rows.
+//   • NULL / empty-string action / entity_type rows do NOT leak into either
+//     dropdown — the route's defensive `IS NOT NULL AND <> ''` filters.
+interface FacetsResponse {
+  actions:     string[];
+  entityTypes: string[];
+}
+
+const FACETS_PATH = (companyIdOverride?: number | string, qs: string = "") => {
+  const cid = companyIdOverride === undefined ? historyCompanyId : companyIdOverride;
+  const base = "/api/admin/maintenance/history/facets";
+  const params = [
+    cid === null ? "" : `companyId=${cid}`,
+    qs,
+  ].filter((s) => s.length > 0).join("&");
+  return params.length > 0 ? `${base}?${params}` : base;
+};
+
+test("GET /maintenance/history/facets: 401 without bearer token", async () => {
+  await seedHistoryOnce();
+  const r = await api(FACETS_PATH(), "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/history/facets: 403 for non-superadmin", async () => {
+  await seedHistoryOnce();
+  const r = await api(FACETS_PATH(), "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/history/facets: 400 for missing or non-positive companyId", async () => {
+  // No companyId at all → maintGuard rejects with 400 + Arabic message.
+  const missing = await api<{ error?: string }>(
+    "/api/admin/maintenance/history/facets", "GET", { token: saToken });
+  assert.equal(missing.status, 400, `expected 400 for missing companyId, got ${missing.status}`);
+  assert.ok(typeof missing.body?.error === "string" && missing.body.error.length > 0,
+    "400 response must carry an error message the UI can surface");
+
+  // Zero, negative, and non-numeric companyId → all 400 (maintGuard requires
+  // an integer > 0). Catches a future refactor that accidentally widens the
+  // accepted set (e.g. dropping the `<= 0` check).
+  for (const cid of ["0", "-1", "not-a-number"]) {
+    const r = await api(FACETS_PATH(cid), "GET", { token: saToken });
+    assert.equal(r.status, 400, `expected 400 for companyId=${cid}, got ${r.status}`);
+  }
+});
+
+test("GET /maintenance/history/facets: returns sorted, deduplicated actions + entityTypes from seeded rows", async () => {
+  await seedHistoryOnce();
+  const r = await api<FacetsResponse>(FACETS_PATH(), "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+  // Documented response shape — the UI maps both fields straight onto two
+  // <Select> components.
+  assert.ok(Array.isArray(r.body.actions),     "actions must be an array");
+  assert.ok(Array.isArray(r.body.entityTypes), "entityTypes must be an array");
+
+  // HISTORY_SEED carries 8 rows where:
+  //   actions = {fix×3, export_csv×3, edit_retention×2}      → 3 distinct
+  //   entityTypes = {journal_pending×2, broken_refs×2,
+  //                  dormant_users×1, maintenance_history×1,
+  //                  retention_settings×2}                   → 5 distinct
+  // The route sorts via String.prototype.localeCompare (default locale).
+  const expectedActions     = ["edit_retention", "export_csv", "fix"]
+    .slice().sort((a, b) => a.localeCompare(b));
+  const expectedEntityTypes = ["broken_refs", "dormant_users", "journal_pending", "maintenance_history", "retention_settings"]
+    .slice().sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(r.body.actions, expectedActions,
+    `actions must be the 3 distinct seeded values, sorted; got ${JSON.stringify(r.body.actions)}`);
+  assert.deepEqual(r.body.entityTypes, expectedEntityTypes,
+    `entityTypes must be the 5 distinct seeded values, sorted; got ${JSON.stringify(r.body.entityTypes)}`);
+
+  // Belt-and-brace: the result MUST be sorted and free of duplicates even
+  // if the expected lists above are ever re-ordered by mistake.
+  for (const list of [r.body.actions, r.body.entityTypes]) {
+    for (let i = 1; i < list.length; i++) {
+      assert.ok(list[i - 1].localeCompare(list[i]) < 0,
+        `facet list must be strictly ascending and dedup'd; ${list[i - 1]} >= ${list[i]} at index ${i}`);
+    }
+  }
+});
+
+test("GET /maintenance/history/facets: returns empty arrays for a company with no maintenance audit rows", async () => {
+  // Fresh tenant with zero audit_log activity → both dropdowns must be
+  // empty. The UI renders a "no options" hint in that state.
+  const [emptyCo] = await db.insert(companiesTable).values({
+    nameAr:         `${TEST_TAG} شركة فلاتر فارغة`,
+    nameEn:         `${TEST_TAG} Empty Facets Co`,
+    vatNumber:      `300000000000${"E".charCodeAt(0) % 10}`,
+    crNumber:       `CR_${TEST_TAG}_FE`,
+    city:           "Riyadh",
+    street:         "Test St",
+    buildingNumber: "1",
+    postalCode:     "12345",
+    country:        "SA",
+    invoiceType:    "both",
+    status:         "active",
+  }).returning({ id: companiesTable.id });
+  insertedCompanyIds.push(emptyCo.id);
+
+  const r = await api<FacetsResponse>(FACETS_PATH(emptyCo.id), "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+  assert.deepEqual(r.body.actions, [],
+    "actions must be empty for a tenant with no maintenance audit rows");
+  assert.deepEqual(r.body.entityTypes, [],
+    "entityTypes must be empty for a tenant with no maintenance audit rows");
+});
+
+test("GET /maintenance/history/facets: filters out NULL / empty-string action and entity_type rows", async () => {
+  // Dedicated tenant so the assertions don't fight the HISTORY_SEED mix.
+  const [filterCo] = await db.insert(companiesTable).values({
+    nameAr:         `${TEST_TAG} شركة فلاتر فلتر`,
+    nameEn:         `${TEST_TAG} Facets Filter Co`,
+    vatNumber:      `300000000000${"F".charCodeAt(0) % 10}`,
+    crNumber:       `CR_${TEST_TAG}_FF`,
+    city:           "Riyadh",
+    street:         "Test St",
+    buildingNumber: "1",
+    postalCode:     "12345",
+    country:        "SA",
+    invoiceType:    "both",
+    status:         "active",
+  }).returning({ id: companiesTable.id });
+  insertedCompanyIds.push(filterCo.id);
+
+  // Three "good" rows + four sentinel rows that exercise every blank/NULL
+  // branch the route's `IS NOT NULL AND <> ''` filter is supposed to strip:
+  //   • action='' (empty)        → must NOT appear in `actions`
+  //   • entity_type=''           → must NOT appear in `entityTypes`
+  //   • entity_type=NULL         → must NOT appear in `entityTypes`
+  // (action=NULL cannot be inserted because the column is NOT NULL at the
+  // schema level — the route's `action IS NOT NULL` is a defensive guard
+  // against a future schema change. We can only exercise the empty-string
+  // arm for `action`.)
+  const goodRowsValues = [
+    { action: "facet_keep_a", entityType: "facet_keep_x" },
+    { action: "facet_keep_b", entityType: "facet_keep_y" },
+    { action: "facet_keep_c", entityType: "facet_keep_z" },
+  ];
+  const sentinelEmptyAction       = { action: "",                entityType: "facet_blank_action_entity"   };
+  const sentinelEmptyEntityType   = { action: "facet_with_blank_entity",       entityType: ""              };
+  const sentinelNullEntityType    = { action: "facet_with_null_entity",        entityType: null as string | null };
+  // Mix the sentinels in alongside the good rows.
+  const allRows = [
+    ...goodRowsValues,
+    sentinelEmptyAction,
+    sentinelEmptyEntityType,
+    sentinelNullEntityType,
+  ];
+  const inserted = await db.insert(auditLogTable).values(
+    allRows.map((r, i) => ({
+      userId:     saUserId,
+      username:   `${TEST_TAG}_sa_facets`,
+      role:       "superadmin",
+      companyId:  filterCo.id,
+      module:     "maintenance",
+      action:     r.action,
+      method:     "POST",
+      path:       "/api/admin/maintenance/seed",
+      entityType: r.entityType,
+      entityId:   null,
+      statusCode: 200,
+      ip:         "127.0.0.1",
+      metadata:   { row: i },
+      createdAt:  new Date(`2010-05-0${i + 1}T03:00:00.000Z`),
+    })),
+  ).returning({ id: auditLogTable.id });
+  for (const row of inserted) insertedAuditLogIds.push(row.id);
+
+  const r = await api<FacetsResponse>(FACETS_PATH(filterCo.id), "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+
+  // `actions` must include every NON-empty action seeded (3 good + 2 from
+  // the entity_type sentinel rows whose own `action` columns are populated)
+  // and MUST NOT include the empty-string action.
+  const expectedActions = [
+    "facet_keep_a",
+    "facet_keep_b",
+    "facet_keep_c",
+    "facet_with_blank_entity",
+    "facet_with_null_entity",
+  ].slice().sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(r.body.actions, expectedActions,
+    `actions must surface non-blank values only, sorted; got ${JSON.stringify(r.body.actions)}`);
+  assert.ok(!r.body.actions.includes(""),
+    "empty-string action must never leak into the dropdown options");
+
+  // `entityTypes` must include every NON-empty entityType seeded (3 good +
+  // 1 from the empty-action sentinel whose own entity_type is populated)
+  // and MUST NOT include the empty-string or NULL entity_type sentinels.
+  const expectedEntityTypes = [
+    "facet_blank_action_entity",
+    "facet_keep_x",
+    "facet_keep_y",
+    "facet_keep_z",
+  ].slice().sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(r.body.entityTypes, expectedEntityTypes,
+    `entityTypes must surface non-blank values only, sorted; got ${JSON.stringify(r.body.entityTypes)}`);
+  assert.ok(!r.body.entityTypes.includes(""),
+    "empty-string entity_type must never leak into the dropdown options");
+  // NULL would serialise as null in the JSON list if it leaked through —
+  // assert it explicitly so a future bug stripping only '' (and not NULL)
+  // doesn't slip past.
+  assert.ok(!r.body.entityTypes.some((v) => v == null),
+    "NULL entity_type must never leak into the dropdown options");
+});
+
 // Placed last in the history block on purpose: hitting ?format=csv writes a
 // fresh `export_csv` audit row at NOW into the seeded tenant, which would
 // shift the most-recent timestamp the JSON-shape tests above hard-code.
