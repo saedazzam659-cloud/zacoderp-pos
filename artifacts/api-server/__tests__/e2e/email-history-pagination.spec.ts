@@ -40,7 +40,6 @@ import { randomBytes } from "node:crypto";
 import { eq, inArray, like } from "drizzle-orm";
 import {
   db,
-  pool,
   usersTable,
   maintenanceEmailRunsTable,
   superAdminSessionsTable,
@@ -127,20 +126,24 @@ test.beforeAll(async () => {
 });
 
 // ─── Cleanup: strict-by-PK so a crash never nukes unrelated audit history ──
+//
+// We deliberately do NOT call `pool.end()` here. Playwright runs spec files
+// inside the same worker process (workers=1 in playwright.config.ts), and
+// `@workspace/db` exports a singleton `pool`. Ending it would break any
+// sibling spec (e.g. recovered-tools-panel.spec.ts) that runs afterwards in
+// the same worker — its first query would throw "Cannot use a pool after
+// calling end on the pool". Letting Node's process exit close the pg
+// connections is harmless for a short-lived test process.
 test.afterAll(async () => {
-  try {
-    if (seededEmailRunIds.length) {
-      await db
-        .delete(maintenanceEmailRunsTable)
-        .where(inArray(maintenanceEmailRunsTable.id, seededEmailRunIds));
-    }
-    if (saSessionRowId !== null) {
-      await db
-        .delete(superAdminSessionsTable)
-        .where(eq(superAdminSessionsTable.id, saSessionRowId));
-    }
-  } finally {
-    try { await pool.end(); } catch { /* already ended */ }
+  if (seededEmailRunIds.length) {
+    await db
+      .delete(maintenanceEmailRunsTable)
+      .where(inArray(maintenanceEmailRunsTable.id, seededEmailRunIds));
+  }
+  if (saSessionRowId !== null) {
+    await db
+      .delete(superAdminSessionsTable)
+      .where(eq(superAdminSessionsTable.id, saSessionRowId));
   }
 });
 
