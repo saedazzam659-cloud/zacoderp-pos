@@ -35,7 +35,24 @@ function computeInsight(a: FaceAnalytics | undefined): string {
 
 export default function FaceAttendanceHub() {
   const { data: a } = useQuery<FaceAnalytics>({ queryKey: ["face-analytics"], queryFn: () => faceApi.analytics(), refetchInterval: 30_000 });
-  const insight = computeInsight(a);
+  const localInsight = computeInsight(a);
+
+  // Ask the OpenAI proxy for a richer, executive-style weekly summary. Falls
+  // back to the locally-computed insight if the proxy is unavailable so the
+  // hub always shows something useful.
+  const { data: aiSummary } = useQuery<{ summary: string; source: "ai" }>({
+    queryKey: ["face-ai-summary", a?.totalEmployees, a?.enrolledEmployees, a?.todayPresent, a?.todayLate, a?.weekRecognitions, a?.weekSpoofs],
+    queryFn: () => faceApi.aiSummary(a as FaceAnalytics),
+    // Run whenever analytics is loaded; the LLM also produces a useful
+    // onboarding-style summary for tenants with no employees yet, so we don't
+    // gate on counts. `retry: false` keeps the local fallback responsive when
+    // the proxy is offline (503).
+    enabled: !!a,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const insight = aiSummary?.summary || localInsight;
+  const insightFromAI = !!aiSummary?.summary;
 
   const cards = [
     { href: "/hr/face/kiosk",       icon: Tv,         title: "شاشة الحضور المباشرة",   desc: "كاميرا مباشرة + تعرف وتسجيل تلقائي",     color: "from-emerald-500 to-teal-600" },
@@ -72,9 +89,12 @@ export default function FaceAttendanceHub() {
         <div className="flex items-start gap-3">
           <div className="p-2 rounded-lg bg-primary/10"><Sparkles className="h-5 w-5 text-primary" /></div>
           <div className="flex-1">
-            <h3 className="font-semibold mb-1">ملخص ذكي للأسبوع</h3>
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-semibold">ملخص ذكي للأسبوع</h3>
+              {insightFromAI && <Badge variant="secondary" className="text-[10px]">AI</Badge>}
+            </div>
             {insight ? (
-              <p className="text-sm leading-relaxed text-foreground/80">{insight}</p>
+              <p className="text-sm leading-relaxed text-foreground/80 whitespace-pre-line">{insight}</p>
             ) : (
               <p className="text-sm text-muted-foreground">سيظهر التحليل الذكي هنا بمجرد توفر بيانات كافية.</p>
             )}

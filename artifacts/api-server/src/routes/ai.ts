@@ -2624,4 +2624,110 @@ function normalizeLabel(s: string): string {
     .toLowerCase();
 }
 
+// ─── Face attendance — AI weekly summary ─────────────────────────────────────
+// Takes the analytics object produced by /api/hr/face/analytics and asks the
+// LLM for a short, executive-style Arabic summary with concrete recommendations.
+// Falls back gracefully when the proxy is not configured so the hub still
+// renders its locally-computed insight.
+router.post("/summarize-face-attendance", async (req, res) => {
+  try {
+    const a = (req.body ?? {}) as {
+      totalEmployees?: number;
+      enrolledEmployees?: number;
+      enrollmentRate?: number;
+      camerasCount?: number;
+      todayPresent?: number;
+      todayLate?: number;
+      presenceRate?: number;
+      weekRecognitions?: number;
+      weekSpoofs?: number;
+      topLate?: Array<{ employeeName?: string | null; employeeCode?: string | null; lateDays?: number; totalLateMin?: number }>;
+      heatmap?: Array<{ hour: number; cnt: number }>;
+    };
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(503).json({ error: "AI proxy not configured" });
+      return;
+    }
+
+    // Sanitize numbers (finite, default to 0). Identities are intentionally
+    // stripped — the LLM only needs aggregate metrics, never employee names or
+    // codes, so no PII leaves the tenant boundary.
+    const num = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const safe = {
+      totalEmployees: num(a.totalEmployees),
+      enrolledEmployees: num(a.enrolledEmployees),
+      enrollmentRate: num(a.enrollmentRate),
+      camerasCount: num(a.camerasCount),
+      todayPresent: num(a.todayPresent),
+      todayLate: num(a.todayLate),
+      presenceRate: num(a.presenceRate),
+      weekRecognitions: num(a.weekRecognitions),
+      weekSpoofs: num(a.weekSpoofs),
+      topLate: Array.isArray(a.topLate)
+        ? a.topLate.slice(0, 5).map((t, i) => ({
+            label: `موظف ${i + 1}`,
+            lateDays: num(t.lateDays),
+            totalLateMin: num(t.totalLateMin),
+          }))
+        : [],
+      peakHours: (Array.isArray(a.heatmap) ? a.heatmap : [])
+        .slice()
+        .sort((x, y) => num(y.cnt) - num(x.cnt))
+        .slice(0, 3)
+        .map(h => ({ hour: num(h.hour), count: num(h.cnt) })),
+    };
+
+    const userPrompt = `لديك إحصاءات الحضور بالذكاء الاصطناعي لشركة سعودية للأسبوع الماضي. اكتب ملخصاً تنفيذياً قصيراً باللغة العربية (3-5 جمل، بحد أقصى 80 كلمة) يبرز:
+• مستوى تغطية تسجيل الوجوه ومعدل الحضور اليوم.
+• أهم نمط ملحوظ (ذروة، تأخر، محاولات تزوير) إن وجد.
+• توصيتين عمليتين قابلتين للتنفيذ، مسبوقتين برمز 💡.
+
+البيانات:
+${JSON.stringify(safe)}
+
+أعد JSON فقط بهذا الشكل: { "summary": "..." }`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 600,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "أنت محلل موارد بشرية مختصر ومحايد. ترد بـ JSON فقط بدون أي شرح إضافي." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!r.ok) {
+      res.status(502).json({ error: "AI proxy error" });
+      return;
+    }
+    const data = await r.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let summary = "";
+    try {
+      const parsed = JSON.parse(content);
+      summary = String(parsed?.summary ?? "").trim();
+    } catch {
+      summary = "";
+    }
+    if (!summary) {
+      res.status(502).json({ error: "Empty AI response" });
+      return;
+    }
+    res.json({ summary, source: "ai" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "AI summary failed" });
+  }
+});
+
 export default router;

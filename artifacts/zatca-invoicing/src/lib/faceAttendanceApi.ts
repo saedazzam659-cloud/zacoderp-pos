@@ -134,4 +134,8 @@ export const faceApi = {
   logs: (status?: string) => req<FaceLog[]>("GET", `/hr/face/logs${status ? `?status=${status}` : ""}`),
   recent: (limit = 20) => req<FaceLog[]>("GET", `/hr/face/recent?limit=${limit}`),
   analytics: () => req<FaceAnalytics>("GET", "/hr/face/analytics"),
+
+  // AI weekly summary — falls back to caller's local summary if proxy is off.
+  aiSummary: (analytics: FaceAnalytics) =>
+    req<{ summary: string; source: "ai" }>("POST", "/ai/summarize-face-attendance", analytics),
 };
