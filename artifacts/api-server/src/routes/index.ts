@@ -45,12 +45,14 @@ import salesRepsRouter from "./sales-reps";
 import auditLogRouter from "./audit-log";
 import sequencesRouter from "./sequences";
 import offersRouter from "./offers";
+import adminModulesRouter from "./adminModules";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth/superadmin", superAdminAuthRouter);
+router.use("/admin/modules", adminModulesRouter);
 router.use("/admin", adminRouter);
 router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);
