@@ -166,10 +166,12 @@ interface FetchOpts {
 interface ApiResponse<T = unknown> {
   status: number;
   body: T;
+  headers: Headers;
+  text: string;
 }
 async function api<T = unknown>(
   path: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   opts: FetchOpts = {},
 ): Promise<ApiResponse<T>> {
   const headers: Record<string, string> = {};
@@ -185,7 +187,7 @@ async function api<T = unknown>(
   if (text) {
     try { body = JSON.parse(text); } catch { body = text; }
   }
-  return { status: res.status, body: body as T };
+  return { status: res.status, body: body as T, headers: res.headers, text };
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -2859,4 +2861,278 @@ test("PUT /maintenance/retention-settings: writes an audit-log row with action=e
   // Track for cleanup
   for (const row of newRows) insertedAuditLogIds.push(row.id);
   await resetRetention("old-maintenance-runs");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/maintenance/email-history — JSON / CSV / filters / audit
+// ════════════════════════════════════════════════════════════════════════════
+// Backs the SuperAdmin "سجل تنبيهات البريد" panel on the AI Company Fix
+// screen. Pin the auth gates, the trigger / status-bucket / date-range
+// filters, the bucket-to-status mapping (drift here would silently
+// mis-classify rows in the UI's coloured chips), the CSV branch's
+// content-type + Arabic header row, and the `export_csv` audit row that
+// records who pulled the file and which filters they applied.
+//
+// All assertions scope through ?from / ?to to a far-past date window
+// (2010-03-*) so seeded rows can never collide with real history that
+// might already exist in a shared test DB.
+const EMAIL_HIST_FROM = "2010-03-01";
+const EMAIL_HIST_TO   = "2010-03-08";
+
+interface EmailHistorySeedRow {
+  ranAt: Date;
+  trigger: "scheduled" | "manual" | "test";
+  status: "ok" | "no_critical" | "failed" | "no_recipients" | "no_transport" | "skipped" | "snoozed" | "rate_limited";
+  recipients: number;
+  criticalCount: number;
+  reason: string;
+  criticalSignature: string;
+  error: string | null;
+}
+
+// 8 rows spanning every (trigger, status-bucket) combination the route
+// supports, one per calendar day in the seeded window so date-range
+// assertions can pick exact subsets without overlap.
+const EMAIL_HISTORY_SEED: EmailHistorySeedRow[] = [
+  { ranAt: new Date("2010-03-01T03:00:00.000Z"), trigger: "scheduled", status: "ok",            recipients: 3, criticalCount: 4, reason: "digest_sent",                              criticalSignature: "sig-ok-1", error: null },
+  { ranAt: new Date("2010-03-02T03:00:00.000Z"), trigger: "scheduled", status: "no_critical",   recipients: 0, criticalCount: 0, reason: "no_critical_results",                      criticalSignature: "",         error: null },
+  { ranAt: new Date("2010-03-03T03:00:00.000Z"), trigger: "scheduled", status: "failed",        recipients: 2, criticalCount: 5, reason: "smtp_error",                               criticalSignature: "sig-f-1",  error: "boom" },
+  { ranAt: new Date("2010-03-04T03:00:00.000Z"), trigger: "scheduled", status: "no_recipients", recipients: 0, criticalCount: 5, reason: "no_superadmin_email_configured",           criticalSignature: "sig-f-2",  error: null },
+  { ranAt: new Date("2010-03-05T03:00:00.000Z"), trigger: "manual",    status: "no_transport",  recipients: 0, criticalCount: 5, reason: "no_smtp_or_outlook_transport_configured",  criticalSignature: "sig-f-3",  error: "no transport" },
+  { ranAt: new Date("2010-03-06T03:00:00.000Z"), trigger: "manual",    status: "skipped",       recipients: 0, criticalCount: 5, reason: "cooldown_active_24h_signature_unchanged",  criticalSignature: "sig-s-1", error: null },
+  { ranAt: new Date("2010-03-07T03:00:00.000Z"), trigger: "test",      status: "snoozed",       recipients: 0, criticalCount: 5, reason: "alerts_muted",                             criticalSignature: "sig-s-2",  error: null },
+  { ranAt: new Date("2010-03-08T03:00:00.000Z"), trigger: "test",      status: "rate_limited",  recipients: 0, criticalCount: 5, reason: "rate_limited",                             criticalSignature: "sig-s-3",  error: null },
+];
+
+let emailHistorySeeded = false;
+async function seedEmailHistoryOnce(): Promise<void> {
+  if (emailHistorySeeded) return;
+  // Pre-clean any orphan rows in the seeded window from a previous interrupted
+  // run. Exact-count assertions below rely on the window holding *only* this
+  // run's seeded rows, so leftover rows from a crashed test would silently
+  // inflate every count and we'd see flaky failures on shared databases.
+  // Bounded strictly to the 2010-03-* test window — never touches real history.
+  await db.execute(sql`
+    DELETE FROM maintenance_email_runs
+     WHERE ran_at >= ${EMAIL_HIST_FROM}::date
+       AND ran_at <  (${EMAIL_HIST_TO}::date + interval '1 day')
+  `);
+  const inserted = await db.insert(maintenanceEmailRunsTable)
+    .values(EMAIL_HISTORY_SEED)
+    .returning({ id: maintenanceEmailRunsTable.id });
+  for (const r of inserted) insertedMaintenanceEmailRunIds.push(r.id);
+  emailHistorySeeded = true;
+}
+
+interface EmailHistoryItem {
+  id: number;
+  ranAt: string;
+  trigger: string;
+  status: string;
+  recipients: number;
+  criticalCount: number;
+  error: string | null;
+  reason: string | null;
+  criticalSignature: string | null;
+}
+interface EmailHistoryResponse {
+  count: number;
+  items: EmailHistoryItem[];
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+const EMAIL_HIST_BASE = `/api/admin/maintenance/email-history?from=${EMAIL_HIST_FROM}&to=${EMAIL_HIST_TO}`;
+
+test("GET /maintenance/email-history: 401 without bearer token", async () => {
+  const r = await api("/api/admin/maintenance/email-history", "GET");
+  assert.equal(r.status, 401);
+});
+
+test("GET /maintenance/email-history: 403 for non-superadmin", async () => {
+  const r = await api("/api/admin/maintenance/email-history", "GET", { token: regularToken });
+  assert.equal(r.status, 403);
+});
+
+test("GET /maintenance/email-history: returns the seeded rows in the date window, DESC by ranAt", async () => {
+  await seedEmailHistoryOnce();
+  const r = await api<EmailHistoryResponse>(EMAIL_HIST_BASE, "GET", { token: saToken });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body).slice(0, 300)}`);
+  assert.equal(r.body.count, EMAIL_HISTORY_SEED.length);
+  assert.equal(r.body.items.length, EMAIL_HISTORY_SEED.length);
+  assert.equal(r.body.hasMore, false);
+  assert.equal(r.body.offset, 0);
+  // Default limit is 20.
+  assert.equal(r.body.limit, 20);
+  // DESC by ranAt → most recent seeded row (2010-03-08) is first.
+  assert.equal(r.body.items[0].ranAt, "2010-03-08T03:00:00.000Z");
+  assert.equal(r.body.items[r.body.items.length - 1].ranAt, "2010-03-01T03:00:00.000Z");
+  for (let i = 1; i < r.body.items.length; i++) {
+    assert.ok(
+      new Date(r.body.items[i - 1].ranAt).getTime() >= new Date(r.body.items[i].ranAt).getTime(),
+      "items must be sorted by ranAt DESC",
+    );
+  }
+  // Spot-check that the response shape mirrors the schema columns the UI relies on.
+  const first = r.body.items[0];
+  assert.equal(first.trigger, "test");
+  assert.equal(first.status, "rate_limited");
+  assert.equal(first.reason, "rate_limited");
+  assert.equal(first.criticalSignature, "sig-s-3");
+});
+
+test("GET /maintenance/email-history: ?trigger filters to a single dispatch source", async () => {
+  await seedEmailHistoryOnce();
+  for (const [trig, expectedCount] of [["scheduled", 4], ["manual", 2], ["test", 2]] as const) {
+    const r = await api<EmailHistoryResponse>(`${EMAIL_HIST_BASE}&trigger=${trig}`, "GET", { token: saToken });
+    assert.equal(r.status, 200, `trigger=${trig}: expected 200, got ${r.status}`);
+    assert.equal(r.body.count, expectedCount, `trigger=${trig} should match exactly ${expectedCount} seeded rows`);
+    for (const it of r.body.items) {
+      assert.equal(it.trigger, trig, `trigger=${trig} returned a row with trigger=${it.trigger}`);
+    }
+  }
+});
+
+test("GET /maintenance/email-history: ?status bucket maps to the documented underlying statuses", async () => {
+  await seedEmailHistoryOnce();
+  // The exact bucket-to-status mapping from EMAIL_HISTORY_STATUS_BUCKETS in
+  // admin.ts. Verifying the membership here means a future tweak to the
+  // mapping (e.g. moving "snoozed" out of the suppressed bucket) trips this
+  // test instead of silently mis-classifying rows in the UI's chip filter.
+  const cases: Array<{ bucket: string; expectedStatuses: string[] }> = [
+    { bucket: "ok",         expectedStatuses: ["ok", "no_critical"] },
+    { bucket: "failed",     expectedStatuses: ["failed", "no_recipients", "no_transport"] },
+    { bucket: "suppressed", expectedStatuses: ["skipped", "snoozed", "rate_limited"] },
+  ];
+  for (const c of cases) {
+    const r = await api<EmailHistoryResponse>(`${EMAIL_HIST_BASE}&status=${c.bucket}`, "GET", { token: saToken });
+    assert.equal(r.status, 200, `status=${c.bucket}: expected 200, got ${r.status}`);
+    const got = r.body.items.map((it) => it.status).sort();
+    assert.deepEqual(
+      got,
+      c.expectedStatuses.slice().sort(),
+      `status=${c.bucket} must return exactly the expected underlying statuses, got [${got.join(",")}]`,
+    );
+  }
+});
+
+test("GET /maintenance/email-history: ?from / ?to scope the result by ranAt (inclusive end-of-day)", async () => {
+  await seedEmailHistoryOnce();
+  // Window covers exactly rows 4, 5, 6 (2010-03-04 .. 2010-03-06). The "to"
+  // bound is inclusive of the whole calendar day, so rows at 03:00 UTC on
+  // 2010-03-06 must appear.
+  const r = await api<EmailHistoryResponse>(
+    `/api/admin/maintenance/email-history?from=2010-03-04&to=2010-03-06`,
+    "GET", { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.count, 3);
+  const days = r.body.items.map((it) => it.ranAt.slice(0, 10)).sort();
+  assert.deepEqual(days, ["2010-03-04", "2010-03-05", "2010-03-06"]);
+
+  // Single-day window (from===to). Inclusive end-of-day must still match
+  // the row recorded at 03:00 UTC on that day.
+  const single = await api<EmailHistoryResponse>(
+    `/api/admin/maintenance/email-history?from=2010-03-05&to=2010-03-05`,
+    "GET", { token: saToken },
+  );
+  assert.equal(single.status, 200);
+  assert.equal(single.body.count, 1);
+  assert.equal(single.body.items[0].ranAt, "2010-03-05T03:00:00.000Z");
+});
+
+test("GET /maintenance/email-history: combines trigger + status + date filters (AND semantics)", async () => {
+  await seedEmailHistoryOnce();
+  // Within 2010-03-01..2010-03-08, manual+failed bucket should match exactly
+  // the manual+no_transport row (2010-03-05).
+  const r = await api<EmailHistoryResponse>(
+    `${EMAIL_HIST_BASE}&trigger=manual&status=failed`,
+    "GET", { token: saToken },
+  );
+  assert.equal(r.status, 200);
+  assert.equal(r.body.count, 1);
+  assert.equal(r.body.items[0].trigger, "manual");
+  assert.equal(r.body.items[0].status, "no_transport");
+  assert.equal(r.body.items[0].ranAt, "2010-03-05T03:00:00.000Z");
+});
+
+test("GET /maintenance/email-history: 400 on invalid query input", async () => {
+  // Bad date shape (from), bad date shape (to), unknown trigger, unknown
+  // status bucket — every input-validation arm in the route.
+  const cases = [
+    `/api/admin/maintenance/email-history?from=not-a-date`,
+    `/api/admin/maintenance/email-history?to=2026/01/01`,
+    `/api/admin/maintenance/email-history?from=2010-13-40`,           // syntactically YYYY-MM-DD but not a real calendar date
+    `/api/admin/maintenance/email-history?trigger=bogus`,
+    `/api/admin/maintenance/email-history?status=bogus`,
+  ];
+  for (const path of cases) {
+    const r = await api(path, "GET", { token: saToken });
+    assert.equal(r.status, 400, `expected 400 for ${path}, got ${r.status}`);
+  }
+});
+
+test("GET /maintenance/email-history: ?format=csv returns text/csv with the documented Arabic header row + writes an export_csv audit row", async () => {
+  await seedEmailHistoryOnce();
+  // Watermark audit_log so we only inspect rows this test wrote — same
+  // shared-DB safety pattern the retention audit-log test uses above.
+  const before = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM audit_log
+  `);
+  const beforeMax = Number(((before as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0);
+
+  const r = await api(
+    `${EMAIL_HIST_BASE}&format=csv`,
+    "GET",
+    { token: saToken },
+  );
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.text.slice(0, 200)}`);
+  assert.match(r.headers.get("content-type") ?? "", /text\/csv/i, "Content-Type must be text/csv");
+
+  // Exact header row — admins archiving the file expect a stable schema.
+  const headerLine = r.text.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0];
+  const expectedHeaders = ["الوقت", "المصدر", "الحالة", "السبب", "المستلمون", "صفوف حرجة", "بصمة القائمة الحرجة", "الخطأ"];
+  for (const h of expectedHeaders) {
+    assert.ok(headerLine.includes(h), `CSV header row must include "${h}", got: ${headerLine}`);
+  }
+  // Data lines: one per seeded row in the window.
+  const dataLines = r.text.replace(/^\uFEFF/, "").split(/\r?\n/).slice(1).filter((l) => l.length > 0);
+  assert.equal(dataLines.length, EMAIL_HISTORY_SEED.length,
+    `CSV should contain one data line per seeded row, got ${dataLines.length}`);
+
+  // Audit side-effect: a single row recording who pulled the file, the
+  // module/action/entityType, and the filter set in the metadata column.
+  const newAuditRows = await db.select({
+    id:         auditLogTable.id,
+    action:     auditLogTable.action,
+    module:     auditLogTable.module,
+    entityType: auditLogTable.entityType,
+    userId:     auditLogTable.userId,
+    metadata:   auditLogTable.metadata,
+  })
+    .from(auditLogTable)
+    .where(and(
+      sql`${auditLogTable.id} > ${beforeMax}`,
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.entityType, "maintenance_email_history"),
+    ));
+  assert.equal(newAuditRows.length, 1, "CSV branch must write exactly one export_csv audit row");
+  const audit = newAuditRows[0];
+  assert.equal(audit.userId, saUserId, "audit row must record the calling SuperAdmin");
+  assert.ok(isObject(audit.metadata), "audit metadata must be a JSON object");
+  const meta = audit.metadata as Record<string, unknown>;
+  assert.equal(meta.format, "csv");
+  assert.equal(meta.count, EMAIL_HISTORY_SEED.length);
+  assert.ok(isObject(meta.filters), "metadata.filters must be present");
+  const filters = meta.filters as Record<string, unknown>;
+  assert.equal(filters.from, EMAIL_HIST_FROM);
+  assert.equal(filters.to, EMAIL_HIST_TO);
+  assert.equal(filters.trigger, null, "trigger filter was unset, metadata should record null");
+  assert.equal(filters.status, null, "status filter was unset, metadata should record null");
+  // Track for suite-level cleanup (also covered by the userId-based wipe in
+  // cleanup() but explicit tracking matches the rest of the suite).
+  insertedAuditLogIds.push(audit.id);
 });
