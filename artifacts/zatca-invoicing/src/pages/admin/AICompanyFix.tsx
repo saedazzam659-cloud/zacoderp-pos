@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -601,22 +601,41 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     return parts.length ? `&${parts.join("&")}` : "";
   };
 
-  const historyQ = useQuery({
+  // Paged history (task #46). The page size matches the previous on-screen
+  // cap (50) so admins still see the same first screenful, but a "تحميل
+  // المزيد" button below the table now appends the next page in-place
+  // instead of forcing a CSV download. The query key intentionally excludes
+  // the offset so changing any filter naturally resets pagination via React
+  // Query's normal cache-keying — `useInfiniteQuery` rebuilds page 0 from
+  // scratch when the key changes.
+  const HISTORY_PAGE_SIZE = 50;
+  const historyQ = useInfiniteQuery({
     queryKey: [
       "maintenance-history", companyId, historyTick,
       historyFrom, historyTo, historyAction, historyEntityType,
     ],
-    queryFn: async () => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
       const r = await fetch(
-        `${API}/api/admin/maintenance/history?companyId=${companyId}&limit=50${historyFilterParams()}`,
+        `${API}/api/admin/maintenance/history?companyId=${companyId}`
+          + `&limit=${HISTORY_PAGE_SIZE}&offset=${offset}${historyFilterParams()}`,
         { headers },
       );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب السجل");
-      return r.json() as Promise<{ count: number; items: any[] }>;
+      return r.json() as Promise<{
+        count: number; items: any[];
+        offset: number; limit: number;
+        hasMore: boolean; nextOffset: number | null;
+      }>;
     },
+    getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
     enabled: !!companyId && historyOpen,
     refetchOnWindowFocus: false,
   });
+  // Flatten all loaded pages into a single list for the table — this also
+  // keeps the empty-state / error-state checks below readable.
+  const historyItems: any[] = (historyQ.data?.pages ?? []).flatMap((p) => p.items);
 
   // CSV export — calls the same history endpoint with `?format=csv` so admins
   // get the FULL audit-logged history (not just the on-screen 50 rows). The
@@ -2265,10 +2284,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
               {historyQ.isError && (
                 <p className="text-xs text-red-700">{(historyQ.error as any)?.message || "فشل جلب السجل"}</p>
               )}
-              {historyQ.data && historyQ.data.items.length === 0 && (
+              {!historyQ.isLoading && !historyQ.isError && historyItems.length === 0 && (
                 <p className="text-xs text-muted-foreground">لا توجد عمليات صيانة مسجّلة لهذه الشركة بعد.</p>
               )}
-              {historyQ.data && historyQ.data.items.length > 0 && (
+              {historyItems.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/40">
@@ -2281,7 +2300,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {historyQ.data.items.map((row: any) => (
+                      {historyItems.map((row: any) => (
                         <tr key={row.id}>
                           <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
                           <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
@@ -2294,6 +2313,33 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {/* "Load more" pager (task #46). Only shown once we have at
+                  least one row and the server signalled there's another
+                  page; otherwise the row count line stands on its own so
+                  admins know they're at the end of the filtered set. */}
+              {historyItems.length > 0 && (
+                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    {historyQ.hasNextPage
+                      ? `تم عرض ${historyItems.length} صفًا`
+                      : `تم عرض كل النتائج (${historyItems.length} صفًا)`}
+                  </span>
+                  {historyQ.hasNextPage && (
+                    <Button
+                      size="sm" variant="outline"
+                      className="h-7 text-[11px] px-2 gap-1"
+                      onClick={() => historyQ.fetchNextPage()}
+                      disabled={historyQ.isFetchingNextPage}
+                      title="تحميل الصفحة التالية من السجل"
+                    >
+                      {historyQ.isFetchingNextPage
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : null}
+                      تحميل المزيد
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

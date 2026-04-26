@@ -4109,7 +4109,12 @@ router.post("/maintenance/old-maintenance-email-runs/fix", requireSuperAdmin, as
 //    complete.
 router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
-  const limit = clampInt(req.query.limit, 1, 200, 50);
+  const limit  = clampInt(req.query.limit,  1, 200,        50);
+  // ?offset=N — cursor for the in-page "load more" button (task #46). Capped
+  // generously so a forgotten / runaway client can't ask the DB to skip an
+  // unbounded number of rows. Ignored by the CSV branch which always returns
+  // the full filtered history regardless of paging state.
+  const offset = clampInt(req.query.offset, 0, 1_000_000,  0);
   // Optional filters — applied identically to both JSON and CSV branches so
   // the downloaded file always matches what the admin saw on screen.
   //   ?from=YYYY-MM-DD       (inclusive, lower bound on createdAt)
@@ -4173,6 +4178,9 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       sendCsv(res, `maintenance-history-${g.companyId}-${Date.now()}.csv`, headers, csvRows);
       return;
     }
+    // Fetch one extra row so we can answer `hasMore` without a second
+    // count(*) round-trip — a cheap trick that keeps the JSON branch the same
+    // shape as before for clients that don't paginate.
     const rows = await db.select({
       id: auditLogTable.id, action: auditLogTable.action,
       entityType: auditLogTable.entityType, username: auditLogTable.username,
@@ -4181,8 +4189,18 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       .from(auditLogTable)
       .where(where)
       .orderBy(desc(auditLogTable.createdAt))
-      .limit(limit);
-    res.json({ count: rows.length, items: rows });
+      .limit(limit + 1)
+      .offset(offset);
+    const hasMore = rows.length > limit;
+    const items   = hasMore ? rows.slice(0, limit) : rows;
+    res.json({
+      count:      items.length,
+      items,
+      offset,
+      limit,
+      hasMore,
+      nextOffset: hasMore ? offset + items.length : null,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب السجل" });
   }
