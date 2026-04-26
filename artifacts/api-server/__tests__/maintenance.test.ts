@@ -92,6 +92,8 @@ import {
   getRecentToolRecoveries,
   TOOL_ERROR_WINDOW_DAYS,
   severityMeetsThreshold,
+  getSuperAdminRecipients,
+  dispatchCriticalDigest,
   type AlertSeverity,
 } from "../src/lib/maintenanceScheduler.ts";
 
@@ -2424,4 +2426,207 @@ test("POST /maintenance/run-now: clean company's manual rows are all status='ok'
   `);
   const n = Number(((flagged as { rows?: Array<{ n: number }> }).rows ?? [{ n: 0 }])[0]?.n ?? 0);
   assert.equal(n, 0, "clean company must have zero warn/critical rows");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  dispatchCriticalDigest — per-threshold recipient routing (end-to-end)
+// ════════════════════════════════════════════════════════════════════════════
+// The unit tests above pin `severityMeetsThreshold` and the signature change
+// in isolation. The end-to-end behaviour we actually care about is:
+//
+//   (a) a sweep whose only signal is `warn` reaches threshold='warning' AND
+//       threshold='all' SuperAdmins, but skips threshold='critical' ones.
+//   (b) a sweep whose only signal is `error` (a silently-broken tool) reaches
+//       only threshold='all' SuperAdmins — the motivating case for the 'all'
+//       option, since `critical`/`warning` recipients otherwise go for weeks
+//       without noticing a wedged check.
+//   (c) a sweep with at least one critical row reaches every opted-in
+//       SuperAdmin (regression guard for the historical default).
+//   (d) a TEST send (the "Send test email" button) bypasses recipient
+//       filtering entirely so an operator confirming SMTP setup gets
+//       confirmation regardless of what the live sweep currently looks like.
+//
+// We assert (a)/(b)/(c) against the exported `getSuperAdminRecipients`
+// helper because that's the only place we can read the actual recipient
+// list (EmailDispatchOutcome only exposes a count). (d) ALSO calls
+// `dispatchCriticalDigest({ isTest: true })` end-to-end and asserts the
+// recipient COUNT matches our seeded SAs — that's the integration-level
+// proof that the bypass is wired into the dispatch path, not just the
+// helper.
+//
+// Determinism: the shared DB usually contains live SuperAdmins. We snapshot
+// every other SA's `notifyMaintenanceEmail` flag, flip it OFF for the
+// duration of this test, then restore it in `finally` so a failed
+// assertion can never leak the silenced state past the test boundary.
+test("dispatchCriticalDigest: per-threshold recipient routing for warn/error/critical sweeps + test-send bypass", async () => {
+  // Snapshot every SuperAdmin that's currently opted in (including saUserId
+  // from before(), which defaults to true). Flip them OFF so our seeded
+  // users are the only candidates the recipient query can return.
+  const otherSAs = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.role, "superadmin"),
+      eq(usersTable.notifyMaintenanceEmail, true),
+    ));
+  const previouslyOnIds = otherSAs.map((r) => r.id);
+  if (previouslyOnIds.length) {
+    await db.update(usersTable)
+      .set({ notifyMaintenanceEmail: false })
+      .where(inArray(usersTable.id, previouslyOnIds));
+  }
+
+  // Snapshot the env vars that emailConfigured() reads, then unset them so
+  // dispatchCriticalDigest's test-send hits the deterministic `no_transport`
+  // branch instead of trying to actually deliver to fake @example.test
+  // addresses via Outlook/SMTP if either happens to be configured here.
+  // Recipient COUNT is preserved on that branch — that's what the bypass
+  // assertion needs.
+  const envSnapshot: Record<string, string | undefined> = {
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASS: process.env.SMTP_PASS,
+    REPLIT_CONNECTORS_HOSTNAME: process.env.REPLIT_CONNECTORS_HOSTNAME,
+  };
+  delete process.env.SMTP_HOST;
+  delete process.env.SMTP_USER;
+  delete process.env.SMTP_PASS;
+  delete process.env.REPLIT_CONNECTORS_HOSTNAME;
+
+  // Watermark maintenance_email_runs so we can clean up the row recordEmailOutcome
+  // appends during the test-send dispatch — the call doesn't return the
+  // inserted id.
+  const beforeMaxExec = await db.execute<{ max_id: number | null }>(sql`
+    SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM maintenance_email_runs
+  `);
+  const beforeMax = Number(
+    ((beforeMaxExec as { rows?: Array<{ max_id: number | null }> }).rows ?? [{ max_id: 0 }])[0]?.max_id ?? 0,
+  );
+
+  try {
+    // Three SAs — one per threshold — with unique emails so a deepEqual on
+    // the returned list pins exactly which users were selected.
+    const hash = await bcrypt.hash("ignored-test-pw", 4);
+    const critEmail = `${TEST_TAG}-sa-crit@example.test`;
+    const warnEmail = `${TEST_TAG}-sa-warn@example.test`;
+    const allEmail  = `${TEST_TAG}-sa-all@example.test`;
+    const seeded = await db.insert(usersTable).values([
+      { username: `${TEST_TAG}_sa_crit`, email: critEmail, passwordHash: hash,
+        role: "superadmin", isActive: true, sessionToken: null, sessionId: null,
+        companyId: null, notifyMaintenanceEmail: true,
+        notifyMaintenanceSeverity: "critical" },
+      { username: `${TEST_TAG}_sa_warn`, email: warnEmail, passwordHash: hash,
+        role: "superadmin", isActive: true, sessionToken: null, sessionId: null,
+        companyId: null, notifyMaintenanceEmail: true,
+        notifyMaintenanceSeverity: "warning" },
+      { username: `${TEST_TAG}_sa_all`,  email: allEmail,  passwordHash: hash,
+        role: "superadmin", isActive: true, sessionToken: null, sessionId: null,
+        companyId: null, notifyMaintenanceEmail: true,
+        notifyMaintenanceSeverity: "all" },
+    ]).returning({ id: usersTable.id });
+    for (const r of seeded) insertedUserIds.push(r.id);
+
+    // Belt-and-brace: an opted-OUT SA must never reach the recipient list
+    // even when their threshold would otherwise match the sweep. Seeded as
+    // a 4th user so the toggle-off is exercised directly here, not just
+    // implied by the bulk-disable above.
+    const optedOutEmail = `${TEST_TAG}-sa-off@example.test`;
+    const optedOut = await db.insert(usersTable).values({
+      username: `${TEST_TAG}_sa_off`, email: optedOutEmail, passwordHash: hash,
+      role: "superadmin", isActive: true, sessionToken: null, sessionId: null,
+      companyId: null, notifyMaintenanceEmail: false,
+      notifyMaintenanceSeverity: "all",
+    }).returning({ id: usersTable.id });
+    insertedUserIds.push(optedOut[0].id);
+
+    // (a) warn-only sweep — present={warn} → warning + all only.
+    const warnOnly = await getSuperAdminRecipients(new Set<AlertSeverity>(["warn"]));
+    assert.deepEqual(
+      warnOnly.slice().sort(),
+      [warnEmail, allEmail].sort(),
+      `warn-only sweep must reach 'warning' + 'all' recipients only, got [${warnOnly.join(",")}]`,
+    );
+    assert.ok(!warnOnly.includes(critEmail),
+      "warn-only sweep MUST NOT page threshold='critical' recipients");
+    assert.ok(!warnOnly.includes(optedOutEmail),
+      "an opted-OUT SA must never appear, even when their threshold would match");
+
+    // (b) error-only sweep — present={error} → only `all` recipients.
+    // Motivating case: a wedged check that produces no warn/critical rows
+    // would otherwise leave 'critical'/'warning' SAs blind to the breakage.
+    const errOnly = await getSuperAdminRecipients(new Set<AlertSeverity>(["error"]));
+    assert.deepEqual(
+      errOnly,
+      [allEmail],
+      `error-only sweep must reach ONLY 'all' recipients, got [${errOnly.join(",")}]`,
+    );
+
+    // (c) critical-only sweep — present={critical} → every threshold matches.
+    // Regression guard so the historical default never silently loses recipients.
+    const critOnly = await getSuperAdminRecipients(new Set<AlertSeverity>(["critical"]));
+    assert.deepEqual(
+      critOnly.slice().sort(),
+      [critEmail, warnEmail, allEmail].sort(),
+      `critical-only sweep must reach every threshold, got [${critOnly.join(",")}]`,
+    );
+
+    // Cross-check: an empty present-set means no one is eligible. The
+    // dispatch path short-circuits earlier in production, but the helper
+    // belt-and-braces this so a future caller can rely on the contract.
+    const noneEligible = await getSuperAdminRecipients(new Set<AlertSeverity>());
+    assert.deepEqual(noneEligible, [],
+      "empty present-severities set must yield zero recipients");
+
+    // (d) test-send bypass — `dispatchCriticalDigest({ isTest: true })`
+    // synthesises a recipient set of {critical, warn, error} so EVERY
+    // opted-in SA receives the test even when the live sweep is currently
+    // quiet. We assert via two complementary paths:
+    //   1. The helper called with the same synthetic set returns all three
+    //      emails (deterministic recipient-list assertion).
+    //   2. The full dispatch reports recipients=3 in the outcome (proves
+    //      the bypass is wired from `isTest` through the dispatch path,
+    //      not just present in the helper in isolation).
+    const testHelperRecipients = await getSuperAdminRecipients(
+      new Set<AlertSeverity>(["critical", "warn", "error"]),
+    );
+    assert.deepEqual(
+      testHelperRecipients.slice().sort(),
+      [critEmail, warnEmail, allEmail].sort(),
+      "test send must broadcast to every opted-in SuperAdmin regardless of their per-account threshold",
+    );
+
+    const outcome = await dispatchCriticalDigest({ isTest: true });
+    // Capture any maintenance_email_runs row recordEmailOutcome appended so
+    // the suite-level cleanup deletes it. Row count >= 1 is expected; we
+    // also accept 0 as best-effort because the audit insert is wrapped in
+    // try/catch and never fails the dispatch.
+    const newEmailRuns = await db.select({ id: maintenanceEmailRunsTable.id })
+      .from(maintenanceEmailRunsTable)
+      .where(sql`${maintenanceEmailRunsTable.id} > ${beforeMax}`);
+    for (const r of newEmailRuns) insertedMaintenanceEmailRunIds.push(r.id);
+
+    assert.equal(
+      outcome.recipients, 3,
+      `test dispatch must select all 3 opted-in SAs regardless of threshold, got ${outcome.recipients} (status=${outcome.status})`,
+    );
+    // Status is `no_transport` here because we explicitly cleared the SMTP
+    // / Outlook env vars above. If a future change adds a third transport
+    // and slips past the env unset, this catches it loudly instead of
+    // silently emitting test mail to fake addresses.
+    assert.equal(
+      outcome.status, "no_transport",
+      `expected no_transport (env unset) but got ${outcome.status}: ${outcome.message}`,
+    );
+  } finally {
+    // Restore env first — it has the broadest blast radius if a later test
+    // depends on the live transport configuration.
+    for (const [k, v] of Object.entries(envSnapshot)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    if (previouslyOnIds.length) {
+      await db.update(usersTable)
+        .set({ notifyMaintenanceEmail: true })
+        .where(inArray(usersTable.id, previouslyOnIds));
+    }
+  }
 });

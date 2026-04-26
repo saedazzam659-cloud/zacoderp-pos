@@ -328,7 +328,12 @@ function resolvePublicBaseUrl(explicit?: string): string {
 //
 // Returns de-duplicated emails so a SuperAdmin who somehow appears twice
 // (e.g. legacy rows) doesn't get the digest twice.
-async function getSuperAdminRecipients(
+//
+// Exported so the maintenance test suite can pin the per-threshold filter
+// against seeded SuperAdmins without spinning up the full sweep — the
+// dispatch path's recipient-list assertion would otherwise only be visible
+// as an integer count via EmailDispatchOutcome.recipients.
+export async function getSuperAdminRecipients(
   presentSeverities: ReadonlySet<AlertSeverity>,
 ): Promise<string[]> {
   // notifyMaintenanceEmail = false is an explicit per-SuperAdmin opt-out
