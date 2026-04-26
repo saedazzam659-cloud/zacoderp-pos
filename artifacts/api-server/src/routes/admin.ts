@@ -4656,7 +4656,9 @@ router.get("/maintenance/runs", requireSuperAdmin, async (req, res) => {
 // limit is 20 (the modal renders 20 rows comfortably) and capped at 50 to
 // match the same ceiling /maintenance/runs uses.
 //
-// Read-only and audit-free — same rationale as /maintenance/runs.
+// Read-only — except for the `?format=csv` branch which writes a single
+// `export_csv` audit row so SuperAdmins can see who pulled the failure trail
+// (mirrors /maintenance/history and /maintenance/email-history).
 router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
   try {
     const companyId = Number(req.query.companyId);
@@ -4666,6 +4668,51 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
     const toolKey = String(req.query.toolKey ?? "").trim();
     if (!toolKey) {
       res.status(400).json({ error: "toolKey مطلوب" }); return;
+    }
+    // CSV branch: return every recorded run for this (company, tool) pair
+    // (subject only to the global retention prune) so the downloaded file
+    // contains the full failure trail, not just the 20 rows on screen. The
+    // on-screen `?limit=` is intentionally ignored here — same convention
+    // /maintenance/history uses for its CSV branch.
+    if (wantsCsv(req)) {
+      const exec = await db.execute<any>(sql`
+        SELECT id,
+               run_at      AS "runAt",
+               trigger     AS "trigger",
+               status      AS "status",
+               count       AS "count",
+               duration_ms AS "durationMs",
+               error       AS "error"
+          FROM maintenance_runs
+         WHERE company_id = ${companyId}
+           AND tool_key   = ${toolKey}
+         ORDER BY run_at DESC
+      `);
+      const rows = ((exec as any).rows ?? []) as Array<{
+        id: number; runAt: Date | string; trigger: string; status: string;
+        count: number; durationMs: number; error: string | null;
+      }>;
+      // Headers + per-row mapping mirror exactly what the on-screen modal
+      // renders so the file matches what the admin saw before clicking
+      // export. `trigger` is humanised to match the badge text.
+      const headers = ["الحالة", "التشغيل", "عدد النتائج", "المدة (مللي ث)", "وقت التشغيل", "رسالة الخطأ"];
+      const csvRows = rows.map((r) => [
+        r.status ?? "",
+        r.trigger === "manual" ? "يدوي" : r.trigger === "scheduled" ? "مجدول" : (r.trigger ?? ""),
+        r.count ?? 0,
+        r.durationMs ?? 0,
+        csvDate(r.runAt),
+        r.error ?? "",
+      ]);
+      await logMaint(req, companyId, "export_csv", "maintenance_tool_history", {
+        count: rows.length, format: "csv", toolKey,
+      });
+      // `toolKey` is a vetted machine identifier (matches existing keys), but
+      // strip anything outside [A-Za-z0-9._-] defensively so the
+      // Content-Disposition filename never gains stray punctuation.
+      const safeToolKey = toolKey.replace(/[^A-Za-z0-9._-]+/g, "_");
+      sendCsv(res, `tool-history-${companyId}-${safeToolKey}-${Date.now()}.csv`, headers, csvRows);
+      return;
     }
     const limit = clampInt(req.query.limit, 1, 50, 20);
     const exec = await db.execute<any>(sql`

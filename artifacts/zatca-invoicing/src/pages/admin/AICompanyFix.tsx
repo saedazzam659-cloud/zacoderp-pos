@@ -120,6 +120,7 @@ const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
   maintenance_schedule:            "جدولة الصيانة",
   maintenance_runs:                "تشغيل الصيانة",
   maintenance_retention:           "مدة الاحتفاظ بالسجلات",
+  maintenance_tool_history:        "سجل تشغيلات الأداة",
 };
 function historyActionLabelAr(value: string): string {
   return HISTORY_ACTION_LABELS_AR[value] ?? value;
@@ -1135,6 +1136,48 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
     },
     enabled: !!toolHistoryTarget,
     refetchOnWindowFocus: false,
+  });
+
+  // CSV export for the tool-history modal — calls the same endpoint with
+  // `?format=csv` so SuperAdmins can attach the failure trail to a ticket
+  // without copying rows by hand. The server returns the FULL recorded
+  // history for the (company, tool) pair (subject only to the global
+  // retention prune), not just the on-screen 20 rows, and writes a single
+  // export_csv audit row that surfaces in the maintenance history accordion.
+  const toolHistoryCsvMut = useMutation({
+    mutationFn: async () => {
+      const t = toolHistoryTarget;
+      if (!t) throw new Error("لم يتم اختيار أداة");
+      const r = await fetch(
+        `${API}/api/admin/maintenance/tool-history?companyId=${t.companyId}&toolKey=${encodeURIComponent(t.toolKey)}&format=csv`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1]
+        ? decodeURIComponent(m[1])
+        : `tool-history-${t.companyId}-${t.toolKey}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => {
+      toast({ title: "تم تنزيل ملف CSV" });
+      // Refresh the maintenance-history accordion so the export_csv audit
+      // row this download just produced shows up without a manual reload.
+      setHistoryTick((t) => t + 1);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
   const onFixed = () => setHistoryTick((t) => t + 1);
@@ -2684,6 +2727,23 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                     {toolHistoryTarget.toolKey}
                   </span>
                 )}
+                {/* CSV export — pulls every recorded run for this (company,
+                    tool) pair so the failure trail can be attached to a
+                    ticket. Disabled until the modal has a target and while a
+                    download is already in flight. */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1 mr-auto"
+                  onClick={() => toolHistoryCsvMut.mutate()}
+                  disabled={!toolHistoryTarget || toolHistoryCsvMut.isPending}
+                  title="تنزيل سجل تشغيلات الأداة كاملاً كملف CSV"
+                >
+                  {toolHistoryCsvMut.isPending
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <Download className="h-3 w-3" />}
+                  تصدير CSV
+                </Button>
               </DialogTitle>
               <DialogDescription>
                 {toolHistoryTarget && (
@@ -2693,6 +2753,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       {toolHistoryTarget.companyName}
                     </span>{" "}
                     (#{toolHistoryTarget.companyId}). مرّر فوق رسالة الخطأ لرؤية النص الكامل.
+                    يقوم زر "تصدير CSV" بتنزيل السجل الكامل (وليس فقط ما يظهر).
                   </span>
                 )}
               </DialogDescription>
