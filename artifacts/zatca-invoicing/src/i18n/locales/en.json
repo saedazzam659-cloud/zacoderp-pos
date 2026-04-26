@@ -447,6 +447,7 @@
     "sequences": "Document Numbering",
     "invoices": "Invoices",
     "vatDeclaration": "VAT Declaration",
+    "posManagement": "POS Management",
     "posMonitoring": "POS Monitoring",
     "posSettings": "POS Settings",
     "posTerminals": "POS Terminals",

@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
-  Factory, Cog, ScanFace,
+  Factory, Cog, ScanFace, Store,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -106,11 +106,21 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];
-const companyBusinessNav: NavDef[] = [
-  { nameKey: "nav.posMonitoring", href: "/pos-monitoring",     icon: Activity, permKey: "pos" },
-  { nameKey: "nav.posTerminals",  href: "/pos-terminals",      icon: MonitorSmartphone, permKey: "pos" },
-  { nameKey: "nav.posSettings",   href: "/pos-settings",       icon: Settings, permKey: "pos" },
+// POS items used to live as flat NavItems in companyBusinessNav. Per the
+// user's request they're now grouped under a collapsible "إدارة نقاط البيع"
+// (POS Management) parent group rendered by PosNavGroup, so this list
+// stays empty (kept around for future business-level top-level NavItems).
+const companyBusinessNav: NavDef[] = [];
+
+// ── POS Management submenu ──────────────────────────────────────────────
+// Collected from the legacy companyBusinessNav entries; gated on the same
+// `pos` permission they had individually.
+const posSubNav: NavDef[] = [
+  { nameKey: "nav.posMonitoring", href: "/pos-monitoring", icon: Activity,          permKey: "pos" },
+  { nameKey: "nav.posTerminals",  href: "/pos-terminals",  icon: MonitorSmartphone, permKey: "pos" },
+  { nameKey: "nav.posSettings",   href: "/pos-settings",   icon: Settings,          permKey: "pos" },
 ];
+const POS_GROUP_PERMS = ["pos"];
 // HR submenu — sits under the "شؤون الموظفين" (HR) collapsible group.
 const hrSubNav: NavDef[] = [
   { nameKey: "nav.hrEmployeesList", href: "/hr/employees",       icon: UserCog,         permKey: "hr_employees" },
@@ -153,6 +163,10 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
   { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText,   permKey: "sales_invoices" },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
+  // Audit log was previously rendered as a standalone top-level item gated by
+  // user.role==="admin"; per the user's request it's now nested under the
+  // dashboard/control-panel group. requireAdmin keeps the same admin-only gate.
+  { nameKey: "nav.auditLog",        href: "/admin/audit-log",     icon: ScrollText, requireAdmin: true },
 ];
 
 const purchasingSubNav: NavDef[] = [
@@ -838,6 +852,43 @@ function AccountingNavGroup({
   );
 }
 
+// ─── PosNavGroup ──────────────────────────────────────────────────────────────
+// Collapsible "إدارة نقاط البيع" (POS Management) group — collects the
+// previously-flat posMonitoring / posTerminals / posSettings entries under
+// a single parent (per the user's request).
+function PosNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, POS_GROUP_PERMS)) return null;
+  const isOnSub = posSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <button onClick={onToggle} className={cn(
+        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        isOnSub && !open
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}>
+        <Store className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-start">{t("nav.posManagement")}</span>
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {posSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── HrNavGroup ───────────────────────────────────────────────────────────────
 function HrNavGroup({
   location, onNavigate, open, onToggle,
@@ -941,6 +992,8 @@ function SidebarInner({
   onHrToggle,
   productionOpen,
   onProductionToggle,
+  posOpen,
+  onPosToggle,
   onNavigate,
   onLogout,
 }: {
@@ -974,6 +1027,8 @@ function SidebarInner({
   onHrToggle: () => void;
   productionOpen: boolean;
   onProductionToggle: () => void;
+  posOpen: boolean;
+  onPosToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -1132,6 +1187,15 @@ function SidebarInner({
               />
             </div>
 
+            <div className="space-y-0.5">
+              <PosNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={posOpen}
+                onToggle={onPosToggle}
+              />
+            </div>
+
             {filteredBusiness.length > 0 && (
               <div className="space-y-0.5">
                 {filteredBusiness.map(item => (
@@ -1145,16 +1209,6 @@ function SidebarInner({
                 {filteredSystem.map(item => (
                   <NavItem key={item.href} item={item} location={location} onClick={onNavigate} />
                 ))}
-              </div>
-            )}
-
-            {user?.role === "admin" && (
-              <div className="space-y-0.5">
-                <NavItem
-                  item={{ nameKey: "nav.auditLog", href: "/admin/audit-log", icon: ScrollText }}
-                  location={location}
-                  onClick={onNavigate}
-                />
               </div>
             )}
           </>
@@ -1247,6 +1301,9 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/accounting/fiscal-periods":     { label: "nav.fiscalPeriods", parent: "/accounting" },
     "/accounting/reports":            { label: "navExtra.accountingReports", parent: "/accounting" },
     "/org":                           { label: "navExtra.orgRoot" },
+    // Virtual "POS Management" parent — has no dedicated route, but supplies
+    // a breadcrumb label for posSubNav children below.
+    "/pos":                           { label: "nav.posManagement" },
   };
   const all = [
     ...dashboardSubNav,
@@ -1265,6 +1322,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     inventoryReportsHeader,
     ...inventoryReportsSubNav.map(i => ({ ...i, parent: "/inventory/reports" })),
     ...companyBusinessNav,
+    ...posSubNav.map(i => ({ ...i, parent: "/pos" })),
     ...hrSubNav,
     ...productionSubNav,
   ];
@@ -1492,6 +1550,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals") || location.startsWith("/accounting/reports"));
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
+  // Auto-expand the POS group when the user lands directly on any of the
+  // pos-monitoring / pos-terminals / pos-settings routes.
+  const [posOpen,        setPosOpen]          = useState(() =>
+    location.startsWith("/pos-monitoring") || location.startsWith("/pos-terminals") || location.startsWith("/pos-settings")
+  );
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -1509,6 +1572,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleAccountingToggle = () => setAccountingOpen(v => !v);
   const handleHrToggle         = () => setHrOpen(v => !v);
   const handleProductionToggle = () => setProductionOpen(v => !v);
+  const handlePosToggle        = () => setPosOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   const sharedProps = {
@@ -1542,6 +1606,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onHrToggle: handleHrToggle,
     productionOpen,
     onProductionToggle: handleProductionToggle,
+    posOpen,
+    onPosToggle: handlePosToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };
