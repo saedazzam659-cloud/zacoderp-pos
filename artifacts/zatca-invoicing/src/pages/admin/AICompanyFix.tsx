@@ -844,26 +844,37 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     return parts.length ? `&${parts.join("&")}` : "";
   };
 
-  // Append-only email-dispatch history (last 20 attempts by default — narrow
-  // further with the filter controls above the table). Surfaces every
-  // success, failure, and suppression so SuperAdmins can audit deliveries
-  // without trawling server logs. Refreshed alongside the schedule card after
-  // any send attempt (test, manual run-now, scheduled sweep).
+  // Append-only email-dispatch history (page size 20 — narrow further with
+  // the filter controls above the table). Surfaces every success, failure,
+  // and suppression so SuperAdmins can audit deliveries without trawling
+  // server logs. Refreshed alongside the schedule card after any send
+  // attempt (test, manual run-now, scheduled sweep).
   // `reason` + `criticalSignature` were added so SuperAdmins can tell *why*
   // a sweep was skipped (cooldown vs snooze vs no recipients) and verify
   // which critical fingerprint the dispatcher was acting on.
-  const emailHistoryQ = useQuery({
+  // Pagination (task #54): the previous single-page `limit=20` request
+  // silently capped audits at 20 rows; SuperAdmins reviewing several months
+  // of activity now get a "تحميل المزيد" button that appends the next page
+  // in-place via `useInfiniteQuery`. The query key intentionally excludes
+  // the offset so changing any filter naturally resets pagination — React
+  // Query rebuilds page 0 from scratch when the key changes.
+  const EMAIL_HISTORY_PAGE_SIZE = 20;
+  const emailHistoryQ = useInfiniteQuery({
     queryKey: [
       "maintenance-email-history",
       emailHistFrom, emailHistTo, emailHistTrigger, emailHistStatus,
     ],
-    queryFn: async () => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
       const r = await fetch(
-        `${API}/api/admin/maintenance/email-history?limit=20${emailHistoryFilterParams()}`,
+        `${API}/api/admin/maintenance/email-history`
+          + `?limit=${EMAIL_HISTORY_PAGE_SIZE}&offset=${offset}${emailHistoryFilterParams()}`,
         { headers },
       );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب سجل البريد");
       return r.json() as Promise<{
+        count: number;
         items: Array<{
           id: number;
           ranAt: string;
@@ -875,10 +886,19 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           reason: string | null;
           criticalSignature: string | null;
         }>;
+        offset: number;
+        limit: number;
+        hasMore: boolean;
+        nextOffset: number | null;
       }>;
     },
+    getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
     refetchOnWindowFocus: false,
   });
+  // Flatten all loaded pages into a single list for the table — keeps the
+  // empty-state checks below readable and matches the maintenance-history
+  // panel's pattern.
+  const emailHistoryItems = (emailHistoryQ.data?.pages ?? []).flatMap((p) => p.items);
 
   // CSV export — calls the same email-history endpoint with `?format=csv`
   // and forwards the on-screen filters so the downloaded file matches what
@@ -1255,6 +1275,9 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             quarter", "give the auditor a CSV") without leaving the page. */}
         {emailHistoryQ.data && (() => {
           const hasFilters = !!(emailHistFrom || emailHistTo || emailHistTrigger || emailHistStatus);
+          const lastPage   = emailHistoryQ.data.pages[emailHistoryQ.data.pages.length - 1];
+          const hasMore    = !!lastPage?.hasMore;
+          const loadedCount = emailHistoryItems.length;
           return (
           <div className="border border-violet-200 rounded p-3 bg-white">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -1262,8 +1285,8 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
               <span className="text-sm font-medium text-violet-900">سجل تنبيهات البريد</span>
               <span className="text-[11px] text-muted-foreground">
                 {hasFilters
-                  ? `${emailHistoryQ.data.items.length} محاولة مطابقة للفلاتر (حتى 20)`
-                  : `آخر ${emailHistoryQ.data.items.length} محاولة إرسال (نجاح أو فشل أو متخطّاة)`}
+                  ? `${loadedCount} محاولة مطابقة للفلاتر${hasMore ? "+" : ""}`
+                  : `آخر ${loadedCount} محاولة إرسال (نجاح أو فشل أو متخطّاة)${hasMore ? " — هناك المزيد" : ""}`}
               </span>
               <div className="mr-auto flex items-center gap-1.5">
                 <Button
@@ -1346,7 +1369,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                 </Button>
               )}
             </div>
-            {emailHistoryQ.data.items.length === 0 ? (
+            {emailHistoryItems.length === 0 ? (
               <p className="text-[11px] text-muted-foreground">
                 {hasFilters
                   ? "لا توجد محاولات إرسال مطابقة للفلاتر."
@@ -1367,7 +1390,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-violet-100">
-                    {emailHistoryQ.data.items.map((row) => {
+                    {emailHistoryItems.map((row) => {
                       const triggerLabel =
                         row.trigger === "scheduled" ? "تلقائي" :
                         row.trigger === "manual"    ? "يدوي" :
@@ -1419,9 +1442,39 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
                 </table>
               </div>
             )}
+            {/* "تحميل المزيد" — appends the next page of email-history rows
+                in-place (task #54) instead of silently capping the audit at
+                the first page. Hidden when the server reports no more rows
+                so the UI doesn't suggest extra data exists. The fetch error
+                from any page surfaces above the button so admins notice. */}
+            {hasMore && (
+              <div className="mt-2 flex items-center justify-center">
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => emailHistoryQ.fetchNextPage()}
+                  disabled={emailHistoryQ.isFetchingNextPage}
+                  title="جلب صفحة إضافية من سجل البريد"
+                >
+                  {emailHistoryQ.isFetchingNextPage
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : null}
+                  تحميل المزيد
+                </Button>
+              </div>
+            )}
           </div>
           );
         })()}
+        {/* Surface fetch errors OUTSIDE the `emailHistoryQ.data && ...` guard
+            so a first-page failure (where `data` is still undefined) is also
+            visible to SuperAdmins, not just errors from a follow-up
+            fetchNextPage() call (task #54). */}
+        {emailHistoryQ.isError && (
+          <p className="text-[11px] text-red-700 mt-2">
+            {(emailHistoryQ.error as any)?.message || "فشل جلب سجل البريد"}
+          </p>
+        )}
 
         {/* ── Broken-tool panel: latest per-(company, tool) "error" rows ──
             Surfaces silently-broken checks distinct from "critical findings"

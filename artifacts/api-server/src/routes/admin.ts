@@ -4878,6 +4878,11 @@ function outcomeMessageAr(o: { status: string; message: string }): string {
 // Query params (all optional, applied identically to JSON & CSV branches so
 // the downloaded file always matches what the admin saw on screen):
 //   ?limit=20             (1..100; ignored when ?format=csv → unlimited)
+//   ?offset=N             (cursor for the in-page "load more" button — task
+//                          #54; capped at 1_000_000 so a runaway client can't
+//                          ask the DB to skip an unbounded number of rows;
+//                          ignored by the CSV branch which always returns the
+//                          full filtered history regardless of paging state)
 //   ?from=YYYY-MM-DD      (inclusive lower bound on ranAt)
 //   ?to=YYYY-MM-DD        (inclusive end-of-day on ranAt)
 //   ?trigger=scheduled|manual|test
@@ -4897,7 +4902,8 @@ const EMAIL_HISTORY_STATUS_BUCKETS: Record<string, string[]> = {
 };
 router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => {
   const isCsv = wantsCsv(req);
-  const limit = clampInt(req.query.limit, 1, 100, 20);
+  const limit  = clampInt(req.query.limit,  1, 100,        20);
+  const offset = clampInt(req.query.offset, 0, 1_000_000,  0);
 
   const fromRaw = typeof req.query.from === "string" ? req.query.from.trim() : "";
   const toRaw   = typeof req.query.to   === "string" ? req.query.to.trim()   : "";
@@ -4973,22 +4979,35 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
       return;
     }
 
+    // Fetch one extra row so we can answer `hasMore` without a second
+    // count(*) round-trip — same trick as /maintenance/history (task #46) so
+    // the email-history panel can page through hundreds of attempts via the
+    // "تحميل المزيد" button without silently capping at 100 (task #54).
     const q = db.select().from(maintenanceEmailRunsTable);
     const rows = await (where ? q.where(where) : q)
       .orderBy(desc(maintenanceEmailRunsTable.ranAt))
-      .limit(limit);
+      .limit(limit + 1)
+      .offset(offset);
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const items = pageRows.map((r) => ({
+      id:                r.id,
+      ranAt:             r.ranAt.toISOString(),
+      trigger:           r.trigger,
+      status:            r.status,
+      recipients:        r.recipients,
+      criticalCount:     r.criticalCount,
+      error:             r.error,
+      reason:            r.reason,
+      criticalSignature: r.criticalSignature,
+    }));
     res.json({
-      items: rows.map((r) => ({
-        id:                r.id,
-        ranAt:             r.ranAt.toISOString(),
-        trigger:           r.trigger,
-        status:            r.status,
-        recipients:        r.recipients,
-        criticalCount:     r.criticalCount,
-        error:             r.error,
-        reason:            r.reason,
-        criticalSignature: r.criticalSignature,
-      })),
+      count:      items.length,
+      items,
+      offset,
+      limit,
+      hasMore,
+      nextOffset: hasMore ? offset + items.length : null,
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "فشل جلب سجل تنبيهات البريد" });
