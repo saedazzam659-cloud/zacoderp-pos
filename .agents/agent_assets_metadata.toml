@@ -18,3 +18,9 @@ id = "9h-pg5LlnemsY3P9TELTR"
 uri = "file://exports/ERD.md"
 type = "text"
 title = "مخطط العلاقات بين الجداول (ERD)"
+
+[[outputs]]
+id = "QTnnES8sCcEuHhhuqz23M"
+uri = "file://docs/SETUP_AR.md"
+type = "text"
+title = "دليل التشغيل الكامل (محلي + سحابي)"
