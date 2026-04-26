@@ -5339,5 +5339,22 @@
     "deleted": "تم الحذف",
     "confirmDelete": "هل أنت متأكد من الحذف؟",
     "errorOccurred": "حدث خطأ"
+  },
+  "assistant": {
+    "title": "المساعد الذكي",
+    "subtitle": "شرح الشاشة، اقتراحات وتنبيهات",
+    "openButton": "افتح المساعد الذكي",
+    "closeButton": "إغلاق المساعد",
+    "explanation": "شرح",
+    "suggestion": "اقتراح",
+    "nextStep": "الخطوة التالية",
+    "warning": "تنبيه",
+    "ask": "اسألني عن هذه الشاشة...",
+    "send": "إرسال",
+    "loading": "جاري التفكير...",
+    "retry": "أعد المحاولة",
+    "source_ai": "بواسطة الذكاء الاصطناعي",
+    "source_fallback": "شرح افتراضي",
+    "errorOccurred": "حدث خطأ"
   }
 }

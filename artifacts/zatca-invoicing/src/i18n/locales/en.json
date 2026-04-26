@@ -5254,5 +5254,22 @@
     "deleted": "Deleted",
     "confirmDelete": "Are you sure you want to delete?",
     "errorOccurred": "Something went wrong"
+  },
+  "assistant": {
+    "title": "AI Assistant",
+    "subtitle": "Explains the screen, suggests next steps, flags issues",
+    "openButton": "Open AI assistant",
+    "closeButton": "Close assistant",
+    "explanation": "Explanation",
+    "suggestion": "Suggestion",
+    "nextStep": "Next step",
+    "warning": "Warning",
+    "ask": "Ask about this screen...",
+    "send": "Send",
+    "loading": "Thinking...",
+    "retry": "Retry",
+    "source_ai": "by AI",
+    "source_fallback": "default guidance",
+    "errorOccurred": "Something went wrong"
   }
 }

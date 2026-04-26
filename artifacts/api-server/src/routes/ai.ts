@@ -1918,55 +1918,215 @@ router.post("/assist", async (req, res) => {
     }
 
     // Deterministic fallback used when AI is unavailable OR raises an error.
-    const screenLabels: Record<string, { ar: string; en: string }> = {
-      "production.orders.list": {
-        ar: "قائمة أوامر الإنتاج",
-        en: "Production orders list",
+    // Covers every major screen so the panel always returns a meaningful
+    // explanation even with no AI credits configured. Unknown contexts fall
+    // through to a generic "this screen" label.
+    const screenLabels: Record<string, { ar: string; en: string; explainAr: string; explainEn: string }> = {
+      // ── Dashboard ────────────────────────────────────────────────────
+      "dashboard.home": {
+        ar: "اللوحة الرئيسية",
+        en: "Main dashboard",
+        explainAr: "تعرض لك أهم مؤشرات الشركة (مبيعات، مشتريات، مخزون، صافي الربح) وروابط سريعة لأكثر العمليات استخداماً.",
+        explainEn: "Shows the company's key indicators (sales, purchases, inventory, net profit) plus shortcuts to the most-used actions.",
       },
-      "production.orders.detail": {
-        ar: "تفاصيل أمر الإنتاج",
-        en: "Production order detail",
+      "common.notifications": {
+        ar: "الإشعارات",
+        en: "Notifications",
+        explainAr: "كل التنبيهات والرسائل التي يولّدها النظام لك (موافقات، تجاوزات، طلبات...). اضغط أي إشعار لفتح المستند المرتبط به.",
+        explainEn: "All system-generated alerts (approvals, exceptions, requests…). Click any item to jump to its source document.",
       },
-      "production.resources": {
-        ar: "موارد الإنتاج (الماكينات والخطوط)",
-        en: "Production resources (machines & lines)",
-      },
-      "production.dashboard": {
-        ar: "لوحة معلومات الإنتاج",
-        en: "Production dashboard",
-      },
+
+      // ── Sales ────────────────────────────────────────────────────────
+      "sales.module": { ar: "وحدة المبيعات", en: "Sales module", explainAr: "إدارة العملاء، عروض الأسعار، الفواتير، المرتجعات والتحصيلات.", explainEn: "Manage customers, quotations, invoices, returns and collections." },
+      "sales.invoices.list":   { ar: "قائمة فواتير المبيعات", en: "Sales invoices list", explainAr: "كل فواتير المبيعات (مرحّلة ومسودات) مع إمكانية الفلترة والتصدير وإرسال ZATCA.", explainEn: "All sales invoices (posted & drafts) with filtering, export and ZATCA submission." },
+      "sales.invoices.new":    { ar: "فاتورة مبيعات جديدة", en: "New sales invoice", explainAr: "إنشاء فاتورة مبيعات لعميل: إضافة الأصناف، حساب الضريبة (15%)، ثم الترحيل والإرسال إلى ZATCA.", explainEn: "Create a customer invoice: add items, compute VAT (15%), then post and submit to ZATCA." },
+      "sales.invoices.detail": { ar: "تفاصيل فاتورة المبيعات", en: "Sales invoice detail", explainAr: "عرض كامل لفاتورة المبيعات: البنود، الإجماليات، حالة الترحيل، حالة ZATCA، والمرتجعات المرتبطة.", explainEn: "Full invoice view: lines, totals, posting status, ZATCA status, linked returns." },
+      "sales.quotations":        { ar: "عروض أسعار المبيعات", en: "Sales quotations", explainAr: "إعداد عروض أسعار للعملاء وتحويلها لاحقاً إلى فاتورة مبيعات بضغطة زر.", explainEn: "Prepare customer quotations and later convert any of them into a sales invoice in one click." },
+      "sales.quotations.new":    { ar: "عرض سعر مبيعات جديد", en: "New sales quotation", explainAr: "إنشاء عرض سعر لعميل: الأصناف، الأسعار، الصلاحية. ثم يمكن تحويله إلى فاتورة مبيعات.", explainEn: "Create a customer quotation: items, prices, validity. Later convert to a sales invoice." },
+      "sales.quotations.detail": { ar: "تفاصيل عرض السعر", en: "Quotation detail", explainAr: "عرض/تعديل عرض سعر، تحويله إلى فاتورة، أو طباعته للعميل.", explainEn: "View/edit a quotation, convert it to an invoice, or print it for the customer." },
+      "sales.orders":            { ar: "أوامر البيع", en: "Sales orders", explainAr: "كل أوامر البيع المعتمدة من العملاء قبل الفوترة.", explainEn: "All approved customer sales orders before invoicing." },
+      "sales.orders.new":        { ar: "أمر بيع جديد", en: "New sales order", explainAr: "إنشاء أمر بيع لعميل قبل تحويله لاحقاً إلى فاتورة.", explainEn: "Create a customer sales order before later converting it to an invoice." },
+      "sales.orders.detail":     { ar: "تفاصيل أمر البيع", en: "Sales order detail", explainAr: "عرض/تعديل أمر بيع وتحويله إلى فاتورة جاهزة للترحيل.", explainEn: "View/edit a sales order and convert it to a ready-to-post invoice." },
+      "sales.returns":         { ar: "مرتجعات المبيعات", en: "Sales returns", explainAr: "تسجيل الأصناف المرتجعة من العملاء مع التأثير التلقائي على المخزون والقيد المحاسبي.", explainEn: "Record items returned by customers with automatic inventory and journal-entry impact." },
+      "sales.settlements":     { ar: "تسويات العملاء", en: "Customer settlements", explainAr: "ربط الفواتير بالمدفوعات لتسوية أرصدة العملاء.", explainEn: "Match invoices with payments to settle customer balances." },
+      "sales.reps":            { ar: "مندوبو المبيعات", en: "Sales reps", explainAr: "إدارة المندوبين، عمولاتهم وأهدافهم البيعية.", explainEn: "Manage sales reps, their commissions and quotas." },
+      "sales.reports":         { ar: "تقارير المبيعات", en: "Sales reports", explainAr: "تقارير شاملة: أعلى العملاء، أعلى الأصناف، تطور المبيعات، الأرباح، تحليل الفواتير.", explainEn: "Comprehensive reports: top customers, top items, sales trend, profit, invoice analysis." },
+      "sales.customers.list":   { ar: "قائمة العملاء", en: "Customers list", explainAr: "كل العملاء، أرصدتهم، حدودهم الائتمانية، وفواتيرهم.", explainEn: "All customers with balances, credit limits and invoices." },
+      "sales.customers.new":    { ar: "عميل جديد", en: "New customer", explainAr: "إضافة عميل: البيانات الأساسية، الرقم الضريبي (15 رقم يبدأ وينتهي بـ 3)، العنوان (إلزامي للـ B2B)، حد الائتمان.", explainEn: "Add a customer: profile, VAT number (15 digits starting/ending with 3), address (required for B2B), credit limit." },
+      "sales.customers.detail": { ar: "بطاقة العميل", en: "Customer card", explainAr: "بطاقة العميل: الفواتير، المدفوعات، الرصيد، كشف حساب، وأهم المؤشرات.", explainEn: "Customer profile: invoices, payments, balance, statement and key indicators." },
+
+      // ── Purchasing ───────────────────────────────────────────────────
+      "purchasing.module":            { ar: "وحدة المشتريات", en: "Purchasing module", explainAr: "إدارة الموردين، فواتير الشراء، المرتجعات والتسويات.", explainEn: "Manage suppliers, purchase invoices, returns and settlements." },
+      "purchasing.invoices.list":     { ar: "قائمة فواتير الشراء", en: "Purchase invoices list", explainAr: "كل فواتير الشراء مع الفلترة والتصدير وحالة الدفع.", explainEn: "All purchase invoices with filtering, export and payment status." },
+      "purchasing.invoices.new":      { ar: "فاتورة شراء جديدة", en: "New purchase invoice", explainAr: "تسجيل فاتورة من مورد: الأصناف، الضريبة، أثرها على المخزون والذمم الدائنة.", explainEn: "Record a supplier invoice: items, VAT, impact on inventory and payables." },
+      "purchasing.invoices.detail":   { ar: "تفاصيل فاتورة الشراء", en: "Purchase invoice detail", explainAr: "عرض كامل لفاتورة الشراء، حالة الدفع والمرتجعات.", explainEn: "Full purchase-invoice view, payment status and returns." },
+      "purchasing.orders":            { ar: "أوامر الشراء", en: "Purchase orders", explainAr: "كل أوامر الشراء المرسلة للموردين قبل استلام الفاتورة.", explainEn: "All purchase orders sent to suppliers before receiving the invoice." },
+      "purchasing.orders.new":        { ar: "أمر شراء جديد", en: "New purchase order", explainAr: "إنشاء أمر شراء لمورد قبل استلام البضاعة وفاتورة الشراء.", explainEn: "Create a purchase order to a supplier before receiving goods and invoice." },
+      "purchasing.orders.detail":     { ar: "تفاصيل أمر الشراء", en: "Purchase order detail", explainAr: "عرض/تعديل أمر الشراء وتحويله لاحقاً إلى فاتورة شراء.", explainEn: "View/edit a purchase order and later convert it into a purchase invoice." },
+      "purchasing.lc":                { ar: "الاعتمادات المستندية (LC)", en: "Letters of credit (LC)", explainAr: "إدارة الاعتمادات المستندية للمشتريات الأجنبية، مرفقاتها وقيود فتحها وتسويتها.", explainEn: "Manage letters of credit for foreign purchases — documents and journal entries on opening/settlement." },
+      "purchasing.supplierGroups":    { ar: "مجموعات الموردين", en: "Supplier groups", explainAr: "تصنيف الموردين في مجموعات لتسهيل الفلترة والتقارير.", explainEn: "Group suppliers for easier filtering and reporting." },
+      "purchasing.returns":           { ar: "مرتجعات المشتريات", en: "Purchase returns", explainAr: "إرجاع أصناف للمورد مع تأثيرها التلقائي على المخزون والذمم.", explainEn: "Return items to a supplier with automatic stock and AP impact." },
+      "purchasing.settlements":       { ar: "تسويات الموردين", en: "Supplier settlements", explainAr: "ربط فواتير الشراء بالمدفوعات لتسوية أرصدة الموردين.", explainEn: "Match purchase invoices with payments to settle supplier balances." },
+      "purchasing.reports":           { ar: "تقارير المشتريات", en: "Purchasing reports", explainAr: "تحليلات المشتريات حسب المورد والصنف، وأهم مؤشرات الأداء.", explainEn: "Purchasing analytics by supplier and item, plus key KPIs." },
+      "purchasing.suppliers.list":    { ar: "قائمة الموردين", en: "Suppliers list", explainAr: "كل الموردين، أرصدتهم وفواتيرهم.", explainEn: "All suppliers with balances and invoices." },
+      "purchasing.suppliers.new":     { ar: "مورد جديد", en: "New supplier", explainAr: "إضافة مورد: البيانات الأساسية، الرقم الضريبي والعنوان.", explainEn: "Add a supplier: profile, VAT number and address." },
+      "purchasing.suppliers.detail":  { ar: "بطاقة المورد", en: "Supplier card", explainAr: "بطاقة المورد: الفواتير، المدفوعات، الرصيد، كشف حساب.", explainEn: "Supplier profile: invoices, payments, balance and statement." },
+
+      // ── Cash & banks ────────────────────────────────────────────────
+      "cash.module":           { ar: "وحدة الخزائن والبنوك", en: "Cash & banks module", explainAr: "إدارة الخزائن، البنوك، سندات القبض والصرف وتسوياتها.", explainEn: "Manage cash boxes, bank accounts, receipt/payment vouchers and reconciliations." },
+      "cash.boxes":            { ar: "الخزائن", en: "Cash boxes", explainAr: "تعريف خزائن الشركة وأرصدتها، وقيود فتح الخزينة.", explainEn: "Define company cash boxes and their opening balances." },
+      "cash.banks":            { ar: "الحسابات البنكية", en: "Bank accounts", explainAr: "تعريف الحسابات البنكية، أرصدتها وحركاتها.", explainEn: "Set up bank accounts, balances and movements." },
+      "cash.receiptVouchers":  { ar: "سندات القبض", en: "Receipt vouchers", explainAr: "تسجيل المبالغ الواردة من العملاء أو غيرهم وربطها بفواتير.", explainEn: "Record incoming payments from customers and link them to invoices." },
+      "cash.paymentVouchers":  { ar: "سندات الصرف", en: "Payment vouchers", explainAr: "تسجيل المبالغ المدفوعة للموردين أو المصروفات وربطها بفواتير.", explainEn: "Record outgoing payments to suppliers or expenses and link them to invoices." },
+      "cash.transfers":        { ar: "التحويلات بين الخزائن والبنوك", en: "Cash/bank transfers", explainAr: "نقل أموال بين خزينة وأخرى أو بين حسابين بنكيين مع توليد قيد محاسبي تلقائي.", explainEn: "Move money between cash boxes or bank accounts with an automatic journal entry." },
+      "cash.reports":          { ar: "تقارير الخزائن والبنوك", en: "Cash & bank reports", explainAr: "كشوف حركات الخزائن والبنوك، التدفق النقدي والأرصدة.", explainEn: "Cash/bank statements, cash flow and balances." },
+
+      // ── Inventory ───────────────────────────────────────────────────
+      "inventory.module":           { ar: "وحدة المخزون", en: "Inventory module", explainAr: "إدارة الأصناف، المخازن، التحويلات، التسويات والجرد.", explainEn: "Manage items, warehouses, transfers, adjustments and stock counts." },
+      "inventory.items.list":       { ar: "قائمة الأصناف", en: "Items list", explainAr: "كل أصناف الشركة، أرصدتها في كل مخزن، أسعارها وتصنيفاتها.", explainEn: "All items with per-warehouse balances, prices and categories." },
+      "inventory.items.new":        { ar: "صنف جديد", en: "New item", explainAr: "إضافة صنف: الكود، الباركود، الوحدات، أسعار البيع/الشراء، حساب المخزون المرتبط.", explainEn: "Add an item: code, barcode, units, sales/cost prices, linked inventory account." },
+      "inventory.items.detail":     { ar: "بطاقة الصنف", en: "Item card", explainAr: "بطاقة الصنف: الأرصدة، الحركات، التكلفة، نقاط إعادة الطلب.", explainEn: "Item profile: balances, movements, cost, reorder points." },
+      "inventory.itemGroups":       { ar: "مجموعات الأصناف", en: "Item groups", explainAr: "تصنيف الأصناف في مجموعات لتسهيل الفلترة وربط الحسابات المحاسبية.", explainEn: "Group items into categories for easier filtering and accounting account mapping." },
+      "inventory.units":            { ar: "وحدات القياس", en: "Units of measure", explainAr: "تعريف الوحدات الأساسية والوحدات البديلة (مثل صندوق = 12 قطعة) لكل صنف.", explainEn: "Define base and alternate units (e.g. box = 12 pcs) for items." },
+      "inventory.warehouses":       { ar: "المخازن", en: "Warehouses", explainAr: "تعريف مخازن الشركة، أمناءها وحساباتها المحاسبية.", explainEn: "Define warehouses, their keepers and linked accounting accounts." },
+      "inventory.warehouseGroups":  { ar: "مجموعات المخازن", en: "Warehouse groups", explainAr: "تجميع المخازن في مناطق/فروع لإدارة الصلاحيات والتقارير بسهولة.", explainEn: "Group warehouses into regions/branches for permissions and reporting." },
+      "inventory.offers":           { ar: "العروض الترويجية", en: "Promotional offers", explainAr: "تعريف عروض الأصناف (خصومات، اشترِ X واحصل على Y) وتفعيلها لفترات محددة.", explainEn: "Define item promotions (discounts, buy-X-get-Y) active for a date range." },
+      "inventory.offers.new":       { ar: "عرض ترويجي جديد", en: "New promotional offer", explainAr: "إنشاء عرض جديد: نوعه، الأصناف المؤهلة، فترة السريان، نسبة/قيمة الخصم.", explainEn: "Create a new offer: type, eligible items, validity dates, discount %/amount." },
+      "inventory.offers.detail":    { ar: "تفاصيل العرض الترويجي", en: "Promotional offer detail", explainAr: "عرض/تعديل عرض ترويجي قائم وتفعيله أو إيقافه.", explainEn: "View/edit an existing promotional offer and enable/disable it." },
+      "inventory.transfers":        { ar: "التحويلات بين المخازن", en: "Stock transfers", explainAr: "نقل أصناف من مخزن لآخر مع توليد قيد محاسبي تلقائي.", explainEn: "Move items between warehouses with an automatic journal entry." },
+      "inventory.transfers.new":    { ar: "تحويل مخزني جديد", en: "New stock transfer", explainAr: "إصدار سند تحويل من مخزن إلى آخر مع تسجيل التكلفة وتأثيرها على الأرصدة.", explainEn: "Issue a new transfer from one warehouse to another, recording cost and balance impact." },
+      "inventory.adjustments":      { ar: "تسويات المخزون", en: "Stock adjustments", explainAr: "تسوية الفروق (تالف/فاقد/فائض) مع توليد قيد محاسبي تلقائي.", explainEn: "Reconcile differences (damaged/missing/surplus) with auto journal entry." },
+      "inventory.adjustments.new":  { ar: "تسوية مخزون جديدة", en: "New stock adjustment", explainAr: "تسجيل تسوية يدوية لزيادة/نقص رصيد صنف مع سبب وحساب محاسبي.", explainEn: "Record a manual adjustment to increase/decrease an item's balance with a reason and account." },
+      "inventory.counts":           { ar: "الجرد", en: "Stock counts", explainAr: "جرد دوري للأصناف ومقارنة الفعلي بالنظري وإصدار تسوية تلقائية بالفروق.", explainEn: "Periodic stock-takes comparing physical vs. system and producing an adjustment for the variance." },
+      "inventory.counts.new":       { ar: "جرد مخزني جديد", en: "New stock count", explainAr: "بدء عملية جرد جديدة: اختيار المخزن والأصناف وتسجيل الكميات الفعلية.", explainEn: "Start a new stock-take: pick warehouse and items, then record physical quantities." },
+      "inventory.ledger":           { ar: "حركات المخزون (الأستاذ المخزني)", en: "Stock ledger", explainAr: "كل الحركات الواردة والصادرة لكل صنف عبر الزمن مع التكلفة.", explainEn: "Every inbound/outbound movement per item over time, with cost." },
+      "inventory.balance":          { ar: "أرصدة المخزون", en: "Stock balances", explainAr: "الرصيد الحالي لكل صنف في كل مخزن مع متوسط التكلفة.", explainEn: "Current balance per item per warehouse, with average cost." },
+      "inventory.reports":          { ar: "تقارير المخزون", en: "Inventory reports", explainAr: "تقارير الحركات، الأرصدة، التكلفة، عمر المخزون والصلاحية.", explainEn: "Movement, balance, cost, ageing and expiry reports." },
+
+      // ── Accounting ──────────────────────────────────────────────────
+      "accounting.module":                 { ar: "وحدة المحاسبة", en: "Accounting module", explainAr: "إدارة دليل الحسابات، القيود اليومية، التقارير المالية.", explainEn: "Manage chart of accounts, journal entries and financial reports." },
+      "accounting.chart":                  { ar: "دليل الحسابات", en: "Chart of accounts", explainAr: "تنظيم حسابات الشركة في شجرة (أصول، خصوم، ملكية، إيرادات، مصروفات). الحسابات الترحيلية فقط هي التي تُستخدم في القيود.", explainEn: "Organize accounts as a tree (assets, liabilities, equity, revenue, expenses). Only posting accounts are used in entries." },
+      "accounting.costCenters":            { ar: "مراكز التكلفة", en: "Cost centers", explainAr: "تعريف مراكز التكلفة وتوزيع المصروفات والإيرادات عليها لتقارير الربحية.", explainEn: "Define cost centers and allocate expenses/revenue to them for profitability reporting." },
+      "accounting.fiscalPeriods":          { ar: "الفترات المحاسبية", en: "Fiscal periods", explainAr: "تعريف السنوات والفترات المحاسبية وإقفالها لمنع التعديل بعد الإقفال.", explainEn: "Define fiscal years and periods, then close them to lock entries after the cut-off." },
+      "accounting.journalEntries.list":    { ar: "قائمة القيود اليومية", en: "Journal entries list", explainAr: "كل القيود اليدوية والآلية مع إمكانية الفلترة والترحيل والعكس.", explainEn: "All manual & automatic journal entries with filter, post and reverse." },
+      "accounting.journalEntries.new":     { ar: "قيد يومية جديد", en: "New journal entry", explainAr: "تسجيل قيد محاسبي يدوي: اختيار الفرع، إضافة الأطراف المدينة والدائنة (يجب أن يتساوى الجانبان)، ثم الحفظ والترحيل.", explainEn: "Record a manual journal entry: pick branch, add debit/credit lines (sides must balance), then save and post." },
+      "accounting.journalEntries.detail":  { ar: "تفاصيل القيد", en: "Journal entry detail", explainAr: "عرض/تعديل قيد محاسبي قائم. تأكد من تساوي المدين والدائن قبل الترحيل.", explainEn: "View/edit an existing journal entry. Ensure debits = credits before posting." },
+      "accounting.reports":                { ar: "التقارير المحاسبية", en: "Accounting reports", explainAr: "ميزان المراجعة، الأستاذ العام، قائمة الدخل، الميزانية، التدفقات النقدية.", explainEn: "Trial balance, general ledger, income statement, balance sheet and cash flow." },
+
+      // ── HR ──────────────────────────────────────────────────────────
+      "hr.module":               { ar: "وحدة الموارد البشرية", en: "HR module", explainAr: "إدارة الموظفين، الرواتب، الحضور والإجازات.", explainEn: "Manage employees, payroll, attendance and leaves." },
+      "hr.employees.list":       { ar: "قائمة الموظفين", en: "Employees list", explainAr: "كل الموظفين، حالتهم الوظيفية، قسمهم وراتبهم الأساسي.", explainEn: "All employees with status, department and base salary." },
+      "hr.employees.new":        { ar: "موظف جديد", en: "New employee", explainAr: "إضافة موظف: البيانات الشخصية، التعاقد، الراتب، الفرع، البدلات والاستقطاعات الافتراضية.", explainEn: "Add an employee: personal info, contract, salary, branch, default allowances and deductions." },
+      "hr.employees.detail":     { ar: "ملف الموظف", en: "Employee profile", explainAr: "بطاقة الموظف: البيانات، عقد العمل، تاريخ الرواتب، الإجازات، الحضور.", explainEn: "Employee profile: details, contract, payroll history, leaves and attendance." },
+      "hr.employees.contracts":  { ar: "عقود الموظف", en: "Employee contracts", explainAr: "عقود العمل الخاصة بالموظف: الراتب، البدلات، تاريخ البداية والنهاية، التجديدات.", explainEn: "This employee's work contracts: salary, allowances, start/end dates and renewals." },
+      "hr.contracts":            { ar: "كل العقود", en: "All contracts", explainAr: "قائمة بكل عقود الموظفين عبر المؤسسة، حالاتها وتواريخ تجديدها.", explainEn: "All employee contracts across the company, their statuses and renewal dates." },
+      "hr.payroll":              { ar: "الرواتب", en: "Payroll", explainAr: "إعداد كشف الرواتب الشهري وترحيله محاسبياً (مع ربطه بالفرع).", explainEn: "Generate monthly payroll runs and post them to accounting (linked to branch)." },
+      "hr.attendance":           { ar: "الحضور والانصراف", en: "Attendance", explainAr: "تسجيل ساعات الحضور والانصراف وحساب الإضافي والخصومات.", explainEn: "Record attendance hours and compute overtime/deductions." },
+      "hr.leaves":               { ar: "الإجازات", en: "Leaves", explainAr: "طلبات الإجازات وموافقاتها وتأثيرها على رصيد كل موظف.", explainEn: "Leave requests, approvals and their effect on each employee's balance." },
+      "hr.loans":                { ar: "السلف والقروض", en: "Loans & advances", explainAr: "تسجيل السلف والقروض الممنوحة للموظفين وجدولة استقطاعها من الراتب.", explainEn: "Record employee advances/loans and schedule monthly deductions from payroll." },
+      "hr.eos":                  { ar: "مكافأة نهاية الخدمة", en: "End-of-service", explainAr: "حساب مكافأة نهاية الخدمة وفق نظام العمل السعودي عند انتهاء عقد الموظف.", explainEn: "Compute end-of-service award per Saudi labor law when an employee's contract ends." },
+      "hr.calculators":          { ar: "حاسبات الموارد البشرية", en: "HR calculators", explainAr: "حاسبات سريعة: نهاية الخدمة، صافي الراتب، الإجازات، التأمينات.", explainEn: "Quick calculators: end-of-service, net salary, leaves, GOSI." },
+      "hr.settings":             { ar: "إعدادات الموارد البشرية", en: "HR settings", explainAr: "إعدادات قواعد الرواتب، الإجازات، أيام العمل وحساب نهاية الخدمة.", explainEn: "Settings for payroll rules, leaves, work days and end-of-service calculation." },
+      "hr.reports":              { ar: "تقارير الموارد البشرية", en: "HR reports", explainAr: "تقارير الموظفين، الرواتب، الحضور، العقود، الإجازات والسلف.", explainEn: "Reports on employees, payroll, attendance, contracts, leaves and loans." },
+
+      // ── Production ──────────────────────────────────────────────────
+      "production.module":         { ar: "وحدة الإنتاج", en: "Production module", explainAr: "إدارة أوامر الإنتاج، الموارد والخامات.", explainEn: "Manage production orders, resources and raw materials." },
+      "production.orders.list":    { ar: "قائمة أوامر الإنتاج", en: "Production orders list", explainAr: "كل أوامر الإنتاج وحالتها (مسودة → معتمد → قيد الإنتاج → فحص الجودة → مكتمل).", explainEn: "All production orders and their status (draft → approved → in-production → QC → completed)." },
+      "production.orders.new":     { ar: "أمر إنتاج جديد", en: "New production order", explainAr: "إنشاء أمر إنتاج: المنتج النهائي، الكمية المخططة، الخامات والموارد المطلوبة.", explainEn: "Create a production order: finished product, planned qty, raw materials and resources." },
+      "production.orders.detail":  { ar: "تفاصيل أمر الإنتاج", en: "Production order detail", explainAr: "تفاصيل أمر الإنتاج: الخامات، الموارد، الأحداث، التكلفة الفعلية مقابل المقدّرة.", explainEn: "Production order detail: materials, resources, events, actual vs estimated cost." },
+      "production.resources":      { ar: "موارد الإنتاج", en: "Production resources", explainAr: "تعريف الماكينات وخطوط الإنتاج، طاقتها الإنتاجية وأوقات توقفها.", explainEn: "Define machines/production lines, their capacity and downtime." },
+      "production.dashboard":      { ar: "لوحة معلومات الإنتاج", en: "Production dashboard", explainAr: "مؤشرات أداء الإنتاج: أوامر مفتوحة، إنتاج اليوم، نسبة الهالك، استغلال الموارد.", explainEn: "Production KPIs: open orders, today's output, waste %, resource utilization." },
+
+      // ── ZATCA ───────────────────────────────────────────────────────
+      "zatca.module":         { ar: "ZATCA — الفاتورة الإلكترونية", en: "ZATCA e-invoicing", explainAr: "إعدادات ZATCA Phase 2: الشهادات، الإرسال الفوري، السجل والملخصات.", explainEn: "ZATCA Phase 2 settings: certificates, real-time submission, log and summaries." },
+      "zatca.bridge":         { ar: "جسر ZATCA", en: "ZATCA bridge", explainAr: "إعدادات الاتصال بـ ZATCA، تسجيل CSID، حالة الشهادة، إعادة المحاولة للفواتير المرفوضة.", explainEn: "ZATCA connectivity setup, CSID enrollment, certificate status, retry for rejected invoices." },
+      "zatca.report":         { ar: "تقرير ZATCA", en: "ZATCA report", explainAr: "تقرير الفواتير المرسلة لـ ZATCA: المقبولة، المرفوضة، أسباب الرفض، إجراءات الإصلاح.", explainEn: "Report of invoices submitted to ZATCA: accepted, rejected, reasons and fix actions." },
+      "zatca.vatDeclaration": { ar: "إقرار ضريبة القيمة المضافة", en: "VAT declaration", explainAr: "إعداد إقرار ضريبة القيمة المضافة (ضريبة المخرجات والمدخلات) للفترة المحددة.", explainEn: "Prepare the VAT return (output & input VAT) for the chosen period." },
+
+      // ── Org & settings ──────────────────────────────────────────────
+      "org.users":                    { ar: "المستخدمون", en: "Users", explainAr: "إدارة مستخدمي الشركة، صلاحياتهم وفروعهم.", explainEn: "Manage company users, their permissions and assigned branches." },
+      "org.branches":                 { ar: "الفروع", en: "Branches", explainAr: "تعريف فروع الشركة. كل قيد محاسبي وكل مستند مرتبط بفرع.", explainEn: "Define company branches. Every journal entry and document is tagged to a branch." },
+      "org.regions":                  { ar: "المناطق", en: "Regions", explainAr: "تعريف مناطق جغرافية تجمع الفروع لتسهيل تقارير المبيعات والمصروفات بحسب المنطقة.", explainEn: "Define geographic regions that group branches for region-based sales/expense reports." },
+      "org.roles":                    { ar: "الأدوار والصلاحيات", en: "Roles & permissions", explainAr: "إنشاء أدوار جاهزة للصلاحيات وتطبيقها على المستخدمين.", explainEn: "Define permission roles and apply them to users." },
+      "org.settings":                 { ar: "إعدادات المنظمة", en: "Organization settings", explainAr: "بيانات الشركة، الفروع، المستخدمين، اللغة الافتراضية.", explainEn: "Company info, branches, users and default language." },
+      "settings.general":             { ar: "الإعدادات العامة", en: "General settings", explainAr: "إعدادات التطبيق العامة: اللغة، التاريخ، التقريب، طباعة المستندات.", explainEn: "General app settings: language, date, rounding, document printing." },
+      "settings.currencies":          { ar: "العملات", en: "Currencies", explainAr: "تعريف العملات، أسعار الصرف وعملة الشركة الأساسية.", explainEn: "Define currencies, exchange rates and the company's base currency." },
+      "settings.accountingMappings":  { ar: "ربط الحسابات المحاسبية", en: "Accounting mappings", explainAr: "ربط أنواع المستندات (مبيعات، مشتريات، خزينة...) بحسابات افتراضية في دليل الحسابات.", explainEn: "Map document types (sales, purchases, cash…) to default accounts in the chart." },
+      "settings.dataIo":              { ar: "استيراد وتصدير البيانات", en: "Data import & export", explainAr: "استيراد بيانات أساسية (عملاء/أصناف/قيود) من Excel/CSV، أو تصدير بيانات النظام.", explainEn: "Import master data (customers/items/journal entries) from Excel/CSV, or export system data." },
+      "settings.sequences":           { ar: "تسلسل المستندات", en: "Document sequences", explainAr: "تخصيص أرقام المستندات (الفواتير، القيود، السندات...) — البادئة، الطول، البداية.", explainEn: "Customize document numbering (invoices, journals, vouchers…) — prefix, padding, starting number." },
+      "settings.other":               { ar: "إعدادات أخرى", en: "Other settings", explainAr: "إعدادات إضافية للنظام.", explainEn: "Additional system settings." },
+
+      // ── POS ──────────────────────────────────────────────────────────
+      "pos.monitoring": { ar: "مراقبة نقاط البيع", en: "POS monitoring", explainAr: "متابعة جلسات نقاط البيع المفتوحة، المبيعات اللحظية وحالة الأجهزة.", explainEn: "Monitor open POS sessions, real-time sales and device status." },
+      "pos.settings":   { ar: "إعدادات نقاط البيع", en: "POS settings", explainAr: "إعدادات نقاط البيع: المخازن المرتبطة، طرق الدفع، الطباعة، المستخدمون.", explainEn: "POS settings: linked warehouses, payment methods, printing, users." },
+      "pos.terminals":  { ar: "أجهزة نقاط البيع", en: "POS terminals", explainAr: "تعريف أجهزة نقاط البيع، أرقامها التسلسلية، حالتها وموقعها.", explainEn: "Define POS terminals, their serial numbers, status and location." },
+
+      // ── Super admin (kept short) ────────────────────────────────────
+      "admin.registrationRequests": { ar: "طلبات تسجيل الشركات", en: "Company registration requests", explainAr: "مراجعة طلبات تسجيل الشركات الجديدة والموافقة عليها.", explainEn: "Review and approve new company registration requests." },
+      "admin.subscriptions":        { ar: "الاشتراكات", en: "Subscriptions", explainAr: "إدارة اشتراكات الشركات، تجديدها وإلغاؤها.", explainEn: "Manage company subscriptions, renewals and cancellations." },
+      "admin.plans":                { ar: "الخطط", en: "Plans", explainAr: "تعريف خطط الاشتراك وأسعارها وحدودها.", explainEn: "Define subscription plans, prices and limits." },
+      "admin.menuPermissions":      { ar: "صلاحيات القوائم", en: "Menu permissions", explainAr: "تحديد القوائم المرئية لكل خطة اشتراك.", explainEn: "Pick which menus are visible per subscription plan." },
+      "admin.modules":              { ar: "الموديولات", en: "Modules", explainAr: "تفعيل/تعطيل موديولات النظام لكل شركة.", explainEn: "Enable/disable modules per company." },
+      "admin.licenses":             { ar: "التراخيص", en: "Licenses", explainAr: "إدارة تراخيص الشركات، توليدها وتجديدها.", explainEn: "Manage company licenses, generation and renewal." },
+      "admin.security":             { ar: "مركز الأمان", en: "Security center", explainAr: "إعدادات الأمان، السياسات وتدقيق العمليات.", explainEn: "Security settings, policies and audit." },
+      "admin.reports":              { ar: "تقارير الإدارة", en: "Admin reports", explainAr: "تقارير أداء الشركات، الإيرادات، استخدام الخطط.", explainEn: "Reports on company performance, revenue and plan usage." },
+      "admin.backups":              { ar: "النسخ الاحتياطية", en: "Backups", explainAr: "إدارة النسخ الاحتياطية للنظام واستعادتها.", explainEn: "Manage system backups and restores." },
+      "admin.orphanStock":          { ar: "تنظيف الأصناف اليتيمة", en: "Orphan stock cleanup", explainAr: "اكتشاف وتنظيف أرصدة المخزون اليتيمة (بدون صنف فعلي).", explainEn: "Detect and clean orphan stock balances (without a real item)." },
+      "admin.aiCompanyFix":         { ar: "تصحيح بيانات الشركة بالذكاء الاصطناعي", en: "AI company fix", explainAr: "اقتراحات ذكية لإصلاح اختلالات بيانات الشركة.", explainEn: "AI suggestions to fix data integrity issues for a company." },
+      "admin.support":              { ar: "صندوق الدعم", en: "Support inbox", explainAr: "رسائل الدعم الواردة من الشركات والرد عليها.", explainEn: "Incoming support messages from companies and replies." },
+      "admin.auditLog":             { ar: "سجل التدقيق", en: "Audit log", explainAr: "سجل كامل لكل العمليات الحساسة.", explainEn: "Full audit trail of every sensitive operation." },
+      "admin.companies":            { ar: "الشركات", en: "Companies", explainAr: "كل الشركات المسجلة في المنصة.", explainEn: "All companies registered on the platform." },
+      "admin.companyNew":           { ar: "شركة جديدة", en: "New company", explainAr: "إنشاء شركة جديدة يدوياً.", explainEn: "Create a new company manually." },
+      "admin.companyDetails":       { ar: "تفاصيل الشركة", en: "Company details", explainAr: "بطاقة الشركة: الاشتراك، المستخدمون، الاستخدام، البيانات.", explainEn: "Company card: subscription, users, usage and data." },
     };
     const label = screenLabels[screenContext] ?? {
       ar: "هذه الشاشة",
       en: "this screen",
+      explainAr: "هذه شاشة من النظام. اقرأ العناوين والأزرار لتعرف العملية المتاحة، أو اطرح سؤالاً محدداً عن الشاشة في الأسفل.",
+      explainEn: "This is one of the system screens. Read the page title and action buttons to learn what it does, or ask a specific question about it below.",
     };
     const fallback = () => {
-      if (lang === "en") {
+      // Production-detail fallback keeps its old, snapshot-aware behaviour
+      // so the experience on the production module is unchanged.
+      if (snapshot) {
+        if (lang === "en") {
+          return {
+            explanation: `${label.en}. ${label.explainEn}`,
+            suggestion: `Order ${snapshot.orderNumber} is currently in "${snapshot.status}". Make sure all raw materials are listed and a resource is assigned before approving.`,
+            next_step: "Click the status button on the right to advance the order to the next stage when ready.",
+            warning_if_any:
+              Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
+                ? "Waste was recorded but no produced quantity yet — double-check the run."
+                : "",
+            source: "fallback" as const,
+          };
+        }
         return {
-          explanation: `${label.en} lets you manage production work end-to-end: create an order, add raw materials, assign a machine, then move the order through the workflow (draft → approved → in production → quality check → completed).`,
-          suggestion: snapshot
-            ? `Order ${snapshot.orderNumber} is currently in "${snapshot.status}". Make sure all raw materials are listed and a resource is assigned before approving.`
-            : "Start by creating a new order with the planned quantity, then add the raw materials it consumes.",
-          next_step:
-            "Click the status button on the right to advance the order to the next stage when ready.",
+          explanation: `${label.ar}. ${label.explainAr}`,
+          suggestion: `الأمر ${snapshot.orderNumber} حالته الآن "${snapshot.status}". تأكد من إدراج كل الخامات وتخصيص مورد قبل الاعتماد.`,
+          next_step: "اضغط زر الحالة على اليسار لتمرير الأمر إلى المرحلة التالية عندما يصبح جاهزاً.",
           warning_if_any:
-            snapshot && Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
-              ? "Waste was recorded but no produced quantity yet — double-check the run."
+            Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
+              ? "تم تسجيل كمية هالك بدون أي إنتاج فعلي — راجع التشغيلة."
               : "",
           source: "fallback" as const,
         };
       }
+      // Generic per-screen fallback for every other screen.
+      if (lang === "en") {
+        return {
+          explanation: `${label.en}: ${label.explainEn}`,
+          suggestion: "Use the search/filter at the top to narrow down the list, or click the primary button (top-right in RTL / top-left in LTR) to add a new record.",
+          next_step: "Pick an item from the list to view its details, or ask me a specific question about this screen using the input below.",
+          warning_if_any: "",
+          source: "fallback" as const,
+        };
+      }
       return {
-        explanation: `${label.ar} يتيح لك إدارة دورة الإنتاج كاملةً: إنشاء أمر، إضافة الخامات، تخصيص الماكينة، ثم تمرير الأمر بين الحالات (مسودة ← معتمد ← قيد الإنتاج ← فحص الجودة ← مكتمل).`,
-        suggestion: snapshot
-          ? `الأمر ${snapshot.orderNumber} حالته الآن "${snapshot.status}". تأكد من إدراج كل الخامات وتخصيص مورد قبل الاعتماد.`
-          : "ابدأ بإنشاء أمر إنتاج جديد مع الكمية المخططة، ثم أضف الخامات التي يستهلكها.",
-        next_step:
-          "اضغط زر الحالة على اليسار لتمرير الأمر إلى المرحلة التالية عندما يصبح جاهزاً.",
-        warning_if_any:
-          snapshot && Number(snapshot.wasteQty) > 0 && Number(snapshot.producedQty) === 0
-            ? "تم تسجيل كمية هالك بدون أي إنتاج فعلي — راجع التشغيلة."
-            : "",
+        explanation: `${label.ar}: ${label.explainAr}`,
+        suggestion: "استخدم البحث/التصفية بالأعلى لتضييق القائمة، أو اضغط الزر الرئيسي (أعلى الصفحة) لإضافة سجل جديد.",
+        next_step: "اختر سجلاً من القائمة لعرض تفاصيله، أو اسألني سؤالاً محدداً عن الشاشة من خلال المربع بالأسفل.",
+        warning_if_any: "",
         source: "fallback" as const,
       };
     };
@@ -1976,10 +2136,13 @@ router.post("/assist", async (req, res) => {
       return;
     }
 
+    // Generic, screen-agnostic system prompt: applies equally well to sales,
+    // purchasing, accounting, inventory, HR, production, ZATCA, etc. The
+    // backend tells the model the current screen ID via `screen_context`.
     const sysPrompt =
       lang === "en"
-        ? "You are an embedded assistant inside a Saudi ERP's manufacturing module. You explain the screen the user is on, suggest the next concrete step, and flag risks. Always reply with a JSON object containing exactly these fields: explanation, suggestion, next_step, warning_if_any. Be concise (2-3 sentences per field max). Use practical, business-friendly language — no jargon."
-        : "أنت مساعد ذكي مدمج داخل وحدة التصنيع في نظام ERP سعودي. مهمتك شرح الشاشة التي يقف عندها المستخدم، اقتراح الخطوة التالية الملموسة، وتنبيهه من أي مخاطرة. ترد دائماً بـ JSON بهذا الشكل بالضبط: explanation, suggestion, next_step, warning_if_any. كن مختصراً (٢-٣ جمل لكل حقل كحد أقصى) واستخدم لغة عملية مفهومة بدون مصطلحات تقنية.";
+        ? "You are an embedded assistant inside a Saudi multi-tenant ERP that covers sales, purchasing, inventory, accounting, HR, production and ZATCA e-invoicing. You explain the screen the user is on, suggest the next concrete step, and flag risks. Always reply with a JSON object containing exactly these fields: explanation, suggestion, next_step, warning_if_any. Be concise (2-3 sentences per field max). Use practical, business-friendly language — no jargon. When the screen_context is unfamiliar, derive guidance from the route segments themselves."
+        : "أنت مساعد ذكي مدمج داخل نظام ERP سعودي متعدد المستأجرين يشمل المبيعات والمشتريات والمخزون والمحاسبة والموارد البشرية والإنتاج والفاتورة الإلكترونية (ZATCA). مهمتك شرح الشاشة التي يقف عندها المستخدم، اقتراح الخطوة التالية الملموسة، وتنبيهه من أي مخاطرة. ترد دائماً بـ JSON بهذا الشكل بالضبط: explanation, suggestion, next_step, warning_if_any. كن مختصراً (٢-٣ جمل لكل حقل كحد أقصى) واستخدم لغة عملية مفهومة بدون مصطلحات تقنية. إذا كان screen_context غير معروف لك، استنبط الإرشاد من أجزاء المسار نفسها.";
 
     const userPrompt = JSON.stringify(
       {

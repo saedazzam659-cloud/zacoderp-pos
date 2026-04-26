@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
+import ScreenAssistant from "@/components/ScreenAssistant";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
@@ -1550,6 +1551,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         />
         <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
+
+      {/* Global AI assistant — floating widget rendered on every authenticated
+          screen. The component itself self-hides when the user is not
+          authenticated and auto-derives the screen context from the URL. */}
+      <ScreenAssistant />
     </div>
   );
 }
