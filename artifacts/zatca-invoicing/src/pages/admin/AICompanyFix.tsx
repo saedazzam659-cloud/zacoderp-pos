@@ -482,6 +482,7 @@ export default function AICompanyFix() {
       <MaintenanceSection
         companyId={companyId ? Number(companyId) : null}
         onSelectCompany={(id) => setCompanyId(String(id))}
+        companies={companies}
       />
 
       <Card>
@@ -611,9 +612,13 @@ export default function AICompanyFix() {
 // card runs an independent backend probe and lets the operator inspect /
 // remediate inline (no popup modals). All fix actions are audit-logged with
 // `module='maintenance'` and replayed in the history panel below.
-function MaintenanceSection({ companyId, onSelectCompany }: {
+function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   companyId: number | null;
   onSelectCompany: (id: number) => void;
+  /** Forwarded from the parent so the critical-summary panel and the per-card
+   *  drill-down handler can resolve a friendly company name without an extra
+   *  fetch. Shape mirrors `/api/admin/companies` rows. */
+  companies: Array<{ id: number; nameAr?: string | null; nameEn?: string | null }>;
 }) {
   const { token } = useAuth();
   const { toast } = useToast();
@@ -820,6 +825,10 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
       // so a manual sweep that recovers (or newly breaks) a tool must
       // refresh it too — otherwise the panel keeps showing stale rows.
       qc.invalidateQueries({ queryKey: ["maintenance-error-summary"] });
+      // Critical-alerts panel uses the same per-(company, tool) latest
+      // projection — invalidate it so a recovery flips the row out (and a
+      // newly critical run flips one in) without requiring a page reload.
+      qc.invalidateQueries({ queryKey: ["maintenance-critical-summary"] });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -1046,13 +1055,59 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
     refetchOnWindowFocus: false,
   });
 
+  // Currently-critical findings — same projection that drives the SuperAdmin
+  // dashboard banner. Powers the new red "critical alerts" panel so operators
+  // can jump straight from a critical row into the tool-history modal owned
+  // by this section, mirroring the amber broken-tool panel below.
+  const criticalSummaryQ = useQuery({
+    queryKey: ["maintenance-critical-summary"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/maintenance/critical-summary?limit=50`, { headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب التنبيهات الحرجة");
+      return r.json() as Promise<{
+        count: number;
+        items: Array<{
+          companyId: number;
+          companyName: string | null;
+          toolKey: string;
+          count: number;
+          runAt: string;
+          severity: "critical" | "warn";
+        }>;
+      }>;
+    },
+    refetchOnWindowFocus: false,
+  });
+
   // Tool-history drill-down — clicking a tool key in the broken-tool panel
   // opens a modal listing the most recent runs for that (company, tool) pair
   // across all days, so SuperAdmins can diagnose a recurring failure without
-  // leaving the page.
+  // leaving the page. Also reachable from the red critical-alerts panel and
+  // from the per-day drill-down on each trend bar (task #56).
   const [toolHistoryTarget, setToolHistoryTarget] = useState<
     { companyId: number; companyName: string; toolKey: string } | null
   >(null);
+
+  // Resolve a friendly company display name from the parent's companies
+  // query. Falls back to `#<id>` so the modal still has a meaningful title
+  // when the lookup misses (e.g. a company was just deactivated).
+  const companyDisplayName = (cid: number, fallback?: string | null): string => {
+    if (fallback) return fallback;
+    const c = companies.find((row) => row.id === cid);
+    return c?.nameAr || c?.nameEn || `#${cid}`;
+  };
+
+  // Single entry point used by every "open tool history" affordance on this
+  // page (broken-tool panel, critical-alerts panel, per-day drill-down on
+  // each trend bar). Centralising it keeps the modal contract consistent.
+  const openToolHistory = (toolKey: string) => {
+    if (!companyId) return;
+    setToolHistoryTarget({
+      companyId,
+      companyName: companyDisplayName(companyId),
+      toolKey,
+    });
+  };
   const toolHistoryQ = useQuery({
     queryKey: ["maintenance-tool-history", toolHistoryTarget?.companyId, toolHistoryTarget?.toolKey],
     queryFn: async () => {
@@ -1476,6 +1531,76 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
           </p>
         )}
 
+        {/* ── Critical-alerts panel: latest per-(company, tool) "critical" rows
+            Same projection that powers the SuperAdmin dashboard banner.
+            Clicking a tool key opens the same tool-history modal as the
+            amber broken-tool panel below, so operators investigating a
+            critical finding can see how the check has been behaving over
+            time without context-switching. The row also lets them jump
+            companies in one click. */}
+        {criticalSummaryQ.data && criticalSummaryQ.data.items.length > 0 && (
+          <div className="border border-red-200 rounded p-3 bg-red-50/40">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertCircle className="h-4 w-4 text-red-700" />
+              <span className="text-sm font-medium text-red-900">
+                تنبيهات حرجة حالياً
+                <span className="font-normal text-red-800/80 mr-1">
+                  ({criticalSummaryQ.data.items.length} حالة)
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground mr-auto">
+                هذه الفحوصات حالتها الحالية "حرجة" — اضغط الأداة لعرض آخر 20 تشغيلاً.
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-red-100/60 text-red-900">
+                  <tr>
+                    <th className="px-2 py-1 text-right">الشركة</th>
+                    <th className="px-2 py-1 text-right">الأداة</th>
+                    <th className="px-2 py-1 text-right">العدد</th>
+                    <th className="px-2 py-1 text-right">وقت آخر فحص</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-red-100">
+                  {criticalSummaryQ.data.items.map((row) => (
+                    <tr key={`${row.companyId}:${row.toolKey}`}>
+                      <td className="px-2 py-1">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline font-medium"
+                          onClick={() => onSelectCompany(row.companyId)}
+                          title={`اختيار ${row.companyName ?? `#${row.companyId}`} (#${row.companyId})`}
+                        >
+                          {row.companyName || `#${row.companyId}`}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[11px]">
+                        <button
+                          type="button"
+                          className="text-violet-700 hover:underline"
+                          onClick={() => setToolHistoryTarget({
+                            companyId: row.companyId,
+                            companyName: companyDisplayName(row.companyId, row.companyName),
+                            toolKey: row.toolKey,
+                          })}
+                          title={`عرض آخر التشغيلات لـ ${row.toolKey} (${row.companyName ?? `#${row.companyId}`})`}
+                        >
+                          {row.toolKey}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 font-mono text-red-700 tabular-nums">{row.count}</td>
+                      <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">
+                        {new Date(row.runAt).toLocaleString("ar-SA")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ── Broken-tool panel: latest per-(company, tool) "error" rows ──
             Surfaces silently-broken checks distinct from "critical findings"
             so a tool whose latest run threw — and therefore contributes 0 to
@@ -1650,6 +1775,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/journal-pending/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("journal-pending") ?? null}
             trend={trendForTool("journal-pending")}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids, action: "post" })}
@@ -1712,6 +1838,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/broken-refs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("broken-refs") ?? null}
             trend={trendForTool("broken-refs")}
             buildFixBody={(cid, ids) => {
@@ -1777,6 +1904,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             icon={Unlink}
             checkEndpoint="maintenance/unlinked-accounts"
             companyId={companyId}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("unlinked-accounts") ?? null}
             trend={trendForTool("unlinked-accounts")}
             renderDetails={({ data }) => {
@@ -1815,6 +1943,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             icon={ListOrdered}
             checkEndpoint="maintenance/sequence-gaps"
             companyId={companyId}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("sequence-gaps") ?? null}
             trend={trendForTool("sequence-gaps")}
             renderDetails={({ data }) => {
@@ -1852,6 +1981,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             destructive
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("dormant-users") ?? null}
             trend={trendForTool("dormant-users")}
             buildFixBody={(cid, ids) => ({ companyId: cid, ids })}
@@ -1904,6 +2034,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             icon={PackageX}
             checkEndpoint="orphan-stock"
             companyId={companyId}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("orphan-stock") ?? null}
             trend={trendForTool("orphan-stock")}
             externalCta={{ label: "فتح صفحة التنظيف", href: "/admin/orphan-stock" }}
@@ -1926,6 +2057,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             checkEndpoint="maintenance/negative-stock"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("negative-stock") ?? null}
             trend={trendForTool("negative-stock")}
             renderDetails={({ data }) => {
@@ -1970,6 +2102,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/stock-balance-drift/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("stock-balance-drift") ?? null}
             trend={trendForTool("stock-balance-drift")}
             confirmTitle="إعادة حساب الأرصدة"
@@ -2049,6 +2182,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             checkEndpoint="maintenance/unbalanced-entries"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             latestScan={latestByTool.get("unbalanced-entries") ?? null}
             trend={trendForTool("unbalanced-entries")}
             renderDetails={({ data }) => {
@@ -2105,6 +2239,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/old-audit-logs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             destructive
             latestScan={latestByTool.get("old-audit-logs") ?? null}
             trend={trendForTool("old-audit-logs")}
@@ -2160,6 +2295,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/old-maintenance-runs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             destructive
             latestScan={latestByTool.get("old-maintenance-runs") ?? null}
             trend={trendForTool("old-maintenance-runs")}
@@ -2222,6 +2358,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/old-maintenance-email-runs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             destructive
             latestScan={null}
             trend={undefined}
@@ -2288,6 +2425,7 @@ function MaintenanceSection({ companyId, onSelectCompany }: {
             fixEndpoint="maintenance/old-report-email-runs/fix"
             companyId={companyId}
             onFixed={onFixed}
+            onShowToolHistory={openToolHistory}
             destructive
             latestScan={null}
             trend={undefined}

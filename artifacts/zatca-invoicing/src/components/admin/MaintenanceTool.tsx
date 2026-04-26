@@ -11,6 +11,7 @@ import {
 import {
   Loader2, RefreshCw, ChevronDown, ChevronUp, CheckCircle2,
   AlertTriangle, AlertCircle, Clock, Download, Save, CalendarClock,
+  History,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -95,6 +96,14 @@ export type MaintenanceToolProps = {
     min: number;
     max: number;
   };
+  /**
+   * When supplied, the per-day drill-down panel renders an extra "view full
+   * tool history" button in its header so SuperAdmins can jump from a single
+   * trend bar to the broader (last 20 runs) modal owned by the parent.
+   * Receives this card's toolKey so the parent can re-use one handler across
+   * every card. Passing `undefined` (default) hides the button entirely.
+   */
+  onShowToolHistory?: (toolKey: string) => void;
 };
 
 export default function MaintenanceTool(props: MaintenanceToolProps) {
@@ -102,7 +111,7 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
     toolKey, label, description, icon: Icon, checkEndpoint, fixEndpoint,
     destructive, confirmTitle, confirmDescription, buildFixBody, fixActions,
     renderDetails, externalCta, companyId, onFixed, latestScan, trend,
-    retentionConfig,
+    retentionConfig, onShowToolHistory,
   } = props;
   const { token } = useAuth();
   const { toast } = useToast();
@@ -396,6 +405,12 @@ export default function MaintenanceTool(props: MaintenanceToolProps) {
             errorMessage={(dayRunsQ.error as any)?.message}
             items={dayRunsQ.data?.items ?? []}
             onClose={() => setSelectedDay(null)}
+            // Surfaces the broader (last 20 runs) tool-history modal alongside
+            // the per-day list so a SuperAdmin who clicked a single trend bar
+            // can pivot to the full history without leaving the card.
+            onShowToolHistory={
+              onShowToolHistory ? () => onShowToolHistory(toolKey) : undefined
+            }
           />
         )}
         {checkQ.isError && (
@@ -651,8 +666,10 @@ function DayRunsPanel(props: {
     details: any;
   }>;
   onClose: () => void;
+  /** When set, renders a "view full tool history" button in the header. */
+  onShowToolHistory?: () => void;
 }) {
-  const { day, isFetching, isError, errorMessage, items, onClose } = props;
+  const { day, isFetching, isError, errorMessage, items, onClose, onShowToolHistory } = props;
   const STATUS_BADGE: Record<string, string> = {
     ok:       "bg-emerald-100 text-emerald-800 border border-emerald-200",
     warn:     "bg-amber-100   text-amber-900   border border-amber-200",
@@ -673,9 +690,22 @@ function DayRunsPanel(props: {
             <span className="text-muted-foreground font-normal">({items.length})</span>
           )}
         </p>
-        <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={onClose}>
-          إغلاق
-        </Button>
+        <div className="flex items-center gap-1">
+          {onShowToolHistory && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 text-[11px] px-2 gap-1"
+              onClick={onShowToolHistory}
+              title="عرض آخر 20 تشغيلاً لهذه الأداة"
+            >
+              <History className="h-3 w-3" />
+              سجل الأداة
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={onClose}>
+            إغلاق
+          </Button>
+        </div>
       </div>
       {isFetching && (
         <p className="text-[11px] text-muted-foreground flex items-center gap-1">
