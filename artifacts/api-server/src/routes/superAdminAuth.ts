@@ -181,7 +181,7 @@ router.post("/login", saLoginIpLimit, saLoginUsernameLimit, async (req, res) => 
   const hour = new Date().getHours();
   const risk = await assessRisk({ userId: user.id, ip, deviceFingerprint: fp, hour });
 
-  if (risk.level === "high") {
+  if (risk.level === "high" && !emergencyBypassEnabled()) {
     await recordAttempt({
       userId: user.id, username, ip, userAgent: ua, deviceFingerprint: fp,
       success: false, outcome: "blocked_high_risk",
