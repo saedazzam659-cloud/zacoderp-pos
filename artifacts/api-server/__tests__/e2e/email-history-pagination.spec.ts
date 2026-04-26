@@ -188,14 +188,17 @@ test("email-history pagination: first page renders 20, load more appends, filter
   await fromInput.fill(SEED_DATE);
   await toInput.fill(SEED_DATE);
 
-  // After the filter applies, the count chip reads "20 محاولة مطابقة للفلاتر+"
-  // (the trailing `+` is the UI's hasMore marker) and the table renders
-  // exactly PAGE_SIZE rows. To count *only* this run's seeded rows — never
-  // colliding with leftover rows from a crashed prior run, even though the
-  // 1985-01-15 date filter already isolates the day — we match on the full
-  // unique TEST_TAG carried by the criticalSignature column. The visible
-  // cell text is intentionally truncated to 8 chars + "…" by the UI (see
-  // AICompanyFix.tsx around line 1578), so we anchor on the cell's `title`
+  // After the filter applies, the count chip reads
+  // "تم تحميل 20 من 25 محاولة مطابقة للفلاتر" (task #67 replaced the older
+  // "20 محاولة مطابقة للفلاتر+" hasMore-suffix copy with an explicit
+  // "loaded N of T" format; hasMore is now implied by loadedCount<totalCount
+  // rather than a trailing `+`) and the table renders exactly PAGE_SIZE
+  // rows. To count *only* this run's seeded rows — never colliding with
+  // leftover rows from a crashed prior run, even though the 1985-01-15 date
+  // filter already isolates the day — we match on the full unique TEST_TAG
+  // carried by the criticalSignature column. The visible cell text is
+  // intentionally truncated to 8 chars + "…" by the UI (see AICompanyFix.tsx
+  // around the email-history tbody), so we anchor on the cell's `title`
   // attribute, which is set to the full untruncated signature.
   const seededRows = panel(page).locator("tbody tr").filter({
     has: page.locator(`td[title="${TEST_TAG}"]`),
@@ -203,19 +206,31 @@ test("email-history pagination: first page renders 20, load more appends, filter
 
   await expect(seededRows).toHaveCount(PAGE_SIZE);
   await expect(
-    panel(page).getByText(`${PAGE_SIZE} محاولة مطابقة للفلاتر+`),
+    panel(page).getByText(
+      `تم تحميل ${PAGE_SIZE} من ${TOTAL_ROWS} محاولة مطابقة للفلاتر`,
+      { exact: true },
+    ),
   ).toBeVisible();
 
+  // The button label now also surfaces the remaining count (task #67):
+  // "تحميل المزيد (5 متبقّية)" before the second page is loaded, then plain
+  // "تحميل المزيد" if remaining ever drops to 0 while hasMore is still true.
+  // getByRole's `name` does substring matching on the accessible name, so
+  // matching on the stable "تحميل المزيد" prefix covers both shapes.
   const loadMore = panel(page).getByRole("button", { name: "تحميل المزيد" });
   await expect(loadMore).toBeVisible();
 
   // ─── Click "تحميل المزيد" → second page is appended in-place ───
   await loadMore.click();
   await expect(seededRows).toHaveCount(TOTAL_ROWS);
-  // Trailing `+` is gone now that hasMore=false, so the count chip flips
-  // from "20 محاولة مطابقة للفلاتر+" to "25 محاولة مطابقة للفلاتر".
+  // hasMore=false now, so the count chip flips from
+  // "تم تحميل 20 من 25 محاولة مطابقة للفلاتر" to
+  // "تم تحميل 25 من 25 محاولة مطابقة للفلاتر".
   await expect(
-    panel(page).getByText(`${TOTAL_ROWS} محاولة مطابقة للفلاتر`, { exact: true }),
+    panel(page).getByText(
+      `تم تحميل ${TOTAL_ROWS} من ${TOTAL_ROWS} محاولة مطابقة للفلاتر`,
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(loadMore).toBeHidden();
 
@@ -243,7 +258,7 @@ test("email-history pagination: first page renders 20, load more appends, filter
     panel(page).getByText("لا توجد محاولات إرسال مطابقة للفلاتر."),
   ).toBeVisible();
   await expect(
-    panel(page).getByText("0 محاولة مطابقة للفلاتر", { exact: true }),
+    panel(page).getByText("تم تحميل 0 من 0 محاولة مطابقة للفلاتر", { exact: true }),
   ).toBeVisible();
   await expect(
     panel(page).getByRole("button", { name: "تحميل المزيد" }),
