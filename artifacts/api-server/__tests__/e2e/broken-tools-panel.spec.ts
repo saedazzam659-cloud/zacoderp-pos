@@ -1,5 +1,5 @@
 // E2E test for the SuperAdmin "أدوات صيانة تعطّلت آخر 7 أيام" amber panel
-// on /admin/ai-fix in the zatca-invoicing artifact (task #85).
+// on /admin/ai-fix in the zatca-invoicing artifact (tasks #85, #104).
 //
 // What this verifies (mirrors the regression task acceptance criteria):
 //   1. Empty state — when GET /api/admin/maintenance/error-summary returns
@@ -20,6 +20,20 @@
 //      seeded row opens the tool-history dialog whose title bar echoes
 //      our TOOL_KEY (same affordance as the green recovered-tool panel
 //      below it).
+//   4. CSV export (task #104) — clicking the "تنزيل CSV" button on the
+//      panel triggers GET /maintenance/error-summary?format=csv, which
+//      must return:
+//        - filename `maintenance-broken-tools-<unix-ms>.csv`
+//        - body prefixed with the UTF-8 BOM
+//        - the four headers الشركة / الأداة / رسالة الخطأ / وقت آخر فشل
+//          in that exact order
+//        - at most BROKEN_CSV_ROW_CAP=1000 data rows even when the
+//          underlying helper returns more (we seed 1000 extra broken
+//          (company, tool) pairs to push the total past the cap)
+//        - exactly one `export_csv` audit row with module=maintenance,
+//          entityType=maintenance_error_summary, companyId=null
+//      Mirrors the structure of the recovered-tools CSV spec so future
+//      maintenance is consistent across the two panels.
 //
 // Determinism story (mirrors recovered-tools-panel.spec.ts):
 //   - We create a brand-new `companies` row tagged with a per-run TEST_TAG
@@ -53,13 +67,14 @@
 
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, like } from "drizzle-orm";
 import {
   db,
   usersTable,
   companiesTable,
   maintenanceRunsTable,
   superAdminSessionsTable,
+  auditLogTable,
 } from "@workspace/db";
 
 // ─── Fixtures / state shared across both tests in this file ────────────────
@@ -79,6 +94,14 @@ let saSessionRowId: number | null = null;
 let saSessionToken: string | null = null;
 let testCompanyId: number | null = null;
 const seededRunIds: number[] = [];
+// audit_log row id(s) the maintenance/error-summary CSV export writes
+// during the CSV test below. Tracked so afterAll can strip them by PK
+// and the dev DB doesn't accumulate test-only audit rows over time.
+const seededAuditIds: number[] = [];
+// Anchor moment captured before the CSV export click so the audit-row
+// lookup can scope its query to this test run instead of relying on a
+// LIKE pattern (the export helper doesn't accept caller-supplied tags).
+let csvAuditAnchor: Date | null = null;
 
 // ─── Setup: create company, sa_session, and a broken-tool scenario ─────────
 test.beforeAll(async () => {
@@ -173,10 +196,25 @@ test.beforeAll(async () => {
 // We deliberately do NOT call `pool.end()` — see the matching note in
 // recovered-tools-panel.spec.ts.
 test.afterAll(async () => {
-  if (seededRunIds.length) {
+  if (seededAuditIds.length) {
+    // Strip the export_csv audit row(s) the CSV test triggered. Done
+    // before the maintenance_runs / companies cleanup because audit rows
+    // hold no FK back to those tables — but ordering this first keeps the
+    // teardown narrative ("test artefacts → fixtures") readable.
     await db
-      .delete(maintenanceRunsTable)
-      .where(inArray(maintenanceRunsTable.id, seededRunIds));
+      .delete(auditLogTable)
+      .where(inArray(auditLogTable.id, seededAuditIds));
+  }
+  if (seededRunIds.length) {
+    // Chunk the delete so a CSV-test run that seeded ~1000 padding rows
+    // stays comfortably below Postgres's 65k bind-parameter ceiling on a
+    // single statement.
+    const CHUNK = 500;
+    for (let i = 0; i < seededRunIds.length; i += CHUNK) {
+      await db
+        .delete(maintenanceRunsTable)
+        .where(inArray(maintenanceRunsTable.id, seededRunIds.slice(i, i + CHUNK)));
+    }
   }
   if (testCompanyId !== null) {
     await db
@@ -288,4 +326,180 @@ test("broken-tools panel: renders the seeded broken tool with the four columns a
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("آخر تشغيلات الأداة")).toBeVisible();
   await expect(dialog.getByText(TOOL_KEY)).toBeVisible();
+});
+
+test("broken-tools panel: 'تنزيل CSV' downloads the broken-tools list with the four Arabic headers, BOM, the 1000-row cap, and one audit row", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Seed enough additional broken (company, tool) pairs to push the total
+  // count past the BROKEN_CSV_ROW_CAP=1000 server-side cap. Combined with
+  // the row from beforeAll plus any unrelated dev-DB rows, the helper will
+  // now see >1000 candidate pairs and the LIMIT clause inside
+  // getRecentToolErrors must clip the CSV output to exactly 1000 rows.
+  //
+  // Each padding row uses a unique tool_key so DISTINCT ON
+  // (company_id, tool_key) keeps every one of them. Crucially the padding
+  // prefix does *not* contain TOOL_KEY as a substring (we use
+  // `${TEST_TAG}_pad_…` instead of `${TOOL_KEY}_pad_…`) so the
+  // `hasText: TOOL_KEY` panel-row probe below uniquely matches the
+  // beforeAll row and not the padding rows. runAt is staggered strictly
+  // *older* than the beforeAll row so that row stays the most recent and
+  // remains visible on the on-screen 50-row panel — important for the
+  // "panel is visible" gate before we click the export. All padding
+  // runAts sit comfortably inside the 7-day window.
+  const EXTRA_PAIRS = 1000;
+  const now = Date.now();
+  const extraRows = Array.from({ length: EXTRA_PAIRS }, (_, i) => ({
+    companyId:  testCompanyId!,
+    toolKey:    `${TEST_TAG}_pad_${i.toString().padStart(4, "0")}`,
+    status:     "error" as const,
+    count:      0,
+    trigger:    "scheduled" as const,
+    // 2 days ago, then minus 60s per index → all between -2d and -2.7d.
+    runAt:      new Date(now - 2 * 86_400_000 - i * 60_000),
+    durationMs: 1,
+    error:      `pad ${i} ${ERROR_MSG}`,
+    details:    null,
+  }));
+  // Bulk insert in chunks to keep parameter counts well within Postgres's
+  // 65k bind-parameter ceiling (each row ≈ 9 parameters → 200 rows ≈ 1.8k).
+  const CHUNK = 200;
+  for (let i = 0; i < extraRows.length; i += CHUNK) {
+    const inserted = await db
+      .insert(maintenanceRunsTable)
+      .values(extraRows.slice(i, i + CHUNK))
+      .returning({ id: maintenanceRunsTable.id });
+    for (const r of inserted) seededRunIds.push(r.id);
+  }
+
+  // Capture the CSV bytes the user would have saved. The mutation in
+  // AICompanyFix.tsx (errorSummaryCsvMut) does fetch → .blob() → anchor
+  // click, which drains Playwright's response body before we can read it
+  // — so we intercept the network round-trip, refetch upstream, snapshot
+  // the bytes + headers, then forward the same response to the page.
+  // Mirrors the recovered-tools CSV spec's capture pattern.
+  const csvCaptures: {
+    body: Buffer;
+    contentType: string;
+    contentDisposition: string;
+  }[] = [];
+  await page.route("**/api/admin/maintenance/error-summary**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    const upstream = await route.fetch();
+    const body     = await upstream.body();
+    const headers  = upstream.headers();
+    csvCaptures.push({
+      body,
+      contentType:        headers["content-type"] ?? "",
+      contentDisposition: headers["content-disposition"] ?? "",
+    });
+    await route.fulfill({ response: upstream, body });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+
+  // Wait for the SPA + the amber panel to render before clicking the
+  // export button — the button only exists inside the panel, which is
+  // gated on `errorSummaryQ.data.items.length > 0`.
+  await expect(page.getByRole("heading", { name: PAGE_HEADING_RE })).toBeVisible();
+  const panel = page.locator("div", { hasText: PANEL_HEADER_PREFIX }).filter({
+    has: page.locator("table"),
+  }).first();
+  await expect(panel).toBeVisible();
+  // Stable handle on the seeded row so we know the broken-tool scenario
+  // is on screen before exporting (the server pulls all rows via the same
+  // helper, but waiting here guarantees the test isn't racing the initial
+  // query and that the export button is mounted).
+  await expect(panel.locator("tbody tr", { hasText: TOOL_KEY })).toHaveCount(1);
+
+  // Anchor a wall-clock moment just before the export so the audit-row
+  // lookup below can scope itself to this run; writeAudit() uses defaultNow
+  // for created_at so a >= filter on this anchor will only match rows the
+  // export we triggered (or a concurrent test run, which is impossible
+  // here because workers=1).
+  csvAuditAnchor = new Date(Date.now() - 1_000); // 1s slack for clock skew
+
+  // Click the CSV export button by its data-testid (added on AICompanyFix
+  // for exactly this hook). page.route() above will record the bytes.
+  // The 1000-row cap means the upstream query has to scan + serialise
+  // more rows than usual, so allow a generous timeout.
+  await page.locator('[data-testid="error-summary-csv-button"]').click();
+  await expect.poll(() => csvCaptures.length, { timeout: 30_000 }).toBe(1);
+  const csvCapture = csvCaptures[0];
+
+  // ─── Response headers — Content-Type and the filename pattern ───────────
+  // sendCsv() sets `text/csv; charset=utf-8`; the substring check tolerates
+  // case differences in the charset clause without depending on order.
+  expect(csvCapture.contentType.toLowerCase()).toContain("text/csv");
+  // Filename advertised to the browser must follow the
+  // `maintenance-broken-tools-<unix-ms>.csv` pattern — the same identifier
+  // the page-side mutation falls back to and that operators recognise when
+  // reviewing downloads.
+  expect(csvCapture.contentDisposition).toMatch(
+    /filename="maintenance-broken-tools-\d+\.csv"/,
+  );
+
+  // ─── Body bytes — UTF-8 BOM, header row in order, 1000-row cap ──────────
+  // Excel needs the BOM to render Arabic correctly; assert on the raw
+  // bytes before any decoder strips the signature.
+  const csvBuf = csvCapture.body;
+  expect(csvBuf.length).toBeGreaterThan(3);
+  expect(csvBuf[0]).toBe(0xEF);
+  expect(csvBuf[1]).toBe(0xBB);
+  expect(csvBuf[2]).toBe(0xBF);
+
+  const csvText = csvBuf.toString("utf8").replace(/^\uFEFF/, "");
+  // sendCsv emits CRLF row separators; filter(Boolean) drops the trailing
+  // empty element from a final CRLF (if any).
+  const csvLines = csvText.split("\r\n").filter(Boolean);
+  // Header row carries the four documented Arabic columns in this exact
+  // order — toEqual asserts both content and order in one shot, mirroring
+  // the route handler's `headers` array.
+  const headerCells = csvLines[0].split(",");
+  expect(headerCells).toEqual([
+    "الشركة",
+    "الأداة",
+    "رسالة الخطأ",
+    "وقت آخر فشل",
+  ]);
+
+  // 1000-row cap: BROKEN_CSV_ROW_CAP=1000 in admin.ts. We seeded 1000
+  // padding pairs plus the beforeAll row (1001 ours alone) so the helper
+  // sees ≥1001 candidates and must clip to exactly 1000 data rows. We
+  // assert on the data-row count (not >= or <=) because any drift in the
+  // cap — accidental bump, accidental removal, off-by-one — would change
+  // this number and silently ship.
+  //
+  // Note: this assumes none of our padding rows contain CRLFs that would
+  // split a logical CSV line into two physical lines. The padding's
+  // `error` cells are simple ASCII ("pad <i> <ERROR_MSG>") and the helper
+  // never inserts CRLFs into other columns (companyName/toolKey/runAt),
+  // so split("\r\n") yields exactly one entry per row.
+  expect(csvLines.length - 1).toBe(1000);
+
+  // ─── Audit assertion — exactly one export_csv row was written ─────────
+  // Mirrors the server-side comment on /maintenance/error-summary: the
+  // export must record an audit entry under module='maintenance' /
+  // action='export_csv' / entityType='maintenance_error_summary' with
+  // companyId=null (broken tools span the whole fleet). Scoping the
+  // lookup by createdAt >= our anchor avoids LIKE-style matches against
+  // the JSON metadata column and keeps the assertion stable on a shared
+  // dev DB.
+  const auditRows = await db
+    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_error_summary"),
+      isNull(auditLogTable.companyId),
+      gte(auditLogTable.createdAt, csvAuditAnchor!),
+    ));
+  expect(auditRows).toHaveLength(1);
+  // Track the id so afterAll can strip it by PK and the dev DB doesn't
+  // accumulate test-only audit rows over time.
+  for (const r of auditRows) seededAuditIds.push(r.id);
 });
