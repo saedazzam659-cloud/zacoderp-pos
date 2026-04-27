@@ -9,6 +9,7 @@ import Dashboard from "@/pages/Dashboard";
 import SuperAdminDashboard from "@/pages/SuperAdminDashboard";
 import OrphanStockCleanup from "@/pages/admin/OrphanStockCleanup";
 import AICompanyFix from "@/pages/admin/AICompanyFix";
+import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
@@ -265,6 +266,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/backups" component={BackupOperations} />}
             {isSuperAdmin && <Route path="/admin/orphan-stock" component={OrphanStockCleanup} />}
             {isSuperAdmin && <Route path="/admin/ai-fix" component={AICompanyFix} />}
+            {isSuperAdmin && <Route path="/admin/data-doctor" component={CompanyDataDoctor} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
             {(isSuperAdmin || user?.role === "admin") && <Route path="/admin/audit-log" component={AuditLog} />}

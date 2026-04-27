@@ -439,6 +439,7 @@
     "menuPermissions": "Menu Permissions",
     "orphanStock": "Orphan Stock Cleanup",
     "aiCompanyFix": "AI Company Issue Fixer",
+    "dataDoctor": "Company Data Doctor",
     "supportInbox": "Support Inbox",
     "supportSettings": "Support Channels Settings",
     "auditLog": "Audit Log",

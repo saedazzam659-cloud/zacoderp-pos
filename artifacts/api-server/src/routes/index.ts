@@ -56,6 +56,7 @@ import faceAttendanceRouter from "./faceAttendance";
 import securityEventsRouter from "./security-events";
 import inboxRouter from "./inbox";
 import aiReportsRouter from "./ai-reports";
+import dataDoctorRouter from "./data-doctor";
 
 const router: IRouter = Router();
 
@@ -63,6 +64,7 @@ router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth/superadmin", superAdminAuthRouter);
 router.use("/admin/modules", adminModulesRouter);
+router.use("/admin/data-doctor", dataDoctorRouter);
 router.use("/admin", adminRouter);
 router.use("/companies", companiesRouter);
 router.use("/customers", customersRouter);
