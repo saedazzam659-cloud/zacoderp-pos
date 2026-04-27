@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
+import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
 
 const router = Router();
 
@@ -134,6 +135,32 @@ router.post("/login", async (req, res) => {
       // surrounding transaction makes the close-and-insert pair all-or-
       // nothing so we never strand both the old and the new in 'active'.
       const cid = user.companyId;
+
+      // Pick a sensible default branch for this login row so reports and
+      // filters can attribute the session to a branch. Resolution order:
+      //   1. If the user has exactly one branch grant in user_branches,
+      //      use that — common case for cashiers / branch managers.
+      //   2. Otherwise fall back to the per-company defaultBranchId
+      //      configured in the Session Settings screen (may be null).
+      // Multi-branch admins (or users with viewAllBranches) intentionally
+      // get the company default — they pick branches per-screen.
+      let loginBranchId: number | null = null;
+      try {
+        const grants = await db
+          .select({ branchId: userBranchesTable.branchId })
+          .from(userBranchesTable)
+          .where(eq(userBranchesTable.userId, user.id));
+        if (grants.length === 1) {
+          loginBranchId = grants[0].branchId;
+        } else {
+          const settings = await loadSessionSettings(cid);
+          loginBranchId = settings.defaultBranchId ?? null;
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[auth] branch resolution for work_session failed", e);
+      }
+
       try {
         await db.transaction(async (tx) => {
           await tx.update(workSessionsTable).set({
@@ -152,6 +179,7 @@ router.post("/login", async (req, res) => {
             status:    "active",
             ip,
             userAgent: ua,
+            branchId:  loginBranchId,
           });
         });
       } catch (txErr: any) {
@@ -252,7 +280,15 @@ router.post("/logout", async (req, res) => {
       });
       // Close any active work-session rows for this user. Defensive: a
       // session-table failure must not block the logout response.
+      // We snapshot the IDs first so we can fire end-of-session hooks
+      // (auto-report + email) for each one after closing.
       try {
+        const active = await db.select({ id: workSessionsTable.id, companyId: workSessionsTable.companyId })
+          .from(workSessionsTable)
+          .where(and(
+            eq(workSessionsTable.userId, user.id),
+            eq(workSessionsTable.status, "active"),
+          ));
         await db.update(workSessionsTable).set({
           status:    "ended",
           endedAt:   new Date(),
@@ -262,6 +298,10 @@ router.post("/logout", async (req, res) => {
           eq(workSessionsTable.userId, user.id),
           eq(workSessionsTable.status, "active"),
         ));
+        // Fire hooks in the background — best-effort, never blocks logout.
+        for (const a of active) {
+          if (a.companyId) void runEndOfSessionHooks(a.id, a.companyId, { reason: "logout" });
+        }
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("[auth] failed to close work_session on logout", e);
@@ -291,8 +331,15 @@ router.post("/logout", async (req, res) => {
           userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
           metadata: { saSessionId: sa.id },
         });
-        // Close any active work-session rows for this superadmin user too.
+        // Close any active work-session rows for this superadmin user too,
+        // and fire end-of-session hooks for each (best-effort).
         try {
+          const active = await db.select({ id: workSessionsTable.id, companyId: workSessionsTable.companyId })
+            .from(workSessionsTable)
+            .where(and(
+              eq(workSessionsTable.userId, sa.userId),
+              eq(workSessionsTable.status, "active"),
+            ));
           await db.update(workSessionsTable).set({
             status:    "ended",
             endedAt:   new Date(),
@@ -302,6 +349,9 @@ router.post("/logout", async (req, res) => {
             eq(workSessionsTable.userId, sa.userId),
             eq(workSessionsTable.status, "active"),
           ));
+          for (const a of active) {
+            if (a.companyId) void runEndOfSessionHooks(a.id, a.companyId, { reason: "logout" });
+          }
         } catch (e) {
           // eslint-disable-next-line no-console
           console.error("[auth] failed to close work_session on sa logout", e);

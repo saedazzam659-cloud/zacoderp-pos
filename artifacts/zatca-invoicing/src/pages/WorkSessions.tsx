@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Clock, FileText, StopCircle, Sparkles, RefreshCw, Activity } from "lucide-react";
+import { Loader2, Clock, FileText, StopCircle, Sparkles, RefreshCw, Activity, Settings, Building2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -28,8 +29,19 @@ interface WorkSession {
   aiReport: string | null;
   aiReportGeneratedAt: string | null;
   activityCount: number | null;
+  branchId: number | null;
+  branchName?: string | null;
+  branchCode?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface BranchOption {
+  id: number;
+  code: string;
+  nameAr: string;
+  nameEn: string | null;
+  isMain: boolean;
 }
 
 interface SessionDetail {
@@ -137,6 +149,8 @@ export default function WorkSessions() {
 
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "ended">("all");
   const [openId, setOpenId] = useState<number | null>(null);
+  const [branchEditOpen, setBranchEditOpen] = useState<{ id: number; current: number | null } | null>(null);
+  const [branchPickValue, setBranchPickValue] = useState<string>("");
 
   // List query — refetched every 30s so active-session durations stay live-ish
   // without hammering the server.
@@ -188,6 +202,39 @@ export default function WorkSessions() {
     onError: (e: any) => toast({ title: tr("toast.errorTitle"), description: String(e?.message ?? e), variant: "destructive" }),
   });
 
+  // Branch options for the picker dialog. Only fetched once we know the
+  // user is admin (the dropdown is admin-only) — saves a request for
+  // regular cashiers who can't change branches anyway.
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const { data: branches = [] } = useQuery<BranchOption[]>({
+    queryKey: ["work-session-settings-branches"],
+    enabled: isAdmin,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/work-session-settings/branches`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+  });
+
+  const branchMut = useMutation({
+    mutationFn: async (args: { id: number; branchId: number | null }) => {
+      const r = await fetch(`${API}/api/work-sessions/${args.id}/branch`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: args.branchId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: tr("toast.branchSavedTitle"), description: tr("toast.branchSavedBody") });
+      qc.invalidateQueries({ queryKey: ["work-sessions"] });
+      qc.invalidateQueries({ queryKey: ["work-session", openId] });
+      setBranchEditOpen(null);
+    },
+    onError: (e: any) => toast({ title: tr("toast.errorTitle"), description: String(e?.message ?? e), variant: "destructive" }),
+  });
+
   const reportMut = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API}/api/work-sessions/${id}/generate-report`, { method: "POST", headers });
@@ -205,8 +252,6 @@ export default function WorkSessions() {
     onError: (e: any) => toast({ title: tr("toast.errorTitle"), description: String(e?.message ?? e), variant: "destructive" }),
   });
 
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
-
   const reportHtml = useMemo(
     () => detail?.session?.aiReport ? renderMarkdown(detail.session.aiReport) : "",
     [detail?.session?.aiReport],
@@ -217,11 +262,23 @@ export default function WorkSessions() {
       {/* Header + stats */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-primary" />
-            {tr("title")}
-          </CardTitle>
-          <CardDescription>{tr("subtitle")}</CardDescription>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-primary" />
+                {tr("title")}
+              </CardTitle>
+              <CardDescription>{tr("subtitle")}</CardDescription>
+            </div>
+            {isAdmin && (
+              <Link href="/work-sessions/settings">
+                <Button variant="outline" size="sm" className="gap-1" data-testid="link-session-settings">
+                  <Settings className="h-4 w-4" />
+                  {tr("openSettings")}
+                </Button>
+              </Link>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -270,6 +327,7 @@ export default function WorkSessions() {
                 <thead>
                   <tr className="border-b border-border">
                     {isAdmin && <th className="text-start p-2 font-medium">{tr("col.user")}</th>}
+                    <th className="text-start p-2 font-medium">{tr("col.branch")}</th>
                     <th className="text-start p-2 font-medium">{tr("col.started")}</th>
                     <th className="text-start p-2 font-medium">{tr("col.ended")}</th>
                     <th className="text-start p-2 font-medium">{tr("col.duration")}</th>
@@ -284,6 +342,16 @@ export default function WorkSessions() {
                         onClick={() => setOpenId(r.id)}
                         data-testid={`row-session-${r.id}`}>
                       {isAdmin && <td className="p-2">{r.username ?? `#${r.userId}`}</td>}
+                      <td className="p-2 whitespace-nowrap">
+                        {r.branchName ? (
+                          <span className="inline-flex items-center gap-1 text-xs">
+                            <Building2 className="h-3 w-3 text-muted-foreground" />
+                            {r.branchName}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
                       <td className="p-2 whitespace-nowrap">{fmtDate(r.startedAt, locale)}</td>
                       <td className="p-2 whitespace-nowrap">
                         {r.endedAt ? fmtDate(r.endedAt, locale) : <span className="text-emerald-600">{tr("ongoing")}</span>}
@@ -316,6 +384,14 @@ export default function WorkSessions() {
                                   className="gap-1 text-violet-600 hover:text-violet-700">
                             <Sparkles className="h-4 w-4" /> {tr("action.report")}
                           </Button>
+                          {isAdmin && (
+                            <Button size="sm" variant="ghost"
+                                    onClick={() => { setBranchEditOpen({ id: r.id, current: r.branchId }); setBranchPickValue(r.branchId ? String(r.branchId) : "none"); }}
+                                    className="gap-1 text-sky-600 hover:text-sky-700"
+                                    data-testid={`button-set-branch-${r.id}`}>
+                              <Building2 className="h-4 w-4" /> {tr("action.setBranch")}
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -439,6 +515,43 @@ export default function WorkSessions() {
               </Button>
             )}
             <Button variant="secondary" onClick={() => setOpenId(null)}>{tr("close")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Branch picker dialog (admin-only). The Select uses the literal "none"
+          for "no branch" because Radix Select rejects "" as a value. */}
+      <Dialog open={branchEditOpen !== null} onOpenChange={(o) => !o && setBranchEditOpen(null)}>
+        <DialogContent className="max-w-md" dir={isRtl ? "rtl" : "ltr"}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-sky-600" />
+              {tr("dialog.setBranchTitle")}
+            </DialogTitle>
+            <DialogDescription>{tr("dialog.setBranchDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Select value={branchPickValue} onValueChange={setBranchPickValue}>
+              <SelectTrigger data-testid="select-branch-pick"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{tr("dialog.noBranch")}</SelectItem>
+                {branches.map(b => (
+                  <SelectItem key={b.id} value={String(b.id)}>
+                    {b.nameAr}{b.isMain ? ` (${tr("dialog.mainBranch")})` : ""} — {b.code}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setBranchEditOpen(null)}>{tr("close")}</Button>
+            <Button onClick={() => branchEditOpen && branchMut.mutate({
+              id: branchEditOpen.id,
+              branchId: branchPickValue === "none" ? null : Number(branchPickValue),
+            })} disabled={branchMut.isPending} data-testid="button-save-branch">
+              {branchMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {tr("save")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

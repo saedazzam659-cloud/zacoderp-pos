@@ -13,6 +13,7 @@ import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
 import WorkSessions from "@/pages/WorkSessions";
+import WorkSessionSettings from "@/pages/WorkSessionSettings";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
@@ -265,6 +266,7 @@ function AppRoutes() {
             {(isSuperAdmin || user?.role === "admin") && <Route path="/admin/audit-log" component={AuditLog} />}
             {/* Work sessions are inherently per-company/per-user. Superadmin
                 has no companyId so the feature doesn't apply to them. */}
+            {!isSuperAdmin && <Route path="/work-sessions/settings" component={WorkSessionSettings} />}
             {!isSuperAdmin && <Route path="/work-sessions" component={WorkSessions} />}
             <Route path="/notifications" component={Notifications} />
 

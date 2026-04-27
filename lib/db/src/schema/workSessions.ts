@@ -31,6 +31,12 @@ export const workSessionsTable = pgTable("work_sessions", {
   endReason:           text("end_reason"),                              // logout | manual | new_login | system
   ip:                  text("ip"),                                      // client IP at login
   userAgent:           text("user_agent"),                              // UA string at login
+  // Optional branch tag for the session. When the user has access to a
+  // single branch (or the company has a "default branch" configured), this
+  // is filled at login time. Otherwise the user can pick/change it later
+  // from the session detail dialog. Plain integer (no FK constraint) to
+  // avoid blocking login if the branch row is later deleted.
+  branchId:            integer("branch_id"),
   notes:               text("notes"),                                   // optional admin/user note
   aiReport:            text("ai_report"),                               // cached Markdown report
   aiReportGeneratedAt: timestamp("ai_report_generated_at", { withTimezone: true }),

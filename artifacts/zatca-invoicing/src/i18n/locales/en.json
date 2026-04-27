@@ -5487,6 +5487,8 @@
     "empty": "No sessions to show.",
     "ongoing": "ongoing",
     "close": "Close",
+    "save": "Save",
+    "openSettings": "Session Settings",
     "stats": {
       "active": "Active right now",
       "today":  "Sessions today",
@@ -5502,6 +5504,7 @@
     },
     "col": {
       "user":     "User",
+      "branch":   "Branch",
       "started":  "Started",
       "ended":    "Ended",
       "duration": "Duration",
@@ -5510,9 +5513,10 @@
       "tools":    "Tools"
     },
     "action": {
-      "view":   "View",
-      "end":    "End session",
-      "report": "AI report"
+      "view":      "View",
+      "end":       "End session",
+      "report":    "AI report",
+      "setBranch": "Set branch"
     },
     "dialog": {
       "title":       "Session details",
@@ -5524,15 +5528,52 @@
       "noReportYet": "No report has been generated for this session yet. Click \"Generate report\" to build one with AI.",
       "activity":    "Recent activity in this session",
       "noActivity":  "No recorded activity for this session.",
-      "moreShown":   "Showing {{shown}} of {{total}} actions."
+      "moreShown":   "Showing {{shown}} of {{total}} actions.",
+      "setBranchTitle":       "Set session branch",
+      "setBranchDescription": "Pin this session to a specific branch. The branch shows in the list and is included in the AI report.",
+      "noBranch":             "No branch",
+      "mainBranch":           "main"
     },
     "toast": {
-      "endedTitle":      "Session ended",
-      "endedBody":       "The work session has been ended successfully.",
-      "reportReadyTitle":"Report ready",
-      "reportReadyBody": "Session report generated successfully.",
-      "reportTruncated": "Activity list was truncated because it exceeded the per-report limit.",
-      "errorTitle":      "Something went wrong"
+      "endedTitle":       "Session ended",
+      "endedBody":        "The work session has been ended successfully.",
+      "reportReadyTitle": "Report ready",
+      "reportReadyBody":  "Session report generated successfully.",
+      "reportTruncated":  "Activity list was truncated because it exceeded the per-report limit.",
+      "errorTitle":       "Something went wrong",
+      "branchSavedTitle": "Branch saved",
+      "branchSavedBody":  "Session branch updated successfully.",
+      "settingsSavedTitle":"Settings saved",
+      "settingsSavedBody": "Work session settings have been saved."
+    },
+    "settings": {
+      "title": "Work Session Settings",
+      "subtitle": "Control AI reports, email delivery, and branch linkage for work sessions.",
+      "backToList": "Back to sessions",
+      "adminOnly": "This page is only available to company admins.",
+      "emailGroup": "Email",
+      "emailGroupDesc": "Settings for emailing the AI session report when a session ends.",
+      "emailReportsEnabled": "Enable email reports",
+      "emailReportsEnabledHint": "When on, the AI report is emailed to the recipients below at session end.",
+      "emailOnSessionEnd": "Send email when a session ends",
+      "emailOnSessionEndHint": "On logout or manual end, send the report automatically.",
+      "autoGenerateOnEnd": "Auto-generate report on end",
+      "autoGenerateOnEndHint": "When a session ends, generate the AI report immediately so you don't have to click \"Generate\".",
+      "emailRecipients": "Recipients",
+      "emailRecipientsHint": "One email per line (or comma-separated). Example: admin@company.sa",
+      "aiGroup": "AI",
+      "aiGroupDesc": "Pick the model used to write session summaries, plus idle window.",
+      "aiModel": "AI model",
+      "aiModelHint": "Haiku is cheap & fast for daily summaries. Sonnet/Opus for deeper analysis.",
+      "idleTimeout": "Idle timeout before ending a session (minutes)",
+      "idleTimeoutHint": "Reserved for future auto-end of stale active sessions. Allowed: 5–1440 minutes.",
+      "branchGroup": "Branches",
+      "branchGroupDesc": "Pin sessions to a default branch, or require users to pick one at login.",
+      "requireBranchSelection": "Require branch selection",
+      "requireBranchSelectionHint": "When on, every session must be tied to a branch. Used to group activity per branch in reports.",
+      "defaultBranch": "Default branch for sessions",
+      "defaultBranchHint": "Used automatically for users who don't have exactly one branch grant.",
+      "noDefaultBranch": "No default branch"
     }
   }
 }

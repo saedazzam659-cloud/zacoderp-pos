@@ -24,10 +24,14 @@
 
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { workSessionsTable, auditLogTable, usersTable } from "@workspace/db";
-import { and, eq, desc, gte, lte, ne, count, sql } from "drizzle-orm";
+import { workSessionsTable, auditLogTable, branchesTable } from "@workspace/db";
+import { and, eq, desc, gte, lte, ne, count, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import Anthropic from "@anthropic-ai/sdk";
+import {
+  generateSessionReport,
+  loadSessionSettings,
+  runEndOfSessionHooks,
+} from "../lib/workSessionReport.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -48,34 +52,10 @@ function isAdmin(req: any): boolean {
   return role === "admin" || role === "superadmin";
 }
 
-// Sensitive-key allowlist for the AI prompt. audit_log.metadata is a free-
-// form jsonb that may contain user-influenced strings, and a few of our
-// writers stash auth-adjacent values (password reset tokens, support-message
-// replies, license keys, etc). Before forwarding metadata to an external
-// AI provider, walk the JSON and replace any value whose key matches one of
-// these patterns with the literal "[REDACTED]".
-// Word-boundary matching to avoid false positives on benign keys like
-// "monkey", "passage", "tokenize", "keyword". Common compound forms
-// (api_key, access_token, etc.) are still caught because the parts they
-// contain are themselves bounded.
-const SENSITIVE_KEY_RE = /\b(pass(word|phrase)?|token|access_token|refresh_token|secret|api[_-]?key|secret[_-]?key|public[_-]?key|private[_-]?key|otp|pin|salt|hash|cookie|authorization|bearer|credit[_-]?card|card[_-]?number|cvv|cvc|iban|signature|x[_-]?api[_-]?key|jwt)\b/i;
-
-function redactMetadata(input: unknown, depth = 0): unknown {
-  if (input == null || depth > 6) return input;
-  if (Array.isArray(input)) return input.map((v) => redactMetadata(v, depth + 1));
-  if (typeof input === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-      if (SENSITIVE_KEY_RE.test(k)) {
-        out[k] = "[REDACTED]";
-      } else {
-        out[k] = redactMetadata(v, depth + 1);
-      }
-    }
-    return out;
-  }
-  return input;
-}
+// NOTE: redactMetadata + the prompt + the Anthropic call all live in
+// `lib/workSessionReport.ts` now so the auto-on-end hook (fired from
+// /end and from the logout audit hook) can reuse the exact same logic
+// without HTTP-bouncing through this router.
 
 // Format a duration in seconds to "Xh Ym" (Arabic).
 function fmtDuration(secs: number): string {
@@ -114,7 +94,26 @@ router.get("/", async (req, res) => {
       .orderBy(desc(workSessionsTable.startedAt))
       .limit(limit).offset(offset);
 
-    res.json(rows);
+    // Resolve every distinct branchId on the page to its display name in
+    // a single round-trip so the table can show "الفرع" without an N+1.
+    const branchIds = Array.from(new Set(rows.map(r => r.branchId).filter((v): v is number => !!v)));
+    const branchMap = new Map<number, { nameAr: string; nameEn: string | null; code: string }>();
+    if (branchIds.length) {
+      const brs = await db.select({
+        id: branchesTable.id,
+        nameAr: branchesTable.nameAr,
+        nameEn: branchesTable.nameEn,
+        code:   branchesTable.code,
+      }).from(branchesTable).where(inArray(branchesTable.id, branchIds));
+      for (const b of brs) branchMap.set(b.id, { nameAr: b.nameAr, nameEn: b.nameEn, code: b.code });
+    }
+    const enriched = rows.map(r => ({
+      ...r,
+      branchName: r.branchId ? (branchMap.get(r.branchId)?.nameAr ?? branchMap.get(r.branchId)?.nameEn ?? null) : null,
+      branchCode: r.branchId ? (branchMap.get(r.branchId)?.code ?? null) : null,
+    }));
+
+    res.json(enriched);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -181,6 +180,15 @@ router.get("/:id", async (req, res) => {
       res.status(403).json({ error: "ممنوع" }); return;
     }
 
+    // Resolve branch label for display.
+    let branchName: string | null = null;
+    let branchCode: string | null = null;
+    if (row.branchId) {
+      const [b] = await db.select({ nameAr: branchesTable.nameAr, nameEn: branchesTable.nameEn, code: branchesTable.code })
+        .from(branchesTable).where(eq(branchesTable.id, row.branchId)).limit(1);
+      if (b) { branchName = b.nameAr || b.nameEn || null; branchCode = b.code; }
+    }
+
     // Activity preview: pull the audit_log rows for this user/company that
     // fall inside the session window. Skip "view" rows — they're noise.
     const winEnd = row.endedAt ?? new Date();
@@ -210,12 +218,58 @@ router.get("/:id", async (req, res) => {
       ((row.endedAt ?? new Date()).getTime() - row.startedAt.getTime()) / 1000));
 
     res.json({
-      session: row,
+      session: { ...row, branchName, branchCode },
       durationSecs,
       durationLabel: fmtDuration(durationSecs),
       activity,
       activityCount: activity.length,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /:id/branch — set or clear the branch for a session.
+//
+// Body: { branchId: number | null }
+// Permission: admin can set on any row; regular users only on their own rows.
+// We re-validate the branch belongs to the caller's company so an admin can't
+// pin a foreign branch.
+router.patch("/:id/branch", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const id = Number(req.params.id);
+    if (!id) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+    const [row] = await db.select().from(workSessionsTable)
+      .where(and(eq(workSessionsTable.id, id), eq(workSessionsTable.companyId, cid)))
+      .limit(1);
+    if (!row) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }
+    if (!isAdmin(req) && row.userId !== (req as any).authUser.id) {
+      res.status(403).json({ error: "ممنوع" }); return;
+    }
+
+    const raw = req.body?.branchId;
+    let branchId: number | null = null;
+    if (raw !== null && raw !== undefined && raw !== "") {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) { res.status(400).json({ error: "معرّف فرع غير صالح" }); return; }
+      const [b] = await db.select({ id: branchesTable.id })
+        .from(branchesTable)
+        .where(and(eq(branchesTable.id, n), eq(branchesTable.companyId, cid)))
+        .limit(1);
+      if (!b) { res.status(400).json({ error: "الفرع لا يخص هذه الشركة" }); return; }
+      branchId = n;
+    }
+
+    await db.update(workSessionsTable)
+      .set({ branchId, updatedAt: new Date() })
+      .where(eq(workSessionsTable.id, id));
+
+    const [updated] = await db.select().from(workSessionsTable)
+      .where(eq(workSessionsTable.id, id)).limit(1);
+    res.json(updated);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -249,6 +303,13 @@ router.post("/:id/end", async (req, res) => {
 
     const [updated] = await db.select().from(workSessionsTable)
       .where(eq(workSessionsTable.id, id)).limit(1);
+
+    // Fire end-of-session hooks (auto-generate report + auto-email) in the
+    // background. These are best-effort — failures are logged inside the
+    // helper and never bubble up here so the manual end click still
+    // returns 200 immediately.
+    void runEndOfSessionHooks(id, cid, { reason: "manual" });
+
     res.json(updated);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -257,10 +318,9 @@ router.post("/:id/end", async (req, res) => {
 
 // POST /:id/generate-report ---------------------------------------------------
 //
-// Collects every non-"view" audit_log row in the session window, formats it
-// into a compact JSON facts payload, and asks Claude to write an Arabic
-// Markdown summary. The result is cached on the session row so reopening the
-// dialog doesn't re-bill Anthropic on every click.
+// Thin wrapper around the shared `generateSessionReport()` helper. The same
+// helper is also called from the end-of-session hook so manual generation
+// and auto-on-end produce the exact same Markdown.
 router.post("/:id/generate-report", async (req, res) => {
   try {
     const cid = getCid(req);
@@ -268,11 +328,7 @@ router.post("/:id/generate-report", async (req, res) => {
     const id = Number(req.params.id);
     if (!id) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
 
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
-      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيّأة على الخادم." });
-      return;
-    }
-
+    // Permission check before doing any work — load the row first.
     const [row] = await db.select().from(workSessionsTable)
       .where(and(eq(workSessionsTable.id, id), eq(workSessionsTable.companyId, cid)))
       .limit(1);
@@ -281,150 +337,42 @@ router.post("/:id/generate-report", async (req, res) => {
       res.status(403).json({ error: "ممنوع" }); return;
     }
 
-    const [u] = await db.select({ username: usersTable.username, nameAr: usersTable.nameAr })
-      .from(usersTable).where(eq(usersTable.id, row.userId)).limit(1);
+    // Pick the model from the per-company settings so admins can dial cost
+    // vs. quality without code changes. `force=true` so a manual click
+    // refreshes the cached report (the auto-on-end hook uses force=false).
+    const settings = await loadSessionSettings(cid);
+    const result = await generateSessionReport(id, cid, {
+      model: settings.aiModel,
+      force: true,
+    });
 
-    const winEnd = row.endedAt ?? new Date();
-
-    // We cap at 500 rows to keep the prompt small. If the cap is reached
-    // the prompt explicitly tells the model the activity was truncated so
-    // it doesn't claim "this is everything that happened."
-    const ROW_CAP = 500;
-    const activity = await db.select({
-      module:     auditLogTable.module,
-      action:     auditLogTable.action,
-      entityType: auditLogTable.entityType,
-      entityId:   auditLogTable.entityId,
-      method:     auditLogTable.method,
-      path:       auditLogTable.path,
-      statusCode: auditLogTable.statusCode,
-      metadata:   auditLogTable.metadata,
-      createdAt:  auditLogTable.createdAt,
-    }).from(auditLogTable)
-      .where(and(
-        eq(auditLogTable.userId, row.userId),
-        eq(auditLogTable.companyId, cid),
-        gte(auditLogTable.createdAt, row.startedAt),
-        lte(auditLogTable.createdAt, winEnd),
-        ne(auditLogTable.action, "view"),
-      ))
-      .orderBy(desc(auditLogTable.createdAt))
-      .limit(ROW_CAP + 1);
-
-    const truncated = activity.length > ROW_CAP;
-    const sliced    = truncated ? activity.slice(0, ROW_CAP) : activity;
-
-    // Per-module counts so the model has a reliable shape even if the
-    // detailed list gets truncated.
-    const moduleCounts: Record<string, number> = {};
-    for (const a of activity) {
-      moduleCounts[a.module] = (moduleCounts[a.module] ?? 0) + 1;
+    if (!result.ok) {
+      const reason = result.reason;
+      if (reason === "anthropic_not_configured") {
+        res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيّأة على الخادم." });
+      } else if (reason === "session_not_found") {
+        res.status(404).json({ error: "الجلسة غير موجودة" });
+      } else {
+        res.status(500).json({ error: "تعذّر توليد التقرير" });
+      }
+      return;
     }
-
-    const durationSecs = Math.max(0, Math.floor(
-      (winEnd.getTime() - row.startedAt.getTime()) / 1000));
-
-    const facts = {
-      session: {
-        id:           row.id,
-        username:     u?.username ?? row.username ?? `#${row.userId}`,
-        userNameAr:   u?.nameAr ?? null,
-        startedAt:    row.startedAt.toISOString(),
-        endedAt:      row.endedAt?.toISOString() ?? null,
-        status:       row.status,
-        durationSecs,
-        durationLabel: fmtDuration(durationSecs),
-        ip:           row.ip,
-      },
-      totals: {
-        actions:        activity.length,
-        truncated,
-        rowCap:         ROW_CAP,
-        modulesTouched: Object.keys(moduleCounts).length,
-        moduleCounts,
-      },
-      activity: sliced.map(a => ({
-        at:         a.createdAt.toISOString(),
-        module:     a.module,
-        action:     a.action,
-        entity:     a.entityType ?? null,
-        entityId:   a.entityId ?? null,
-        method:     a.method ?? null,
-        statusCode: a.statusCode ?? null,
-        // Redact sensitive jsonb keys *before* serialising, then truncate
-        // to keep the prompt small. We never forward raw audit_log
-        // metadata to a third-party AI provider unfiltered.
-        metadata:   a.metadata
-          ? JSON.stringify(redactMetadata(a.metadata)).slice(0, 200)
-          : null,
-      })),
-    };
-
-    const prompt = `أنت محلل تشغيلي ضمن نظام محاسبة عربي سعودي.
-مهمتك: كتابة "تقرير جلسة عمل" بالعربية الفصحى وبتنسيق Markdown، يلخّص نشاط مستخدم واحد خلال جلسة دخول واحدة، بناءً على سجل التدقيق المُرفق فقط.
-
-البيانات (JSON):
-\`\`\`json
-${JSON.stringify(facts, null, 2)}
-\`\`\`
-
-اكتب التقرير بالأقسام التالية بالضبط، وبهذا الترتيب:
-
-## معلومات الجلسة
-- المستخدم، تاريخ ووقت البداية، تاريخ ووقت النهاية (أو "جارية"), المدة الإجمالية، عنوان IP إن وُجد.
-
-## ملخص الحركة
-- جدول مختصر يعرض الوحدات (modules) التي عمل عليها المستخدم وعدد الإجراءات في كل وحدة (مأخوذة من \`totals.moduleCounts\`).
-
-## التسلسل الزمني للحركات
-- قائمة مرتّبة زمنيًا (من الأقدم إلى الأحدث) بكل إجراء مهم: الوقت، الوحدة، الإجراء، نوع السجل ومعرّفه إن وُجد.
-- استخدم أسماء عربية مفهومة بدلاً من المفاتيح التقنية (مثلاً "sales_invoices/create" → "إنشاء فاتورة مبيعات").
-- إذا كانت قائمة الحركات طويلة جداً، اعرض أهم 30-40 حركة فقط واذكر أنه تم اختصارها.
-
-## ملاحظات وتنبيهات
-- أي إجراءات حساسة (مثل الحذف delete, الترحيل post, التصدير export, تعديل الأسعار/الكميات) أو محاولات مرفوضة (statusCode 4xx/5xx). إن لم توجد، اكتب "لا توجد ملاحظات".
-
-قواعد صارمة:
-- لا تخترع بيانات غير موجودة في JSON.
-- إذا كانت القائمة فارغة، اكتب صراحةً "لم تُسجّل أي حركات خلال هذه الجلسة".
-- إذا كان \`totals.truncated = true\`، أضف ملاحظة في أسفل القسم الأول: "تم اختصار قائمة الحركات لأنها تجاوزت الحد المسموح في تقرير واحد".
-- لا تذكر أسماء حقول JSON الخام (createdAt, statusCode إلخ). ترجمها إلى عربية واضحة.
-- لا تُضف أقساماً غير المطلوبة، ولا توقيع/خاتمة.`;
-
-    const client = new Anthropic({
-      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
-
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 8192,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const block = message.content[0];
-    const reportMd = (block && block.type === "text") ? block.text : "";
-
-    await db.update(workSessionsTable).set({
-      aiReport:            reportMd,
-      aiReportGeneratedAt: new Date(),
-      activityCount:       activity.length,
-      updatedAt:           new Date(),
-    }).where(eq(workSessionsTable.id, id));
 
     res.json({
       ok: true,
-      aiReport: reportMd,
+      aiReport: result.aiReport,
       aiReportGeneratedAt: new Date().toISOString(),
-      activityCount: activity.length,
-      truncated,
+      activityCount: result.activityCount,
+      truncated: result.truncated ?? false,
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message ?? "تعذّر توليد التقرير" });
   }
 });
 
-// Suppress an unused-import warning for `sql` — kept for future date filters.
+// Suppress unused-import warnings for `sql` and the audit-log helpers — these
+// stay imported because the GET / and GET /:id activity preview block still
+// uses gte/lte/ne/desc/auditLogTable. `sql` is kept for future date filters.
 void sql;
 
 export default router;
