@@ -2736,6 +2736,9 @@ interface OperationalRow  {
   company_id: number; customers: number; suppliers: number; items: number;
   open_pos_sessions: number; last_activity_at: string | null;
   audit_events_period: number; denied_period: number;
+  // Trailing-7-day counters are computed independently of the period selector
+  // so the KPI tile can always answer "how active was this tenant this week?".
+  audit_events_7d: number; denied_7d: number;
 }
 // auto_backups doesn't track an explicit "status" column — every persisted row
 // represents a successful backup (failures aren't recorded). We derive a
@@ -2971,6 +2974,18 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
                   AND created_at >= ${fromTs}::timestamp
                   AND created_at <= ${toTsExclusive}::timestamp
                 GROUP BY company_id
+             ),
+             -- Trailing-7-day windows are independent of the period selector.
+             ae7 AS (
+               SELECT company_id, COUNT(*)::int n FROM audit_log
+                WHERE created_at >= NOW() - INTERVAL '7 days'
+                GROUP BY company_id
+             ),
+             de7 AS (
+               SELECT company_id, COUNT(*)::int n FROM audit_log
+                WHERE action = 'denied'
+                  AND created_at >= NOW() - INTERVAL '7 days'
+                GROUP BY company_id
              )
         SELECT co.id                       AS company_id,
                COALESCE(c.n,   0)          AS customers,
@@ -2979,7 +2994,9 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
                COALESCE(pos.n, 0)          AS open_pos_sessions,
                la.last_activity_at::text   AS last_activity_at,
                COALESCE(ae.n,  0)          AS audit_events_period,
-               COALESCE(de.n,  0)          AS denied_period
+               COALESCE(de.n,  0)          AS denied_period,
+               COALESCE(ae7.n, 0)          AS audit_events_7d,
+               COALESCE(de7.n, 0)          AS denied_7d
           FROM companies co
           LEFT JOIN c   ON c.company_id   = co.id
           LEFT JOIN s   ON s.company_id   = co.id
@@ -2988,6 +3005,8 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
           LEFT JOIN la  ON la.company_id  = co.id
           LEFT JOIN ae  ON ae.company_id  = co.id
           LEFT JOIN de  ON de.company_id  = co.id
+          LEFT JOIN ae7 ON ae7.company_id = co.id
+          LEFT JOIN de7 ON de7.company_id = co.id
       `),
       // Latest auto-backup row per company (DISTINCT ON keeps only the newest).
       db.execute<BackupOverviewRow>(sql`
@@ -3024,9 +3043,10 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
         lastActivityAt, inactive,
         auditEventsPeriod: r.audit_events_period,
         deniedPeriod:      r.denied_period,
-        // Legacy aliases for one release window of compatibility.
-        auditEvents7d:     r.audit_events_period,
-        denied7d:          r.denied_period,
+        // Trailing-7-day KPIs are computed independently of the period selector
+        // so the headline tile always reflects "this week" regardless of filter.
+        auditEvents7d:     r.audit_events_7d,
+        denied7d:          r.denied_7d,
         latestBackupReason: backup?.reason ?? null,
         latestBackupAt:     backup?.created_at ?? null,
       };
@@ -3037,10 +3057,15 @@ router.get("/reports/operational-summary", requireSuperAdmin, async (req, res) =
 
     if (format === "csv") {
       sendCsv(res, `operational-summary-${period.from}_${period.to}.csv`,
-        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط", "أحداث التدقيق (الفترة)", "محاولات مرفوضة (الفترة)", "آخر نسخة احتياطية", "نوع النسخة", "راكدة (>30 يوم)"],
+        ["الشركة", "الحالة", "العملاء", "الموردون", "الأصناف", "جلسات نقاط البيع المفتوحة", "آخر نشاط",
+         "أحداث التدقيق (الفترة)", "محاولات مرفوضة (الفترة)",
+         "أحداث التدقيق (آخر 7 أيام)", "محاولات مرفوضة (آخر 7 أيام)",
+         "آخر نسخة احتياطية", "نوع النسخة", "راكدة (>30 يوم)"],
         rows.map(r => [
           r.companyName, r.companyStatus, r.customers, r.suppliers, r.items,
-          r.openPosSessions, r.lastActivityAt ?? "—", r.auditEventsPeriod, r.deniedPeriod,
+          r.openPosSessions, r.lastActivityAt ?? "—",
+          r.auditEventsPeriod, r.deniedPeriod,
+          r.auditEvents7d, r.denied7d,
           r.latestBackupAt ?? "—", r.latestBackupReason ?? "—", r.inactive ? "نعم" : "لا",
         ]),
       );

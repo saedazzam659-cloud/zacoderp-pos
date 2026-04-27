@@ -87,14 +87,19 @@ export default function CompanyPerformanceReport() {
             <BarChart3 className="h-5 w-5 text-primary" /> أداء الشركات
           </h1>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => downloadCsv(token, `/api/admin/reports/company-performance?${queryString}&format=csv`, `company-performance-${period.from}_${period.to}.csv`)}
-          disabled={!data || filtered.length === 0}
-        >
-          <Download className="h-4 w-4 ml-1" /> تصدير CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground hidden sm:inline" title="ترتيب التصدير ثابت بحسب الإيرادات تنازلياً، بصرف النظر عن ترتيب الجدول المعروض">
+            (مرتّب بالإيرادات تنازلياً)
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => downloadCsv(token, `/api/admin/reports/company-performance?${queryString}&format=csv`, `company-performance-${period.from}_${period.to}.csv`)}
+            disabled={!data || filtered.length === 0}
+          >
+            <Download className="h-4 w-4 ml-1" /> تصدير CSV
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 p-3 border rounded-lg bg-muted/20">

@@ -109,9 +109,10 @@ export default function OperationalSummaryReport() {
           <RotateCcw className="h-4 w-4 ml-1" /> إعادة الضبط
         </Button>
         <p className="text-xs text-muted-foreground basis-full">
-          أحداث التدقيق والمحاولات المرفوضة تُحسب ضمن الفترة المختارة
+          أعمدة "(الفترة)" تُحسب ضمن الفترة المختارة
           {periodLabel && <> ({periodLabel})</>}.
-          الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً (تنبيه ثابت بصرف النظر عن الفترة).
+          أعمدة "(آخر 7 أيام)" ثابتة دائماً وتُحسب من تاريخ اليوم بصرف النظر عن الفترة.
+          الشركة "راكدة" إذا لم يحدث أي نشاط خلال 30 يوماً.
         </p>
       </div>
 
@@ -132,12 +133,14 @@ export default function OperationalSummaryReport() {
                 <TableHead className="text-right">آخر نشاط</TableHead>
                 <TableHead className="text-right">أحداث التدقيق (الفترة)</TableHead>
                 <TableHead className="text-right">مرفوضة (الفترة)</TableHead>
+                <TableHead className="text-right">أحداث التدقيق (آخر 7 أيام)</TableHead>
+                <TableHead className="text-right">مرفوضة (آخر 7 أيام)</TableHead>
                 <TableHead className="text-right">نسخة احتياطية</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.length === 0 ? (
-                <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">لا توجد بيانات.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">لا توجد بيانات.</TableCell></TableRow>
               ) : rows.map(r => (
                 <TableRow key={r.companyId} className={r.inactive ? "bg-amber-50/40" : ""}>
                   <TableCell className="font-medium">
@@ -164,10 +167,16 @@ export default function OperationalSummaryReport() {
                     ) : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{r.lastActivityAt ? r.lastActivityAt.slice(0, 19).replace("T", " ") : "—"}</TableCell>
-                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEventsPeriod ?? r.auditEvents7d ?? 0)}</TableCell>
+                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEventsPeriod ?? 0)}</TableCell>
                   <TableCell className="tabular-nums">
-                    {(r.deniedPeriod ?? r.denied7d ?? 0) > 0
-                      ? <span className="text-rose-700 font-bold">{r.deniedPeriod ?? r.denied7d}</span>
+                    {(r.deniedPeriod ?? 0) > 0
+                      ? <span className="text-rose-700 font-bold">{r.deniedPeriod}</span>
+                      : <span className="text-muted-foreground">0</span>}
+                  </TableCell>
+                  <TableCell className="tabular-nums">{fmtInt.format(r.auditEvents7d ?? 0)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {(r.denied7d ?? 0) > 0
+                      ? <span className="text-rose-700 font-bold">{r.denied7d}</span>
                       : <span className="text-muted-foreground">0</span>}
                   </TableCell>
                   <TableCell className="text-xs">
