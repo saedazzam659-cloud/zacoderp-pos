@@ -1926,6 +1926,7 @@
     "periodFromTo": "{{from}} to {{to}}",
     "closingBalance": "Closing Balance",
     "docNumber": "Doc #",
+    "openSource": "Open source document",
     "description": "Description",
     "filename_prefix": "account-statement",
     "title_with": "Account Statement — {{name}} ({{from}} to {{to}})",

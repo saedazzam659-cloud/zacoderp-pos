@@ -1937,6 +1937,7 @@
     "periodFromTo": "{{from}} إلى {{to}}",
     "closingBalance": "الرصيد الختامي",
     "docNumber": "رقم القيد",
+    "openSource": "فتح المستند المصدر",
     "description": "البيان",
     "filename_prefix": "كشف-حساب",
     "title_with": "كشف حساب — {{name}} ({{from}} إلى {{to}})",

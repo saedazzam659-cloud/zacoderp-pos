@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { accountsTable, journalEntriesTable, journalEntryLinesTable } from "@workspace/db";
+import { accountsTable, journalEntriesTable, journalEntryLinesTable, salesInvoicesTable, purchaseInvoicesTable } from "@workspace/db";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread } from "../middleware/auth.js";
 
@@ -153,14 +153,36 @@ router.get("/account-statement", async (req, res) => {
       .select({
         lineId:      journalEntryLinesTable.id,
         entryId:     journalEntriesTable.id,
+        entryType:   journalEntriesTable.entryType,
         docNumber:   journalEntriesTable.docNumber,
         entryDate:   journalEntriesTable.entryDate,
         description: sql<string>`COALESCE(${journalEntryLinesTable.description}, ${journalEntriesTable.description}, '')`,
         debit:       journalEntryLinesTable.debit,
         credit:      journalEntryLinesTable.credit,
+        // sourceId = pk of the source document, if any. Resolved per entryType
+        // by left-joining against the table that owns this journal entry.
+        // Sales/purchase invoices keep `journal_entry_id` on the row, so we
+        // map them straight back. Other entry types (returns, vouchers,
+        // payroll, general, …) fall back to the JE itself on the frontend.
+        salesInvoiceId:    salesInvoicesTable.id,
+        purchaseInvoiceId: purchaseInvoicesTable.id,
       })
       .from(journalEntryLinesTable)
       .innerJoin(journalEntriesTable, eq(journalEntryLinesTable.entryId, journalEntriesTable.id))
+      .leftJoin(
+        salesInvoicesTable,
+        and(
+          eq(salesInvoicesTable.journalEntryId, journalEntriesTable.id),
+          eq(salesInvoicesTable.companyId, cid),
+        ),
+      )
+      .leftJoin(
+        purchaseInvoicesTable,
+        and(
+          eq(purchaseInvoicesTable.journalEntryId, journalEntriesTable.id),
+          eq(purchaseInvoicesTable.companyId, cid),
+        ),
+      )
       .where(and(
         eq(journalEntryLinesTable.accountId, Number(accountId)),
         ...entryFilters,

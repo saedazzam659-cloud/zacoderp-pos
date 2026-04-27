@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "wouter";
 import { useFormatters } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -10,8 +11,26 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import BranchFilter from "@/components/BranchFilter";
-import { FileText, Search, Printer } from "lucide-react";
+import { FileText, Search, Printer, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Map a journal-entry row coming back from /account-statement to the URL of
+// the document that produced it. Sales / purchase invoices have dedicated
+// detail pages; everything else (returns, vouchers, payroll, manual JEs, …)
+// falls back to the journal-entry detail page, which renders cleanly for any
+// entry type and is therefore the safe universal target.
+function sourceLinkFor(row: any): string | null {
+  if (row.entryType === "sales_invoice" && row.salesInvoiceId) {
+    return `/sales/invoices/${row.salesInvoiceId}`;
+  }
+  if (row.entryType === "purchase_invoice" && row.purchaseInvoiceId) {
+    return `/purchasing/invoices/${row.purchaseInvoiceId}`;
+  }
+  if (row.entryId) {
+    return `/accounting/journals/${row.entryId}`;
+  }
+  return null;
+}
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -197,11 +216,28 @@ export default function AccountStatement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
+                  {rows.map((r, i) => {
+                    const href = sourceLinkFor(r);
+                    const label = r.docNumber || `JE-${r.entryId}`;
+                    return (
                     <tr key={r.lineId} className="border-b hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
                       <td className="px-4 py-2.5">{r.entryDate}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs font-semibold">
+                        {href ? (
+                          <Link
+                            href={href}
+                            className="inline-flex items-center gap-1 text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40 rounded"
+                            data-testid={`link-source-${r.entryId}`}
+                            title={t("accountStatement.openSource")}
+                          >
+                            {label}
+                            <ExternalLink className="h-3 w-3 opacity-60" />
+                          </Link>
+                        ) : (
+                          <span className="text-primary">{label}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 text-muted-foreground max-w-xs truncate">{r.description || "—"}</td>
                       <td className="px-4 py-2.5 text-end font-mono text-blue-700">
                         {r.debit > 0 ? fmt(r.debit) : ""}
@@ -216,7 +252,8 @@ export default function AccountStatement() {
                         <span className={cn("text-xs font-normal", isRtl ? "mr-1" : "ml-1")}>{r.balance >= 0 ? t("accountingReports.debitShort") : t("accountingReports.creditShort")}</span>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr className="bg-muted/50 font-semibold border-t-2">
