@@ -4743,6 +4743,15 @@ router.get("/maintenance/runs", requireSuperAdmin, async (req, res) => {
 // Read-only — except for the `?format=csv` branch which writes a single
 // `export_csv` audit row so SuperAdmins can see who pulled the failure trail
 // (mirrors /maintenance/history and /maintenance/email-history).
+//
+// CSV branch is row-capped at TOOL_HISTORY_CSV_ROW_CAP (1000, matching the
+// sibling BROKEN_CSV_ROW_CAP / RECOVERY_CSV_ROW_CAP) so a long-lived tool
+// that runs every minute on a busy tenant can't blow up the download or pin
+// the API server while it streams hundreds of thousands of rows. When the
+// cap kicks in the audit metadata records the truncation flag (mirroring
+// the contract the sibling broken-tools / recovered-tools exports use), so
+// SuperAdmins reviewing past exports can tell the data was clipped.
+const TOOL_HISTORY_CSV_ROW_CAP = 1000;
 router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
   try {
     const companyId = Number(req.query.companyId);
@@ -4753,10 +4762,11 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
     if (!toolKey) {
       res.status(400).json({ error: "toolKey مطلوب" }); return;
     }
-    // CSV branch: return every recorded run for this (company, tool) pair
-    // (subject only to the global retention prune) so the downloaded file
-    // contains the full failure trail, not just the 20 rows on screen. The
-    // on-screen `?limit=` is intentionally ignored here — same convention
+    // CSV branch: return up to TOOL_HISTORY_CSV_ROW_CAP recent runs for
+    // this (company, tool) pair (subject only to the global retention
+    // prune) so the downloaded file contains the recent failure trail
+    // without unbounded growth on a long-lived tenant. The on-screen
+    // `?limit=` is intentionally ignored here — same convention
     // /maintenance/history uses for its CSV branch.
     if (wantsCsv(req)) {
       const exec = await db.execute<any>(sql`
@@ -4771,11 +4781,33 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
          WHERE company_id = ${companyId}
            AND tool_key   = ${toolKey}
          ORDER BY run_at DESC
+         LIMIT ${TOOL_HISTORY_CSV_ROW_CAP}
       `);
       const rows = ((exec as any).rows ?? []) as Array<{
         id: number; runAt: Date | string; trigger: string; status: string;
         count: number; durationMs: number; error: string | null;
       }>;
+      // Resolve the underlying total only when the result set hit the
+      // cap — an export of exactly TOOL_HISTORY_CSV_ROW_CAP rows (no
+      // clipping) must not falsely show as truncated. The common
+      // (under-cap) path skips the COUNT scan entirely. Mirrors the
+      // pattern on /maintenance/error-summary and /maintenance/recent-
+      // recoveries.
+      const atCap = rows.length >= TOOL_HISTORY_CSV_ROW_CAP;
+      let totalAvailable = rows.length;
+      if (atCap) {
+        const countExec = await db.execute<any>(sql`
+          SELECT COUNT(*)::bigint AS "total"
+            FROM maintenance_runs
+           WHERE company_id = ${companyId}
+             AND tool_key   = ${toolKey}
+        `);
+        const totalRaw = ((countExec as any).rows?.[0]?.total) ?? rows.length;
+        // pg returns bigint as a string; coerce defensively.
+        totalAvailable = typeof totalRaw === "string" ? Number(totalRaw) : Number(totalRaw);
+        if (!Number.isFinite(totalAvailable)) totalAvailable = rows.length;
+      }
+      const truncated = totalAvailable > TOOL_HISTORY_CSV_ROW_CAP;
       // Headers + per-row mapping mirror exactly what the on-screen modal
       // renders so the file matches what the admin saw before clicking
       // export. `trigger` is humanised to match the badge text.
@@ -4789,7 +4821,12 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
         r.error ?? "",
       ]);
       await logMaint(req, companyId, "export_csv", "maintenance_tool_history", {
-        count: rows.length, format: "csv", toolKey,
+        count: rows.length,
+        totalAvailable,
+        truncated,
+        rowCap: TOOL_HISTORY_CSV_ROW_CAP,
+        format: "csv",
+        toolKey,
       });
       // `toolKey` is a vetted machine identifier (matches existing keys), but
       // strip anything outside [A-Za-z0-9._-] defensively so the

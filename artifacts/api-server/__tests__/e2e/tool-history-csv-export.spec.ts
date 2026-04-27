@@ -453,9 +453,14 @@ test("tool-history dialog CSV export: filename, BOM, headers, seeded runs, and e
   // action='export_csv' / entityType='maintenance_tool_history' scoped
   // to the selected companyId. Scoping the lookup by createdAt >= our
   // anchor (and by our test companyId) keeps the assertion stable on a
-  // shared dev DB without inspecting the JSON metadata column.
+  // shared dev DB. The metadata column is projected so we can lock in
+  // the truncation-flag shape below.
   const auditRows = await db
-    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .select({
+      id:        auditLogTable.id,
+      companyId: auditLogTable.companyId,
+      metadata:  auditLogTable.metadata,
+    })
     .from(auditLogTable)
     .where(and(
       eq(auditLogTable.module, "maintenance"),
@@ -465,6 +470,178 @@ test("tool-history dialog CSV export: filename, BOM, headers, seeded runs, and e
       gte(auditLogTable.createdAt, exportAuditAnchor!),
     ));
   expect(auditRows).toHaveLength(1);
+  // Truncation visibility — even when the cap doesn't kick in, the audit
+  // row must carry the new `truncated`/`rowCap`/`totalAvailable` fields
+  // so a SuperAdmin reviewing past exports can tell at a glance whether
+  // the data was clipped (the truncated=true branch is covered by the
+  // sibling test below; here we lock in the shape of the non-truncated
+  // branch). Without this assertion, the route could silently drop the
+  // truncation fields and a real clipped export would once again be
+  // indistinguishable from a complete one.
+  const meta = (auditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(meta.format).toBe("csv");
+  expect(meta.toolKey).toBe(TOOL_KEY);
+  expect(meta.rowCap).toBe(1000);
+  expect(meta.truncated).toBe(false);
+  // count must equal totalAvailable when not truncated — the route uses
+  // rows.length for both rather than re-running a COUNT query in the
+  // common (cheap) path.
+  expect(typeof meta.count).toBe("number");
+  expect(typeof meta.totalAvailable).toBe("number");
+  expect(meta.count).toBe(meta.totalAvailable);
+  // We seeded exactly two rows for this (company, TOOL_KEY) pair on a
+  // brand-new test company, so the count is bounded above as well.
+  expect(meta.count).toBe(2);
+  // Track the id so afterAll can strip it by PK and the dev DB doesn't
+  // accumulate test-only audit rows over time.
+  for (const r of auditRows) seededAuditIds.push(r.id);
+});
+
+// ─── Second test: 1000-row server-side cap on the tool-history CSV branch ──
+// Tool-history runs are not aggregated (unlike broken-tools, which DISTINCT
+// ON (company_id, tool_key)), so we just seed 1001 raw runs for one
+// (company, tool) pair — that's strictly greater than the
+// TOOL_HISTORY_CSV_ROW_CAP=1000 ceiling on the route — and assert the body
+// is clipped to exactly 1000 data rows and the audit row's metadata
+// records the truncation. Mirrors the truncation test in
+// broken-tools-panel.spec.ts.
+//
+// We trigger the export directly via the page-context fetch (Bearer token
+// from localStorage) rather than driving the dialog open through the UI
+// for a second time — the first test in this file already covers the
+// click flow end-to-end; here the focus is purely the server cap. This
+// keeps the test fast (no extra Radix dialog navigation) while still
+// exercising the exact same /api route the UI hits.
+//
+// Tag and toolKey are isolated from the first test (different toolKey
+// suffix) so the two tests don't interfere even though they share the
+// per-run TEST_TAG / sa_session / company fixtures from beforeAll.
+const TRUNC_TOOL_KEY = `${TEST_TAG}_trunc_tool`;
+let truncAuditAnchor: Date | null = null;
+
+test("tool-history CSV export: caps body at 1000 rows and records truncation in the audit row", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Seed 1001 error runs (strictly > TOOL_HISTORY_CSV_ROW_CAP=1000) for
+  // a fresh tool key on the test company. All rows sit inside the 7-day
+  // window (purely cosmetic — tool-history doesn't filter by recency),
+  // staggered in the past so ORDER BY run_at DESC is deterministic.
+  // Bulk insert in chunks to stay well under Postgres's 65k bind-
+  // parameter ceiling (each row ≈ 9 parameters → 200 rows ≈ 1.8k).
+  const SEED_COUNT = 1001;
+  const now = Date.now();
+  const seedRows = Array.from({ length: SEED_COUNT }, (_, i) => ({
+    companyId:  testCompanyId!,
+    toolKey:    TRUNC_TOOL_KEY,
+    status:     "error" as const,
+    count:      0,
+    trigger:    "scheduled" as const,
+    // Each run staggered 60s back from "now" — keeps every row inside the
+    // 7-day window (1001 minutes ≈ 16h, well under 7 days) and gives
+    // ORDER BY run_at DESC a deterministic ordering.
+    runAt:      new Date(now - i * 60_000),
+    durationMs: 1,
+    error:      `pad ${i} ${TEST_TAG}`,
+    details:    null,
+  }));
+  const CHUNK = 200;
+  for (let i = 0; i < seedRows.length; i += CHUNK) {
+    const inserted = await db
+      .insert(maintenanceRunsTable)
+      .values(seedRows.slice(i, i + CHUNK))
+      .returning({ id: maintenanceRunsTable.id });
+    for (const r of inserted) seededRunIds.push(r.id);
+  }
+
+  // Navigate to any SPA page so the addInitScript installs the bearer
+  // token into localStorage; we don't need to drive the AICompanyFix UI
+  // here — the cap behavior is exercised purely via a page-context fetch
+  // against the same /api route the dialog button hits.
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  // Anchor a wall-clock moment just before the export so the audit-row
+  // lookup can scope itself to this run. writeAudit() uses defaultNow
+  // for created_at, so a >= filter on this anchor (and on our seeded
+  // companyId) matches only the row this fetch produced.
+  truncAuditAnchor = new Date(Date.now() - 1_000); // 1s slack for clock skew
+
+  // Fire the CSV fetch from inside the page context so localStorage
+  // (where the SPA stores the SuperAdmin bearer token) is available.
+  // page.request lives outside the page and would need its own auth
+  // setup. Returning the body as a number[] keeps the marshal across
+  // the page boundary trivial; we rebuild the Buffer on the test side.
+  const csvUrl = `/api/admin/maintenance/tool-history?companyId=${testCompanyId}&toolKey=${encodeURIComponent(TRUNC_TOOL_KEY)}&format=csv`;
+  const csvFetch = await page.evaluate(async ({ url }) => {
+    const token = localStorage.getItem("zatca_token");
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+    });
+    const buf = await r.arrayBuffer();
+    return {
+      status:      r.status,
+      bytes:       Array.from(new Uint8Array(buf)),
+      contentType: r.headers.get("content-type") ?? "",
+    };
+  }, { url: csvUrl });
+  expect(csvFetch.status).toBe(200);
+  expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
+
+  // ─── Body bytes — UTF-8 BOM and the 1000-row cap ────────────────────────
+  const csvBuf = Buffer.from(csvFetch.bytes);
+  expect(csvBuf.length).toBeGreaterThan(3);
+  expect(csvBuf[0]).toBe(0xEF);
+  expect(csvBuf[1]).toBe(0xBB);
+  expect(csvBuf[2]).toBe(0xBF);
+
+  const csvText = csvBuf.toString("utf8").replace(/^\uFEFF/, "");
+  // sendCsv emits CRLF row separators; filter(Boolean) drops the trailing
+  // empty element from a final CRLF (if any).
+  const csvLines = csvText.split("\r\n").filter(Boolean);
+  // 1000-row cap: TOOL_HISTORY_CSV_ROW_CAP=1000 in admin.ts. We seeded
+  // 1001 raw runs, so the LIMIT clause must clip the CSV output to
+  // exactly 1000 data rows. We assert on the data-row count (not >= or
+  // <=) because any drift in the cap — accidental bump, accidental
+  // removal, off-by-one — would change this number and silently ship.
+  //
+  // Note: this assumes none of our padding rows contain CRLFs that
+  // would split a logical CSV line into two physical lines. The
+  // padding's `error` cells are simple ASCII ("pad <i> <TEST_TAG>") and
+  // the other columns (status, trigger, count, durationMs, runAt)
+  // never contain CRLFs, so split("\r\n") yields exactly one entry per
+  // row.
+  expect(csvLines.length - 1).toBe(1000);
+
+  // ─── Audit assertion — exactly one export_csv row + truncation flag ────
+  // Mirrors the broken-tools / recovered-tools truncation contract: the
+  // audit row must carry `truncated=true`, the cap, and a strictly-
+  // greater `totalAvailable` so a SuperAdmin reviewing past exports can
+  // tell the data was clipped.
+  const auditRows = await db
+    .select({
+      id:        auditLogTable.id,
+      companyId: auditLogTable.companyId,
+      metadata:  auditLogTable.metadata,
+    })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_tool_history"),
+      eq(auditLogTable.companyId, testCompanyId!),
+      gte(auditLogTable.createdAt, truncAuditAnchor!),
+    ));
+  expect(auditRows).toHaveLength(1);
+  const meta = (auditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(meta.format).toBe("csv");
+  expect(meta.toolKey).toBe(TRUNC_TOOL_KEY);
+  expect(meta.count).toBe(1000);
+  expect(meta.rowCap).toBe(1000);
+  expect(meta.truncated).toBe(true);
+  // We seeded exactly 1001 rows for this (company, TRUNC_TOOL_KEY)
+  // pair on a brand-new test company, so totalAvailable is exactly
+  // 1001 — no other test or sweep can have seeded for this unique
+  // tagged tool key.
+  expect(meta.totalAvailable).toBe(1001);
   // Track the id so afterAll can strip it by PK and the dev DB doesn't
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);
