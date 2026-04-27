@@ -858,6 +858,35 @@ export async function getRecentToolErrors(
   return ((exec as any).rows ?? []) as ToolErrorRow[];
 }
 
+// Sibling COUNT projection for `getRecentToolErrors`. Same WHERE clauses,
+// no LIMIT — used by the SuperAdmin CSV-export path to detect when the
+// row cap kicked in: if `count(rows) >= cap` we re-query with this helper
+// to record the *real* underlying total in the audit metadata, so a
+// SuperAdmin reviewing past exports can tell at a glance that data was
+// clipped (and by how much). Kept as a separate helper instead of folding
+// into `getRecentToolErrors` so the hot panel/digest paths don't pay for
+// the COUNT scan when they don't need it.
+export async function countRecentToolErrors(
+  windowDays: number = TOOL_ERROR_WINDOW_DAYS,
+): Promise<number> {
+  const exec = await db.execute<any>(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (company_id, tool_key)
+             id, company_id, tool_key, status, run_at
+        FROM maintenance_runs
+       ORDER BY company_id, tool_key, run_at DESC
+    )
+    SELECT COUNT(*)::int AS "n"
+      FROM latest l
+      JOIN companies c ON c.id = l.company_id
+     WHERE l.status  = 'error'
+       AND c.status  = 'active'
+       AND l.run_at >= now() - ((${windowDays})::int || ' days')::interval
+  `);
+  const rows = ((exec as any).rows ?? []) as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
+}
+
 // ─── Recent recoveries — tools that flipped error → non-error in window ──────
 // Mirrors `getRecentToolErrors` but in the positive direction: each row
 // represents a (company, tool) pair whose latest run finished without error
@@ -929,6 +958,39 @@ export async function getRecentToolRecoveries(
      LIMIT ${limit}
   `);
   return ((exec as any).rows ?? []) as ToolRecoveryRow[];
+}
+
+// Sibling COUNT projection for `getRecentToolRecoveries`. Same WHERE
+// clauses, no LIMIT — used by the SuperAdmin CSV-export path the same way
+// `countRecentToolErrors` is used: only invoked when the row cap kicked
+// in, so the audit row can record the *real* underlying total alongside
+// the capped row count. Kept separate so the panel/digest paths don't
+// pay for the COUNT scan when they don't need it.
+export async function countRecentToolRecoveries(
+  windowDays: number = TOOL_ERROR_WINDOW_DAYS,
+): Promise<number> {
+  const exec = await db.execute<any>(sql`
+    WITH ranked AS (
+      SELECT id,
+             company_id,
+             tool_key,
+             status,
+             run_at,
+             LAG(status) OVER (PARTITION BY company_id, tool_key ORDER BY run_at) AS prev_status,
+             ROW_NUMBER() OVER (PARTITION BY company_id, tool_key ORDER BY run_at DESC) AS rn
+        FROM maintenance_runs
+    )
+    SELECT COUNT(*)::int AS "n"
+      FROM ranked r
+      JOIN companies c ON c.id = r.company_id
+     WHERE r.rn = 1
+       AND r.status      <> 'error'
+       AND r.prev_status  = 'error'
+       AND c.status       = 'active'
+       AND r.run_at >= now() - ((${windowDays})::int || ' days')::interval
+  `);
+  const rows = ((exec as any).rows ?? []) as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
 }
 
 // ─── Email-history auto-prune ────────────────────────────────────────────────

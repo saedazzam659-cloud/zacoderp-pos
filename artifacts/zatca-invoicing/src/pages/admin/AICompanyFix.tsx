@@ -1127,6 +1127,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const cd = r.headers.get("Content-Disposition") ?? "";
       const m = cd.match(/filename="?([^";]+)"?/i);
       const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-broken-tools-${Date.now()}.csv`;
+      // Server echoes truncation signals in custom response headers so we
+      // can flag a clipped export in the success toast without a second
+      // round-trip — operators triggering the export deserve the same
+      // visibility a SuperAdmin gets in the audit log.
+      const truncated = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1135,8 +1141,14 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      return { truncated, rowCap };
     },
-    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onSuccess: ({ truncated, rowCap }) => toast({
+      title: "تم تنزيل ملف CSV",
+      description: truncated && rowCap > 0
+        ? `تم الاقتطاع عند ${rowCap} صف`
+        : undefined,
+    }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -1194,6 +1206,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const cd = r.headers.get("Content-Disposition") ?? "";
       const m = cd.match(/filename="?([^";]+)"?/i);
       const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-recent-recoveries-${Date.now()}.csv`;
+      // Server echoes truncation signals in custom response headers so we
+      // can flag a clipped export in the success toast — same pattern as
+      // the broken-tools mutation above.
+      const truncated = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1202,8 +1219,14 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      return { truncated, rowCap };
     },
-    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onSuccess: ({ truncated, rowCap }) => toast({
+      title: "تم تنزيل ملف CSV",
+      description: truncated && rowCap > 0
+        ? `تم الاقتطاع عند ${rowCap} صف`
+        : undefined,
+    }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 

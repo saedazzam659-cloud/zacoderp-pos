@@ -14,7 +14,9 @@ import {
 } from "../lib/maintenanceChecks.js";
 import {
   ensureMaintenanceScheduleRow, getLatestResultsForCompany, getCriticalAlerts,
-  getRecentToolErrors, getRecentToolRecoveries, TOOL_ERROR_WINDOW_DAYS,
+  getRecentToolErrors, getRecentToolRecoveries,
+  countRecentToolErrors, countRecentToolRecoveries,
+  TOOL_ERROR_WINDOW_DAYS,
   runMaintenanceSweep, MAINTENANCE_SCHEDULE_ID, dispatchCriticalDigest,
   clearCriticalDigestCooldown,
   severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
@@ -4950,6 +4952,21 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
   try {
     if (isCsv) {
       const rows = await getRecentToolErrors(BROKEN_CSV_ROW_CAP);
+      // When the helper returned exactly the cap, the upstream projection
+      // *might* have had more candidates that the LIMIT clause clipped —
+      // or the underlying total may have been exactly cap, in which case
+      // nothing was clipped. Resolve the real underlying total via a
+      // sibling COUNT-only query and only flag `truncated` when that
+      // total is strictly greater than the cap. Without this, an export
+      // of exactly 1000 broken tools (no clipping) would falsely show
+      // `truncated: true` in audit logs and the operator toast.
+      // We only pay for the COUNT scan when truncation is even
+      // possible, so the common (under-cap) path stays cheap.
+      const atCap = rows.length >= BROKEN_CSV_ROW_CAP;
+      const totalAvailable = atCap
+        ? await countRecentToolErrors()
+        : rows.length;
+      const truncated = totalAvailable > BROKEN_CSV_ROW_CAP;
       const headers = ["الشركة", "الأداة", "رسالة الخطأ", "وقت آخر فشل"];
       const csvRows = rows.map((r) => [
         r.companyName || `#${r.companyId}`,
@@ -4970,10 +4987,24 @@ router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => 
         entityId:   null,
         metadata: {
           count: rows.length,
+          totalAvailable,
+          truncated,
+          rowCap: BROKEN_CSV_ROW_CAP,
           format: "csv",
           windowDays: TOOL_ERROR_WINDOW_DAYS,
         },
       });
+      // Echo the truncation signal in response headers so the page-side
+      // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
+      // without needing a second round-trip. CORS-safe headers expose for
+      // the proxied frontend; sendCsv() runs after these are set.
+      res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
+      res.setHeader("X-Csv-Row-Cap", String(BROKEN_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+      );
       sendCsv(res, `maintenance-broken-tools-${Date.now()}.csv`, headers, csvRows);
       return;
     }
@@ -5011,6 +5042,15 @@ router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res)
   try {
     if (isCsv) {
       const rows = await getRecentToolRecoveries(RECOVERY_CSV_ROW_CAP);
+      // See the matching block on /maintenance/error-summary for rationale.
+      // We only flag `truncated` when the underlying total is strictly
+      // greater than the cap — an export of exactly 1000 recoveries (no
+      // clipping) must not falsely show as truncated.
+      const atCap = rows.length >= RECOVERY_CSV_ROW_CAP;
+      const totalAvailable = atCap
+        ? await countRecentToolRecoveries()
+        : rows.length;
+      const truncated = totalAvailable > RECOVERY_CSV_ROW_CAP;
       const headers = ["الشركة", "الأداة", "آخر خطأ", "وقت التعافي", "حالة الفحص الحالي"];
       const csvRows = rows.map((r) => [
         r.companyName || `#${r.companyId}`,
@@ -5032,10 +5072,23 @@ router.get("/maintenance/recent-recoveries", requireSuperAdmin, async (req, res)
         entityId:   null,
         metadata: {
           count: rows.length,
+          totalAvailable,
+          truncated,
+          rowCap: RECOVERY_CSV_ROW_CAP,
           format: "csv",
           windowDays: TOOL_ERROR_WINDOW_DAYS,
         },
       });
+      // Echo the truncation signal in response headers so the page-side
+      // mutation can surface "تم الاقتطاع عند 1000 صف" in its toast
+      // without a second round-trip. Mirrors the broken-tools branch.
+      res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
+      res.setHeader("X-Csv-Row-Cap", String(RECOVERY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+      );
       sendCsv(res, `maintenance-recent-recoveries-${Date.now()}.csv`, headers, csvRows);
       return;
     }

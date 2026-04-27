@@ -489,7 +489,11 @@ test("broken-tools panel: 'تنزيل CSV' downloads the broken-tools list with 
   // the JSON metadata column and keeps the assertion stable on a shared
   // dev DB.
   const auditRows = await db
-    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .select({
+      id: auditLogTable.id,
+      companyId: auditLogTable.companyId,
+      metadata: auditLogTable.metadata,
+    })
     .from(auditLogTable)
     .where(and(
       eq(auditLogTable.module, "maintenance"),
@@ -499,6 +503,24 @@ test("broken-tools panel: 'تنزيل CSV' downloads the broken-tools list with 
       gte(auditLogTable.createdAt, csvAuditAnchor!),
     ));
   expect(auditRows).toHaveLength(1);
+  // Truncation visibility: when the cap kicks in, the audit row must
+  // record both the *capped* row count AND the underlying total so a
+  // SuperAdmin reviewing past exports can tell the data was clipped.
+  // Without this assertion, the route could silently drop the new
+  // metadata fields and the audit log would once again say "1000"
+  // without any indication that 1500+ candidates existed.
+  const meta = (auditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(meta.format).toBe("csv");
+  expect(meta.count).toBe(1000);
+  expect(meta.rowCap).toBe(1000);
+  expect(meta.truncated).toBe(true);
+  // We seeded 1000 padding rows + the beforeAll seed row (1001 ours),
+  // and the dev DB may carry additional broken (company, tool) pairs
+  // unrelated to this run. The real total must therefore be at least
+  // 1001 — strictly greater than the cap, which is what truncation
+  // means.
+  expect(typeof meta.totalAvailable).toBe("number");
+  expect(meta.totalAvailable as number).toBeGreaterThan(1000);
   // Track the id so afterAll can strip it by PK and the dev DB doesn't
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);

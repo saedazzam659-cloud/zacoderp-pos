@@ -418,7 +418,11 @@ test("recovered-tools panel: 'تنزيل CSV' downloads the recovered-tools list
   // createdAt >= our anchor avoids LIKE-style matches against the JSON
   // metadata column and keeps the assertion stable on a shared dev DB.
   const auditRows = await db
-    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .select({
+      id: auditLogTable.id,
+      companyId: auditLogTable.companyId,
+      metadata: auditLogTable.metadata,
+    })
     .from(auditLogTable)
     .where(and(
       eq(auditLogTable.module, "maintenance"),
@@ -428,6 +432,28 @@ test("recovered-tools panel: 'تنزيل CSV' downloads the recovered-tools list
       gte(auditLogTable.createdAt, recoveryAuditAnchor!),
     ));
   expect(auditRows).toHaveLength(1);
+  // Truncation visibility — even when the cap doesn't kick in, the audit
+  // row must carry the new `truncated`/`rowCap`/`totalAvailable` fields
+  // so a future SuperAdmin reviewing past exports can tell at a glance
+  // whether the data was clipped (the broken-tools spec covers the
+  // truncated=true branch with 1000+ seeded pairs; here we lock in the
+  // shape of the non-truncated branch). Without this assertion, the
+  // route could silently drop the truncation fields and a real clipped
+  // export would once again be indistinguishable from a complete one.
+  const meta = (auditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(meta.format).toBe("csv");
+  expect(meta.rowCap).toBe(1000);
+  expect(meta.truncated).toBe(false);
+  // count must equal totalAvailable when not truncated — the route uses
+  // rows.length for both rather than re-running a COUNT query in the
+  // common (cheap) path.
+  expect(typeof meta.count).toBe("number");
+  expect(typeof meta.totalAvailable).toBe("number");
+  expect(meta.count).toBe(meta.totalAvailable);
+  // The dev DB may carry other recoveries unrelated to this run, so we
+  // can't assert an exact row count — but our seeded recovery must be
+  // included, which means at least one row was exported.
+  expect(meta.count as number).toBeGreaterThanOrEqual(1);
   // Track the id so afterAll can strip it by PK and the dev DB doesn't
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);

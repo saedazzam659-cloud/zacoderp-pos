@@ -92,6 +92,8 @@ import {
   shouldSkipForRateLimit,
   getRecentToolErrors,
   getRecentToolRecoveries,
+  countRecentToolErrors,
+  countRecentToolRecoveries,
   getMaintenanceAlerts,
   TOOL_ERROR_WINDOW_DAYS,
   severityMeetsThreshold,
@@ -1870,6 +1872,46 @@ test("getRecentToolRecoveries: returns tools that flipped error → non-error wi
 test("getRecentToolRecoveries: respects the limit argument", async () => {
   const items = await getRecentToolRecoveries(1, TOOL_ERROR_WINDOW_DAYS);
   assert.ok(items.length <= 1, `limit=1 must cap rows, got ${items.length}`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  countRecentToolErrors / countRecentToolRecoveries — sibling COUNT helpers
+// ════════════════════════════════════════════════════════════════════════════
+// The maintenance CSV-export routes use these to detect when the 1000-row
+// row cap actually clipped the data: only when the underlying total is
+// strictly greater than the cap is the export `truncated`. An export of
+// exactly N rows when N === cap must NOT show as truncated — that was a
+// real bug caught in code review on task #111. The two assertions below
+// pin the count helpers' contract for that decision:
+//   1. Their result must equal the row helper's row count when the row
+//      helper isn't itself capping. Without that equality the route's
+//      `truncated = totalAvailable > cap` check would be wrong.
+//   2. The result must be a finite integer (not undefined / NaN) so the
+//      audit metadata field stays well-typed.
+test("countRecentToolErrors: matches getRecentToolErrors row count under a generous limit (so 'truncated' is decided correctly at the cap)", async () => {
+  // Use a deliberately large limit on the row helper so it can't be the
+  // one doing the capping — any difference between the two numbers must
+  // come from a divergence in their WHERE clauses, which would silently
+  // break the CSV-export route's truncation flag.
+  const rows  = await getRecentToolErrors(10_000, TOOL_ERROR_WINDOW_DAYS);
+  const total = await countRecentToolErrors(TOOL_ERROR_WINDOW_DAYS);
+  assert.equal(typeof total, "number", "count helper must return a number");
+  assert.ok(Number.isFinite(total), `count helper must return a finite number, got ${total}`);
+  assert.equal(
+    total, rows.length,
+    `countRecentToolErrors (${total}) must match the row helper's row count (${rows.length}) when nothing is being clipped — a divergence here would falsely flip the CSV export's 'truncated' flag at the exact-cap boundary.`,
+  );
+});
+
+test("countRecentToolRecoveries: matches getRecentToolRecoveries row count under a generous limit (so 'truncated' is decided correctly at the cap)", async () => {
+  const rows  = await getRecentToolRecoveries(10_000, TOOL_ERROR_WINDOW_DAYS);
+  const total = await countRecentToolRecoveries(TOOL_ERROR_WINDOW_DAYS);
+  assert.equal(typeof total, "number", "count helper must return a number");
+  assert.ok(Number.isFinite(total), `count helper must return a finite number, got ${total}`);
+  assert.equal(
+    total, rows.length,
+    `countRecentToolRecoveries (${total}) must match the row helper's row count (${rows.length}) when nothing is being clipped — a divergence here would falsely flip the CSV export's 'truncated' flag at the exact-cap boundary.`,
+  );
 });
 
 // ════════════════════════════════════════════════════════════════════════════
