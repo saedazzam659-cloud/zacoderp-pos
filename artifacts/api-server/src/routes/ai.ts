@@ -4,6 +4,7 @@ import {
   accountsTable, warehousesTable, customersTable, suppliersTable,
   productionOrdersTable, productionOrderItemsTable, productionEventsTable,
   productionResourcesTable,
+  securityEventMediaTable,
 } from "@workspace/db";
 import { and, eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -2815,5 +2816,178 @@ ${SEVERITIES.map(s => `- ${s}`).join("\n")}
     res.json({ eventType, severity, suggestedTitle, reasoning });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "AI classify failed" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// POST /api/ai/security/analyze-image
+// Take an uploaded image (object-storage path) and run vision analysis to
+// detect a security event. Returns the same shape as classify-event PLUS
+// a suggested description and an isSecurityConcern flag.
+// Body: { imageUrl: string ("/objects/..."), hint?: string, cameraLabel?: string }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/security/analyze-image", requirePermission("security_events", "view"), async (req, res) => {
+  try {
+    const { imageUrl, hint, cameraLabel } = (req.body ?? {}) as {
+      imageUrl?: string;
+      hint?: string;
+      cameraLabel?: string;
+    };
+    const path = String(imageUrl ?? "").trim();
+    if (!path || !path.startsWith("/objects/")) {
+      res.status(400).json({ error: "مسار الصورة غير صالح" });
+      return;
+    }
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
+      return;
+    }
+
+    // ── Authorization: object-level tenant isolation ────────────────
+    // Even though the route is gated by security_events:view, we must
+    // also verify the caller's company actually OWNS this object path.
+    // The ONLY trusted source of ownership is security_event_media,
+    // which is stamped at upload-URL issuance time from the auth token
+    // (companyId is never accepted from request bodies). We do NOT
+    // trust security_events.imageUrl as proof, because users can write
+    // arbitrary strings into that column — write-side validation also
+    // pins those columns to security_event_media for the same company,
+    // so the two sources are equivalent and we can keep the check
+    // single-sourced here.
+    const cid = resolveCompanyId(req, (req as any).authUser?.companyId ?? undefined);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+
+    const [mediaRow] = await db.select({ id: securityEventMediaTable.id })
+      .from(securityEventMediaTable)
+      .where(and(
+        eq(securityEventMediaTable.companyId, cid),
+        eq(securityEventMediaTable.objectPath, path),
+      ))
+      .limit(1);
+    if (!mediaRow) {
+      // 404 (not 403) so we don't confirm to a probing attacker that
+      // some other tenant's path exists.
+      res.status(404).json({ error: "الصورة غير موجودة" });
+      return;
+    }
+
+    // Pull the image bytes from object storage. We require the object to
+    // exist and to be a real image (not video / pdf / arbitrary blob)
+    // before paying for a vision call.
+    const { ObjectStorageService, ObjectNotFoundError } = await import("../lib/objectStorage.js");
+    const svc = new ObjectStorageService();
+    let buf: Buffer;
+    let contentType = "image/jpeg";
+    try {
+      const file = await svc.getObjectEntityFile(path);
+      const [meta] = await file.getMetadata();
+      const ct = String((meta as any)?.contentType ?? "").toLowerCase();
+      if (!ct.startsWith("image/")) {
+        res.status(400).json({ error: "الملف ليس صورة" });
+        return;
+      }
+      contentType = ct;
+      const [data] = await file.download();
+      buf = data;
+    } catch (e: any) {
+      if (e instanceof ObjectNotFoundError) {
+        res.status(404).json({ error: "الصورة غير موجودة" });
+        return;
+      }
+      throw e;
+    }
+
+    // Hard cap: 8MB after base64 expansion is ~10.7MB; vision APIs choke
+    // on larger payloads. Reject up-front instead of timing out.
+    if (buf.length > 8 * 1024 * 1024) {
+      res.status(413).json({ error: "الصورة أكبر من 8 ميجابايت" });
+      return;
+    }
+    const dataUrl = `data:${contentType};base64,${buf.toString("base64")}`;
+
+    const TYPES = [
+      "intrusion", "theft", "suspicious_movement", "unknown_person",
+      "after_hours_presence", "missing_item", "unusual_gathering",
+      "tampering", "other",
+    ];
+    const SEVERITIES = ["low", "medium", "high", "critical"];
+
+    const userText = `حلّل الصورة المرفقة من كاميرا مراقبة وحدد ما إذا كانت تمثّل حدثاً أمنياً.
+${hint ? `سياق إضافي من المستخدم: ${hint}` : ""}
+${cameraLabel ? `الكاميرا/الموقع: ${cameraLabel}` : ""}
+
+الأنواع المتاحة (اختر واحداً فقط بالقيمة الإنجليزية بالضبط):
+${TYPES.map(t => `- ${t}`).join("\n")}
+
+مستويات الخطورة (اختر واحداً فقط بالقيمة الإنجليزية بالضبط):
+${SEVERITIES.map(s => `- ${s}`).join("\n")}
+
+أعد JSON فقط بهذا الشكل:
+{
+  "isSecurityConcern": true|false,
+  "eventType": "...",
+  "severity": "...",
+  "suggestedTitle": "عنوان مختصر بالعربية (5-10 كلمات)",
+  "suggestedDescription": "وصف مختصر بالعربية لما تظهره الصورة (1-3 جمل)",
+  "confidence": 0.0-1.0,
+  "reasoning": "سبب موجز جداً (جملة واحدة)"
+}
+
+إذا كانت الصورة لا تظهر أي مشكلة أمنية (مشهد عادي / فارغ)، فاضبط isSecurityConcern=false وeventType="other" وseverity="low".`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 600,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "أنت محلّل لقطات كاميرات مراقبة محايد. ترد بـ JSON فقط بدون أي شرح خارج الـ JSON." },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userText },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any;
+    try { parsed = JSON.parse(content); }
+    catch { res.status(500).json({ error: "تعذّر تحليل استجابة الذكاء الاصطناعي" }); return; }
+
+    const eventType = TYPES.includes(parsed?.eventType) ? parsed.eventType : "other";
+    const severity  = SEVERITIES.includes(parsed?.severity) ? parsed.severity : "medium";
+    const suggestedTitle = String(parsed?.suggestedTitle ?? "").slice(0, 200);
+    const suggestedDescription = String(parsed?.suggestedDescription ?? "").slice(0, 1000);
+    const reasoning = String(parsed?.reasoning ?? "").slice(0, 500);
+    const isSecurityConcern = parsed?.isSecurityConcern === true;
+    let confidence = Number(parsed?.confidence);
+    if (!Number.isFinite(confidence)) confidence = 0;
+    confidence = Math.max(0, Math.min(1, confidence));
+
+    res.json({
+      isSecurityConcern,
+      eventType,
+      severity,
+      suggestedTitle,
+      suggestedDescription,
+      confidence,
+      reasoning,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "AI vision failed" });
   }
 });

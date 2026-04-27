@@ -31,3 +31,4 @@ export * from "./offers";
 export * from "./modules";
 export * from "./production";
 export * from "./securityEvents";
+export * from "./securityEventMedia";

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
-import { Sparkles, X } from "lucide-react";
+import { Sparkles, X, Camera, Video, Trash2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import {
-  securityEventsApi, aiClassifyEvent, type SecurityEvent, type SecurityEventInput,
+  securityEventsApi, aiClassifyEvent, aiAnalyzeImage, uploadSecurityMedia, mediaUrl,
+  type SecurityEvent, type SecurityEventInput,
 } from "@/lib/securityEventsApi";
 
 const TYPES = [
@@ -56,8 +57,16 @@ export default function SecurityEventForm({ event, onClose, onSaved }: Props) {
     cameraLabel: event?.cameraLabel ?? "",
     eventDateTime: toInputDateTime(event?.eventDateTime),
     resolutionNote: event?.resolutionNote ?? "",
+    imageUrl: event?.imageUrl ?? null,
+    videoClipUrl: event?.videoClipUrl ?? null,
   });
   const [aiBusy, setAiBusy] = useState(false);
+  const [visionBusy, setVisionBusy] = useState(false);
+  const [imgUploading, setImgUploading] = useState(false);
+  const [vidUploading, setVidUploading] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const vidInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (event) {
@@ -70,6 +79,8 @@ export default function SecurityEventForm({ event, onClose, onSaved }: Props) {
         cameraLabel: event.cameraLabel ?? "",
         eventDateTime: toInputDateTime(event.eventDateTime),
         resolutionNote: event.resolutionNote ?? "",
+        imageUrl: event.imageUrl ?? null,
+        videoClipUrl: event.videoClipUrl ?? null,
       });
     }
   }, [event]);
@@ -106,6 +117,84 @@ export default function SecurityEventForm({ event, onClose, onSaved }: Props) {
       toast({ title: t("common.error"), description: e?.message, variant: "destructive" });
     } finally {
       setAiBusy(false);
+    }
+  }
+
+  async function runVisionAnalyze() {
+    if (!form.imageUrl) {
+      toast({ title: t("security.ai.needImage"), variant: "destructive" });
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const r = await aiAnalyzeImage(
+        form.imageUrl,
+        form.description ?? undefined,
+        form.cameraLabel ?? undefined,
+      );
+      setForm(f => ({
+        ...f,
+        eventType: r.eventType,
+        severity: r.severity,
+        // Don't overwrite text the user already typed.
+        title: f.title.trim() ? f.title : (r.suggestedTitle || f.title),
+        description: f.description?.trim()
+          ? f.description
+          : (r.suggestedDescription || f.description),
+        confidence: r.confidence,
+      }));
+      toast({
+        title: r.isSecurityConcern
+          ? t("security.ai.visionApplied")
+          : t("security.ai.visionNoConcern"),
+        description: r.reasoning,
+      });
+    } catch (e: any) {
+      toast({ title: t("security.ai.visionFailed"), description: e?.message, variant: "destructive" });
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function handleImageFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      toast({ title: t("security.media.notImage"), variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: t("security.media.imageTooLarge"), variant: "destructive" });
+      return;
+    }
+    setImgUploading(true);
+    try {
+      const path = await uploadSecurityMedia(file);
+      setForm(f => ({ ...f, imageUrl: path }));
+      toast({ title: t("security.media.imageUploaded") });
+    } catch (e: any) {
+      toast({ title: t("security.media.uploadFailed"), description: e?.message, variant: "destructive" });
+    } finally {
+      setImgUploading(false);
+    }
+  }
+
+  async function handleVideoFile(file: File) {
+    if (!file.type.startsWith("video/")) {
+      toast({ title: t("security.media.notVideo"), variant: "destructive" });
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      toast({ title: t("security.media.videoTooLarge"), variant: "destructive" });
+      return;
+    }
+    setVidUploading(true);
+    try {
+      const path = await uploadSecurityMedia(file);
+      setForm(f => ({ ...f, videoClipUrl: path }));
+      toast({ title: t("security.media.videoUploaded") });
+    } catch (e: any) {
+      toast({ title: t("security.media.uploadFailed"), description: e?.message, variant: "destructive" });
+    } finally {
+      setVidUploading(false);
     }
   }
 
@@ -219,6 +308,166 @@ export default function SecurityEventForm({ event, onClose, onSaved }: Props) {
             </div>
           </div>
 
+          {/* Image + Video upload + AI vision analysis */}
+          <div className="rounded-md border bg-muted/20 p-3 space-y-3" data-testid="security-media-section">
+            <div className="text-xs font-medium text-muted-foreground">
+              {t("security.media.title")}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Image */}
+              <div className="flex items-start gap-3">
+                <div
+                  className="w-24 h-24 rounded-md border bg-background grid place-items-center overflow-hidden shrink-0 relative group"
+                  data-testid="security-image-preview"
+                >
+                  {form.imageUrl ? (
+                    <>
+                      <img
+                        src={mediaUrl(form.imageUrl)}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLightboxOpen(true)}
+                        className="absolute inset-0 bg-black/0 hover:bg-black/40 transition grid place-items-center"
+                        title={t("security.media.viewImage")}
+                        data-testid="btn-view-image"
+                      >
+                        <Eye className="h-5 w-5 text-white opacity-0 group-hover:opacity-100" />
+                      </button>
+                    </>
+                  ) : (
+                    <Camera className="h-8 w-8 text-muted-foreground/40" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                  <Label className="text-xs">{t("security.media.image")}</Label>
+                  <input
+                    ref={imgInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={imgUploading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleImageFile(f);
+                      e.target.value = "";
+                    }}
+                    data-testid="input-image-file"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={imgUploading}
+                      onClick={() => imgInputRef.current?.click()}
+                      data-testid="btn-upload-image"
+                    >
+                      {imgUploading
+                        ? t("security.media.uploading")
+                        : form.imageUrl
+                          ? t("security.media.changeImage")
+                          : t("security.media.uploadImage")}
+                    </Button>
+                    {form.imageUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-rose-600"
+                        onClick={() => setForm(f => ({ ...f, imageUrl: null }))}
+                        data-testid="btn-remove-image"
+                      >
+                        <Trash2 className="h-3 w-3 me-1" />
+                        {t("security.media.remove")}
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    className="h-7 text-xs w-fit"
+                    disabled={!form.imageUrl || visionBusy}
+                    onClick={runVisionAnalyze}
+                    data-testid="btn-ai-vision"
+                  >
+                    <Sparkles className="h-3 w-3 me-1" />
+                    {visionBusy ? t("security.ai.thinking") : t("security.ai.analyzeImage")}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Video */}
+              <div className="flex items-start gap-3">
+                <div className="w-24 h-24 rounded-md border bg-background grid place-items-center overflow-hidden shrink-0">
+                  {form.videoClipUrl ? (
+                    <video
+                      src={mediaUrl(form.videoClipUrl)}
+                      className="w-full h-full object-cover"
+                      controls
+                      data-testid="security-video-preview"
+                    />
+                  ) : (
+                    <Video className="h-8 w-8 text-muted-foreground/40" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                  <Label className="text-xs">{t("security.media.video")}</Label>
+                  <input
+                    ref={vidInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    disabled={vidUploading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleVideoFile(f);
+                      e.target.value = "";
+                    }}
+                    data-testid="input-video-file"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={vidUploading}
+                      onClick={() => vidInputRef.current?.click()}
+                      data-testid="btn-upload-video"
+                    >
+                      {vidUploading
+                        ? t("security.media.uploading")
+                        : form.videoClipUrl
+                          ? t("security.media.changeVideo")
+                          : t("security.media.uploadVideo")}
+                    </Button>
+                    {form.videoClipUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-rose-600"
+                        onClick={() => setForm(f => ({ ...f, videoClipUrl: null }))}
+                        data-testid="btn-remove-video"
+                      >
+                        <Trash2 className="h-3 w-3 me-1" />
+                        {t("security.media.remove")}
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    {t("security.media.videoHint")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {(form.status === "closed" || form.status === "false_positive") && (
             <div>
               <Label>{t("security.form.resolutionNote")}</Label>
@@ -232,6 +481,19 @@ export default function SecurityEventForm({ event, onClose, onSaved }: Props) {
             </div>
           )}
         </div>
+
+        {lightboxOpen && form.imageUrl && (
+          <Dialog open onOpenChange={(o) => { if (!o) setLightboxOpen(false); }}>
+            <DialogContent className="max-w-4xl p-2 bg-black border-0">
+              <img
+                src={mediaUrl(form.imageUrl)}
+                alt=""
+                className="w-full h-auto max-h-[85vh] object-contain"
+                data-testid="security-image-lightbox"
+              />
+            </DialogContent>
+          </Dialog>
+        )}
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>

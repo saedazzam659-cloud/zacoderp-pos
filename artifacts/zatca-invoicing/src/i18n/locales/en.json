@@ -584,7 +584,30 @@
       "dateTime": "Date & Time",
       "location": "Location / Camera",
       "assignedTo": "Assigned To",
-      "actions": "Actions"
+      "actions": "Actions",
+      "preview": "Image",
+      "viewPreview": "View image"
+    },
+    "media": {
+      "title": "Media (camera image and video)",
+      "image": "Image",
+      "video": "Video",
+      "uploadImage": "Upload image",
+      "changeImage": "Change image",
+      "uploadVideo": "Upload video",
+      "changeVideo": "Change video",
+      "uploading": "Uploading...",
+      "uploaded": "Uploaded",
+      "imageUploaded": "Image uploaded",
+      "videoUploaded": "Video uploaded",
+      "remove": "Remove",
+      "viewImage": "View full size",
+      "videoHint": "Max 25MB — stored only (video is not analyzed by AI)",
+      "imageTooLarge": "Image is too large (max 5MB)",
+      "videoTooLarge": "Video is too large (max 25MB)",
+      "notImage": "File is not an image",
+      "notVideo": "File is not a video",
+      "uploadFailed": "Upload failed"
     },
     "form": {
       "newTitle": "New Security Event",
@@ -606,7 +629,12 @@
       "suggest": "AI Suggest",
       "thinking": "Analyzing...",
       "applied": "AI suggestion applied",
-      "needDescription": "Please write a description first (at least 5 characters)"
+      "needDescription": "Please write a description first (at least 5 characters)",
+      "analyzeImage": "Analyze image with AI",
+      "needImage": "Please upload an image first",
+      "visionApplied": "Image analyzed and fields filled",
+      "visionNoConcern": "Image shows no clear security concern",
+      "visionFailed": "Failed to analyze image"
     },
     "validation": {
       "titleRequired": "Title is required"

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 import {
-  ShieldAlert, Plus, Search, Trash2, Pencil, RefreshCw, Filter,
+  ShieldAlert, Plus, Search, Trash2, Pencil, RefreshCw, Filter, Camera,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
 } from "@/components/ui/select";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  securityEventsApi, type SecurityEvent, type SecurityEventsFilter,
+  securityEventsApi, mediaUrl,
+  type SecurityEvent, type SecurityEventsFilter,
 } from "@/lib/securityEventsApi";
 import SecurityEventForm from "./SecurityEventForm";
 
@@ -67,6 +69,7 @@ export default function SecurityEvents() {
   const [editing, setEditing] = useState<SecurityEvent | null>(null);
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const eventsQ = useQuery({
     queryKey: ["security-events", filter],
@@ -157,6 +160,7 @@ export default function SecurityEvents() {
               <table className="w-full text-sm">
                 <thead className="text-right text-xs text-muted-foreground border-b">
                   <tr>
+                    <th className="py-2 px-2 w-14">{t("security.col.preview")}</th>
                     <th className="py-2 px-2">{t("security.col.dateTime")}</th>
                     <th className="py-2 px-2">{t("security.col.title")}</th>
                     <th className="py-2 px-2">{t("security.col.type")}</th>
@@ -170,6 +174,27 @@ export default function SecurityEvents() {
                 <tbody>
                   {eventsQ.data.map(ev => (
                     <tr key={ev.id} className="border-b hover:bg-slate-50/60" data-testid={`row-event-${ev.id}`}>
+                      <td className="py-2 px-2">
+                        {ev.imageUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setLightboxUrl(ev.imageUrl)}
+                            className="block w-10 h-10 rounded border bg-muted overflow-hidden hover-elevate"
+                            title={t("security.col.viewPreview")}
+                            data-testid={`btn-thumb-event-${ev.id}`}
+                          >
+                            <img
+                              src={mediaUrl(ev.imageUrl)}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="w-10 h-10 rounded border bg-muted/40 grid place-items-center">
+                            <Camera className="h-4 w-4 text-muted-foreground/40" />
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2 px-2 whitespace-nowrap text-xs">{fmtDate(ev.eventDateTime)}</td>
                       <td className="py-2 px-2 font-medium">{ev.title}</td>
                       <td className="py-2 px-2 text-xs">{t(`security.type.${ev.eventType}`, ev.eventType)}</td>
@@ -221,6 +246,19 @@ export default function SecurityEvents() {
             qc.invalidateQueries({ queryKey: ["security-events"] });
           }}
         />
+      )}
+
+      {lightboxUrl && (
+        <Dialog open onOpenChange={(o) => { if (!o) setLightboxUrl(null); }}>
+          <DialogContent className="max-w-4xl p-2 bg-black border-0">
+            <img
+              src={mediaUrl(lightboxUrl)}
+              alt=""
+              className="w-full h-auto max-h-[85vh] object-contain"
+              data-testid="security-list-lightbox"
+            />
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

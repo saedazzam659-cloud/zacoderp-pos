@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   securityEventsTable,
+  securityEventMediaTable,
   SECURITY_EVENT_TYPES,
   SECURITY_EVENT_SEVERITIES,
   SECURITY_EVENT_STATUSES,
@@ -11,6 +12,7 @@ import {
 import { eq, and, desc, gte, lte, sql, inArray, ilike, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { ObjectStorageService } from "../lib/objectStorage.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -47,6 +49,29 @@ function clampConfidence(v: unknown): string | null {
   if (!Number.isFinite(n)) return null;
   const c = Math.max(0, Math.min(1, n));
   return c.toFixed(4);
+}
+
+// Tenant-safe object-path validation. Any /objects/... path that gets
+// stored on a security_events row MUST come from this tenant's own
+// upload (recorded in security_event_media). Without this, a tenant
+// could simply paste another tenant's path into create/update and
+// then call /api/ai/security/analyze-image, which uses the row as
+// proof of ownership. Returns the validated path, null for empty
+// values, or throws "MEDIA_UNAUTHORIZED" on a foreign / unknown path.
+async function validateOwnedMediaPath(cid: number, raw: unknown): Promise<string | null> {
+  if (raw == null || raw === "") return null;
+  const p = String(raw).trim();
+  if (!p) return null;
+  if (!p.startsWith("/objects/")) throw new Error("MEDIA_UNAUTHORIZED");
+  const [row] = await db.select({ id: securityEventMediaTable.id })
+    .from(securityEventMediaTable)
+    .where(and(
+      eq(securityEventMediaTable.companyId, cid),
+      eq(securityEventMediaTable.objectPath, p),
+    ))
+    .limit(1);
+  if (!row) throw new Error("MEDIA_UNAUTHORIZED");
+  return p;
 }
 
 // Tenant-safe FK validation. Returns the validated id, or null when the FK
@@ -231,6 +256,39 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// ── POST /media/request-url  (scoped, ownership-tracked upload) ─────
+// Issues a presigned upload URL AND records (companyId, userId,
+// objectPath) into security_event_media so that downstream readers
+// (the AI vision endpoint, the storage proxy) can verify the
+// requester's company actually owns this object before serving or
+// analyzing it. This is the authorization-binding layer that prevents
+// one tenant from analyzing another tenant's image just by knowing
+// its /objects/... path.
+router.post("/media/request-url", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const userId = (req as any).authUser?.id ?? null;
+    const kindRaw = String((req.body as any)?.kind ?? "image").toLowerCase();
+    const kind = kindRaw === "video" ? "video" : "image";
+
+    const svc = new ObjectStorageService();
+    const uploadURL = await svc.getObjectEntityUploadURL();
+    const objectPath = svc.normalizeObjectEntityPath(uploadURL);
+
+    await db.insert(securityEventMediaTable).values({
+      companyId: cid,
+      userId,
+      objectPath,
+      kind,
+    }).onConflictDoNothing();
+
+    res.json({ uploadURL, objectPath, kind });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "request-url failed" });
+  }
+});
+
 // ── POST /  (create) ────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
@@ -257,6 +315,16 @@ router.post("/", async (req, res) => {
       return;
     }
 
+    let imageUrlSafe: string | null;
+    let videoClipUrlSafe: string | null;
+    try {
+      imageUrlSafe = await validateOwnedMediaPath(cid, b.imageUrl);
+      videoClipUrlSafe = await validateOwnedMediaPath(cid, b.videoClipUrl);
+    } catch {
+      res.status(400).json({ error: "مرجع وسائط غير صالح: الصورة أو الفيديو لا ينتمي للشركة" });
+      return;
+    }
+
     const [row] = await db.insert(securityEventsTable).values({
       companyId: cid,
       branchId: branchIdSafe,
@@ -266,8 +334,8 @@ router.post("/", async (req, res) => {
       status,
       title: title.slice(0, 300),
       description: b.description ? String(b.description) : null,
-      imageUrl: b.imageUrl ? String(b.imageUrl) : null,
-      videoClipUrl: b.videoClipUrl ? String(b.videoClipUrl) : null,
+      imageUrl: imageUrlSafe,
+      videoClipUrl: videoClipUrlSafe,
       confidence: clampConfidence(b.confidence),
       eventDateTime,
       assignedToUserId: assignedToUserIdSafe,
@@ -324,8 +392,14 @@ router.put("/:id", async (req, res) => {
       try { updates.assignedToUserId = await validateUserFk(cid, b.assignedToUserId); }
       catch { res.status(400).json({ error: "المستخدم غير صالح أو لا ينتمي للشركة" }); return; }
     }
-    if (b.imageUrl !== undefined)      updates.imageUrl = b.imageUrl ? String(b.imageUrl) : null;
-    if (b.videoClipUrl !== undefined)  updates.videoClipUrl = b.videoClipUrl ? String(b.videoClipUrl) : null;
+    if (b.imageUrl !== undefined) {
+      try { updates.imageUrl = await validateOwnedMediaPath(cid, b.imageUrl); }
+      catch { res.status(400).json({ error: "الصورة غير مرفوعة من هذه الشركة" }); return; }
+    }
+    if (b.videoClipUrl !== undefined) {
+      try { updates.videoClipUrl = await validateOwnedMediaPath(cid, b.videoClipUrl); }
+      catch { res.status(400).json({ error: "الفيديو غير مرفوع من هذه الشركة" }); return; }
+    }
     if (b.confidence !== undefined)    updates.confidence = clampConfidence(b.confidence);
     if (b.resolutionNote !== undefined) updates.resolutionNote = b.resolutionNote ? String(b.resolutionNote) : null;
     if (b.eventDateTime !== undefined) {

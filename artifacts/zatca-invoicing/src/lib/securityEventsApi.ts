@@ -123,3 +123,56 @@ export async function aiClassifyEvent(description: string, cameraLabel?: string)
   if (!r.ok) throw new Error(await r.text());
   return r.json() as Promise<{ eventType: string; severity: string; suggestedTitle: string; reasoning: string }>;
 }
+
+export interface AiVisionResult {
+  isSecurityConcern: boolean;
+  eventType: string;
+  severity: string;
+  suggestedTitle: string;
+  suggestedDescription: string;
+  confidence: number;
+  reasoning: string;
+}
+
+export async function aiAnalyzeImage(imageUrl: string, hint?: string, cameraLabel?: string): Promise<AiVisionResult> {
+  const r = await fetch(`${API}/api/ai/security/analyze-image`, {
+    method: "POST", headers: authHeaders(), body: JSON.stringify({ imageUrl, hint, cameraLabel }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// Request a presigned upload URL, PUT the file directly to GCS, and return
+// the persistent /objects/... path that should be saved into the row.
+//
+// We use the security-events-scoped endpoint (not the generic storage
+// uploads endpoint) so that the backend records (companyId, userId,
+// objectPath) at issuance time. Downstream readers (the AI vision
+// endpoint, the storage proxy) then verify the requester's company
+// owns the object before serving or analyzing it. This is what
+// prevents one tenant from analyzing another tenant's image just by
+// knowing/guessing its /objects/... path.
+export async function uploadSecurityMedia(file: File, kind: "image" | "video" = "image"): Promise<string> {
+  const reqRes = await fetch(`${API}/api/security-events/media/request-url`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ kind, name: file.name, size: file.size, contentType: file.type }),
+  });
+  if (!reqRes.ok) throw new Error(await reqRes.text());
+  const { uploadURL, objectPath } = await reqRes.json();
+  const putRes = await fetch(uploadURL, {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error("upload failed");
+  return objectPath as string;
+}
+
+// Convert an /objects/... path into a same-origin URL the browser can render
+// (the backend's /api/storage/objects/* route handles auth + ACL).
+export function mediaUrl(p: string | null | undefined): string {
+  if (!p) return "";
+  if (p.startsWith("/objects/")) return `${API}/api/storage${p}`;
+  return p;
+}
