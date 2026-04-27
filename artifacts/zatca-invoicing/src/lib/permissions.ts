@@ -17,14 +17,17 @@ const VC:  Action[] = ["view", "create", "edit", "delete"];
 const VO:  Action[] = ["view"];
 
 const G = {
-  dashboard:  "perms.groups.dashboard",
-  sales:      "perms.groups.sales",
-  purchasing: "perms.groups.purchasing",
-  inventory:  "perms.groups.inventory",
-  accounting: "perms.groups.accounting",
-  tax:        "perms.groups.tax",
-  pos:        "perms.groups.pos",
-  hr:         "perms.groups.hr",
+  dashboard:   "perms.groups.dashboard",
+  sales:       "perms.groups.sales",
+  purchasing:  "perms.groups.purchasing",
+  inventory:   "perms.groups.inventory",
+  accounting:  "perms.groups.accounting",
+  tax:         "perms.groups.tax",
+  pos:         "perms.groups.pos",
+  hr:          "perms.groups.hr",
+  production:  "perms.groups.production",
+  contracting: "perms.groups.contracting",
+  security:    "perms.groups.security",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -83,6 +86,18 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "hr_calculators",       label: "perms.modules.hr_calculators",       group: G.hr,         actions: VO },
   { key: "hr_settings",          label: "perms.modules.hr_settings",          group: G.hr,         actions: ["view", "edit"] },
   { key: "hr_face_attendance",   label: "perms.modules.hr_face_attendance",   group: G.hr,         actions: ALL },
+
+  // Production & Manufacturing — backend key is "production"; one logical
+  // module covers dashboard / orders / resources behind a single permission.
+  { key: "production",           label: "perms.modules.production",           group: G.production,  actions: ALL },
+
+  // Contracting Management — backend key is "contracting"; covers projects,
+  // contractors, bills, and the contracting dashboard behind a single permission.
+  { key: "contracting",          label: "perms.modules.contracting",          group: G.contracting, actions: ALL },
+
+  // Security & Surveillance — backend key is "security_events"; covers the
+  // security hub, events log, and notification rules.
+  { key: "security_events",      label: "perms.modules.security_events",      group: G.security,    actions: VC },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

@@ -19,6 +19,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { FormPanel } from "@/components/FormPanel";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -58,6 +59,10 @@ export default function ContractingProjects() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [editing, setEditing] = useState<Partial<Project> | null>(null);
+  // Peek the next project code from the central sequence engine when creating
+  // a new project (i.e. editing exists but has no id yet).
+  const isCreating = !!editing && (editing as any).id == null;
+  const nextCode = useNextSequenceNumber("contracting_project", isCreating);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
 
@@ -82,8 +87,8 @@ export default function ContractingProjects() {
 
   async function save() {
     if (!editing) return;
-    if (!editing.nameAr?.trim() || !editing.code?.trim()) {
-      toast({ title: t("contracting.projects.required", "الاسم والكود مطلوبان"), variant: "destructive" });
+    if (!editing.nameAr?.trim()) {
+      toast({ title: t("contracting.projects.nameRequired", "الاسم مطلوب"), variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -156,11 +161,21 @@ export default function ContractingProjects() {
           onClose={() => setEditing(null)}
           onSave={save}
           saving={saving}
-          saveDisabled={!editing.nameAr?.trim() || !editing.code?.trim()}
+          saveDisabled={!editing.nameAr?.trim()}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
-            <Field label={t("contracting.projects.code", "الكود")} required>
-              <Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} />
+            <Field label={t("contracting.projects.code", "الكود")}>
+              <Input
+                value={
+                  isCreating
+                    ? (nextCode.number ?? (nextCode.loading ? "..." : t("contracting.projects.autoCode", "تلقائي")))
+                    : (editing.code ?? "")
+                }
+                readOnly
+                disabled
+                className="font-mono text-sm bg-muted/30"
+                data-testid="input-project-code"
+              />
             </Field>
             <Field label={t("contracting.projects.nameAr", "الاسم بالعربية")} required>
               <Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} />

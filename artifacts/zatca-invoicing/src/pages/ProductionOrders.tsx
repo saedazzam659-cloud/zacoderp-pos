@@ -13,6 +13,7 @@ import {
 import { Label } from "@/components/ui/label";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
 import UnitCodeSelect from "@/components/UnitCodeSelect";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -56,6 +57,9 @@ export default function ProductionOrders() {
   const [loading, setLoading] = useState(false);
   const [openCreate, setOpenCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Peek the next production-order number from the central sequence engine
+  // so the user sees the upcoming auto-assigned number before saving.
+  const nextCode = useNextSequenceNumber("production_order", openCreate);
   const [form, setForm] = useState({
     title: "",
     plannedQty: "",
@@ -202,6 +206,16 @@ export default function ProductionOrders() {
           </div>
           <form onSubmit={handleCreate} className="p-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.orderNumber")}</Label>
+                <Input
+                  value={nextCode.number ?? (nextCode.loading ? "..." : t("production.autoCode"))}
+                  readOnly
+                  disabled
+                  className="mt-1 font-mono text-sm bg-muted/30"
+                  data-testid="input-order-number"
+                />
+              </div>
               <div className="md:col-span-2">
                 <Label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("production.title_field")}</Label>
                 <Input

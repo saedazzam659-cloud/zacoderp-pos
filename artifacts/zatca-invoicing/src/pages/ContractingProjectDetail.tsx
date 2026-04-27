@@ -21,6 +21,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -548,6 +549,10 @@ function BillsTab({ projectId }: { projectId: number }) {
   const [rows, setRows] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
+  // Peek the next bill-number from the central sequence engine while a NEW
+  // bill is being created (id is still nullish).
+  const isCreatingBill = !!editing && (editing as any).id == null;
+  const nextBillCode = useNextSequenceNumber("contracting_bill", isCreatingBill);
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [ownerContracts, setOwnerContracts] = useState<OwnerContract[]>([]);
   const [subContracts,   setSubContracts]   = useState<SubContract[]>([]);
@@ -582,7 +587,7 @@ function BillsTab({ projectId }: { projectId: number }) {
   }, [token, projectId]);
 
   async function save() {
-    if (!editing?.billNumber || !editing?.billDate) { toast({ title: t("contracting.bills.required", "الرقم والتاريخ مطلوبان"), variant: "destructive" }); return; }
+    if (!editing?.billDate) { toast({ title: t("contracting.bills.dateRequired", "التاريخ مطلوب"), variant: "destructive" }); return; }
     if (direction === "incoming" && !editing.contractorId) {
       toast({ title: t("contracting.bills.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
     }
@@ -753,7 +758,19 @@ function BillsTab({ projectId }: { projectId: number }) {
                 </Select>
               </Field>
             )}
-            <Field label={t("contracting.bills.number", "الرقم")} required><Input value={editing.billNumber ?? ""} onChange={e => setEditing({ ...editing, billNumber: e.target.value })} /></Field>
+            <Field label={t("contracting.bills.number", "الرقم")}>
+              <Input
+                value={
+                  isCreatingBill
+                    ? (nextBillCode.number ?? (nextBillCode.loading ? "..." : t("contracting.bills.autoCode", "تلقائي")))
+                    : (editing.billNumber ?? "")
+                }
+                readOnly
+                disabled
+                className="font-mono text-sm bg-muted/30"
+                data-testid="input-bill-number"
+              />
+            </Field>
             <Field label={t("contracting.bills.date", "التاريخ")} required><Input type="date" value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
             <Field label={t("contracting.bills.type", "النوع")}>
               <Select value={editing.billType ?? "interim"} onValueChange={v => setEditing({ ...editing, billType: v })}>

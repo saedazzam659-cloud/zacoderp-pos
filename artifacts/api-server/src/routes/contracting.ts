@@ -22,6 +22,7 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -150,11 +151,34 @@ router.post("/projects", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
     const b = req.body as any;
-    if (!b?.nameAr || !b?.code) { res.status(400).json({ error: "الاسم والكود مطلوبان" }); return; }
+    if (!b?.nameAr) { res.status(400).json({ error: "اسم المشروع مطلوب" }); return; }
+
+    // Auto code — pull from the configured "contracting_project" sequence
+    // when the client did not supply one. The legacy contract required both
+    // nameAr + code; we now relax the code requirement so the engine can
+    // assign it. Tenants without a configured sequence still must supply
+    // a code (the original 400 below preserves that behaviour).
+    let code: string;
+    if (b.code) {
+      code = String(b.code);
+    } else {
+      const seq = await nextSequenceNumber(cid, "contracting_project", {
+        branchId: b.branchId ?? null,
+        userId:   req.authUser?.id ?? null,
+        refTable: "contracting_projects",
+      });
+      if (seq) {
+        code = seq.number;
+      } else {
+        res.status(400).json({ error: "كود المشروع مطلوب (لا يوجد مسلسل مهيأ لمشاريع المقاولات)" });
+        return;
+      }
+    }
+
     const [row] = await db.insert(contractingProjectsTable).values({
       companyId: cid,
       branchId: b.branchId ?? null,
-      code: String(b.code),
+      code,
       nameAr: String(b.nameAr),
       nameEn: b.nameEn ?? null,
       customerId: b.customerId ?? null,
@@ -786,9 +810,32 @@ router.post("/projects/:projectId/bills", async (req, res) => {
     const cid = await scope(req, res); if (!cid) return;
     const projectId = Number(req.params.projectId);
     const b = req.body as any;
-    if (!b?.billNumber || !b?.billDate) {
-      res.status(400).json({ error: "رقم وتاريخ المستخلص مطلوبان" }); return;
+    if (!b?.billDate) {
+      res.status(400).json({ error: "تاريخ المستخلص مطلوب" }); return;
     }
+
+    // Auto bill number — pull from the configured "contracting_bill"
+    // sequence when the client did not supply one. Falls back to the
+    // legacy "must-be-supplied" contract so existing tenants without a
+    // sequence configured still get a clear error instead of an empty
+    // billNumber being inserted.
+    let billNumber: string;
+    if (b.billNumber) {
+      billNumber = String(b.billNumber);
+    } else {
+      const seq = await nextSequenceNumber(cid, "contracting_bill", {
+        branchId: b.branchId ?? null,
+        userId:   req.authUser?.id ?? null,
+        refTable: "contracting_progress_bills",
+      });
+      if (seq) {
+        billNumber = seq.number;
+      } else {
+        res.status(400).json({ error: "رقم المستخلص مطلوب (لا يوجد مسلسل مهيأ لمستخلصات المقاولات)" });
+        return;
+      }
+    }
+
     const direction = b.direction === "incoming" ? "incoming" : "outgoing";
     if (direction === "incoming" && !b.contractorId) {
       res.status(400).json({ error: "المقاول الباطن مطلوب لمستخلصات الباطن" }); return;
@@ -829,7 +876,7 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       contractorId: b.contractorId ? Number(b.contractorId) : null,
       ownerContractId:         b.ownerContractId         ? Number(b.ownerContractId)         : null,
       subcontractorContractId: b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
-      billNumber: String(b.billNumber),
+      billNumber,
       billType: b.billType ?? "interim",
       billDate: b.billDate,
       fromDate: b.fromDate ?? null,

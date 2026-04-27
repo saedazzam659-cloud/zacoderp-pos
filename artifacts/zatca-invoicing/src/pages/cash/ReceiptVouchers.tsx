@@ -12,6 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Sparkles, Loader2 } from "lucide-react";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -37,6 +38,10 @@ export default function ReceiptVouchers() {
   const [panel,   setPanel]   = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
+  // Peek the next code from the central sequence engine. Skip while editing
+  // an existing voucher (we already know its code) and while the panel is
+  // closed so we don't waste a fetch on every list render.
+  const nextCode = useNextSequenceNumber("receipt_voucher", panel && !editing);
   const [acctId,  setAcctId]  = useState("");
   const [postRow,   setPostRow]   = useState<any>(null);
   const [delRow,    setDelRow]    = useState<any>(null);
@@ -258,6 +263,15 @@ export default function ReceiptVouchers() {
           saveDisabled={!form.amount || !form.date}
         >
           <FormGrid>
+            <Field label={t(`${NS}.code`)}>
+              <Input
+                value={editing ? (editing.code ?? "") : (nextCode.number ?? (nextCode.loading ? "..." : t(`${NS}.autoCode`)))}
+                readOnly
+                disabled
+                className="font-mono text-sm bg-muted/30"
+                data-testid="input-receipt-code"
+              />
+            </Field>
             <Field label={t(`${NS}.date`)} required><Input type="date" {...f("date")} /></Field>
             <Field label={t(`${NS}.paymentMethod`)}>
               <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>

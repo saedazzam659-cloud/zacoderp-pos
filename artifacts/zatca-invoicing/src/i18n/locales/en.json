@@ -1511,7 +1511,12 @@
       "purchasing": "Purchasing",
       "inventory": "Inventory",
       "accounting": "Accounting",
-      "tax": "Tax"
+      "tax": "Tax",
+      "pos": "POS",
+      "hr": "Human Resources",
+      "production": "Production & Manufacturing",
+      "contracting": "Contracting Management",
+      "security": "Security & Surveillance"
     },
     "actions": {
       "view": "View",
@@ -1567,7 +1572,10 @@
       "hr_eos": "End of Service",
       "hr_calculators": "HR Calculators",
       "hr_settings": "HR Settings",
-      "hr_face_attendance": "AI Face Attendance"
+      "hr_face_attendance": "AI Face Attendance",
+      "production": "Production & Manufacturing (Dashboard, Orders, Resources)",
+      "contracting": "Contracting Management (Dashboard, Projects, Contractors, Bills)",
+      "security_events": "Security & Surveillance (Events, Notification Rules)"
     }
   },
   "cashCommon": {
@@ -1742,6 +1750,8 @@
   "receiptVouchers": {
     "title": "Receipt Vouchers",
     "subtitle": "Record incoming amounts — cash or bank",
+    "code": "Voucher Code",
+    "autoCode": "Auto",
     "newVoucher": "New Receipt",
     "editVoucher": "Edit Receipt Voucher",
     "newLong": "New Receipt Voucher",
@@ -1827,6 +1837,8 @@
   "paymentVouchers": {
     "title": "Payment Vouchers",
     "subtitle": "Record outgoing amounts — cash or bank",
+    "code": "Voucher Code",
+    "autoCode": "Auto",
     "newVoucher": "New Payment",
     "editVoucher": "Edit Payment Voucher",
     "newLong": "New Payment Voucher",
@@ -2257,6 +2269,12 @@
       "ref": "Reference"
     },
     "tx": {
+      "sales_quotation": "Sales Quotation",
+      "sales_order": "Sales Order",
+      "purchase_order": "Purchase Order",
+      "production_order": "Production Order",
+      "contracting_project": "Contracting Project",
+      "contracting_bill": "Contracting Bill",
       "sales_invoice": "Sales Invoice",
       "sales_return": "Sales Return",
       "purchase_invoice": "Purchase Invoice",
@@ -5424,6 +5442,7 @@
     "orders": "Production Orders",
     "newOrder": "New production order",
     "orderNumber": "Order #",
+    "autoCode": "Auto",
     "title_field": "Title",
     "status": "Status",
     "plannedQty": "Planned qty",
@@ -5775,5 +5794,13 @@
     "emailSent": "Email copy sent",
     "openInInbox": "Open in Inbox",
     "footer": "Supported report types: sales, sales returns, receipt vouchers, payment vouchers, invoices list."
+  },
+  "contracting": {
+    "projects": {
+      "autoCode": "Auto"
+    },
+    "bills": {
+      "autoCode": "Auto"
+    }
   }
 }

@@ -9,6 +9,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -88,10 +89,27 @@ router.post("/", async (req, res) => {
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  // Auto code
-  const existing = await db.select({ id: receiptVouchersTable.id })
-    .from(receiptVouchersTable).where(eq(receiptVouchersTable.companyId, cid));
-  const code = d.code || `RV-${String(existing.length + 1).padStart(4, "0")}`;
+  // Auto code — prefer the configured "receipt_voucher" sequence when no
+  // explicit code was supplied. If no sequence is configured for this tenant
+  // the helper returns null and we fall back to the legacy RV-#### scheme so
+  // existing companies keep working with no setup required.
+  let code: string;
+  if (d.code) {
+    code = String(d.code);
+  } else {
+    const seq = await nextSequenceNumber(cid, "receipt_voucher", {
+      branchId: d.branchId ? parseInt(d.branchId) : null,
+      userId:   (req as any).authUser?.id ?? null,
+      refTable: "receipt_vouchers",
+    });
+    if (seq) {
+      code = seq.number;
+    } else {
+      const existing = await db.select({ id: receiptVouchersTable.id })
+        .from(receiptVouchersTable).where(eq(receiptVouchersTable.companyId, cid));
+      code = `RV-${String(existing.length + 1).padStart(4, "0")}`;
+    }
+  }
 
   const [row] = await db.insert(receiptVouchersTable).values({
     companyId:     cid,

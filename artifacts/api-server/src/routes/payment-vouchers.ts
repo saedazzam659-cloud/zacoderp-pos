@@ -9,6 +9,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission, requireAdminRole } from "../middleware/permissions.js";
+import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -88,9 +89,26 @@ router.post("/", async (req, res) => {
   const cid = resolveCompanyId(req, d.companyId ? parseInt(d.companyId) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
-  const existing = await db.select({ id: paymentVouchersTable.id })
-    .from(paymentVouchersTable).where(eq(paymentVouchersTable.companyId, cid));
-  const code = d.code || `PV-${String(existing.length + 1).padStart(4, "0")}`;
+  // Auto code — prefer the configured "payment_voucher" sequence when no
+  // explicit code was supplied. Falls back to the legacy PV-#### scheme so
+  // tenants without a configured sequence keep working untouched.
+  let code: string;
+  if (d.code) {
+    code = String(d.code);
+  } else {
+    const seq = await nextSequenceNumber(cid, "payment_voucher", {
+      branchId: d.branchId ? parseInt(d.branchId) : null,
+      userId:   (req as any).authUser?.id ?? null,
+      refTable: "payment_vouchers",
+    });
+    if (seq) {
+      code = seq.number;
+    } else {
+      const existing = await db.select({ id: paymentVouchersTable.id })
+        .from(paymentVouchersTable).where(eq(paymentVouchersTable.companyId, cid));
+      code = `PV-${String(existing.length + 1).padStart(4, "0")}`;
+    }
+  }
 
   const [row] = await db.insert(paymentVouchersTable).values({
     companyId:     cid,

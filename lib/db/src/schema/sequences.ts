@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 // Frontend dropdown + backend validation share this list — keep in sync with
 // any TX_TYPES re-export on the API server side.
 export const SEQUENCE_TX_TYPES = [
+  "sales_quotation",
   "sales_invoice",
   "sales_order",
   "sales_return",
@@ -21,6 +22,12 @@ export const SEQUENCE_TX_TYPES = [
   "receipt_voucher",
   "payment_voucher",
   "pos_receipt",
+  // Production & Manufacturing — production_order is already issued by the
+  // backend via nextSequenceNumber, declaring it here closes the type drift.
+  "production_order",
+  // Contracting Management — project codes and progress-bill numbers.
+  "contracting_project",
+  "contracting_bill",
 ] as const;
 
 export type SequenceTxType = typeof SEQUENCE_TX_TYPES[number];

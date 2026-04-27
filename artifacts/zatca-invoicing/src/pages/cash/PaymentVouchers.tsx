@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Sparkles, Loader2 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -37,6 +38,9 @@ export default function PaymentVouchers() {
   const [panel,   setPanel]   = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
+  // Peek the next code from the central sequence engine while the form panel
+  // is open and we are creating (not editing) a voucher.
+  const nextCode = useNextSequenceNumber("payment_voucher", panel && !editing);
   const [acctId,  setAcctId]  = useState("");
   const [postRow,   setPostRow]   = useState<any>(null);
   const [delRow,    setDelRow]    = useState<any>(null);
@@ -213,6 +217,15 @@ export default function PaymentVouchers() {
           saveDisabled={!form.amount || !form.date}
         >
           <FormGrid>
+            <Field label={t(`${NS}.code`)}>
+              <Input
+                value={editing ? (editing.code ?? "") : (nextCode.number ?? (nextCode.loading ? "..." : t(`${NS}.autoCode`)))}
+                readOnly
+                disabled
+                className="font-mono text-sm bg-muted/30"
+                data-testid="input-payment-code"
+              />
+            </Field>
             <Field label={t(`${NS}.date`)} required><Input type="date" {...f("date")} /></Field>
             <Field label={t(`${NS}.paymentMethod`)}>
               <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>

@@ -10,12 +10,15 @@ function authHeaders(): Record<string, string> {
 }
 
 export type SequenceTxType =
+  | "sales_quotation"
   | "sales_invoice" | "sales_return" | "sales_order"
   | "purchase_invoice" | "purchase_return" | "purchase_order"
   | "journal_entry"
   | "stock_transfer" | "stock_adjustment" | "stock_count"
   | "receipt_voucher" | "payment_voucher"
-  | "pos_receipt";
+  | "pos_receipt"
+  | "production_order"
+  | "contracting_project" | "contracting_bill";
 
 export interface PeekResult {
   number: string | null;
