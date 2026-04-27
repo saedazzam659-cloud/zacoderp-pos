@@ -381,6 +381,26 @@ test("tool-history dialog CSV export: filename, BOM, headers, seeded runs, and e
   await expect.poll(() => csvCaptures.length, { timeout: 15_000 }).toBe(1);
   const csvCapture = csvCaptures[0];
 
+  // ─── Toast assertion — success title without the truncation suffix ─────
+  // Inverse of the toast assertion in the sibling truncated test below:
+  // when the export was NOT clipped (we seeded exactly 2 rows, well under
+  // TOOL_HISTORY_CSV_ROW_CAP=1000), the toast description must NOT carry
+  // the "تم الاقتطاع …" suffix — otherwise a future regression that
+  // simplifies the toast condition (e.g. dropping the `truncated` guard
+  // so the suffix renders whenever `rowCap > 0`, since the server always
+  // emits the X-Csv-Row-Cap header) would silently scare every operator
+  // into thinking small exports were clipped. We first wait for the
+  // success title to render (toolHistoryCsvMut.onSuccess in
+  // AICompanyFix.tsx ~line 1459) so the negative assertion can't
+  // spuriously pass just because the toast hasn't appeared yet, then
+  // pin the absence of any element whose text contains "تم الاقتطاع"
+  // (matching the substring is enough — both branches of the suffix
+  // template start with this phrase). Toast lives at document scope
+  // (Radix portal under <Toaster /> in App.tsx), so we query from
+  // `page` not the dialog.
+  await expect(page.getByText("تم تنزيل ملف CSV").first()).toBeVisible();
+  await expect(page.getByText("تم الاقتطاع")).not.toBeVisible();
+
   // ─── Response headers — Content-Type and the filename pattern ─────────
   // sendCsv() in admin.ts sets `text/csv; charset=utf-8`. Comparing
   // lowercased substrings keeps the assertion tolerant of harmless
