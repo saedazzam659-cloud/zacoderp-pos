@@ -1,7 +1,7 @@
-// E2E test for the SuperAdmin maintenance-history "تصدير CSV" button on
-// /admin/ai-fix in the zatca-invoicing artifact (task #99).
+// E2E tests for the SuperAdmin maintenance-history "تصدير CSV" button on
+// /admin/ai-fix in the zatca-invoicing artifact (tasks #99 and #106).
 //
-// Why this test exists:
+// Why these tests exist:
 //   /admin/ai-fix has three "تصدير CSV" / "تنزيل CSV" buttons. The
 //   email-history one is covered by email-history-csv-export.spec.ts and the
 //   recovered-tools one is covered by recovered-tools-panel.spec.ts. The
@@ -12,7 +12,7 @@
 //   filter handling would slip through unnoticed. This spec mirrors the
 //   capture pattern from the other two.
 //
-// What this verifies:
+// What test 1 (task #99) verifies — no-filter happy path:
 //   1. Clicking the maintenance-history "تصدير CSV" button (anchored by its
 //      unique title attribute, since all three CSV buttons share the same
 //      visible label) downloads a file whose Content-Type is
@@ -30,6 +30,23 @@
 //   5. The export itself writes exactly one `export_csv` audit row scoped
 //      to the test company under entityType='maintenance_history' (the
 //      contract documented inline in admin.ts ~line 4429).
+//
+// What test 2 (task #106) verifies — filter pass-through:
+//   The CSV button is documented to forward the four on-screen filters
+//   (from / to / action / entityType) to the server via `historyFilterParams()`
+//   so the file always matches what the admin saw. A regression that drops
+//   one of those params would leave the audit file silently divergent from
+//   the visible table. We exercise both directions:
+//     - Variant A (narrow): set all four filters to a window that pinpoints
+//       the seeded row only (from=TODAY, to=TODAY, action=fix,
+//       entityType=journal_pending). Expect exactly one data row in the body
+//       and all four query params present on the request URL with the
+//       on-screen values.
+//     - Variant B (flip): clear action+entityType and shift the date window
+//       to TOMORROW so the seeded row falls out. Expect zero data rows in
+//       the body, `from`/`to` present with the new dates, and `action`/
+//       `entityType` ABSENT from the URL — proving the helper omits empty
+//       params instead of forwarding stale or blank values.
 //
 // Why we read the CSV bytes through a route handler instead of
 // `page.waitForEvent('download')`:
@@ -101,6 +118,13 @@ const seededAuditIds: number[]      = [];
 // Captured just before the export click so the audit-row lookup that
 // confirms the export_csv row was written can scope its query to this run.
 let exportAuditAnchor: Date | null  = null;
+// Captured from the seeded audit row's createdAt (defaultNow() in PG, UTC)
+// so the filter-pass-through test (task #106) can compute the date window
+// that contains the seed without re-reading wall-clock time at assertion
+// time. Anchoring on the seed's own timestamp eliminates a flake where a
+// run crossing UTC midnight between seed insertion and filter assertion
+// would compute a "TODAY" that no longer contains the seed.
+let seedCreatedAt: Date | null      = null;
 
 // ─── Setup: create company, sa_session, and a seed audit row ───────────────
 test.beforeAll(async () => {
@@ -190,8 +214,12 @@ test.beforeAll(async () => {
       entityId:   null,
       metadata:   SEED_METADATA,
     })
-    .returning({ id: auditLogTable.id });
+    .returning({ id: auditLogTable.id, createdAt: auditLogTable.createdAt });
   seededAuditIds.push(audit.id);
+  // Pin the seed's wall-clock so the filter-pass-through test (task #106)
+  // can derive its date window from it instead of re-reading Date.now() at
+  // assertion time — see the seedCreatedAt declaration for the rationale.
+  seedCreatedAt = audit.createdAt;
 });
 
 // ─── Cleanup: strict-by-PK so a crash never nukes unrelated audit history ──
@@ -204,6 +232,13 @@ test.afterAll(async () => {
       .where(inArray(auditLogTable.id, seededAuditIds));
   }
   if (testCompanyId !== null) {
+    // Also strip every audit row scoped to our throwaway test company —
+    // catches the export_csv rows that each test's CSV click writes
+    // (the second test, task #106, fires two such clicks). Safe because
+    // the company was created fresh in beforeAll and is exclusively ours.
+    await db
+      .delete(auditLogTable)
+      .where(eq(auditLogTable.companyId, testCompanyId));
     await db
       .delete(companiesTable)
       .where(eq(companiesTable.id, testCompanyId));
@@ -402,4 +437,183 @@ test("maintenance-history CSV export: filename, BOM, headers, seeded row, and ex
   // Track the id so afterAll can strip it by PK and the dev DB doesn't
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);
+});
+
+// ─── Task #106: filter pass-through ─────────────────────────────────────────
+// The maintenance-history CSV mutation in AICompanyFix.tsx (`historyCsvMut`)
+// builds the request URL via the shared `historyFilterParams()` helper. That
+// helper appends `from`, `to`, `action`, and `entityType` only when the
+// matching React state is non-empty — so the file should always reflect the
+// admin's on-screen filter state, with absent params for any cleared filter.
+// The previous test only proves the no-filter path; this one drives the four
+// filter inputs and asserts both the request URL shape and the body shape
+// twice, so a regression that drops one of those four params from the CSV
+// URL (which would silently desync the audit file from the visible table)
+// would fail here.
+test("maintenance-history CSV export: forwards on-screen filters (narrow + flip)", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Same buffered-bytes capture pattern as the happy-path test — the page
+  // JS drains Playwright's response body via .blob(), so we refetch
+  // upstream and snapshot URL + headers + body for each CSV request.
+  // Captures here pair the request URL with the body so each variant's
+  // assertions can pull both from the same network record.
+  const csvCaptures: { url: string; body: Buffer }[] = [];
+  await page.route("**/api/admin/maintenance/history**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    const upstream = await route.fetch();
+    const body     = await upstream.body();
+    csvCaptures.push({ url: request.url(), body });
+    await route.fulfill({ response: upstream, body });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: PAGE_HEADING_RE })).toBeVisible();
+
+  // Pick the same seeded company. Anchored on TEST_TAG which is unique to
+  // this run (the company's nameAr carries the full tag).
+  const companyTrigger = page.locator('button:has-text("— اختر الشركة —")').first();
+  await companyTrigger.click();
+  await expect(companyTrigger).toHaveAttribute("data-state", "open");
+  await page.locator('[role="option"]').filter({ hasText: TEST_TAG }).first().click();
+
+  // Open the history accordion so the JSON history feed AND the facets feed
+  // both fire (both are gated on `historyOpen`). Without facets resolving
+  // the action/entityType dropdowns wouldn't surface our seeded values.
+  await page.getByRole("button", { name: "سجل الإصلاحات" }).first().click();
+
+  // Sync barrier: wait for the seeded row to surface on screen so we know
+  // the JSON history fetch has resolved against the now-selected
+  // companyId. The username cell renders SEED_USERNAME verbatim (no
+  // truncation), so anchoring on it is stable.
+  await expect(page.getByText(SEED_USERNAME).first()).toBeVisible();
+
+  // Scope every filter-input lookup to the maintenance-history accordion.
+  // The page also renders an email-history panel above with its own
+  // date inputs sharing the same Arabic labels ("من تاريخ" / "إلى تاريخ"),
+  // so an unscoped locator would be ambiguous. The maintenance accordion
+  // is the unique `.border.rounded` div whose header contains
+  // "سجل الإصلاحات".
+  const maintPanel = page.locator("div.border.rounded").filter({
+    has: page.locator('button:has-text("سجل الإصلاحات")'),
+  });
+  const fromInput        = maintPanel.locator('input[type="date"]').nth(0);
+  const toInput          = maintPanel.locator('input[type="date"]').nth(1);
+  const actionTrigger    = maintPanel.locator('button:has-text("كل الإجراءات")').first();
+  const entityTypeTrigger = maintPanel.locator('button:has-text("كل الفئات")').first();
+  const resetBtn         = maintPanel.getByRole("button", { name: "مسح الفلاتر" });
+
+  // The server parses both `from` and `to` as UTC midnight, and the seed
+  // row's createdAt comes from PG's defaultNow() (also UTC). Anchor TODAY
+  // on the seed row's actual createdAt (captured in beforeAll) instead of
+  // wall-clock Date.now() at assertion time — that way a run that crosses
+  // UTC midnight between insertion and the test still computes a window
+  // that contains the seed.
+  const SEED_DAY = seedCreatedAt!.toISOString().slice(0, 10);
+  const NEXT_DAY = new Date(seedCreatedAt!.getTime() + 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+
+  // ─── Variant A: narrow all four filters down to the seeded row ─────────
+  await fromInput.fill(SEED_DAY);
+  await toInput.fill(SEED_DAY);
+
+  // Action dropdown — "إصلاح" is the Arabic label for action='fix'
+  // (HISTORY_ACTION_LABELS_AR in AICompanyFix.tsx). The option only
+  // materialises once the facets fetch has returned `fix` for our company,
+  // so the click below auto-waits on the materialised <option>.
+  await actionTrigger.click();
+  await page.locator('[role="option"]').filter({ hasText: "إصلاح" }).first().click();
+
+  // EntityType dropdown — "قيود معلّقة" is the Arabic label for
+  // entityType='journal_pending'. Same rationale as the action click.
+  await entityTypeTrigger.click();
+  await page.locator('[role="option"]').filter({ hasText: "قيود معلّقة" }).first().click();
+
+  // Sync barrier: wait for the on-screen table to settle to exactly one row
+  // matching SEED_USERNAME — proves React state for all four filters has
+  // propagated AND the filtered JSON re-fetch landed before we click
+  // export. The export reads the very same React state, so this barrier
+  // is the cheapest way to guarantee the URL we capture below was built
+  // from the post-narrow filter state, not the pre-narrow state.
+  await expect(maintPanel.locator(`tbody tr:has-text("${SEED_USERNAME}")`)).toHaveCount(1);
+
+  const csvButton = page.getByTitle(
+    "تنزيل سجل الإصلاحات الكامل كملف CSV (يحترم الفلاتر أدناه)",
+  );
+  await csvButton.click();
+  await expect.poll(() => csvCaptures.length, { timeout: 15_000 }).toBe(1);
+  const variantA = csvCaptures[0];
+
+  // All four filter values must be on the wire, exactly as set on screen.
+  // A regression that dropped any one of them (e.g. forgot to append the
+  // entityType segment) would surface as a `null` here and fail loud.
+  const variantAUrl = new URL(variantA.url);
+  expect(variantAUrl.searchParams.get("from")).toBe(SEED_DAY);
+  expect(variantAUrl.searchParams.get("to")).toBe(SEED_DAY);
+  expect(variantAUrl.searchParams.get("action")).toBe("fix");
+  expect(variantAUrl.searchParams.get("entityType")).toBe("journal_pending");
+
+  // Body — exactly one data row (the seed), strip BOM before splitting.
+  // The window action=fix + entityType=journal_pending + SEED_DAY pinpoints
+  // our seed in the audit_log; no other row in the dev DB shares that
+  // combination scoped to our brand-new test company.
+  const aLines = variantA.body
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .split("\r\n")
+    .filter(Boolean);
+  expect(aLines).toHaveLength(2); // header + 1 data row
+  expect(aLines[1]).toContain(SEED_USERNAME);
+
+  // ─── Variant B: clear action+entityType, push date window forward ──────
+  // "مسح الفلاتر" resets all four filters at once (date inputs blank,
+  // both Selects back to "__all"). We then re-fill ONLY the date inputs
+  // with NEXT_DAY (the day after the seed) so the URL has from+to but NOT
+  // action/entityType — this exercises both directions of the helper's
+  // append-when-non-empty rule.
+  await resetBtn.click();
+  // The reset button disappears the moment all filters are empty; waiting
+  // for it to drop out is the cheapest barrier to confirm the click
+  // committed all four state setters before we drive the next inputs.
+  await expect(resetBtn).toHaveCount(0);
+
+  await fromInput.fill(NEXT_DAY);
+  await toInput.fill(NEXT_DAY);
+
+  // Sync barrier: the NEXT_DAY window matches no audit row (the seed and
+  // any export_csv rows from variant A are stamped on SEED_DAY), so the
+  // panel must flip to its empty-state copy before we click export.
+  await expect(
+    maintPanel.getByText("لا توجد عمليات صيانة مسجّلة لهذه الشركة بعد."),
+  ).toBeVisible();
+
+  await csvButton.click();
+  await expect.poll(() => csvCaptures.length, { timeout: 15_000 }).toBe(2);
+  const variantB = csvCaptures[1];
+
+  // `from` and `to` must reflect the on-screen NEXT_DAY values; `action`
+  // and `entityType` must be ABSENT (URLSearchParams.get returns null when
+  // a key is missing). This proves `historyFilterParams()` correctly
+  // omits empty filters instead of forwarding stale or blank strings.
+  const variantBUrl = new URL(variantB.url);
+  expect(variantBUrl.searchParams.get("from")).toBe(NEXT_DAY);
+  expect(variantBUrl.searchParams.get("to")).toBe(NEXT_DAY);
+  expect(variantBUrl.searchParams.get("action")).toBeNull();
+  expect(variantBUrl.searchParams.get("entityType")).toBeNull();
+
+  // Body — header line only, zero data rows. The BOM is emitted even on
+  // an empty result so Excel still opens the file in UTF-8 mode.
+  const bBuf = variantB.body;
+  expect(bBuf[0]).toBe(0xEF);
+  expect(bBuf[1]).toBe(0xBB);
+  expect(bBuf[2]).toBe(0xBF);
+  const bLines = bBuf
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .split("\r\n")
+    .filter(Boolean);
+  expect(bLines).toHaveLength(1); // header only — no data rows
 });
