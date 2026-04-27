@@ -7,6 +7,7 @@ import { randomUUID } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
 import { resolveBearerToken } from "../middleware/auth.js";
 import { runEndOfSessionHooks, loadSessionSettings } from "../lib/workSessionReport.js";
+import { listSessionsForUser } from "./sessions.js";
 
 const router = Router();
 
@@ -232,6 +233,31 @@ router.post("/login", async (req, res) => {
     .from(userBranchesTable)
     .where(eq(userBranchesTable.userId, user.id));
 
+  // Manual sessions (admin-managed entity, see routes/sessions.ts).
+  // The client uses this list to drive the post-login session picker:
+  //   length === 1 → auto-pick;  > 1 → modal;  0 → "no session" or
+  //   permission-gated quick-create. `currentSessionId` is the persisted
+  //   selection (cleared if it points to a session no longer assigned).
+  let manualSessions: Array<{ id: number; name: string; status: string }> = [];
+  let currentSessionId: number | null = null;
+  if (user.companyId) {
+    try {
+      manualSessions = await listSessionsForUser(user.id, user.companyId);
+      const persisted = (user as any).currentSessionId ?? null;
+      currentSessionId = persisted && manualSessions.find(s => s.id === persisted)
+        ? persisted
+        : null;
+      if (persisted && currentSessionId == null) {
+        // Self-heal stale persisted selection
+        await db.update(usersTable).set({ currentSessionId: null })
+          .where(eq(usersTable.id, user.id));
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[auth] failed to load manual sessions", e);
+    }
+  }
+
   res.json({
     token: sessionToken,
     sessionId,
@@ -250,6 +276,8 @@ router.post("/login", async (req, res) => {
       company,
       subscription,
     },
+    manualSessions,
+    currentSessionId,
   });
 });
 

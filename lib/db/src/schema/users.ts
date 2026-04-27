@@ -40,6 +40,11 @@ export const usersTable = pgTable("users", {
   notifyMaintenanceSeverity: text("notify_maintenance_severity").notNull().default("critical"),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
+  // ID of the user's currently-selected manual session (FK to sessions.id, see
+  // schema/sessions.ts). Soft reference (no FK constraint) to avoid a circular
+  // import. Cleared if the user is removed from the session or the session is
+  // archived. Persisted server-side so the picker selection survives reload.
+  currentSessionId: integer("current_session_id"),
   lastLoginAt: timestamp("last_login_at"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),

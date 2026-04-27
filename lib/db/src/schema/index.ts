@@ -36,3 +36,4 @@ export * from "./securityEvents";
 export * from "./securityEventMedia";
 export * from "./securityNotificationRules";
 export * from "./voiceAssistant";
+export * from "./sessions";

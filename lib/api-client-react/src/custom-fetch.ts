@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _sessionIdGetter: (() => string | number | null) | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +43,21 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Register a getter that supplies the user's currently-selected manual
+ * session id. Before every fetch the getter is invoked; when it returns a
+ * positive number/string, an `x-session-id: <value>` header is attached.
+ *
+ * The server-side validation for this header lives in extractAuth — it is
+ * only honoured when it matches users.current_session_id, so a stale or
+ * tampered client value is silently ignored (operations get sessionId=null).
+ *
+ * Pass `null` to clear the getter.
+ */
+export function setSessionIdGetter(getter: (() => string | number | null) | null): void {
+  _sessionIdGetter = getter;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -356,6 +372,17 @@ export async function customFetch<T = unknown>(
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }
+  }
+
+  // Attach the user's currently-selected manual session id, if any.
+  // Caller-supplied header always wins so callers can opt out per request.
+  if (_sessionIdGetter && !headers.has("x-session-id")) {
+    try {
+      const sid = _sessionIdGetter();
+      if (sid != null && sid !== "" && Number(sid) > 0) {
+        headers.set("x-session-id", String(sid));
+      }
+    } catch { /* getter must never break a request */ }
   }
 
   const requestInfo = { method, url: resolveUrl(input) };

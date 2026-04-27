@@ -112,6 +112,9 @@ router.post("/", async (req, res) => {
     description:   d.description   ?? null,
     notes:         d.notes         ?? null,
     status:        "draft",
+    // Manual session (admin-created) the user is currently working under,
+    // resolved by extractAuth from the trusted x-session-id header.
+    sessionId:     (req as any).manualSessionId ?? null,
   }).returning();
   res.status(201).json(row);
 });

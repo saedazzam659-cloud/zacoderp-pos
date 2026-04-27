@@ -15,6 +15,7 @@ import AuditLog from "@/pages/admin/AuditLog";
 import WorkSessions from "@/pages/WorkSessions";
 import WorkSessionSettings from "@/pages/WorkSessionSettings";
 import VoiceAssistantSettings from "@/pages/VoiceAssistantSettings";
+import SessionsAdmin from "@/pages/SessionsAdmin";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
@@ -270,6 +271,9 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/work-sessions/settings" component={WorkSessionSettings} />}
             {!isSuperAdmin && <Route path="/work-sessions" component={WorkSessions} />}
             {!isSuperAdmin && <Route path="/voice-assistant/settings" component={VoiceAssistantSettings} />}
+            {/* Manual sessions: admin-managed entity (separate from per-login work_sessions log).
+                Gated against the "sessions" permission key (admin & superadmin pass automatically). */}
+            {!isSuperAdmin && <PermRoute path="/sessions" module="sessions" component={SessionsAdmin} />}
             <Route path="/notifications" component={Notifications} />
 
             {/* Company user routes */}

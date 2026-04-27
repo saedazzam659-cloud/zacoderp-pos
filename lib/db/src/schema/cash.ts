@@ -73,6 +73,8 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
   salesRepId:    integer("sales_rep_id"),
   journalEntryId: integer("journal_entry_id"),
+  // Manual (admin-created) session this voucher was recorded under, if any.
+  sessionId:     integer("session_id"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -99,6 +101,8 @@ export const paymentVouchersTable = pgTable("payment_vouchers", {
   notes:         text("notes"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
   journalEntryId: integer("journal_entry_id"),
+  // Manual (admin-created) session this voucher was recorded under, if any.
+  sessionId:     integer("session_id"),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
 });
 

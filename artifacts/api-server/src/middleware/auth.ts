@@ -52,6 +52,7 @@ export async function resolveBearerToken(token: string): Promise<{
       companyId: usersTable.companyId, isActive: usersTable.isActive,
       permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email, sessionId: usersTable.sessionId,
+      currentSessionId: usersTable.currentSessionId,
     })
     .from(usersTable)
     .where(eq(usersTable.sessionToken, token));
@@ -75,6 +76,7 @@ export async function resolveBearerToken(token: string): Promise<{
       companyId: usersTable.companyId, isActive: usersTable.isActive,
       permissions: usersTable.permissions, viewAllBranches: usersTable.viewAllBranches,
       email: usersTable.email,
+      currentSessionId: usersTable.currentSessionId,
     })
     .from(usersTable)
     .where(eq(usersTable.id, s.userId));
@@ -118,6 +120,19 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     viewAllBranches: user.viewAllBranches,
     branchIds: links.map(l => l.branchId),
   };
+
+  // Manual-session header (`x-session-id`). Honoured only when the value
+  // matches the user's persisted currentSessionId — that field is set via
+  // POST /api/sessions/me/select after the server has already verified the
+  // user is assigned to (and the session is active for) that ID. This makes
+  // header-trust safe without re-querying session_users on every request.
+  const headerVal = (req.headers["x-session-id"] as string | undefined) ?? "";
+  const headerSid = parseInt(headerVal, 10);
+  if (Number.isFinite(headerSid) && headerSid > 0 && (user as any).currentSessionId === headerSid) {
+    (req as any).manualSessionId = headerSid;
+  } else {
+    (req as any).manualSessionId = null;
+  }
 
   // Refresh SA session lastSeenAt (best-effort).
   if (resolved.origin === "superadmin" && resolved.saSessionRowId) {

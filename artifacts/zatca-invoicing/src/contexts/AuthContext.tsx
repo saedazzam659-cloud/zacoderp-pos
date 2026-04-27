@@ -1,10 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { setAuthTokenGetter } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setSessionIdGetter } from "@workspace/api-client-react";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Register auth token getter for the generated API client so all hooks automatically include Bearer token
 setAuthTokenGetter(() => localStorage.getItem("zatca_token"));
+// Register a manual-session header so every generated API call carries the
+// user's currently-selected session id. Server only honours it when it matches
+// the persisted users.current_session_id, so a stale localStorage value is
+// silently ignored — invariant lives in middleware/auth.ts (extractAuth).
+setSessionIdGetter(() => {
+  const v = localStorage.getItem("zatca_manual_session_id");
+  return v ? v : null;
+});
 
 export interface AuthUser {
   id: number;
@@ -39,6 +47,17 @@ export interface AuthUser {
   subscription?: any;
 }
 
+/**
+ * Lightweight summary of a manual (admin-managed) session the user can pick.
+ * Returned by /api/auth/login and /api/sessions/me. The server treats only
+ * `active` ones as selectable.
+ */
+export interface ManualSessionSummary {
+  id: number;
+  name: string;
+  status: string;
+}
+
 interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
@@ -54,6 +73,17 @@ interface AuthContextType {
    */
   setSession: (args: { token: string; sessionId?: string | null; user: AuthUser }) => void;
   isAuthenticated: boolean;
+  // ── Manual sessions (separate from the per-login work_sessions log) ──
+  /** All active sessions the user is assigned to. */
+  manualSessions: ManualSessionSummary[];
+  /** Currently-selected session id (mirrors localStorage + users.current_session_id). */
+  currentSessionId: number | null;
+  /** Persist a new selection (or null to clear). Validated server-side. */
+  selectManualSession: (sessionId: number | null) => Promise<void>;
+  /** Quick-create a session for self (perm-gated server-side). */
+  quickCreateManualSession: (name: string) => Promise<void>;
+  /** Refresh the assigned-sessions list from /api/sessions/me. */
+  refreshManualSessions: () => Promise<void>;
 }
 
 export interface RegisterData {
@@ -79,12 +109,26 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 const TOKEN_KEY = "zatca_token";
 const SESSION_KEY = "zatca_session";
+const MANUAL_SESSION_KEY = "zatca_manual_session_id";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [loading, setLoading] = useState(true);
+  const [manualSessions, setManualSessions] = useState<ManualSessionSummary[]>([]);
+  const [currentSessionId, setCurrentSessionIdState] = useState<number | null>(() => {
+    const v = localStorage.getItem(MANUAL_SESSION_KEY);
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keep localStorage in lock-step so setSessionIdGetter() reads stay correct.
+  const persistManualSession = useCallback((id: number | null) => {
+    setCurrentSessionIdState(id);
+    if (id == null) localStorage.removeItem(MANUAL_SESSION_KEY);
+    else localStorage.setItem(MANUAL_SESSION_KEY, String(id));
+  }, []);
 
   const apiFetch = useCallback(async (path: string, opts: RequestInit = {}) => {
     const t = localStorage.getItem(TOKEN_KEY);
@@ -104,6 +148,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(SESSION_KEY);
         setUser(null);
         setToken(null);
+        // Force-expiry path: also clear manual-session state so a stale id
+        // can't bleed into the next login attempt before login() repopulates.
+        setManualSessions([]);
+        persistManualSession(null);
         return;
       }
       const data = await res.json();
@@ -114,6 +162,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(SESSION_KEY);
         setUser(null);
         setToken(null);
+        setManualSessions([]);
+        persistManualSession(null);
         return;
       }
       setUser(data);
@@ -153,6 +203,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(SESSION_KEY, data.sessionId);
     setToken(data.token);
     setUser(data.user);
+    setManualSessions(Array.isArray(data.manualSessions) ? data.manualSessions : []);
+    persistManualSession(
+      typeof data.currentSessionId === "number" ? data.currentSessionId : null,
+    );
   };
 
   const logout = async () => {
@@ -161,6 +215,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(SESSION_KEY);
     setToken(null);
     setUser(null);
+    setManualSessions([]);
+    persistManualSession(null);
   };
 
   const register = async (data: RegisterData) => {
@@ -184,8 +240,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   }, []);
 
+  const refreshManualSessions = useCallback(async () => {
+    if (!localStorage.getItem(TOKEN_KEY)) return;
+    try {
+      const res = await apiFetch("/sessions/me");
+      if (!res.ok) return;
+      const data = await res.json();
+      const list: ManualSessionSummary[] = Array.isArray(data?.sessions) ? data.sessions : [];
+      setManualSessions(list);
+      const sid = typeof data?.currentSessionId === "number" ? data.currentSessionId : null;
+      // Server self-heals stale selections — mirror that locally.
+      persistManualSession(sid);
+    } catch { /* network / JSON noise — keep current state */ }
+  }, [apiFetch, persistManualSession]);
+
+  const selectManualSession = useCallback(async (sessionId: number | null) => {
+    const res = await apiFetch("/sessions/me/select", {
+      method: "POST",
+      body: JSON.stringify({ sessionId }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error ?? "تعذر تحديد الجلسة");
+    }
+    persistManualSession(sessionId);
+  }, [apiFetch, persistManualSession]);
+
+  const quickCreateManualSession = useCallback(async (name: string) => {
+    const res = await apiFetch("/sessions/me/quick-create", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error ?? "تعذر إنشاء الجلسة");
+    // Server auto-selected the new session — sync state.
+    await refreshManualSessions();
+  }, [apiFetch, refreshManualSessions]);
+
+  // When the user (re)appears (initial /me succeeded after a reload), pull
+  // fresh manual sessions in case the assignment changed in another tab.
+  useEffect(() => {
+    if (user) void refreshManualSessions();
+  }, [user, refreshManualSessions]);
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, register, setUser, setSession, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{
+      user, token, loading,
+      login, logout, register,
+      setUser, setSession,
+      isAuthenticated: !!user,
+      manualSessions, currentSessionId,
+      selectManualSession, quickCreateManualSession, refreshManualSessions,
+    }}>
       {children}
     </AuthContext.Provider>
   );

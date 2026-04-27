@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
-  Factory, Cog, ScanFace, Store, ShieldAlert,
+  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,8 @@ import { NotificationBell } from "@/components/NotificationBell";
 import SessionCountdown from "@/components/SessionCountdown";
 import ScreenAssistant from "@/components/ScreenAssistant";
 import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
+import SessionPickerModal from "@/components/SessionPickerModal";
+import SessionIndicator from "@/components/SessionIndicator";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
@@ -176,8 +178,15 @@ const dashboardSubNav: NavDef[] = [
   // Work-sessions: visible to every company user (each sees their own
   // sessions; admins see the whole company). No requireAdmin gate.
   // Hidden from superadmin entirely — superadmin has no companyId so the
-  // feature does not apply to them.
+  // feature does not apply to them. Renamed in the i18n catalog to
+  // "سجل الجلسات" / "Session Log" to disambiguate from the new manual
+  // sessions admin page below — the route + behaviour are unchanged.
   { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
+  // Manual Sessions admin: NEW entity (separate from the per-login
+  // work_sessions log above). Admin creates sessions and assigns users;
+  // each user picks one at login and operations are tagged with it.
+  // Gated on the new "sessions" perm key — admins always pass.
+  { nameKey: "nav.sessionsAdmin",   href: "/sessions",            icon: Briefcase, permKey: "sessions", requireAdmin: true },
   // Voice Assistant — admin-only screen for company-wide voice activation,
   // AI model + a recent-commands log. Hidden from superadmin (no companyId).
   { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
@@ -1583,6 +1592,11 @@ function TopBar({
           </Button>
           <NotificationBell />
           <SessionCountdown />
+          {/* Manual-session indicator: shows the user's currently-selected
+              session (admin-managed entity) and lets them switch on the fly.
+              Self-hides when the user has no sessions assigned. Distinct from
+              SessionCountdown which tracks the per-login work_sessions clock. */}
+          <SessionIndicator />
           <div className="h-5 w-px bg-border mx-1" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1842,6 +1856,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         />
         <main className="flex-1 p-4 sm:p-6 md:p-8 bg-muted/30">{children}</main>
       </div>
+
+      {/* Manual-session picker: opens once per login when the user has 0 or
+          >1 assigned sessions; auto-selects silently when there's exactly 1.
+          Mounted globally so the prompt appears regardless of which page the
+          user lands on after login. */}
+      {!isSuperAdmin && <SessionPickerModal />}
 
       {/* Global AI assistant — floating widget rendered on every authenticated
           screen. The component itself self-hides when the user is not

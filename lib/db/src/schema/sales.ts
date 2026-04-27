@@ -47,6 +47,9 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   zatcaWarningMessages:  text("zatca_warning_messages"),
   zatcaAiSuggestion:     text("zatca_ai_suggestion"),
   posSessionId:   integer("pos_session_id"),
+  // Manual (admin-created) session this invoice was recorded under, if any.
+  // Soft reference to sessions.id (kept nullable; no FK to allow purging).
+  sessionId:      integer("session_id"),
   createdById:    integer("created_by_id"),
   // Sales rep + commission snapshot (commissionPct copied from rep at save time
   // so historical invoices keep their original % even if the rep's % changes)
@@ -104,6 +107,8 @@ export const salesReturnsTable = pgTable("sales_returns", {
   priceIncludesVat: boolean("price_includes_vat").notNull().default(false),
   status:       text("status").notNull().default("draft"),
   notes:        text("notes"),
+  // Manual (admin-created) session this return was recorded under, if any.
+  sessionId:    integer("session_id"),
   salesRepId:         integer("sales_rep_id").references(() => salesRepsTable.id),
   cogsAccountId:      integer("cogs_account_id").references(() => accountsTable.id),
   inventoryAccountId: integer("inventory_account_id").references(() => accountsTable.id),

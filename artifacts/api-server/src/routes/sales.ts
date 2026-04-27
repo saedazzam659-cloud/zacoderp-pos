@@ -429,6 +429,10 @@ router.post("/sales-invoices", async (req, res) => {
       priceIncludesVat: asBool(priceIncludesVat),
       status: "draft", notes: notes || null,
       posSessionId: null, // set below after validation
+      // Manual session (admin-created) the user is currently working under,
+      // resolved by extractAuth from the trusted x-session-id header. Null when
+      // the user is operating without a manual session.
+      sessionId: (req as any).manualSessionId ?? null,
       createdById:  req.authUser?.id ?? null,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
@@ -984,6 +988,9 @@ router.post("/sales-returns", async (req, res) => {
       discountAmount: discR.toFixed(2),
       priceIncludesVat: priceIncludesVat === true || priceIncludesVat === "true",
       status: "draft", notes: notes || null,
+      // Manual session (admin-created) the user is currently working under,
+      // resolved by extractAuth from the trusted x-session-id header.
+      sessionId: (req as any).manualSessionId ?? null,
       salesRepId:         resolvedRepId,
       cogsAccountId:      cogsAccountId      ? Number(cogsAccountId)      : null,
       inventoryAccountId: inventoryAccountId ? Number(inventoryAccountId) : null,
