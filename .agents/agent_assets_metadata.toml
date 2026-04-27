@@ -1,5 +1,16 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "lEsmSW8A0Kwo5ygI3N-f-"
+uri = "file://artifacts/install-guide-video/public/images/local-server.png"
+type = "image"
+title = "Desktop PC illustration"
+
+[[generated]]
+id = "c5OM8cbGfVMb8e0AgyLq5"
+uri = "file://artifacts/install-guide-video/public/images/cloud-server.png"
+type = "image"
+title = "Cloud server rack illustration"
 
 [[outputs]]
 id = "ZijkzvPyt1HNWuXO3Wk_d"

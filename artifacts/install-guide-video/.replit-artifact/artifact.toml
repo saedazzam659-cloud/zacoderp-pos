@@ -1,0 +1,31 @@
+kind = "video"
+previewPath = "/install-guide-video/"
+title = "دليل تركيب نظام زاتكا - فيديو"
+version = "1.0.0"
+id = "artifacts/install-guide-video"
+router = "path"
+
+[[integratedSkills]]
+name = "video-js"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/install-guide-video/" ]
+localPort = 18924
+
+[services.development]
+run = "pnpm --filter @workspace/install-guide-video run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/install-guide-video", "run", "build" ]
+publicDir = "artifacts/install-guide-video/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18924"
+BASE_PATH = "/install-guide-video/"

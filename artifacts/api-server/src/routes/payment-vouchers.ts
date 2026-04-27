@@ -102,7 +102,7 @@ router.post("/", async (req, res) => {
       refTable: "payment_vouchers",
     });
     if (seq) {
-      code = seq.number;
+      code = seq;
     } else {
       const existing = await db.select({ id: paymentVouchersTable.id })
         .from(paymentVouchersTable).where(eq(paymentVouchersTable.companyId, cid));

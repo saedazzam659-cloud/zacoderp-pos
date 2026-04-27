@@ -168,7 +168,7 @@ router.post("/projects", async (req, res) => {
         refTable: "contracting_projects",
       });
       if (seq) {
-        code = seq.number;
+        code = seq;
       } else {
         res.status(400).json({ error: "كود المشروع مطلوب (لا يوجد مسلسل مهيأ لمشاريع المقاولات)" });
         return;
@@ -829,7 +829,7 @@ router.post("/projects/:projectId/bills", async (req, res) => {
         refTable: "contracting_progress_bills",
       });
       if (seq) {
-        billNumber = seq.number;
+        billNumber = seq;
       } else {
         res.status(400).json({ error: "رقم المستخلص مطلوب (لا يوجد مسلسل مهيأ لمستخلصات المقاولات)" });
         return;
