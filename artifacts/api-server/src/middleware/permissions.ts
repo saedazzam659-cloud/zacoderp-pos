@@ -21,11 +21,100 @@ import { auditLogTable } from "@workspace/db";
 
 export type PermAction = "view" | "create" | "edit" | "delete" | "post" | "export";
 
+// Maps the granular per-action module key (used by users.permissions and by
+// every requirePermission(...) call below) to the high-level company-module
+// key shown on the SuperAdmin → MenuPermissions screen (companies.menuPermissions).
+//
+// Keep in sync with COMPANY_MODULE_GATE in artifacts/zatca-invoicing/src/components/Layout.tsx
+// and with MENU_ITEMS in artifacts/zatca-invoicing/src/pages/MenuPermissions.tsx.
+// When a module key is NOT in this map (system settings like "users", "branches",
+// "sequences") no company-level gate applies — only the per-user permission map.
+const COMPANY_MODULE_GATE: Record<string, string> = {
+  // Sales / Customers
+  customers: "sales_module",
+  sales_reps: "sales_module",
+  sales_quotations: "sales_module",
+  sales_invoices: "sales_module",
+  sales_returns: "sales_module",
+  sales_settlements: "sales_module",
+  sales_reports: "sales_reports",
+  // Purchasing / Suppliers
+  suppliers: "purchases_module",
+  purchase_invoices: "purchases_module",
+  purchase_returns: "purchases_module",
+  supplier_settlements: "purchases_module",
+  // Cash & Banks
+  cash_boxes: "cash_module",
+  bank_accounts: "cash_module",
+  receipt_vouchers: "cash_module",
+  payment_vouchers: "cash_module",
+  // Accounting / Ledger
+  accounts: "accounts",
+  journal_entries: "accounts",
+  accounting_reports: "accounting_reports",
+  // POS
+  pos: "pos",
+  // Inventory
+  items: "inventory_reports",
+  warehouses: "inventory_reports",
+  stock_transfers: "inventory_reports",
+  stock_adjustments: "inventory_reports",
+  stock_counts: "inventory_reports",
+  // HR
+  hr_employees: "hr_module",
+  hr_attendance: "hr_module",
+  hr_face_attendance: "hr_module",
+  hr_loans: "hr_module",
+  hr_payroll: "hr_module",
+  hr_eos: "hr_module",
+  hr_calculators: "hr_module",
+  hr_settings: "hr_module",
+  // ZATCA
+  zatca_setup: "zatca",
+  zatca_bridge: "zatca",
+  zatca_report: "zatca",
+  // Operations
+  contracting: "contracting",
+  production: "production",
+  security_events: "security_events",
+  // VAT / general invoices
+  vat_declaration: "reports",
+};
+
+// True when the company has NOT explicitly disabled the high-level module
+// associated with `module`. Mirrors companyAllowsModule() in Layout.tsx —
+// missing keys, missing JSON, and unparseable JSON all default to "allowed"
+// to avoid breaking legacy companies that never had menuPermissions set.
+function companyAllowsModule(authUser: any, module: string): boolean {
+  const gateKey = COMPANY_MODULE_GATE[module];
+  if (!gateKey) return true;
+  const mp = authUser?.companyMenuPermissions;
+  if (!mp || typeof mp !== "object") return true;
+  return mp[gateKey] !== false;
+}
+
 export function requirePermission(module: string, action: PermAction) {
   return function permGuard(req: Request, res: Response, next: NextFunction) {
     const u = req.authUser;
     if (!u) { res.status(401).json({ error: "غير مصرح" }); return; }
-    if (u.role === "superadmin" || u.role === "admin") { next(); return; }
+    // Superadmin (platform operator) bypasses every gate.
+    if (u.role === "superadmin") { next(); return; }
+    // Company-level upper bound — applies to admin AND regular users.
+    // When SuperAdmin disables a module on the company, no user from that
+    // company (including its own admin) may reach the protected route.
+    if (!companyAllowsModule(u, module)) {
+      void writeAudit({
+        userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
+        module, action: "denied",
+        method: req.method, path: req.originalUrl, statusCode: 403,
+        ip: clientIp(req), userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500),
+        metadata: { attemptedAction: action, reason: "company_module_disabled" },
+      });
+      res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
+      return;
+    }
+    // Company admin bypasses the per-action map (still bounded by the company gate above).
+    if (u.role === "admin") { next(); return; }
     const map = (u as any).permissions ?? {};
     const ok = !!map[module]?.[action];
     if (ok) { next(); return; }
@@ -148,10 +237,12 @@ export function moduleAudit(defaultModule: string) {
   };
 }
 
-// Router-level granular gate. Same idea as moduleAudit, but checks the
-// user's permission for the inferred action before allowing the request
-// through. GET/HEAD/OPTIONS are NOT gated here (read access remains
-// authentication-based, scoped by tenant via resolveCompanyId).
+// Router-level granular gate. Same idea as moduleAudit, but also checks the
+// caller's permission for the inferred action before allowing the request
+// through. GET/HEAD/OPTIONS are NOT gated for the per-action map (read access
+// remains authentication-based, scoped by tenant via resolveCompanyId), BUT
+// they DO go through the company-level module gate so SuperAdmin disabling a
+// module on a company also blocks read endpoints for that company.
 //
 // Apply alongside moduleAudit on routers whose URL paths all belong to
 // the same module:
@@ -163,8 +254,23 @@ export function requireModulePermission(defaultModule: string) {
     // Hard auth gate on EVERY method (incl. GET) — otherwise reads can leak
     // tenant data when extractAuth ran but no Bearer token was supplied.
     if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const u = req.authUser;
+    // Company-level upper bound also applies to GET/HEAD/OPTIONS — so a
+    // disabled module is fully unreachable, not just non-mutable.
+    // SuperAdmin (platform operator) bypasses every gate.
+    if (u.role !== "superadmin" && !companyAllowsModule(u, defaultModule)) {
+      void writeAudit({
+        userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
+        module: defaultModule, action: "denied",
+        method: req.method, path: req.originalUrl, statusCode: 403,
+        ip: clientIp(req), userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500),
+        metadata: { reason: "company_module_disabled", method: req.method },
+      });
+      res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
+      return;
+    }
     const action = inferAction(req);
-    if (!action) { next(); return; }   // GET/HEAD/OPTIONS pass after auth check
+    if (!action) { next(); return; }   // GET/HEAD/OPTIONS pass after company gate
     return requirePermission(defaultModule, action)(req, res, next);
   };
 }
@@ -187,10 +293,26 @@ export function pathRbac(map: Array<[string, string]>) {
   return function pathRbacMw(req: Request, res: Response, next: NextFunction) {
     // Hard auth gate on EVERY method (incl. GET) — see requireModulePermission.
     if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
-    const action = inferAction(req);
-    if (!action) { next(); return; }                    // GET/HEAD/OPTIONS untouched after auth check
     const path = req.path || "";
     const hit = map.find(([prefix]) => path.startsWith(prefix));
+    const matchedMod = hit?.[1] ?? null;
+    const u = req.authUser;
+    // Company-level upper bound applies to ALL methods (incl. GET) when we
+    // know which module this path belongs to, so disabling a module on a
+    // company also blocks read endpoints. SuperAdmin bypasses every gate.
+    if (matchedMod && u.role !== "superadmin" && !companyAllowsModule(u, matchedMod)) {
+      void writeAudit({
+        userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
+        module: matchedMod, action: "denied",
+        method: req.method, path: req.originalUrl, statusCode: 403,
+        ip: clientIp(req), userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500),
+        metadata: { reason: "company_module_disabled", method: req.method },
+      });
+      res.status(403).json({ error: `هذا الموديل غير مفعّل لشركتك — يرجى مراجعة المسؤول` });
+      return;
+    }
+    const action = inferAction(req);
+    if (!action) { next(); return; }                    // GET/HEAD/OPTIONS untouched after company gate
     if (!hit) { next(); return; }
     const [, mod] = hit;
     // Chain perm gate → audit

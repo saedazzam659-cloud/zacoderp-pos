@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { usersTable, userBranchesTable, superAdminSessionsTable } from "@workspace/db";
+import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable } from "@workspace/db";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 
@@ -17,6 +17,13 @@ export interface AuthUser {
   viewAllBranches: boolean;
   // Branches this user is explicitly linked to (from user_branches).
   branchIds: number[];
+  // Company-level high-level module switches (companies.menuPermissions JSON).
+  // Used by requirePermission/requireModulePermission as an UPPER bound — when
+  // a key is explicitly false the company has disabled that module, so even
+  // the company's own admin (who otherwise bypasses the per-action map) is
+  // denied. Null/undefined means "no gate" (legacy companies = all modules
+  // allowed). Mirrors the parsePerms semantics in MenuPermissions.tsx.
+  companyMenuPermissions?: Record<string, boolean> | null;
 }
 
 declare global {
@@ -106,11 +113,33 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
   const { user } = resolved;
 
   // Load explicit branch grants (only relevant when viewAllBranches=false,
-  // but cheap enough to load always — typically a tiny list per user).
-  const links = await db
-    .select({ branchId: userBranchesTable.branchId })
-    .from(userBranchesTable)
-    .where(eq(userBranchesTable.userId, user.id));
+  // but cheap enough to load always — typically a tiny list per user) and the
+  // company-level high-level menu permissions (used as an upper bound by the
+  // permission middleware so SuperAdmin disabling a module on a company takes
+  // effect even on that company's own admin user).
+  const [links, companyRow] = await Promise.all([
+    db.select({ branchId: userBranchesTable.branchId })
+      .from(userBranchesTable)
+      .where(eq(userBranchesTable.userId, user.id)),
+    user.companyId
+      ? db.select({ menuPermissions: companiesTable.menuPermissions })
+          .from(companiesTable)
+          .where(eq(companiesTable.id, user.companyId))
+          .limit(1)
+      : Promise.resolve([] as Array<{ menuPermissions: string | null }>),
+  ]);
+
+  let companyMenuPermissions: Record<string, boolean> | null = null;
+  const rawMenu = companyRow[0]?.menuPermissions ?? null;
+  if (rawMenu != null) {
+    try {
+      const parsed = typeof rawMenu === "string" ? JSON.parse(rawMenu) : rawMenu;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        companyMenuPermissions = parsed as Record<string, boolean>;
+      }
+    } catch { /* ignore — leave null = no gate */ }
+  }
+
   req.authUser = {
     id: user.id,
     username: user.username,
@@ -119,6 +148,7 @@ export async function extractAuth(req: Request, _res: Response, next: NextFuncti
     permissions: user.permissions as any,
     viewAllBranches: user.viewAllBranches,
     branchIds: links.map(l => l.branchId),
+    companyMenuPermissions,
   };
 
   // Manual-session header (`x-session-id`). Honoured only when the value

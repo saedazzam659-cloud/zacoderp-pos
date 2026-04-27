@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export type HubTone =
@@ -44,12 +45,17 @@ export type HubTile = {
   requireAdmin?: boolean;
 };
 
-// Mirror of Layout.tsx navItemAllowed: admin/superadmin always see everything,
-// otherwise need view perm (and not requireAdmin).
+// Mirror of Layout.tsx navItemAllowed (and usePermission): superadmin sees
+// everything, the company-level module gate (companies.menuPermissions) is
+// an upper bound for every other role including the company's own admin,
+// and admins still bypass the per-action user permission map AFTER passing
+// the company gate. Keep in sync with Layout.navItemAllowed and usePermission.
 function tileAllowed(tile: HubTile, user: any): boolean {
   if (!user) return false;
-  if (user.role === "superadmin" || user.role === "admin") return true;
-  if (tile.requireAdmin) return false;
+  if (user.role === "superadmin") return true;
+  if (tile.requireAdmin && user.role !== "admin") return false;
+  if (!companyAllowsModule(user, tile.permKey)) return false;
+  if (user.role === "admin") return true;
   if (!tile.permKey) return true;
   const perm = (user.permissions ?? {})[tile.permKey];
   return !!perm?.view;

@@ -17,14 +17,24 @@ import { nextSequenceNumber } from "../lib/sequences.js";
 const router = Router();
 router.use(extractAuth);
 router.use(pathRbac([
-  ["/warehouse-groups",    "warehouses"],
-  ["/warehouses",          "warehouses"],
-  ["/item-groups",         "items"],
-  ["/units",               "items"],
-  ["/items",               "items"],
-  ["/stock-transfers",     "stock_transfers"],
-  ["/stock-adjustments",   "stock_adjustments"],
-  ["/stock-counts",        "stock_counts"],
+  ["/warehouse-groups",         "warehouses"],
+  ["/warehouses",               "warehouses"],
+  ["/item-groups",              "items"],
+  ["/units",                    "items"],
+  ["/items",                    "items"],
+  ["/stock-transfers",          "stock_transfers"],
+  ["/stock-adjustments",        "stock_adjustments"],
+  ["/stock-counts",             "stock_counts"],
+  // Read-only inventory reports / dashboard — gate them on the high-level
+  // "items" module so the company-level menu permission applies even on GETs.
+  ["/stock-ledger",             "items"],
+  ["/stock-balance",            "items"],
+  ["/last-movements",           "items"],
+  ["/dashboard",                "items"],
+  // Import endpoints — gate as "items" (item rows) and "stock_adjustments"
+  // (opening balances become posted adjustment movements).
+  ["/import/items",             "items"],
+  ["/import/opening-balances",  "stock_adjustments"],
 ]));
 
 // ─── GUARD: require auth ──────────────────────────────────────────────────────

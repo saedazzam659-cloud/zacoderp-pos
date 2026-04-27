@@ -25,6 +25,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { companyAllowsModule } from "@/lib/companyModuleGate";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import SessionCountdown from "@/components/SessionCountdown";
@@ -44,16 +45,26 @@ type NavDef = { nameKey: string; href: string; icon: any; exact?: boolean; permK
 
 // Returns true when this nav item should be visible to the given user.
 // Rules:
-//   - admins and superadmins always see everything (skip per-screen filtering).
-//   - items without a permKey have no per-screen gate and stay visible.
+//   - superadmin (platform operator) always sees everything.
+//   - the company-level module gate (companies.menuPermissions) applies to
+//     EVERY non-superadmin role, including the company's own admin. This is
+//     what makes "SuperAdmin removes a module from a company" actually take
+//     effect on that company's admin user.
+//   - admin-only items stay hidden for regular users so they don't see links
+//     whose backend would 403/404.
+//   - admin role bypasses per-action user permission checks (still bounded
+//     by the company gate above).
 //   - otherwise, the user must have permissions[permKey].view === true.
 // Centralized so leaf-level (NavItem) and group-level filtering stay in sync.
 function navItemAllowed(item: NavDef, user: any): boolean {
   if (!user) return false;
-  if (user.role === "superadmin" || user.role === "admin") return true;
-  // Admin-only items stay hidden for regular users regardless of granted perms,
-  // because their backend endpoints require admin role and would 403/404.
-  if (item.requireAdmin) return false;
+  if (user.role === "superadmin") return true;
+  // Admin-only items stay hidden for non-admin roles regardless of granted
+  // perms, because their backend endpoints require admin role and would 403/404.
+  if (item.requireAdmin && user.role !== "admin") return false;
+  // Company-level gate — applies to admin AND regular users (not superadmin).
+  if (!companyAllowsModule(user, item.permKey)) return false;
+  if (user.role === "admin") return true;
   if (!item.permKey) return true;
   const perm = (user.permissions ?? {})[item.permKey];
   return !!perm?.view;
@@ -61,14 +72,19 @@ function navItemAllowed(item: NavDef, user: any): boolean {
 function filterNav(items: NavDef[], user: any): NavDef[] {
   return items.filter(i => navItemAllowed(i, user));
 }
-// Group-level visibility: a collapsible group should hide entirely when the
-// user has no .view perm for ANY of the modules it contains. Admins/superadmins
-// always see everything.
+// Group-level visibility: a collapsible group hides entirely when none of its
+// children would be visible. Mirrors navItemAllowed: superadmin always sees
+// every group; admin sees a group when at least one child key is enabled at
+// the company level; regular users additionally need .view on at least one
+// company-allowed child.
 function groupVisible(user: any, moduleKeys: string[]): boolean {
   if (!user) return false;
-  if (user.role === "superadmin" || user.role === "admin") return true;
+  if (user.role === "superadmin") return true;
+  const companyAllowed = moduleKeys.filter(k => companyAllowsModule(user, k));
+  if (companyAllowed.length === 0) return false;
+  if (user.role === "admin") return true;
   const perms = user.permissions ?? {};
-  return moduleKeys.some(k => !!perms[k]?.view);
+  return companyAllowed.some(k => !!perms[k]?.view);
 }
 
 // Module key sets per sidebar group. Keep in sync with the subNav arrays
