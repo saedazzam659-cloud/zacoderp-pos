@@ -1861,7 +1861,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >1 assigned sessions; auto-selects silently when there's exactly 1.
           Mounted globally so the prompt appears regardless of which page the
           user lands on after login. */}
-      {!isSuperAdmin && <SessionPickerModal />}
+      {/* Session picker is only forced on regular users — admins/superadmins
+          assign sessions to employees and shouldn't be prompted to pick one
+          themselves. The SessionIndicator in the topbar still lets them
+          opt-in and switch sessions whenever they want. */}
+      {!isSuperAdmin && user?.role !== "admin" && <SessionPickerModal />}
 
       {/* Global AI assistant — floating widget rendered on every authenticated
           screen. The component itself self-hides when the user is not
