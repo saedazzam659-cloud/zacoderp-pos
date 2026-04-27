@@ -1210,6 +1210,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   // Fleet view — top 5 active companies with the most critical findings in
   // the same window. Always available to SuperAdmins regardless of which
   // company is currently selected, so they can spot recurring offenders.
+  // Auto-refreshes on the same 30s cadence as its three sibling panels
+  // (broken-tool, recovered-tool, critical-alerts) so a newly hammered
+  // tenant climbs the leaderboard within one polling tick without forcing
+  // a manual reload. Polling pauses when the tab is hidden (TanStack Query
+  // v5 leaves refetchIntervalInBackground false by default), keeping
+  // request volume in check.
   const fleetQ = useQuery({
     queryKey: ["maintenance-trend-fleet", trendDays],
     queryFn: async () => {
@@ -1221,6 +1227,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       }>;
     },
     refetchOnWindowFocus: false,
+    refetchInterval: MAINTENANCE_PANEL_REFETCH_MS,
   });
 
   // Currently-critical findings — same projection that drives the SuperAdmin
