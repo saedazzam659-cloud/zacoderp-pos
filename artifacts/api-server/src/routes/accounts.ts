@@ -157,6 +157,17 @@ router.get("/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Normalize opening balance fields from the request body. Negative amounts are
+// converted to their positive value with a flipped type so we always store a
+// non-negative number plus a "debit" / "credit" indicator (no sign ambiguity).
+function normalizeOpening(body: any): { openingBalance: string; openingBalanceType: "debit" | "credit" } {
+  let amt  = Number(body?.openingBalance ?? 0);
+  if (!Number.isFinite(amt)) amt = 0;
+  let type = (String(body?.openingBalanceType ?? "debit").toLowerCase() === "credit") ? "credit" : "debit";
+  if (amt < 0) { amt = -amt; type = type === "debit" ? "credit" : "debit"; }
+  return { openingBalance: amt.toFixed(2), openingBalanceType: type };
+}
+
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
@@ -165,12 +176,15 @@ router.post("/", async (req, res) => {
     if (!code || !nameAr || !accountType) {
       res.status(400).json({ error: "كود الحساب واسمه ونوعه مطلوبة" }); return;
     }
+    const opening = normalizeOpening(req.body);
     const [row] = await db.insert(accountsTable).values({
       companyId: cid, code, nameAr, nameEn: nameEn || null,
       accountType, parentId: parentId || null,
       reportDirection: req.body.reportDirection || null,
       level: level ?? 1, isPosting: isPosting ?? true, isActive: isActive ?? true,
       notes: notes || null,
+      openingBalance: opening.openingBalance,
+      openingBalanceType: opening.openingBalanceType,
     }).returning();
     res.status(201).json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -182,12 +196,16 @@ router.put("/:id", async (req, res) => {
     const cid = guard(req, res); if (!cid) return;
     const id  = Number(req.params.id);
     const { code, nameAr, nameEn, accountType, parentId, level, isPosting, isActive, notes } = req.body;
+    const opening = normalizeOpening(req.body);
     const [row] = await db.update(accountsTable).set({
       code, nameAr, nameEn: nameEn || null, accountType,
       parentId: parentId || null, level: level ?? 1,
       reportDirection: req.body.reportDirection || null,
       isPosting: isPosting ?? true, isActive: isActive ?? true,
-      notes: notes || null, updatedAt: new Date(),
+      notes: notes || null,
+      openingBalance: opening.openingBalance,
+      openingBalanceType: opening.openingBalanceType,
+      updatedAt: new Date(),
     }).where(and(eq(accountsTable.id, id), eq(accountsTable.companyId, cid))).returning();
     if (!row) { res.status(404).json({ error: "الحساب غير موجود" }); return; }
     res.json(row);

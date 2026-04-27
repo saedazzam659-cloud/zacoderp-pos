@@ -61,12 +61,26 @@ async function getAccountBalances(req: Request, cid: number, fromDate?: string, 
     }
   }
 
-  return accounts.map(a => ({
-    ...a,
-    totalDebit:  balMap.get(a.id)?.debit  ?? 0,
-    totalCredit: balMap.get(a.id)?.credit ?? 0,
-    balance:     (balMap.get(a.id)?.debit ?? 0) - (balMap.get(a.id)?.credit ?? 0),
-  }));
+  // Opening balances are applied as if they were the very first journal entry
+  // for the account: a "debit" opening adds to debit, a "credit" opening adds
+  // to credit. Net balance is debit - credit, so the natural sign is preserved.
+  // Opening balances apply only when no `fromDate` is supplied (i.e. life-to-date
+  // views); date-windowed reports must NOT carry the opening into a sub-period.
+  const includeOpening = !fromDate;
+  return accounts.map(a => {
+    const txDebit  = balMap.get(a.id)?.debit  ?? 0;
+    const txCredit = balMap.get(a.id)?.credit ?? 0;
+    const op       = includeOpening ? Number((a as any).openingBalance ?? 0) : 0;
+    const opType   = ((a as any).openingBalanceType ?? "debit") as string;
+    const opDebit  = op > 0 && opType === "debit"  ? op : 0;
+    const opCredit = op > 0 && opType === "credit" ? op : 0;
+    return {
+      ...a,
+      totalDebit:  txDebit  + opDebit,
+      totalCredit: txCredit + opCredit,
+      balance:     (txDebit + opDebit) - (txCredit + opCredit),
+    };
+  });
 }
 
 // ─── TRIAL BALANCE ─────────────────────────────────────────────────────────────
