@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,8 +57,19 @@ export default function Suppliers() {
   const [search,    setSearch]    = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [editSup,   setEditSup]   = useState<any>(null);
+  const [creating,  setCreating]  = useState(false);
   const [editForm,  setEditForm]  = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [deleteSup, setDeleteSup] = useState<any>(null);
+
+  function openCreate() {
+    setCreating(true);
+    setEditSup(null);
+    setEditForm(EMPTY_FORM);
+  }
+  function closePanel() {
+    setCreating(false);
+    setEditSup(null);
+  }
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -150,6 +160,36 @@ export default function Suppliers() {
     onError: (e: any) => toast({ title: t("pages.suppliers.updateError"), description: e?.message, variant: "destructive" }),
   });
 
+  const createMutation = useMutation({
+    mutationFn: async (values: typeof EMPTY_FORM) => {
+      const payload = {
+        ...values,
+        companyId: user?.companyId,
+        accountId: values.accountId ? Number(values.accountId) : null,
+      };
+      const res = await fetch(`${API}/api/suppliers`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        let msg = txt;
+        try { msg = JSON.parse(txt).error ?? txt; } catch {}
+        throw new Error(msg || t("pages.suppliers.updateFailed"));
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: t("pages.suppliers.addSuccess", "تم إضافة المورد") });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+      qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      setCreating(false);
+      setEditForm(EMPTY_FORM);
+    },
+    onError: (e: any) => toast({ title: t("pages.suppliers.addError", "تعذّر إضافة المورد"), description: e?.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await fetch(`${API}/api/suppliers/${id}`, {
@@ -229,23 +269,31 @@ export default function Suppliers() {
             title={t("pages.suppliers.exportTitle")}
             subtitle={`${t("pages.suppliers.eInvoiceSystem")} — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
           />
-          <Button asChild className="gap-2">
-            <Link href="/suppliers/new"><Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}</Link>
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="h-4 w-4" />{t("common.add")} {t("pages.suppliers.supplier")}
           </Button>
         </div>
       </div>
 
-      {editSup && (
+      {(editSup || creating) && (
         <FormPanel
           icon={Truck}
-          title={editSup?.nameAr ?? t("pages.suppliers.editSupplier")}
-          subtitle={t("pages.suppliers.editSubtitle")}
+          title={editSup
+            ? (editSup.nameAr ?? t("pages.suppliers.editSupplier"))
+            : t("pages.suppliers.newSupplier", "مورد جديد")}
+          subtitle={editSup
+            ? t("pages.suppliers.editSubtitle")
+            : t("pages.suppliers.addSubtitle", "أدخل بيانات المورد الجديد")}
           width="4xl"
-          onClose={() => setEditSup(null)}
-          onSave={() => updateMutation.mutate(editForm)}
-          saving={updateMutation.isPending}
+          onClose={closePanel}
+          onSave={() => editSup
+            ? updateMutation.mutate(editForm)
+            : createMutation.mutate(editForm)}
+          saving={updateMutation.isPending || createMutation.isPending}
           saveDisabled={!editForm.nameAr.trim()}
-          saveLabel={t("pages.suppliers.saveChanges")}
+          saveLabel={editSup
+            ? t("pages.suppliers.saveChanges")
+            : t("common.save", "حفظ")}
         >
           <div className="space-y-6">
             <div className="space-y-4">
@@ -378,8 +426,8 @@ export default function Suppliers() {
                     <Truck className="h-10 w-10 mx-auto mb-3 opacity-30" />
                     <p className="text-sm">{search ? t("common.noResults") : t("pages.suppliers.noSuppliersYet")}</p>
                     {!search && (
-                      <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
-                        <Link href="/suppliers/new"><Plus className="h-3.5 w-3.5" />{t("common.add")} {t("pages.suppliers.supplier")}</Link>
+                      <Button onClick={openCreate} variant="outline" size="sm" className="mt-4 gap-2">
+                        <Plus className="h-3.5 w-3.5" />{t("common.add")} {t("pages.suppliers.supplier")}
                       </Button>
                     )}
                   </td>
