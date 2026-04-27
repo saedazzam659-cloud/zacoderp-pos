@@ -30,3 +30,9 @@ id = "lIAQ6Ya8NSN6jm4mJ0do6"
 uri = "file://exports/zatca-source-20260427-231316.tar.gz"
 type = "unspecified"
 title = "السورس كود (zatca-source.tar.gz)"
+
+[[outputs]]
+id = "P1J7bQ2sAHpR8wckIloHF"
+uri = "file://exports/دليل_تركيب_نظام_زاتكا.docx"
+type = "word_document"
+title = "دليل تركيب نظام زاتكا (Word)"
