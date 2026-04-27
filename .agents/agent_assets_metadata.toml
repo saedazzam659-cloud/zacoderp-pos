@@ -36,3 +36,9 @@ id = "P1J7bQ2sAHpR8wckIloHF"
 uri = "file://exports/دليل_تركيب_نظام_زاتكا.docx"
 type = "word_document"
 title = "دليل تركيب نظام زاتكا (Word)"
+
+[[outputs]]
+id = "0o5LjUWt-rDQcqE0ycdsY"
+uri = "file://exports/zatca-source.tar.gz"
+type = "unspecified"
+title = "السورس كود (26 ميجابايت)"
