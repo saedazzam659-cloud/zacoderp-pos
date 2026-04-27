@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth, type RegisterData } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,35 +20,77 @@ import {
   SELECTABLE_MODULES, CATEGORIES, PLAN_INCLUDED, priceFor,
 } from "@/lib/systemModules";
 
-const PLANS = [
-  {
-    id: "starter", icon: <Package className="h-6 w-6" />, name: "مبتدئ",
-    nameEn: "Starter", color: "border-blue-200 bg-blue-50",
+// ── Plan card UI shape ────────────────────────────────────────────────
+// Each plan rendered in Step 2 has a stable structural shape (id, name,
+// monthly/annual price, feature bullet-list, recommended flag) plus a
+// visual style (icon + colour palette). The structural fields come from
+// the SuperAdmin-managed `plan_configs` table at runtime; the visual
+// style is mapped per-key from STYLE_BY_KEY below so any plans the
+// SuperAdmin adds in PlanSettings show up here without a code change
+// (unknown keys fall back to the neutral "default" palette).
+type PlanCard = {
+  id: string;
+  icon: React.ReactNode;
+  name: string;
+  nameEn: string;
+  color: string;
+  activeColor: string;
+  badgeColor: string;
+  monthly: number;
+  annual: number;
+  maxUsers: number;
+  maxInvoices: number;
+  features: string[];
+  recommended?: boolean;
+};
+
+const STYLE_BY_KEY: Record<string, Pick<PlanCard, "icon" | "color" | "activeColor" | "badgeColor">> = {
+  starter: {
+    icon: <Package className="h-6 w-6" />,
+    color: "border-blue-200 bg-blue-50",
     activeColor: "border-blue-500 ring-2 ring-blue-200",
     badgeColor: "bg-blue-100 text-blue-700",
-    monthly: 99, annual: 990,
-    maxUsers: 1, maxInvoices: 50,
-    features: ["مستخدم واحد", "50 فاتورة شهرياً", "فواتير ضريبية ومبسطة", "دعم بريد إلكتروني"],
   },
-  {
-    id: "professional", icon: <Star className="h-6 w-6" />, name: "احترافي",
-    nameEn: "Professional", color: "border-primary/30 bg-primary/5",
+  professional: {
+    icon: <Star className="h-6 w-6" />,
+    color: "border-primary/30 bg-primary/5",
     activeColor: "border-primary ring-2 ring-primary/20",
     badgeColor: "bg-primary/10 text-primary",
-    monthly: 299, annual: 2990,
-    maxUsers: 5, maxInvoices: 500,
-    features: ["5 مستخدمين", "500 فاتورة شهرياً", "تقارير متقدمة", "API مفتوح", "دعم أولوية"],
-    recommended: true,
   },
-  {
-    id: "enterprise", icon: <Crown className="h-6 w-6" />, name: "مؤسسي",
-    nameEn: "Enterprise", color: "border-amber-200 bg-amber-50",
+  enterprise: {
+    icon: <Crown className="h-6 w-6" />,
+    color: "border-amber-200 bg-amber-50",
     activeColor: "border-amber-500 ring-2 ring-amber-200",
     badgeColor: "bg-amber-100 text-amber-700",
-    monthly: 899, annual: 8990,
-    maxUsers: 999, maxInvoices: 999999,
-    features: ["مستخدمون غير محدودين", "فواتير غير محدودة", "تقارير مخصصة", "SLA 99.9%", "مدير حساب مخصص"],
   },
+  custom: {
+    icon: <Sparkles className="h-6 w-6" />,
+    color: "border-purple-200 bg-purple-50",
+    activeColor: "border-purple-500 ring-2 ring-purple-200",
+    badgeColor: "bg-purple-100 text-purple-700",
+  },
+};
+const DEFAULT_STYLE: Pick<PlanCard, "icon" | "color" | "activeColor" | "badgeColor"> = {
+  icon: <Package className="h-6 w-6" />,
+  color: "border-slate-200 bg-slate-50",
+  activeColor: "border-slate-500 ring-2 ring-slate-200",
+  badgeColor: "bg-slate-100 text-slate-700",
+};
+
+// Static fallback used only if the /api/admin/plans fetch fails. Mirrors
+// the legacy hardcoded catalog so first-paint never shows an empty form
+// on a transient network error.
+const FALLBACK_PLANS: PlanCard[] = [
+  { id: "starter", ...STYLE_BY_KEY.starter, name: "مبتدئ", nameEn: "Starter",
+    monthly: 99, annual: 990, maxUsers: 1, maxInvoices: 50,
+    features: ["مستخدم واحد", "50 فاتورة شهرياً", "فواتير ضريبية ومبسطة", "دعم بريد إلكتروني"] },
+  { id: "professional", ...STYLE_BY_KEY.professional, name: "احترافي", nameEn: "Professional",
+    monthly: 299, annual: 2990, maxUsers: 5, maxInvoices: 500,
+    features: ["5 مستخدمين", "500 فاتورة شهرياً", "تقارير متقدمة", "API مفتوح", "دعم أولوية"],
+    recommended: true },
+  { id: "enterprise", ...STYLE_BY_KEY.enterprise, name: "مؤسسي", nameEn: "Enterprise",
+    monthly: 899, annual: 8990, maxUsers: 999, maxInvoices: 999999,
+    features: ["مستخدمون غير محدودين", "فواتير غير محدودة", "تقارير مخصصة", "SLA 99.9%", "مدير حساب مخصص"] },
 ];
 
 const STEPS = [
@@ -87,6 +130,60 @@ export default function Register() {
     startDate: new Date().toISOString().split("T")[0],
     endDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
   });
+
+  // ── Live plan catalog (sourced from SuperAdmin's plan_configs table) ──
+  // The /api/admin/plans endpoint is intentionally public-readable so the
+  // sign-up wizard can show whatever plans the SuperAdmin currently has
+  // active in PlanSettings. Inactive plans are hidden. The query is cached
+  // for 5 minutes — a SuperAdmin price tweak shows up to new visitors on
+  // their next page load (no realtime push needed for sign-up).
+  const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const plansQ = useQuery<PlanCard[]>({
+    queryKey: ["public-plans"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/admin/plans`);
+      if (!r.ok) throw new Error("plans fetch failed");
+      const rows = await r.json() as Array<{
+        key: string; nameAr: string; nameEn: string;
+        monthlyPrice: string; annualPrice: string;
+        maxUsers: number; maxInvoices: number;
+        features: string[] | string;
+        isRecommended: boolean; isActive: boolean; sortOrder: number;
+      }>;
+      return rows
+        .filter(p => p.isActive)
+        .map<PlanCard>(p => {
+          const style = STYLE_BY_KEY[p.key] ?? DEFAULT_STYLE;
+          // Server returns features pre-parsed (admin.ts JSON.parses it),
+          // but defensively handle the legacy string form too.
+          const featureList = Array.isArray(p.features)
+            ? p.features
+            : (() => { try { return JSON.parse(p.features ?? "[]"); } catch { return []; } })();
+          return {
+            id: p.key,
+            ...style,
+            name: p.nameAr,
+            nameEn: p.nameEn,
+            monthly: Number(p.monthlyPrice) || 0,
+            annual: Number(p.annualPrice) || 0,
+            maxUsers: p.maxUsers,
+            maxInvoices: p.maxInvoices,
+            features: featureList,
+            recommended: p.isRecommended,
+          };
+        });
+    },
+  });
+  // Fall back to the hardcoded catalog *only* on a hard fetch error so a
+  // legitimately empty `plan_configs` table is shown as such (and not
+  // silently masked by stale defaults). When the live request resolves
+  // with zero active plans we render an explicit empty state below.
+  const PLANS: PlanCard[] = plansQ.isError
+    ? FALLBACK_PLANS
+    : (plansQ.data ?? []);
+  const plansLoading = plansQ.isLoading;
+  const plansEmpty   = !plansLoading && !plansQ.isError && PLANS.length === 0;
 
   const set = (k: keyof RegisterData, v: string) => setForm(f => ({ ...f, [k]: v }));
 
@@ -141,7 +238,15 @@ export default function Register() {
     setAcceptedPolicy(false);
   };
 
-  const selectedPlan = PLANS.find(p => p.id === form.plan) ?? PLANS[1];
+  // Selected plan, with two fallbacks: the recommended plan, or the first
+  // available plan. Guards against the user landing here before plansQ
+  // resolves (PLANS is FALLBACK_PLANS in that window) AND against the
+  // SuperAdmin renaming/disabling whatever was previously selected.
+  const selectedPlan =
+    PLANS.find(p => p.id === form.plan)
+    ?? PLANS.find(p => p.recommended)
+    ?? PLANS[0]
+    ?? FALLBACK_PLANS[1];
 
   // Live price breakdown (memoized) — recomputed only when the plan,
   // module selection, or billing cycle change. Annual uses monthly × 10
@@ -402,40 +507,66 @@ export default function Register() {
                 </div>
 
                 {/* ── 3. Plan tier picker (compact, with "X included free" tag) ── */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {PLANS.map(plan => {
-                    const price = billingCycle === "annual" ? plan.annual : plan.monthly;
-                    const isSelected = form.plan === plan.id;
-                    const included = PLAN_INCLUDED[plan.id] ?? 0;
-                    const includedLabel = included >= SELECTABLE_MODULES.length
-                      ? "كل الوحدات مجاناً"
-                      : `${included} وحدات مشمولة`;
-                    return (
-                      <button key={plan.id} type="button"
-                        data-testid={`plan-${plan.id}`}
-                        onClick={() => selectPlan(plan.id)}
-                        className={cn(
-                          "relative rounded-xl border-2 p-3 text-right transition-all hover:shadow-md",
-                          isSelected ? plan.activeColor : "border-border bg-card hover:border-primary/40"
-                        )}>
-                        {plan.recommended && (
-                          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] bg-primary text-primary-foreground rounded-full px-2 py-0.5 whitespace-nowrap">
-                            الأكثر شيوعاً
-                          </span>
-                        )}
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className={cn("inline-flex p-1.5 rounded-lg", plan.badgeColor)}>{plan.icon}</div>
-                          <span className="font-bold text-foreground text-sm">{plan.name}</span>
+                {plansLoading ? (
+                  // Loading skeleton — three placeholder cards while live
+                  // plans are being fetched from /api/admin/plans.
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="plans-loading">
+                    {[0, 1, 2].map(i => (
+                      <div key={i} className="rounded-xl border-2 border-border bg-card p-3 animate-pulse">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="h-7 w-7 rounded-lg bg-muted" />
+                          <div className="h-4 w-20 rounded bg-muted" />
                         </div>
-                        <div className="text-xl font-bold mt-0.5">
-                          {price} <span className="text-[11px] font-normal text-muted-foreground">ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
-                        </div>
-                        <div className="text-[11px] text-primary mt-1.5 font-medium">{includedLabel}</div>
-                        {isSelected && <div className="absolute top-2 left-2"><Check className="h-3.5 w-3.5 text-primary" /></div>}
-                      </button>
-                    );
-                  })}
-                </div>
+                        <div className="h-6 w-24 rounded bg-muted mt-1" />
+                        <div className="h-3 w-28 rounded bg-muted mt-2" />
+                      </div>
+                    ))}
+                  </div>
+                ) : plansEmpty ? (
+                  // Live API responded with zero active plans — surface
+                  // explicitly instead of silently masking with defaults.
+                  <div
+                    data-testid="plans-empty"
+                    className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-4 text-center text-sm text-amber-800"
+                  >
+                    لا توجد باقات اشتراك متاحة حالياً. يرجى المحاولة لاحقاً أو التواصل مع الدعم.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {PLANS.map(plan => {
+                      const price = billingCycle === "annual" ? plan.annual : plan.monthly;
+                      const isSelected = form.plan === plan.id;
+                      const included = PLAN_INCLUDED[plan.id] ?? 0;
+                      const includedLabel = included >= SELECTABLE_MODULES.length
+                        ? "كل الوحدات مجاناً"
+                        : `${included} وحدات مشمولة`;
+                      return (
+                        <button key={plan.id} type="button"
+                          data-testid={`plan-${plan.id}`}
+                          onClick={() => selectPlan(plan.id)}
+                          className={cn(
+                            "relative rounded-xl border-2 p-3 text-right transition-all hover:shadow-md",
+                            isSelected ? plan.activeColor : "border-border bg-card hover:border-primary/40"
+                          )}>
+                          {plan.recommended && (
+                            <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] bg-primary text-primary-foreground rounded-full px-2 py-0.5 whitespace-nowrap">
+                              الأكثر شيوعاً
+                            </span>
+                          )}
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className={cn("inline-flex p-1.5 rounded-lg", plan.badgeColor)}>{plan.icon}</div>
+                            <span className="font-bold text-foreground text-sm">{plan.name}</span>
+                          </div>
+                          <div className="text-xl font-bold mt-0.5">
+                            {price} <span className="text-[11px] font-normal text-muted-foreground">ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
+                          </div>
+                          <div className="text-[11px] text-primary mt-1.5 font-medium">{includedLabel}</div>
+                          {isSelected && <div className="absolute top-2 left-2"><Check className="h-3.5 w-3.5 text-primary" /></div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* ── 4. Module catalog (grouped by category) ── */}
                 <div className="space-y-3 pt-3 border-t">

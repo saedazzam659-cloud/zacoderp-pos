@@ -5,13 +5,14 @@ import { Link } from "wouter";
 import {
   Plus, Building2, ExternalLink, ShieldCheck, AlertCircle,
   CheckCircle2, Search, ChevronDown, ChevronUp, MapPin,
-  BadgeCheck, FileText, RefreshCw, Layers, Trash2
+  BadgeCheck, FileText, RefreshCw, Layers, Trash2, Globe2
 } from "lucide-react";
 import ExportButtons from "@/components/ExportButtons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { getCountryName } from "@/lib/countries";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription,
@@ -115,6 +116,7 @@ export default function Companies() {
               nameEn:        c.nameEn        ?? "",
               vatNumber:     c.vatNumber     ?? "",
               crNumber:      c.crNumber      ?? "",
+              country:       getCountryName(c.country, "ar"),
               city:          c.city          ?? "",
               status:        STATUS_CONFIG[c.status ?? "active"]?.label ?? c.status ?? "",
               subscriptionPlan: c.subscriptionPlan ?? "",
@@ -126,6 +128,7 @@ export default function Companies() {
               { key: "nameEn",          header: "اسم الشركة (إنجليزي)", width: 28 },
               { key: "vatNumber",       header: "الرقم الضريبي",        width: 20 },
               { key: "crNumber",        header: "السجل التجاري",        width: 18 },
+              { key: "country",         header: "الدولة",               width: 14 },
               { key: "city",            header: "المدينة",              width: 16 },
               { key: "status",          header: "الحالة",               width: 14 },
               { key: "subscriptionPlan", header: "الباقة",              width: 16 },
@@ -191,9 +194,10 @@ export default function Companies() {
         {/* Column headers */}
         <div
           className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
-          style={{ gridTemplateColumns: "2fr 1.3fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
+          style={{ gridTemplateColumns: "2fr 1.3fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
           <span>الشركة</span>
           <span>الرقم الضريبي</span>
+          <span>الدولة</span>
           <span>المدينة</span>
           <span>نوع الفاتورة</span>
           <span>حالة ZATCA</span>
@@ -251,7 +255,7 @@ export default function Companies() {
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
-                  style={{ gridTemplateColumns: "2fr 1.3fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
+                  style={{ gridTemplateColumns: "2fr 1.3fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
                   onClick={() => setExpandedRow(isExpanded ? null : company.id)}
                 >
                   {/* Company name */}
@@ -273,6 +277,12 @@ export default function Companies() {
                   {/* VAT */}
                   <span className="font-mono text-xs text-muted-foreground tracking-wide truncate">
                     {company.vatNumber}
+                  </span>
+
+                  {/* Country (from registration) */}
+                  <span className="inline-flex items-center gap-1.5 text-xs text-foreground/80 truncate" data-testid={`company-country-${company.id}`}>
+                    <Globe2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    {getCountryName(company.country, "ar")}
                   </span>
 
                   {/* City */}

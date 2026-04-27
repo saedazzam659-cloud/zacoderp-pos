@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2, XCircle, Trash2, Clock, Building2, User,
   Search, MapPin, BadgeCheck, AlertTriangle, RefreshCw,
-  Package, ChevronDown, ChevronUp, MoreVertical, Wifi
+  Package, ChevronDown, ChevronUp, MoreVertical, Wifi, Globe2
 } from "lucide-react";
+import { getCountryName } from "@/lib/countries";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
@@ -193,9 +194,10 @@ export default function RegistrationRequests() {
 
         {/* Column headers */}
         <div className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
-          style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 1fr 0.8fr auto" }}>
+          style={{ gridTemplateColumns: "2fr 1.1fr 0.9fr 0.9fr 1fr 1fr 1fr 0.8fr auto" }}>
           <span>الشركة</span>
           <span>الرقم الضريبي</span>
+          <span>الدولة</span>
           <span>المدينة</span>
           <span>المستخدم</span>
           <span>الباقة</span>
@@ -249,7 +251,7 @@ export default function RegistrationRequests() {
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
-                  style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 1fr 1fr 0.8fr auto" }}
+                  style={{ gridTemplateColumns: "2fr 1.1fr 0.9fr 0.9fr 1fr 1fr 1fr 0.8fr auto" }}
                   onClick={() => setExpandedRow(isExpanded ? null : co.id)}
                 >
                   {/* Company name + avatar */}
@@ -270,6 +272,12 @@ export default function RegistrationRequests() {
 
                   {/* VAT */}
                   <span className="font-mono text-xs text-muted-foreground tracking-wide truncate">{co.vatNumber}</span>
+
+                  {/* Country (selected by user at sign-up) */}
+                  <span className="inline-flex items-center gap-1.5 text-xs text-foreground/80 truncate" data-testid={`request-country-${co.id}`}>
+                    <Globe2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    {getCountryName(co.country, "ar")}
+                  </span>
 
                   {/* City */}
                   <span className="text-sm text-foreground/80 truncate">{co.city || "—"}</span>

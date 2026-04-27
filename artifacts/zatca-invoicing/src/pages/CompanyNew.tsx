@@ -19,15 +19,28 @@ import { Input } from "@/components/ui/input";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Save, Building2, MapPin, Settings, Info, AlertCircle, CheckCircle2, Hash, Cpu, ScanSearch, Loader2, Monitor, HardDrive, Server, User, Package, Eye, EyeOff, Globe2 } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { COUNTRIES } from "@/lib/countries";
 
 const INVOICE_TYPE_OPTIONS: ComboboxItem[] = [
   { value: "standard",   code: "B2B",     label: "فاتورة ضريبية (B2B)",         description: "للشركات والجهات التجارية — تُرسل إلى ZATCA للتخليص" },
   { value: "simplified", code: "B2C",     label: "فاتورة ضريبية مبسطة (B2C)",  description: "للأفراد والمستهلكين — يُطبع QR Code ويُبلَّغ خلال 24 ساعة" },
   { value: "both",       code: "B2B+B2C", label: "كلا النوعين",                  description: "إصدار فواتير B2B و B2C من نفس المنشأة" },
 ];
+
+// Country picker options. Reuses the same catalog as the public
+// registration form so the SuperAdmin sees identical labels & order.
+// Each row carries the ISO-3166-α2 code as the value, the Arabic name as
+// the display label, and the country's default currency as a description
+// hint (so the SuperAdmin can sanity-check the right country at a glance).
+const COUNTRY_OPTIONS: ComboboxItem[] = COUNTRIES.map(c => ({
+  value:       c.code,
+  code:        c.code,
+  label:       c.nameAr,
+  description: `${c.nameEn} • ${c.currency.code}`,
+}));
 
 interface DeviceInfo {
   manufacturer: string;
@@ -355,6 +368,38 @@ export default function CompanyNew() {
               <InfoBox>
                 العنوان الوطني مطلوب قانونياً في الفواتير الإلكترونية. تجد بياناته على خريطة <strong>أبشر</strong> أو موقع <strong>البريد السعودي</strong>.
               </InfoBox>
+
+              {/* Country picker. Lives at the top of the address card so it
+                  scopes the rest of the address fields below it. The schema
+                  defaults to "SA" but the SuperAdmin can pick any country
+                  (matches the public registration form's country list). */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <FormField
+                  control={form.control}
+                  name="country"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="flex items-center gap-1.5">
+                        <Globe2 className="h-3.5 w-3.5 text-primary" />
+                        الدولة <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <FormControl>
+                        <SearchCombobox
+                          items={COUNTRY_OPTIONS}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="اختر الدولة..."
+                          searchPlaceholder="ابحث بالاسم أو الكود..."
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        تحدد العملة الافتراضية للشركة بناءً على الدولة المختارة.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <FormField
