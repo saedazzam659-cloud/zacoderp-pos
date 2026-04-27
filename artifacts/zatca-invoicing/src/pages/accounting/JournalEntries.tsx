@@ -18,17 +18,19 @@ import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
-// source document that produced it. Hub-only routes (e.g. /sales/returns,
-// /hr/loans) ignore the id because those modules don't have a per-id detail
-// page yet — clicking still lands the user on the right list. Returns null
-// for general/manual entries that have no source to drill into.
+// source document that produced it. For sourced entry types we ALWAYS return a
+// route — when `sourceId` is missing (older posts that didn't carry a
+// docNumber forward, or rows whose source we couldn't resolve) we fall back to
+// the source module's list page so the user still lands on the right place
+// instead of the journal-entry edit modal. Returns null only for genuinely
+// manual / general entries that have no source to drill into.
 function sourceUrlFor(entryType: string | null | undefined, sourceId: number | null | undefined): string | null {
   const t = entryType ?? "";
   switch (t) {
-    case "sales_invoice":       return sourceId ? `/sales/invoices/${sourceId}` : null;
+    case "sales_invoice":       return sourceId ? `/sales/invoices/${sourceId}` : "/sales/invoices";
     case "sales_return":        return "/sales/returns";
     case "customer_settlement": return "/sales/settlements";
-    case "purchase_invoice":    return sourceId ? `/purchasing/invoices/${sourceId}` : null;
+    case "purchase_invoice":    return sourceId ? `/purchasing/invoices/${sourceId}` : "/purchasing/invoices";
     case "purchase_return":     return "/purchasing/returns";
     case "supplier_settlement": return "/purchasing/settlements";
     case "receipt":
