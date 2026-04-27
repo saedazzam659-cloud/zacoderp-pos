@@ -54,9 +54,22 @@ export default function SessionCountdown() {
   const { toast } = useToast();
   const tr = (k: string) => t(`workSessions.${k}`) as string;
 
+  // Company managers (role === "admin") are EXEMPT from the working-hours
+  // auto-logout per the user's request: that policy applies only to their
+  // subordinate users (cashiers / regular "user" role). SuperAdmins are
+  // exempt as well since they're platform-level and don't belong to any
+  // single company's working-hours configuration.
+  //
+  // Implementation note: by gating `enabled` we short-circuit BOTH the
+  // countdown query AND the per-second tick effect — managers see no
+  // countdown badge and never get auto-logged-out when the company's
+  // sessionEndTime is reached.
+  const exemptFromAutoLogout =
+    user?.role === "admin" || user?.role === "superadmin";
+
   // Disabled if not signed in. (Topbar only renders when signed in anyway,
   // but be defensive — on logout the component unmounts mid-tick.)
-  const enabled = Boolean(token && user);
+  const enabled = Boolean(token && user) && !exemptFromAutoLogout;
 
   // Use the non-admin-safe /me/effective endpoint: it only returns the 3
   // working-hours fields, so cashiers (non-admins) get a countdown without us
