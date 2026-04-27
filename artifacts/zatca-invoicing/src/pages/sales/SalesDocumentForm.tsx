@@ -140,6 +140,12 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [docDate,   setDocDate]         = useState(today());
   const [validUntil,setValidUntil]      = useState("");
   const [customerId,setCustomerId]      = useState("");
+  // ID of the quotation the user picked from the "بناءً على عرض سعر"
+  // combobox on the new-invoice form. Sent on save so the backend can mark
+  // the source quotation as converted and back-link it. Only meaningful
+  // when isInvoice && isNew. Cleared on save/navigation alongside the rest
+  // of the form state.
+  const [sourceQuotationId, setSourceQuotationId] = useState("");
   const [branchId,  setBranchId]        = useState("");
   const [paymentType,setPaymentType]    = useState("credit");
   const [cashBoxId, setCashBoxId]       = useState("");
@@ -216,6 +222,82 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  // Source-quotation picker: load every quotation for this tenant; we then
+  // filter client-side to the only ones that the backend will actually let
+  // us use as a source (status === "accepted" AND not already converted).
+  // Fetched only on the new-invoice form to avoid wasted bandwidth on
+  // edit/quotation/order screens where the picker is hidden.
+  const { data: allQuotationsForLink = [] } = useQuery<any[]>({
+    queryKey: ["sales-quotations-source-link", cid],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/sales-quotations`, { headers: authH });
+      return r.json();
+    },
+    enabled: !!user && isInvoice && isNew,
+    staleTime: 30_000,
+  });
+  // Mirrors the backend gate inside POST /sales-invoices (rules pinned in
+  // routes/sales.ts): we surface ONLY accepted, not-yet-converted quotations
+  // so the user never picks a row the server will reject.
+  const eligibleQuotationsForLink = useMemo(
+    () => (allQuotationsForLink as any[]).filter(
+      (q: any) => q.status === "accepted" && !q.convertedInvoiceId,
+    ),
+    [allQuotationsForLink],
+  );
+
+  // Pre-fill the new-invoice form from a chosen source quotation. We hit
+  // the per-quotation endpoint (which returns header + lines) so we use
+  // exactly the same shape the auto-load effect uses for editing — keeping
+  // the line shape conversion in one mental model. We deliberately set
+  // sourceQuotationId LAST so the combobox stays in sync if any of the
+  // earlier setters bail (e.g. a stale render).
+  async function loadFromQuotation(qid: string) {
+    if (!qid) { setSourceQuotationId(""); return; }
+    try {
+      const r = await fetch(`${API}/api/sales-quotations/${qid}`, { headers: authH });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        toast({ title: j.error || t("salesDocForm.basedOnQuotationLoadError"), variant: "destructive" });
+        return;
+      }
+      const src = await r.json();
+      setCustomerId(src.customerId ? String(src.customerId) : "");
+      setCurrencyCode(src.currencyCode ?? "SAR");
+      setExchangeRate(String(src.exchangeRate ?? "1"));
+      setPriceIncludesVat(!!src.priceIncludesVat);
+      setDocDiscount(String(src.discountAmount ?? "0"));
+      setNotes(src.notes ?? "");
+      setLines(src.lines?.length ? src.lines.map((l: any) => ({
+        _id: crypto.randomUUID(),
+        itemId:      l.itemId      ? String(l.itemId)      : "",
+        itemName:    l.itemName    ?? "",
+        itemCode:    l.itemCode    ?? "",
+        unitId:      l.unitId      ? String(l.unitId)      : "",
+        unit:        l.unit        ?? "",
+        conversionFactor: "1",
+        warehouseId: "",
+        qty:         String(l.qty),
+        unitPrice:   String(l.unitPrice),
+        discount:    String(l.discount ?? "0"),
+        vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+        lineTotal:   String(l.lineTotal),
+        notes:       l.notes ?? "",
+        // Quotations don't carry offer-engine state — start with a clean
+        // slate and let the invoice's own match cycle re-evaluate.
+        appliedOfferId:   null,
+        appliedOfferName: null,
+        engineUnitPrice:  null,
+        engineDiscount:   null,
+        baseUnitPrice:    String(l.unitPrice ?? "0"),
+      })) : [newLine()]);
+      setSourceQuotationId(qid);
+      toast({ title: t("salesDocForm.basedOnQuotationLoaded", { num: src.docNumber ?? `SQ-${qid}` }) });
+    } catch (e: any) {
+      toast({ title: e?.message || t("salesDocForm.basedOnQuotationLoadError"), variant: "destructive" });
+    }
+  }
 
   // Smart document navigator (works for invoice / order / quotation modes).
   // Loads a lightweight summary of every doc-of-this-mode for the current
@@ -827,6 +909,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // engine can clear a previously-applied doc offer when conditions
       // change. Quotations + orders don't run offers.
       base.documentOfferId = documentOfferId || null;
+      // Source-quotation back-link — only carried on the new-invoice POST;
+      // the PUT path doesn't accept it (you can't retroactively re-source
+      // an existing invoice from a different quotation). Backend revalidates
+      // tenancy/status/converted gates before mutating the quotation.
+      if (isNew && sourceQuotationId) base.sourceQuotationId = Number(sourceQuotationId);
       base.paymentType = paymentType;
       base.cashBoxId = paymentType === "cash" ? (cashBoxId || null) : null;
       base.bankAccountId = paymentType === "bank" ? (bankAccountId || null) : null;
@@ -1566,6 +1653,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   <SearchCombobox items={customerComboItems} value={customerId} onValueChange={setCustomerId} placeholder={t("salesDocForm.customerPlaceholder")} />
                 </div>
                 <CustomerVatControl customers={customers} customerId={customerId} onCustomerChange={setCustomerId} />
+                {isInvoice && isNew && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <FileSignature className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t("salesDocForm.basedOnQuotation")}
+                    </Label>
+                    <SearchCombobox
+                      items={[
+                        { value: "", label: t("salesDocForm.basedOnQuotationNone") },
+                        ...eligibleQuotationsForLink.map((q: any) => {
+                          const cust = (customers as any[]).find((c: any) => Number(c.id) === Number(q.customerId));
+                          const custName = cust ? (cust.nameAr ?? cust.nameEn ?? `#${cust.id}`) : t("salesDocForm.noCustomer");
+                          const num = q.docNumber ?? `SQ-${q.id}`;
+                          return {
+                            value: String(q.id),
+                            code:  num,
+                            label: `${custName} — ${q.quotationDate ?? ""} — ${Number(q.totalAmount ?? 0).toFixed(2)}`,
+                          };
+                        }),
+                      ]}
+                      value={sourceQuotationId}
+                      onValueChange={loadFromQuotation}
+                      placeholder={t("salesDocForm.basedOnQuotationPlaceholder")}
+                      emptyText={t("salesDocForm.basedOnQuotationEmpty")}
+                      data-testid="combo-source-quotation"
+                    />
+                  </div>
+                )}
                 {usesOps && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.branch")}</Label>

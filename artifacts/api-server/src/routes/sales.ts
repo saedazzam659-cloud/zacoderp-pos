@@ -11,7 +11,7 @@ import {
   receiptVouchersTable, paymentVouchersTable,
   salesRepsTable, offersTable,
 } from "@workspace/db";
-import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, sql, inArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
@@ -358,7 +358,30 @@ router.post("/sales-invoices", async (req, res) => {
     const { docNumber, invoiceDate, customerId, branchId, paymentType, cashBoxId, bankAccountId, currencyCode, exchangeRate,
             subtotal, vatAmount, discountAmount, totalAmount, priceIncludesVat, notes, lines,
             cogsAccountId, inventoryAccountId, salesAccountId, taxAccountId, discountAccountId,
-            posSessionId, salesRepId, documentOfferId } = req.body;
+            posSessionId, salesRepId, documentOfferId, sourceQuotationId } = req.body;
+    // If the user picked an existing quotation as the source via the
+    // "بناءً على عرض سعر" combobox on the new-invoice form, validate it
+    // BEFORE we INSERT the invoice (rules mirror the /convert endpoint
+    // exactly so the two paths can never diverge):
+    //   1. Quotation must belong to this tenant.
+    //   2. Status must be 'accepted' — drafts/sent quotations cannot be
+    //      invoiced; rejected/converted ones obviously can't either.
+    //   3. Must not already be converted (one quotation → one invoice).
+    let validatedSourceQuotation: { id: number; docNumber: string | null } | null = null;
+    if (sourceQuotationId) {
+      const sqId = Number(sourceQuotationId);
+      const [sq] = await db.select({
+        id: salesQuotationsTable.id,
+        docNumber: salesQuotationsTable.docNumber,
+        status: salesQuotationsTable.status,
+        convertedInvoiceId: salesQuotationsTable.convertedInvoiceId,
+      }).from(salesQuotationsTable)
+        .where(and(eq(salesQuotationsTable.id, sqId), eq(salesQuotationsTable.companyId, cid)));
+      if (!sq) { res.status(404).json({ error: "عرض السعر غير موجود" }); return; }
+      if (sq.convertedInvoiceId) { res.status(400).json({ error: "تم تحويل عرض السعر مسبقاً إلى فاتورة" }); return; }
+      if (sq.status !== "accepted") { res.status(400).json({ error: "يجب قبول عرض السعر قبل التحويل لفاتورة" }); return; }
+      validatedSourceQuotation = { id: sq.id, docNumber: sq.docNumber };
+    }
     if (!invoiceDate) { res.status(400).json({ error: "تاريخ الفاتورة مطلوب" }); return; }
     const pType = paymentType || "credit";
     if (pType === "cash" && !cashBoxId) { res.status(400).json({ error: "يجب اختيار الخزنة عند البيع نقداً" }); return; }
@@ -442,6 +465,35 @@ router.post("/sales-invoices", async (req, res) => {
       }
       if (documentOfferId) usedOfferIds.add(Number(documentOfferId));
       await bumpOffersTimesUsed(cid, [...usedOfferIds]);
+    }
+    // Mirror the /convert path: once the invoice is created from an
+    // accepted quotation, mark the quotation as converted and back-link
+    // it. The pre-insert validation can race — two clients hitting this
+    // endpoint with the same `sourceQuotationId` simultaneously would
+    // both pass the SELECT check and both create invoices. The atomic
+    // gate is the conditional UPDATE below: only ONE row can move from
+    // {status:'accepted', convertedInvoiceId:null} → {status:'converted',
+    // convertedInvoiceId:inv.id}; the loser sees `updateResult.length === 0`
+    // and we compensate by deleting the invoice we just created (FK
+    // cascade nukes invoice lines automatically — confdeltype='c').
+    if (validatedSourceQuotation) {
+      const updated = await db.update(salesQuotationsTable)
+        .set({ status: "converted", convertedInvoiceId: inv.id, updatedAt: new Date() })
+        .where(and(
+          eq(salesQuotationsTable.id, validatedSourceQuotation.id),
+          eq(salesQuotationsTable.companyId, cid),
+          eq(salesQuotationsTable.status, "accepted"),
+          isNull(salesQuotationsTable.convertedInvoiceId),
+        ))
+        .returning({ id: salesQuotationsTable.id });
+      if (updated.length === 0) {
+        await db.delete(salesInvoicesTable).where(and(
+          eq(salesInvoicesTable.id, inv.id),
+          eq(salesInvoicesTable.companyId, cid),
+        ));
+        res.status(409).json({ error: "تم تحويل عرض السعر بواسطة مستخدم آخر — أعد المحاولة" });
+        return;
+      }
     }
     res.status(201).json(inv);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
