@@ -37,109 +37,366 @@ function fieldLabel(f: { labelAr?: string; labelEn?: string; name: string }, isA
 // instead of the flat `journalEntries: [...]` shape our importer expects.
 //
 // `adaptNestedBundle` recognises those bundles and flattens them into the
-// canonical row shape for the chosen entity. Only journalEntries is supported
-// for now; add more branches as we encounter additional real-world exports.
+// canonical row shape for the chosen entity. One branch per importable tile
+// in the /settings/data-io UI: accounts, customers, suppliers, items,
+// warehouses, branches, cashBoxes, bankAccounts, journalEntries.
 //
 // Returns `null` when the bundle is not recognised → caller falls back to the
 // existing direct/loose shape detection.
 function adaptNestedBundle(json: any, entityKey: string): any[] | null {
   if (!json || typeof json !== "object" || Array.isArray(json)) return null;
 
-  if (entityKey === "journalEntries"
-      && Array.isArray(json.AccountingEntry)
-      && Array.isArray(json.AccountingEntryDetailes)) {
-    // ── Defensive: support tables may be present as non-array shapes (e.g.
-    //    a single object or null sentinel). Coerce to [] before iterating so
-    //    the adapter never throws "X is not iterable" on adversarial input.
-    const liveOf = (v: any): any[] => Array.isArray(v) ? v : [];
+  // ── Defensive: support tables may be present as non-array shapes (e.g.
+  //    a single object or null sentinel). Coerce to [] before iterating so
+  //    the adapter never throws "X is not iterable" on adversarial input.
+  const liveOf = (v: any): any[] => Array.isArray(v) ? v : [];
+  const isLive = (r: any): boolean => !r?.IsDeleted;
+  const trim = (v: any): string | null => {
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s;
+  };
 
-    // Build lookup maps from the supporting tables.
-    const accountById = new Map<number, string>();
-    for (const a of liveOf(json.Account)) {
-      if (a?.IsDeleted) continue;
-      if (a?.AccountID != null && a?.code != null) {
-        accountById.set(Number(a.AccountID), String(a.code));
-      }
-    }
-    const branchById = new Map<number, string>();
-    for (const b of liveOf(json.Branch)) {
-      if (b?.IsDeleted) continue;
-      if (b?.branch_id != null && b?.code != null) {
-        branchById.set(Number(b.branch_id), String(b.code));
-      }
-    }
-    const currencyById = new Map<number, { code: string; basic: boolean }>();
-    for (const c of liveOf(json.Currency)) {
-      if (c?.IsDeleted) continue;
-      if (c?.currence_id != null) {
-        currencyById.set(Number(c.currence_id), {
-          code: String(c.code ?? ""),
-          basic: !!c.basic_currency,
-        });
-      }
-    }
-    const headerById = new Map<number, any>();
-    for (const h of json.AccountingEntry) {
-      if (h?.IsDeleted) continue;
-      if (h?.AccountingEntryID != null) {
-        headerById.set(Number(h.AccountingEntryID), h);
-      }
-    }
-
-    // ── Disambiguate docNumber: the backend importer groups lines by
-    //    docNumber alone, so two different AccountingEntryIDs that happen to
-    //    share the same SerialNumberValue would otherwise be merged into one
-    //    journal entry (silent corruption). Pre-scan serials and force the
-    //    AE-<id> form for any serial that isn't unique across live headers.
-    const serialCounts = new Map<string, number>();
-    for (const h of headerById.values()) {
-      const raw = h?.SerialNumberValue;
-      if (raw != null && String(raw).trim() !== "") {
-        const s = String(raw).trim();
-        serialCounts.set(s, (serialCounts.get(s) ?? 0) + 1);
-      }
-    }
-    const docNumberFor = (h: any): string => {
-      const raw = h?.SerialNumberValue;
-      const s = raw != null ? String(raw).trim() : "";
-      if (!s || (serialCounts.get(s) ?? 0) > 1) return `AE-${h.AccountingEntryID}`;
-      return s;
-    };
-
-    const out: any[] = [];
-    for (const ln of json.AccountingEntryDetailes) {
-      if (ln?.IsDeleted) continue;
-      if (ln?.AccountingEntryID == null) continue;
-      const h = headerById.get(Number(ln.AccountingEntryID));
-      if (!h) continue; // orphan or soft-deleted header
-      const accCode = ln.AccountID != null ? accountById.get(Number(ln.AccountID)) : undefined;
-      if (!accCode) continue; // can't post a line without a known account code
-
-      const cur = h.CurrencyID != null ? currencyById.get(Number(h.CurrencyID)) : null;
-      // The source's basic_currency row represents SAR in 99% of Saudi data
-      // dumps regardless of its `code` field (often "1"). Preserve non-basic
-      // currency codes verbatim so multi-currency entries still resolve.
-      const currency = cur ? (cur.basic ? "SAR" : (cur.code || "SAR")) : "SAR";
-      const branchCode = h.branch_id != null ? (branchById.get(Number(h.branch_id)) ?? null) : null;
-      const dateStr = h.Date ? String(h.Date).slice(0, 10) : null;
-
-      out.push({
-        docNumber: docNumberFor(h),
-        entryDate: dateStr,
-        description: h.Description ?? null,
-        currency,
-        exchangeRate: h.ExchangeRate ?? 1,
-        entryType: "general",
-        branchCode,
-        status: "draft",
-        accountCode: accCode,
-        debit: ln.DR ?? 0,
-        credit: ln.CR ?? 0,
-        lineDescription: ln.Description ?? null,
-        costCenter: null,
+  // Currency lookup is shared by suppliers / bankAccounts / journalEntries.
+  // The source's basic_currency row represents SAR in 99% of Saudi dumps
+  // regardless of its `code` field (often "1").
+  const currencyById = new Map<number, { code: string; basic: boolean }>();
+  for (const c of liveOf(json.Currency)) {
+    if (!isLive(c)) continue;
+    if (c?.currence_id != null) {
+      currencyById.set(Number(c.currence_id), {
+        code: String(c.code ?? ""),
+        basic: !!c.basic_currency,
       });
     }
-    return out;
+  }
+  const currencyCodeFor = (id: any): string => {
+    if (id == null) return "SAR";
+    const c = currencyById.get(Number(id));
+    if (!c) return "SAR";
+    return c.basic ? "SAR" : (c.code || "SAR");
+  };
+
+  switch (entityKey) {
+    // ──────────────────────────────────────────────────────────────────────
+    case "accounts": {
+      if (!Array.isArray(json.Account)) return null;
+
+      const groupById = new Map<number, any>();
+      for (const g of liveOf(json.AccountGroup)) {
+        if (!isLive(g)) continue;
+        if (g?.ID != null) groupById.set(Number(g.ID), g);
+      }
+      // accountId → code, used to resolve ParentID into parentCode.
+      const accountIdToCode = new Map<number, string>();
+      for (const a of json.Account) {
+        if (!isLive(a)) continue;
+        const code = trim(a?.code);
+        if (a?.AccountID != null && code) accountIdToCode.set(Number(a.AccountID), code);
+      }
+      // Infer the importer's enum {asset|liability|equity|revenue|expense}.
+      // Source uses both تاء مربوطة and هاء (ميزانية/ميزانيه, قائمة/قائمه)
+      // and may include the definite article ال (قائمة الدخل).
+      //
+      // IMPORTANT: for income-statement accounts (قائمة دخل) the AccountGroup
+      // name alone is unreliable — Saudi charts often nest BOTH revenue (CR)
+      // and expense (DR) accounts under one parent group called "حساب الدخل"
+      // ("income account"). For those rows we trust the State column directly
+      // (CR → revenue, DR → expense). All other rows fall through to the
+      // group-name regexes (asset/liability/equity/expense/revenue) and then
+      // to a State + isBS final default.
+      const inferType = (a: any): string => {
+        const at = String(a?.AccountType ?? "");
+        const isIS = /قائم[ةه]\s*(?:ال)?دخل/.test(at) || /\bincome\s+statement\b/i.test(at);
+        const isBS = /ميزاني[ةه]/.test(at) || /\bbalance\s+sheet\b/i.test(at);
+        if (isIS) {
+          if (a?.State === "CR") return "revenue";
+          if (a?.State === "DR") return "expense";
+        }
+        const g = a?.AccountGroupID != null ? groupById.get(Number(a.AccountGroupID)) : null;
+        const text = `${g?.arabic_name ?? ""} ${g?.english_name ?? ""}`.toLowerCase();
+        if (/أصول|asset/.test(text)) return "asset";
+        if (/خصوم|التزامات|مطلوبات|liabilit/.test(text)) return "liability";
+        if (/حقوق|ملكية|رأس\s*المال|equity|capital/.test(text)) return "equity";
+        if (/مصروف|تكاليف|تكلفة|expense|cost/.test(text)) return "expense";
+        if (/إيراد|ايراد|مبيعات|revenue|income|sales/.test(text)) return "revenue";
+        if (a?.State === "DR") return isBS ? "asset" : "expense";
+        if (a?.State === "CR") return isBS ? "liability" : "revenue";
+        return "asset";
+      };
+
+      const rows: any[] = [];
+      for (const a of json.Account) {
+        if (!isLive(a)) continue;
+        const code = trim(a?.code);
+        if (!code) continue;
+        rows.push({
+          code,
+          nameAr: trim(a?.arabic_name) ?? trim(a?.english_name),
+          nameEn: trim(a?.english_name),
+          accountType: inferType(a),
+          parentCode: a?.ParentID != null ? (accountIdToCode.get(Number(a.ParentID)) ?? null) : null,
+          reportDirection: /ميزاني[ةه]/.test(String(a?.AccountType ?? "")) ? "balance_sheet" : "income_statement",
+          level: typeof a?.Level === "number" ? a.Level : 1,
+          isPosting: !a?.AccountShutdown,
+          isActive: !a?.NotActive,
+          notes: null,
+        });
+      }
+      // Importer resolves parentCode FK per-row inside one transaction, so
+      // parents must be inserted before children: sort by level ASC, code ASC.
+      rows.sort((x, y) => (x.level - y.level) || x.code.localeCompare(y.code));
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "customers": {
+      if (!Array.isArray(json.Clients)) return null;
+      const rows: any[] = [];
+      for (const c of json.Clients) {
+        if (!isLive(c)) continue;
+        const nameAr = trim(c?.name) ?? trim(c?.nick_name);
+        if (!nameAr) continue;
+        rows.push({
+          nameAr,
+          nameEn: null,
+          vatNumber: trim(c?.tax_number),
+          // NB: the source schema has the typo `record_numbe` (no trailing r).
+          crNumber: trim(c?.record_numbe) ?? trim(c?.record_number),
+          email: trim(c?.email1) ?? trim(c?.email2),
+          phone: trim(c?.mobile1) ?? trim(c?.phone1) ?? trim(c?.mobile2) ?? trim(c?.phone2),
+          city: null,
+          district: null,
+          street: trim(c?.address),
+          buildingNumber: null,
+          postalCode: null,
+          country: "SA",
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "suppliers": {
+      if (!Array.isArray(json.Vendors)) return null;
+      const rows: any[] = [];
+      for (const v of json.Vendors) {
+        if (!isLive(v)) continue;
+        const nameAr = trim(v?.vendor_name) ?? trim(v?.nick_name);
+        if (!nameAr) continue;
+        const nick = trim(v?.nick_name);
+        rows.push({
+          code: trim(v?.code),
+          nameAr,
+          nameEn: nick && nick !== nameAr ? nick : null,
+          vatNumber: trim(v?.tax_file_number),
+          crNumber: trim(v?.record_number),
+          email: trim(v?.e_mail),
+          phone: trim(v?.mobile) ?? trim(v?.phone1) ?? trim(v?.phone2),
+          city: null,
+          country: "SA",
+          currencyCode: currencyCodeFor(v?.CurrencyID),
+          openingBalance: null,
+          creditLimit: null,
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "items": {
+      if (!Array.isArray(json.Item)) return null;
+      const rows: any[] = [];
+      for (const i of json.Item) {
+        if (!isLive(i)) continue;
+        const code = trim(i?.item_code);
+        const nameAr = trim(i?.arabic_name) ?? trim(i?.english_name);
+        if (!code || !nameAr) continue;
+        const typeStr = String(i?.item_type ?? "").toLowerCase();
+        const isService = typeStr.includes("service") || typeStr.includes("خدم");
+        rows.push({
+          code,
+          nameAr,
+          nameEn: trim(i?.english_name),
+          barcode: trim(i?.bar_code),
+          itemType: isService ? "service" : "stock",
+          costPrice: Number(i?.main_cost ?? i?.current_cost ?? i?.last_cost ?? 0) || 0,
+          salePrice: Number(i?.defult_price ?? 0) || 0,
+          vatRate: typeof i?.TaxDefaultRatio === "number" ? i.TaxDefaultRatio : 15,
+          reorderLevel: null,
+          description: trim(i?.Description),
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "warehouses": {
+      if (!Array.isArray(json.Stores)) return null;
+      const rows: any[] = [];
+      for (const s of json.Stores) {
+        if (!isLive(s)) continue;
+        const code = trim(s?.code);
+        if (!code) continue;
+        // The source's `negativeAllowance` is a free-text setting; "لاشـئ"
+        // ("nothing", with extra tatweel chars) means no negative stock.
+        const negText = String(s?.negativeAllowance ?? "");
+        const allowNegative = negText.trim() !== "" && !negText.includes("لاش");
+        rows.push({
+          code,
+          nameAr: trim(s?.arabic_name) ?? trim(s?.english_name),
+          nameEn: trim(s?.english_name),
+          city: null,
+          region: null,
+          isActive: !s?.inactive,
+          allowNegative,
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "branches": {
+      if (!Array.isArray(json.Branch)) return null;
+      const rows: any[] = [];
+      for (const b of json.Branch) {
+        if (!isLive(b)) continue;
+        const code = trim(b?.code);
+        if (!code) continue;
+        rows.push({
+          code,
+          nameAr: trim(b?.arabic_name) ?? trim(b?.english_name),
+          nameEn: trim(b?.english_name),
+          city: trim(b?.city),
+          address: trim(b?.address),
+          phone: trim(b?.phone),
+          email: trim(b?.email),
+          isMain: !!b?.IsDefault,
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "cashBoxes": {
+      if (!Array.isArray(json.Treasury)) return null;
+      const rows: any[] = [];
+      for (const t of json.Treasury) {
+        if (!isLive(t)) continue;
+        const code = trim(t?.code);
+        if (!code) continue;
+        rows.push({
+          code,
+          nameAr: trim(t?.arabic_name) ?? trim(t?.english_name),
+          nameEn: trim(t?.english_name),
+          // Treasury rows in this source carry no currencyID; default to SAR
+          // and let the user override during the column-mapping step if needed.
+          currencyCode: "SAR",
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "bankAccounts": {
+      if (!Array.isArray(json.Bank_Account)) return null;
+      const rows: any[] = [];
+      for (const b of json.Bank_Account) {
+        if (!isLive(b)) continue;
+        // Bank_Account has no separate `code` column → synthesise one from
+        // the surrogate id so every row meets the importer's required field.
+        const code = b?.id != null ? `BA-${b.id}` : null;
+        const nameAr = trim(b?.arabic_name) ?? trim(b?.english_name);
+        if (!code || !nameAr) continue;
+        rows.push({
+          code,
+          nameAr,
+          nameEn: trim(b?.english_name),
+          accountNumber: trim(b?.accountNum),
+          currencyCode: currencyCodeFor(b?.currencyID),
+        });
+      }
+      return rows;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    case "journalEntries": {
+      if (!Array.isArray(json.AccountingEntry) || !Array.isArray(json.AccountingEntryDetailes)) return null;
+
+      // Build lookup maps from the supporting tables.
+      const accountById = new Map<number, string>();
+      for (const a of liveOf(json.Account)) {
+        if (!isLive(a)) continue;
+        if (a?.AccountID != null && a?.code != null) {
+          accountById.set(Number(a.AccountID), String(a.code));
+        }
+      }
+      const branchById = new Map<number, string>();
+      for (const b of liveOf(json.Branch)) {
+        if (!isLive(b)) continue;
+        if (b?.branch_id != null && b?.code != null) {
+          branchById.set(Number(b.branch_id), String(b.code));
+        }
+      }
+      const headerById = new Map<number, any>();
+      for (const h of json.AccountingEntry) {
+        if (!isLive(h)) continue;
+        if (h?.AccountingEntryID != null) {
+          headerById.set(Number(h.AccountingEntryID), h);
+        }
+      }
+
+      // ── Disambiguate docNumber: the backend importer groups lines by
+      //    docNumber alone, so two different AccountingEntryIDs that happen to
+      //    share the same SerialNumberValue would otherwise be merged into one
+      //    journal entry (silent corruption). Pre-scan serials and force the
+      //    AE-<id> form for any serial that isn't unique across live headers.
+      const serialCounts = new Map<string, number>();
+      for (const h of headerById.values()) {
+        const raw = h?.SerialNumberValue;
+        if (raw != null && String(raw).trim() !== "") {
+          const s = String(raw).trim();
+          serialCounts.set(s, (serialCounts.get(s) ?? 0) + 1);
+        }
+      }
+      const docNumberFor = (h: any): string => {
+        const raw = h?.SerialNumberValue;
+        const s = raw != null ? String(raw).trim() : "";
+        if (!s || (serialCounts.get(s) ?? 0) > 1) return `AE-${h.AccountingEntryID}`;
+        return s;
+      };
+
+      const rows: any[] = [];
+      for (const ln of json.AccountingEntryDetailes) {
+        if (!isLive(ln)) continue;
+        if (ln?.AccountingEntryID == null) continue;
+        const h = headerById.get(Number(ln.AccountingEntryID));
+        if (!h) continue; // orphan or soft-deleted header
+        const accCode = ln.AccountID != null ? accountById.get(Number(ln.AccountID)) : undefined;
+        if (!accCode) continue; // can't post a line without a known account code
+
+        const currency = currencyCodeFor(h.CurrencyID);
+        const branchCode = h.branch_id != null ? (branchById.get(Number(h.branch_id)) ?? null) : null;
+        const dateStr = h.Date ? String(h.Date).slice(0, 10) : null;
+
+        rows.push({
+          docNumber: docNumberFor(h),
+          entryDate: dateStr,
+          description: h.Description ?? null,
+          currency,
+          exchangeRate: h.ExchangeRate ?? 1,
+          entryType: "general",
+          branchCode,
+          status: "draft",
+          accountCode: accCode,
+          debit: ln.DR ?? 0,
+          credit: ln.CR ?? 0,
+          lineDescription: ln.Description ?? null,
+          costCenter: null,
+        });
+      }
+      return rows;
+    }
   }
 
   return null;
