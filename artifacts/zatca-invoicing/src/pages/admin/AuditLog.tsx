@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, ScrollText, ShieldAlert, ChevronLeft, ChevronRight, RefreshCw, Scissors } from "lucide-react";
+import {
+  Loader2,
+  ScrollText,
+  ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  Scissors,
+  Copy,
+  Check,
+} from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -351,6 +362,12 @@ function AuditDetailsDialog({
 
   const ok = row?.statusCode != null && row.statusCode >= 200 && row.statusCode < 400;
 
+  // Build the copyable request path string (method + path) so the inline
+  // copy button next to the field grabs the same text the user sees.
+  const pathCopyValue = row
+    ? [row.method, row.path].filter((v) => v != null && v !== "").join(" ").trim()
+    : "";
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent
@@ -391,7 +408,17 @@ function AuditDetailsDialog({
                 <span className="font-mono text-xs">{row.entityType ?? "—"}</span>
               </DetailField>
               <DetailField label={tr("detailsEntityId")}>
-                <span className="font-mono text-xs break-all">{row.entityId ?? "—"}</span>
+                <div className="flex items-start gap-1.5">
+                  <span className="font-mono text-xs break-all flex-1">{row.entityId ?? "—"}</span>
+                  {row.entityId && (
+                    <CopyIconButton
+                      value={row.entityId}
+                      label={tr("copyEntityId")}
+                      tr={tr}
+                      testId="audit-details-copy-entity-id"
+                    />
+                  )}
+                </div>
               </DetailField>
               <DetailField label={tr("detailsStatusCode")}>
                 {row.statusCode != null ? (
@@ -406,24 +433,55 @@ function AuditDetailsDialog({
                 )}
               </DetailField>
               <DetailField label={tr("detailsPath")}>
-                <span className="font-mono text-xs break-all">
-                  {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
-                  {row.path ?? "—"}
-                </span>
+                <div className="flex items-start gap-1.5">
+                  <span className="font-mono text-xs break-all flex-1">
+                    {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
+                    {row.path ?? "—"}
+                  </span>
+                  {pathCopyValue && (
+                    <CopyIconButton
+                      value={pathCopyValue}
+                      label={tr("copyPath")}
+                      tr={tr}
+                      testId="audit-details-copy-path"
+                    />
+                  )}
+                </div>
               </DetailField>
               <DetailField label={tr("detailsUserAgent")} fullWidth>
-                <span
-                  data-testid="audit-details-user-agent"
-                  className="font-mono text-xs break-all text-muted-foreground"
-                >
-                  {row.userAgent ?? "—"}
-                </span>
+                <div className="flex items-start gap-1.5">
+                  <span
+                    data-testid="audit-details-user-agent"
+                    className="font-mono text-xs break-all text-muted-foreground flex-1"
+                  >
+                    {row.userAgent ?? "—"}
+                  </span>
+                  {row.userAgent && (
+                    <CopyIconButton
+                      value={row.userAgent}
+                      label={tr("copyUserAgent")}
+                      tr={tr}
+                      testId="audit-details-copy-user-agent"
+                    />
+                  )}
+                </div>
               </DetailField>
             </dl>
 
             <div>
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                {tr("detailsMetadata")}
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {tr("detailsMetadata")}
+                </div>
+                {prettyMeta && (
+                  <CopyIconButton
+                    value={prettyMeta}
+                    label={tr("copyMetadata")}
+                    tr={tr}
+                    testId="audit-details-copy-metadata"
+                    showText
+                  />
+                )}
               </div>
               {prettyMeta ? (
                 <pre
@@ -460,5 +518,108 @@ function DetailField({
       <dt className="text-xs font-medium text-muted-foreground mb-0.5">{label}</dt>
       <dd>{children}</dd>
     </div>
+  );
+}
+
+// Small reusable copy-to-clipboard button used inside the audit details
+// dialog (metadata JSON, entityId, userAgent, request path). It briefly
+// swaps the icon to a check after a successful copy and surfaces a toast
+// either way so the reviewer always gets confirmation.
+//
+// `showText` renders a textual "Copy" label next to the icon (used on the
+// metadata panel header where there's room); the inline buttons next to
+// long fields stay icon-only to keep the layout compact. The component
+// uses logical sizing/flex so it aligns correctly in both LTR and RTL —
+// the parent container's `dir` attribute already mirrors the row.
+function CopyIconButton({
+  value,
+  label,
+  tr,
+  testId,
+  showText = false,
+}: {
+  value: string;
+  label: string;
+  tr: (k: string, opts?: any) => string;
+  testId?: string;
+  showText?: boolean;
+}) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    // Prefer the async Clipboard API; fall back to a hidden textarea +
+    // execCommand for older / insecure-context browsers so the button still
+    // works during local development over plain HTTP.
+    let ok = false;
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        await navigator.clipboard.writeText(value);
+        ok = true;
+      } else if (typeof document !== "undefined") {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    } catch {
+      ok = false;
+    }
+
+    if (ok) {
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+      toast({
+        title: tr("copySuccessTitle"),
+        description: label,
+      });
+    } else {
+      toast({
+        title: tr("copyFailureTitle"),
+        description: tr("copyFailureDescription"),
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={handleCopy}
+      aria-label={label}
+      title={label}
+      data-testid={testId}
+      className={`h-7 ${showText ? "px-2" : "w-7 p-0"} shrink-0`}
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-emerald-600" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+      {showText && (
+        <span className="ms-1 text-xs">
+          {copied ? tr("copiedLabel") : tr("copyLabel")}
+        </span>
+      )}
+    </Button>
   );
 }
