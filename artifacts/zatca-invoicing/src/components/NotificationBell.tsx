@@ -118,7 +118,16 @@ export function NotificationBell() {
               }`}
             >
               <button
-                onClick={() => navigate("/notifications")}
+                onClick={() => {
+                  // Inbox-backed notifications (sourceKey = "inbox:<id>")
+                  // navigate to /inbox?id=NN. Everything else opens the
+                  // notifications list. Mark-as-read happens on the inbox page.
+                  if (n.sourceKey?.startsWith("inbox:")) {
+                    const id = Number(n.sourceKey.slice("inbox:".length));
+                    if (Number.isFinite(id) && id > 0) { navigate(`/inbox?id=${id}`); return; }
+                  }
+                  navigate("/notifications");
+                }}
                 className="flex-1 text-start px-3 py-2.5 flex items-start gap-2 min-w-0"
               >
                 <span className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${SEV_DOT[n.severity] || "bg-slate-400"}`} />

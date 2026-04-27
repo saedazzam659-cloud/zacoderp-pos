@@ -190,6 +190,10 @@ const dashboardSubNav: NavDef[] = [
   // Voice Assistant — admin-only screen for company-wide voice activation,
   // AI model + a recent-commands log. Hidden from superadmin (no companyId).
   { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
+  // In-app inbox — every company user has one (reports, system messages).
+  { nameKey: "nav.inbox",        href: "/inbox",       icon: Inbox },
+  // AI Reports — admin-only natural-language report generator.
+  { nameKey: "nav.aiReports",    href: "/ai-reports",  icon: Sparkles, requireAdmin: true },
 ];
 
 // "ربط ZATCA" — top-level group for ZATCA integration screens. Per the

@@ -460,6 +460,8 @@
     "sessionsAdmin": "Create Sessions",
     "voiceAssistant": "Voice Assistant",
     "voiceAssistantSettings": "Voice Assistant Settings",
+    "inbox": "Inbox",
+    "aiReports": "AI Reports",
     "posSettings": "POS Settings",
     "posTerminals": "POS Terminals",
     "hrEmployeesList": "Employees",
@@ -5702,5 +5704,35 @@
     "colUsers": "Users",
     "colCreated": "Created",
     "colActions": "Actions"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "empty": "Your inbox is empty",
+    "selectToRead": "Select a message to read",
+    "markAllRead": "Mark all as read",
+    "refresh": "Refresh",
+    "download": "Download attachment",
+    "delete": "Delete"
+  },
+  "aiReports": {
+    "title": "AI Reports",
+    "subtitle": "Write your report request in plain language; the system will understand it, generate the report, and deliver it to your inbox.",
+    "promptLabel": "Write your request",
+    "promptPlaceholder": "e.g. Send sales report for the last 7 days",
+    "samplesLabel": "Examples:",
+    "send": "Generate and send",
+    "sending": "Generating...",
+    "toAllAdmins": "Send to all admins",
+    "alsoEmail": "Also send via email",
+    "successTitle": "Report generated and delivered",
+    "errorTitle": "Could not generate report",
+    "reportLabel": "Report",
+    "periodLabel": "Period",
+    "branch": "Branch",
+    "recordsLabel": "Records",
+    "recipientsLabel": "Recipients",
+    "emailSent": "Email copy sent",
+    "openInInbox": "Open in Inbox",
+    "footer": "Supported report types: sales, sales returns, receipt vouchers, payment vouchers, invoices list."
   }
 }

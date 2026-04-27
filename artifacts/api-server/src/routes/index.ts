@@ -54,6 +54,8 @@ import adminModulesRouter from "./adminModules";
 import productionRouter from "./production";
 import faceAttendanceRouter from "./faceAttendance";
 import securityEventsRouter from "./security-events";
+import inboxRouter from "./inbox";
+import aiReportsRouter from "./ai-reports";
 
 const router: IRouter = Router();
 
@@ -102,6 +104,8 @@ router.use(storageRouter);
 router.use("/pos-sessions", posSessionsRouter);
 router.use("/pos-terminals", posTerminalsRouter);
 router.use("/notifications", notificationsRouter);
+router.use("/inbox", inboxRouter);
+router.use("/ai-reports", aiReportsRouter);
 router.use("/support-messages", supportMessagesRouter);
 router.use("/accounting-mappings", accountingMappingsRouter);
 router.use("/backup", backupRouter);

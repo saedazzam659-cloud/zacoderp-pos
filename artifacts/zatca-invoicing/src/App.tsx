@@ -25,6 +25,8 @@ import OperationalSummaryReport from "@/pages/admin/reports/OperationalSummaryRe
 import PlanUsageReport from "@/pages/admin/reports/PlanUsageReport";
 import RevenueByPlanReport from "@/pages/admin/reports/RevenueByPlanReport";
 import Notifications from "@/pages/Notifications";
+import Inbox from "@/pages/Inbox";
+import AiReports from "@/pages/AiReports";
 import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
 import CompanyNew from "@/pages/CompanyNew";
@@ -275,6 +277,8 @@ function AppRoutes() {
                 Gated against the "sessions" permission key (admin & superadmin pass automatically). */}
             {!isSuperAdmin && <PermRoute path="/sessions" module="sessions" component={SessionsAdmin} />}
             <Route path="/notifications" component={Notifications} />
+            {!isSuperAdmin && <Route path="/inbox" component={Inbox} />}
+            {!isSuperAdmin && user?.role === "admin" && <Route path="/ai-reports" component={AiReports} />}
 
             {/* Company user routes */}
             {!isSuperAdmin && <Route path="/" component={Dashboard} />}
