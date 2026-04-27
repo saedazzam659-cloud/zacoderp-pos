@@ -812,7 +812,7 @@ function DashboardNavGroup({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const isOnSub = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
+  const isOnSub = location === "/control-panel" || dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
   return (
     <div>
       <HubGroupButton
@@ -850,7 +850,7 @@ function AccountingNavGroup({
   if (!groupVisible(user, ACCOUNTING_GROUP_PERMS)) return null;
   // Treat /accounting/reports as part of the parent group so the parent stays
   // highlighted while the user is browsing inside its nested reports.
-  const isOnSub = accountingSubNav.some(i => location.startsWith(i.href)) || location.startsWith("/accounting/reports");
+  const isOnSub = location.startsWith("/accounting") || accountingSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -890,7 +890,7 @@ function PosNavGroup({
   const { t } = useTranslation();
   const { user } = useAuth();
   if (!groupVisible(user, POS_GROUP_PERMS)) return null;
-  const isOnSub = posSubNav.some(i => location.startsWith(i.href));
+  const isOnSub = location.startsWith("/pos-management") || location.startsWith("/pos") || posSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton
@@ -921,7 +921,7 @@ function HrNavGroup({
   const { t } = useTranslation();
   const { user } = useAuth();
   if (!groupVisible(user, HR_GROUP_PERMS)) return null;
-  const isOnSub = hrSubNav.some(i => location.startsWith(i.href));
+  const isOnSub = location.startsWith("/hr") || hrSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
       <HubGroupButton

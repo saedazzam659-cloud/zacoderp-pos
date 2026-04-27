@@ -293,7 +293,7 @@ function AppRoutes() {
                 tiles by perm, and the sidebar HR group is hidden when the user
                 has no hr_* perms at all. Don't gate against hr_employees here
                 or users with only payroll/attendance perms get a 403 wall. */}
-            <Route path="/hr" component={HrHub} />
+            {!isSuperAdmin && <Route path="/hr" component={HrHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/employees"               module="hr_employees"   component={Employees} />}
             {!isSuperAdmin && <PermRoute path="/hr/employees/:id/contracts" module="hr_employees"   component={EmployeeContracts} />}
             {!isSuperAdmin && <PermRoute path="/hr/contracts"               module="hr_employees"   component={AllContracts} />}
