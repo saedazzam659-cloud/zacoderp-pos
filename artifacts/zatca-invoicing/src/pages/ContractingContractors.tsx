@@ -11,15 +11,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
-import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { FormPanel } from "@/components/FormPanel";
 import ContractingAIAssistant from "@/components/ContractingAIAssistant";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -132,6 +130,64 @@ export default function ContractingContractors() {
         </Button>
       </div>
 
+      {editing && (
+        <FormPanel
+          icon={Users}
+          title={(editing as any).id
+            ? t("contracting.contractors.edit", "تعديل المقاول")
+            : t("contracting.contractors.new", "مقاول جديد")}
+          subtitle={t("contracting.contractors.subtitle", "إدارة شبكة المقاولين الفرعيين")}
+          width="3xl"
+          onClose={() => setEditing(null)}
+          onSave={save}
+          saving={saving}
+          saveDisabled={!editing.name?.trim()}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+            <Field label={t("contracting.contractors.name", "الاسم")} required>
+              <Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.contractors.contactPerson", "الشخص المسؤول")}>
+              <Input value={editing.contactPerson ?? ""} onChange={e => setEditing({ ...editing, contactPerson: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.contractors.phone", "الهاتف")}>
+              <Input value={editing.phone ?? ""} onChange={e => setEditing({ ...editing, phone: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.contractors.email", "البريد الإلكتروني")}>
+              <Input value={editing.email ?? ""} onChange={e => setEditing({ ...editing, email: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.contractors.specialty", "التخصص")}>
+              <Select value={editing.specialty ?? "general"} onValueChange={v => setEditing({ ...editing, specialty: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SPECIALTIES.map(s => <SelectItem key={s} value={s}>{SPECIALTY_LABEL[s]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.contractors.status", "الحالة")}>
+              <Select value={editing.status ?? "active"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.contractors.rating", "التقييم (0-5)")}>
+              <Input type="number" min={0} max={5} step={0.1} value={editing.rating ?? "0"}
+                onChange={e => setEditing({ ...editing, rating: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.contractors.address", "العنوان")}>
+              <Input value={editing.address ?? ""} onChange={e => setEditing({ ...editing, address: e.target.value })} />
+            </Field>
+            <div className="md:col-span-2">
+              <Field label={t("contracting.contractors.notes", "ملاحظات")}>
+                <Input value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
+              </Field>
+            </div>
+          </div>
+        </FormPanel>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
           <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
@@ -188,68 +244,6 @@ export default function ContractingContractors() {
 
         <ContractingAIAssistant screenContext="contracting.contractors" currentAction="reviewing contractors" />
       </div>
-
-      <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editing && (editing as any).id
-                ? t("contracting.contractors.edit", "تعديل المقاول")
-                : t("contracting.contractors.new", "مقاول جديد")}
-            </DialogTitle>
-          </DialogHeader>
-          {editing && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field label={t("contracting.contractors.name", "الاسم")} required>
-                <Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} />
-              </Field>
-              <Field label={t("contracting.contractors.contactPerson", "الشخص المسؤول")}>
-                <Input value={editing.contactPerson ?? ""} onChange={e => setEditing({ ...editing, contactPerson: e.target.value })} />
-              </Field>
-              <Field label={t("contracting.contractors.phone", "الهاتف")}>
-                <Input value={editing.phone ?? ""} onChange={e => setEditing({ ...editing, phone: e.target.value })} />
-              </Field>
-              <Field label={t("contracting.contractors.email", "البريد الإلكتروني")}>
-                <Input value={editing.email ?? ""} onChange={e => setEditing({ ...editing, email: e.target.value })} />
-              </Field>
-              <Field label={t("contracting.contractors.specialty", "التخصص")}>
-                <Select value={editing.specialty ?? "general"} onValueChange={v => setEditing({ ...editing, specialty: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {SPECIALTIES.map(s => <SelectItem key={s} value={s}>{SPECIALTY_LABEL[s]}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label={t("contracting.contractors.status", "الحالة")}>
-                <Select value={editing.status ?? "active"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label={t("contracting.contractors.rating", "التقييم (0-5)")}>
-                <Input type="number" min={0} max={5} step={0.1} value={editing.rating ?? "0"}
-                  onChange={e => setEditing({ ...editing, rating: e.target.value })} />
-              </Field>
-              <Field label={t("contracting.contractors.address", "العنوان")}>
-                <Input value={editing.address ?? ""} onChange={e => setEditing({ ...editing, address: e.target.value })} />
-              </Field>
-              <div className="md:col-span-2">
-                <Field label={t("contracting.contractors.notes", "ملاحظات")}>
-                  <Input value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
-                </Field>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save} disabled={saving}>
-              {saving ? t("common.saving", "جاري الحفظ…") : t("common.save", "حفظ")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <AlertDialog open={!!deleting} onOpenChange={open => !open && setDeleting(null)}>
         <AlertDialogContent>

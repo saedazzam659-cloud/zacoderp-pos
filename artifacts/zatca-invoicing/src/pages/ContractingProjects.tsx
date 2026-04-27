@@ -12,15 +12,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
-import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { FormPanel } from "@/components/FormPanel";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -146,6 +144,80 @@ export default function ContractingProjects() {
           {t("contracting.projects.new", "مشروع جديد")}
         </Button>
       </div>
+
+      {editing && (
+        <FormPanel
+          icon={Briefcase}
+          title={(editing as any).id
+            ? t("contracting.projects.edit", "تعديل المشروع")
+            : t("contracting.projects.new", "مشروع جديد")}
+          subtitle={t("contracting.projects.subtitle", "إدارة جميع المشاريع الإنشائية")}
+          width="4xl"
+          onClose={() => setEditing(null)}
+          onSave={save}
+          saving={saving}
+          saveDisabled={!editing.nameAr?.trim() || !editing.code?.trim()}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+            <Field label={t("contracting.projects.code", "الكود")} required>
+              <Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.nameAr", "الاسم بالعربية")} required>
+              <Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.nameEn", "الاسم بالإنجليزية")}>
+              <Input value={editing.nameEn ?? ""} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.client", "العميل")}>
+              <Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.location", "الموقع")}>
+              <Input value={editing.location ?? ""} onChange={e => setEditing({ ...editing, location: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.type", "نوع المشروع")}>
+              <Select value={editing.projectType ?? "building"} onValueChange={v => setEditing({ ...editing, projectType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TYPES.map(ty => <SelectItem key={ty} value={ty}>{ty}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.projects.status", "الحالة")}>
+              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.projects.contractValue", "قيمة العقد (ر.س)")}>
+              <Input type="number" value={editing.contractValue ?? "0"}
+                onChange={e => setEditing({ ...editing, contractValue: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.plannedBudget", "الميزانية المخططة (ر.س)")}>
+              <Input type="number" value={editing.plannedBudget ?? "0"}
+                onChange={e => setEditing({ ...editing, plannedBudget: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.plannedStartDate", "تاريخ البداية المخطط")}>
+              <Input type="date" value={editing.plannedStartDate ?? ""}
+                onChange={e => setEditing({ ...editing, plannedStartDate: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.plannedEndDate", "تاريخ النهاية المخطط")}>
+              <Input type="date" value={editing.plannedEndDate ?? ""}
+                onChange={e => setEditing({ ...editing, plannedEndDate: e.target.value })} />
+            </Field>
+            <Field label={t("contracting.projects.progress", "نسبة الإنجاز %")}>
+              <Input type="number" min={0} max={100} value={editing.progressPercent ?? "0"}
+                onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} />
+            </Field>
+            <div className="md:col-span-2">
+              <Field label={t("contracting.projects.description", "الوصف")}>
+                <Input value={editing.description ?? ""} onChange={e => setEditing({ ...editing, description: e.target.value })} />
+              </Field>
+            </div>
+          </div>
+        </FormPanel>
+      )}
 
       <div className="rounded-lg border bg-white dark:bg-slate-900 p-3 flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[220px]">
