@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Briefcase, Plus, Pencil, Trash2, Sparkles, Download,
-  TrendingUp, Wallet, Activity, AlertTriangle, FileSpreadsheet, Loader2,
+  TrendingUp, Wallet, Activity, AlertTriangle, FileSpreadsheet, Loader2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +17,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -336,6 +333,49 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
           <Plus className="h-4 w-4 mx-1" /> {t("contracting.workItems.add", "إضافة بند")}
         </Button>
       </div>
+
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.workItems.edit", "تعديل البند") : t("contracting.workItems.add", "إضافة بند")}
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t("contracting.workItems.code", "الكود")}><Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.name", "الاسم")} required><Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.category", "التصنيف")}>
+              <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["earthworks","concrete","steel","masonry","mep","finishing","other"].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.workItems.plannedQty", "كمية مخططة")}><Input type="number" value={editing.plannedQty ?? "0"} onChange={e => setEditing({ ...editing, plannedQty: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.actualQty", "كمية فعلية")}><Input type="number" value={editing.actualQty ?? "0"} onChange={e => setEditing({ ...editing, actualQty: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.unitCost", "سعر الوحدة (ر.س)")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.progress", "نسبة الإنجاز %")}><Input type="number" min={0} max={100} value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
+            <Field label={t("contracting.workItems.status", "الحالة")}>
+              <Select value={editing.status ?? "pending"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["pending","in_progress","completed","blocked"].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
+            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
         <Table>
           <TableHeader><TableRow>
@@ -369,40 +409,6 @@ function WorkItemsTab({ projectId, onChange }: { projectId: number; onChange: ()
           </TableBody>
         </Table>
       </div>
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{(editing as any)?.id ? t("contracting.workItems.edit", "تعديل البند") : t("contracting.workItems.add", "إضافة بند")}</DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
-            <Field label={t("contracting.workItems.code", "الكود")}><Input value={editing.code ?? ""} onChange={e => setEditing({ ...editing, code: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.name", "الاسم")} required><Input value={editing.nameAr ?? ""} onChange={e => setEditing({ ...editing, nameAr: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.unit", "الوحدة")}><Input value={editing.unit ?? "m3"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.category", "التصنيف")}>
-              <Select value={editing.category ?? "other"} onValueChange={v => setEditing({ ...editing, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["earthworks","concrete","steel","masonry","mep","finishing","other"].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("contracting.workItems.plannedQty", "كمية مخططة")}><Input type="number" value={editing.plannedQty ?? "0"} onChange={e => setEditing({ ...editing, plannedQty: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.actualQty", "كمية فعلية")}><Input type="number" value={editing.actualQty ?? "0"} onChange={e => setEditing({ ...editing, actualQty: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.unitCost", "سعر الوحدة (ر.س)")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.progress", "نسبة الإنجاز %")}><Input type="number" min={0} max={100} value={editing.progressPercent ?? "0"} onChange={e => setEditing({ ...editing, progressPercent: e.target.value })} /></Field>
-            <Field label={t("contracting.workItems.status", "الحالة")}>
-              <Select value={editing.status ?? "pending"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["pending","in_progress","completed","blocked"].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -460,6 +466,46 @@ function ResourcesTab({ projectId }: { projectId: number }) {
           <Plus className="h-4 w-4 mx-1" /> {t("contracting.resources.add", "إضافة مورد")}
         </Button>
       </div>
+
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.resources.edit", "تعديل المورد") : t("contracting.resources.add", "إضافة مورد")}
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t("contracting.resources.name", "اسم المورد")} required><Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field>
+            <Field label={t("contracting.resources.type", "النوع")}>
+              <Select value={editing.type ?? "material"} onValueChange={v => setEditing({ ...editing, type: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["labor","equipment","material","subcontractor","other"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.resources.unit", "الوحدة")}><Input value={editing.unit ?? "hr"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
+            <Field label={t("contracting.resources.qty", "الكمية")}><Input type="number" value={editing.qty ?? "0"} onChange={e => setEditing({ ...editing, qty: e.target.value })} /></Field>
+            <Field label={t("contracting.resources.unitCost", "سعر الوحدة")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
+            <Field label={t("contracting.resources.status", "الحالة")}>
+              <Select value={editing.status ?? "planned"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["planned","in_use","consumed","returned"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
+            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
         <Table>
           <TableHeader><TableRow>
@@ -489,37 +535,6 @@ function ResourcesTab({ projectId }: { projectId: number }) {
           </TableBody>
         </Table>
       </div>
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{(editing as any)?.id ? t("contracting.resources.edit", "تعديل المورد") : t("contracting.resources.add", "إضافة مورد")}</DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
-            <Field label={t("contracting.resources.name", "اسم المورد")} required><Input value={editing.name ?? ""} onChange={e => setEditing({ ...editing, name: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.type", "النوع")}>
-              <Select value={editing.type ?? "material"} onValueChange={v => setEditing({ ...editing, type: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["labor","equipment","material","subcontractor","other"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("contracting.resources.unit", "الوحدة")}><Input value={editing.unit ?? "hr"} onChange={e => setEditing({ ...editing, unit: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.qty", "الكمية")}><Input type="number" value={editing.qty ?? "0"} onChange={e => setEditing({ ...editing, qty: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.unitCost", "سعر الوحدة")}><Input type="number" value={editing.unitCost ?? "0"} onChange={e => setEditing({ ...editing, unitCost: e.target.value })} /></Field>
-            <Field label={t("contracting.resources.status", "الحالة")}>
-              <Select value={editing.status ?? "planned"} onValueChange={v => setEditing({ ...editing, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["planned","in_use","consumed","returned"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
-            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -704,15 +719,20 @@ function BillsTab({ projectId }: { projectId: number }) {
         </Table>
       </div>
 
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>
-            {(editing as any)?.id ? t("contracting.bills.edit", "تعديل المستخلص") : t("contracting.bills.add", "مستخلص جديد")}
-            <span className="text-xs font-normal text-slate-500 mx-2">
-              ({direction === "outgoing" ? t("contracting.bills.outgoing", "للمالك (صادر)") : t("contracting.bills.incoming", "من الباطن (وارد)")})
-            </span>
-          </DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.bills.edit", "تعديل المستخلص") : t("contracting.bills.add", "مستخلص جديد")}
+              <span className="text-xs font-normal text-slate-500 mx-2">
+                ({direction === "outgoing" ? t("contracting.bills.outgoing", "للمالك (صادر)") : t("contracting.bills.incoming", "من الباطن (وارد)")})
+              </span>
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             {direction === "incoming" && (
               <Field label={t("contracting.bills.contractor", "المقاول الباطن")} required>
                 <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => onContractorChange(v ? Number(v) : null)}>
@@ -756,13 +776,13 @@ function BillsTab({ projectId }: { projectId: number }) {
                 </SelectContent>
               </Select>
             </Field>
-          </div>}
-          <DialogFooter>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -819,41 +839,18 @@ function RisksTab({ projectId }: { projectId: number }) {
           <Plus className="h-4 w-4 mx-1" /> {t("contracting.risks.add", "إضافة مخاطرة")}
         </Button>
       </div>
-      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow>
-            <TableHead>{t("contracting.risks.title2", "المخاطرة")}</TableHead>
-            <TableHead>{t("contracting.risks.category", "التصنيف")}</TableHead>
-            <TableHead>{t("contracting.risks.likelihood", "الاحتمال")}</TableHead>
-            <TableHead>{t("contracting.risks.impact", "الأثر")}</TableHead>
-            <TableHead>{t("contracting.risks.score", "الدرجة")}</TableHead>
-            <TableHead>{t("contracting.risks.status", "الحالة")}</TableHead>
-            <TableHead className="text-end">—</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {loading && rows.length === 0 && <TableRow><TableCell colSpan={7}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-4">{t("contracting.risks.empty", "لا توجد مخاطر")}</TableCell></TableRow>}
-            {rows.map(r => (
-              <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.title}{r.description && <div className="text-[11px] text-slate-500">{r.description}</div>}</TableCell>
-                <TableCell><Badge variant="outline">{r.category}</Badge></TableCell>
-                <TableCell>{r.likelihood}</TableCell>
-                <TableCell>{r.impact}</TableCell>
-                <TableCell><span className={`px-2 py-0.5 rounded-full text-xs font-bold ${r.score >= 6 ? "bg-red-100 text-red-700" : r.score >= 4 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.score}</span></TableCell>
-                <TableCell><Badge>{r.status}</Badge></TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{(editing as any)?.id ? t("contracting.risks.edit", "تعديل مخاطرة") : t("contracting.risks.add", "إضافة مخاطرة")}</DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
+
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.risks.edit", "تعديل مخاطرة") : t("contracting.risks.add", "إضافة مخاطرة")}
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label={t("contracting.risks.title2", "العنوان")} required><Input value={editing.title ?? ""} onChange={e => setEditing({ ...editing, title: e.target.value })} /></Field></div>
             <div className="col-span-2"><Field label={t("contracting.risks.description", "الوصف")}><Input value={editing.description ?? ""} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field></div>
             <Field label={t("contracting.risks.category", "التصنيف")}>
@@ -889,13 +886,45 @@ function RisksTab({ projectId }: { projectId: number }) {
               </Select>
             </Field>
             <div className="col-span-2"><Field label={t("contracting.risks.mitigationPlan", "خطة المعالجة")}><Input value={editing.mitigationPlan ?? ""} onChange={e => setEditing({ ...editing, mitigationPlan: e.target.value })} /></Field></div>
-          </div>}
-          <DialogFooter>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>{t("contracting.risks.title2", "المخاطرة")}</TableHead>
+            <TableHead>{t("contracting.risks.category", "التصنيف")}</TableHead>
+            <TableHead>{t("contracting.risks.likelihood", "الاحتمال")}</TableHead>
+            <TableHead>{t("contracting.risks.impact", "الأثر")}</TableHead>
+            <TableHead>{t("contracting.risks.score", "الدرجة")}</TableHead>
+            <TableHead>{t("contracting.risks.status", "الحالة")}</TableHead>
+            <TableHead className="text-end">—</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {loading && rows.length === 0 && <TableRow><TableCell colSpan={7}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
+            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-4">{t("contracting.risks.empty", "لا توجد مخاطر")}</TableCell></TableRow>}
+            {rows.map(r => (
+              <TableRow key={r.id}>
+                <TableCell className="font-medium">{r.title}{r.description && <div className="text-[11px] text-slate-500">{r.description}</div>}</TableCell>
+                <TableCell><Badge variant="outline">{r.category}</Badge></TableCell>
+                <TableCell>{r.likelihood}</TableCell>
+                <TableCell>{r.impact}</TableCell>
+                <TableCell><span className={`px-2 py-0.5 rounded-full text-xs font-bold ${r.score >= 6 ? "bg-red-100 text-red-700" : r.score >= 4 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.score}</span></TableCell>
+                <TableCell><Badge>{r.status}</Badge></TableCell>
+                <TableCell className="text-end">
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => del(r.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -1207,12 +1236,17 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
         </Table>
       </div>
 
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>
-            {(editing as any)?.id ? t("contracting.ownerContract.edit", "تعديل عقد المالك") : t("contracting.ownerContract.add", "إضافة عقد")}
-          </DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.ownerContract.edit", "تعديل عقد المالك") : t("contracting.ownerContract.add", "إضافة عقد")}
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.ownerContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><Input type="date" value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
             <Field label={t("contracting.ownerContract.type", "النوع")}>
@@ -1262,13 +1296,13 @@ function OwnerContractTab({ projectId, project }: { projectId: number; project: 
                 <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
               </Field>
             </div>
-          </div>}
-          <DialogFooter>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1376,12 +1410,17 @@ function SubContractsTab({ projectId }: { projectId: number }) {
         </Table>
       </div>
 
-      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>
-            {(editing as any)?.id ? t("contracting.subContract.edit", "تعديل عقد الباطن") : t("contracting.subContract.add", "عقد باطن جديد")}
-          </DialogTitle></DialogHeader>
-          {editing && <div className="grid grid-cols-2 gap-3">
+      {editing && (
+        <div className="rounded-lg border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-emerald-700 dark:text-emerald-300">
+              {(editing as any)?.id ? t("contracting.subContract.edit", "تعديل عقد الباطن") : t("contracting.subContract.add", "عقد باطن جديد")}
+            </h4>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)} aria-label={t("common.close", "إغلاق")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <Field label={t("contracting.subContract.contractor", "المقاول الباطن")} required>
               <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => setEditing({ ...editing, contractorId: v ? Number(v) : undefined })}>
                 <SelectTrigger><SelectValue placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")} /></SelectTrigger>
@@ -1429,13 +1468,13 @@ function SubContractsTab({ projectId }: { projectId: number }) {
                 <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
               </Field>
             </div>
-          </div>}
-          <DialogFooter>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-emerald-200 dark:border-emerald-800">
             <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
             <Button onClick={save}>{t("common.save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
