@@ -5,6 +5,37 @@ import { logger } from "./logger.js";
 import { produceDigestArtifacts, AVAILABLE_REPORTS } from "./reportDigest.js";
 import { sendReportsDigest, emailConfigured } from "./email.js";
 
+// ─── Test-only dependency seams ────────────────────────────────────────────
+// Production code never touches `__setReportDigestDepsForTesting` /
+// `__resetReportDigestDepsForTesting` — they exist solely so the
+// report-scheduler test suite can swap out the CSV builder and SMTP-aware
+// email helpers without monkey-patching modules at runtime. The shape
+// mirrors the precedent set by `__resetEmailTransporterForTesting()` in
+// email.ts: opt-in, prefixed with double-underscore, and trivial to grep.
+type ProduceDigestArtifactsFn = typeof produceDigestArtifacts;
+type SendReportsDigestFn      = typeof sendReportsDigest;
+type EmailConfiguredFn        = typeof emailConfigured;
+
+let _produceDigestArtifacts: ProduceDigestArtifactsFn = produceDigestArtifacts;
+let _sendReportsDigest:      SendReportsDigestFn      = sendReportsDigest;
+let _emailConfigured:        EmailConfiguredFn        = emailConfigured;
+
+export function __setReportDigestDepsForTesting(deps: {
+  produceDigestArtifacts?: ProduceDigestArtifactsFn;
+  sendReportsDigest?:      SendReportsDigestFn;
+  emailConfigured?:        EmailConfiguredFn;
+}): void {
+  if (deps.produceDigestArtifacts) _produceDigestArtifacts = deps.produceDigestArtifacts;
+  if (deps.sendReportsDigest)      _sendReportsDigest      = deps.sendReportsDigest;
+  if (deps.emailConfigured)        _emailConfigured        = deps.emailConfigured;
+}
+
+export function __resetReportDigestDepsForTesting(): void {
+  _produceDigestArtifacts = produceDigestArtifacts;
+  _sendReportsDigest      = sendReportsDigest;
+  _emailConfigured        = emailConfigured;
+}
+
 // Singleton config row id. We use a fixed primary-key=1 so updates are simple
 // upserts and the system never needs to "pick" between schedules.
 export const REPORT_SCHEDULE_ID = 1;
@@ -60,7 +91,7 @@ export async function runReportDigest(trigger: "scheduled" | "manual"): Promise<
   if (recipients.length === 0) {
     return recordRun(trigger, "skipped", "لا يوجد مستلمون", reports, 0);
   }
-  if (!emailConfigured()) {
+  if (!_emailConfigured()) {
     const msg = "إعدادات SMTP غير مهيأة على الخادم";
     await markLast(cfg.id, "failed", msg, reports, recipients.length);
     return recordRun(trigger, "failed", msg, reports, recipients.length);
@@ -71,7 +102,7 @@ export async function runReportDigest(trigger: "scheduled" | "manual"): Promise<
 
   let attachments;
   try {
-    const arts = await produceDigestArtifacts(reports, frequency);
+    const arts = await _produceDigestArtifacts(reports, frequency);
     attachments = arts.map(a => ({ filename: a.filename, content: a.csv, contentType: "text/csv; charset=utf-8" }));
     if (attachments.length === 0) {
       const msg = "لم تُنتج التقارير أي ملفات";
@@ -85,7 +116,7 @@ export async function runReportDigest(trigger: "scheduled" | "manual"): Promise<
     return recordRun(trigger, "failed", msg, reports, recipients.length);
   }
 
-  const sendRes = await sendReportsDigest({
+  const sendRes = await _sendReportsDigest({
     to: recipients,
     frequency,
     attachments,
