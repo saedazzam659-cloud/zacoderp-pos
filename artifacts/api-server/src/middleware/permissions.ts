@@ -77,6 +77,13 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   contracting: "contracting",
   production: "production",
   security_events: "security_events",
+  // AI Tools — keep in sync with frontend gate. Disabling the company
+  // ai_tools toggle hides the entire AI Tools sidebar group AND 403s
+  // any backend access to its gated modules.
+  data_io: "ai_tools",
+  voiceAssistant: "ai_tools",
+  sessions: "ai_tools",
+  ai_reports: "ai_tools",
   // VAT / general invoices
   vat_declaration: "reports",
 };

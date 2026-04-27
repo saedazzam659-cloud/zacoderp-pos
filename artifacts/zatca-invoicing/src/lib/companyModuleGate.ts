@@ -65,6 +65,14 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   contracting: "contracting",
   production: "production",
   security_events: "security_events",
+  // AI Tools — covers data import/export plus the admin-only voice
+  // assistant, AI reports, and sessions admin screens. Disabling the
+  // ai_tools company toggle hides the entire group and 403s any
+  // backend access to its gated modules.
+  data_io: "ai_tools",
+  voiceAssistant: "ai_tools",
+  sessions: "ai_tools",
+  ai_reports: "ai_tools",
   // Tax / general invoices
   vat_declaration: "reports",
 };

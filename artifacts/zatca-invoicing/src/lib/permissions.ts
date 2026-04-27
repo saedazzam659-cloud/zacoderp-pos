@@ -28,6 +28,7 @@ const G = {
   production:  "perms.groups.production",
   contracting: "perms.groups.contracting",
   security:    "perms.groups.security",
+  aiTools:     "perms.groups.aiTools",
 };
 
 export const PERMISSION_MODULES: ModuleDef[] = [
@@ -39,7 +40,6 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "general_settings",     label: "perms.modules.general_settings",     group: G.dashboard,  actions: ["view", "edit"] },
   { key: "users",                label: "perms.modules.users",                group: G.dashboard,  actions: VC },
   { key: "currencies",           label: "perms.modules.currencies",           group: G.dashboard,  actions: VC },
-  { key: "data_io",              label: "perms.modules.data_io",              group: G.dashboard,  actions: ["view", "create", "export"] },
   { key: "sequences",            label: "perms.modules.sequences",            group: G.dashboard,  actions: VC },
 
   { key: "customers",            label: "perms.modules.customers",            group: G.sales,      actions: VC },
@@ -98,6 +98,15 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.
   { key: "security_events",      label: "perms.modules.security_events",      group: G.security,    actions: VC },
+
+  // ─── AI Tools ──────────────────────────────────────────────────────
+  // Group covers the screens moved out of the Control Panel into the
+  // dedicated "أدوات الذكاء الاصطناعي" sidebar group. Note that voice
+  // assistant, AI reports, and sessions admin are admin-only at the nav
+  // level (requireAdmin) so they don't need per-user toggles — the only
+  // screen with non-admin access that needs a permission gate is the
+  // import/export data utility.
+  { key: "data_io",              label: "perms.modules.data_io",              group: G.aiTools,     actions: ["view", "create", "export"] },
 ];
 
 export const PERMISSION_GROUPS = Array.from(new Set(PERMISSION_MODULES.map(m => m.group)));

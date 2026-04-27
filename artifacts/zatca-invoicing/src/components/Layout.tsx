@@ -1494,14 +1494,16 @@ function SidebarInner({
               />
             </div>
 
-            <div className="space-y-0.5">
-              <AIToolsNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={aiToolsOpen}
-                onToggle={onAiToolsToggle}
-              />
-            </div>
+            {menuPerms.ai_tools !== false && (
+              <div className="space-y-0.5">
+                <AIToolsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={aiToolsOpen}
+                  onToggle={onAiToolsToggle}
+                />
+              </div>
+            )}
 
             {filteredBusiness.length > 0 && (
               <div className="space-y-0.5">
