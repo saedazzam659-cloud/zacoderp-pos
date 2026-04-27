@@ -187,8 +187,14 @@ const dashboardSubNav: NavDef[] = [
 // user's request these were lifted out of the dashboard/control-panel
 // group so they get their own visible category in the sidebar.
 const zatcaGroupSubNav: NavDef[] = [
-  { nameKey: "nav.zatcaLink", href: "/zatca",    icon: Link2,    permKey: "zatca_setup" },
-  { nameKey: "nav.invoices",  href: "/invoices", icon: FileText, permKey: "sales_invoices" },
+  { nameKey: "nav.zatcaLink",   href: "/zatca",        icon: Link2,     permKey: "zatca_setup" },
+  { nameKey: "nav.invoices",    href: "/invoices",     icon: FileText,  permKey: "sales_invoices" },
+  // Moved out of the Sales group per the user's request — these two screens
+  // belong with the rest of the ZATCA integration surface, not with the
+  // sales-cycle screens. Permission keys (zatca_bridge / zatca_report)
+  // unchanged so existing per-user grants keep working.
+  { nameKey: "nav.zatcaBridge", href: "/zatca-bridge", icon: Link2,     permKey: "zatca_bridge" },
+  { nameKey: "nav.zatcaReport", href: "/zatca-report", icon: BarChart3, permKey: "zatca_report" },
 ];
 
 const purchasingSubNav: NavDef[] = [
@@ -211,8 +217,9 @@ const salesSubNav: NavDef[] = [
   { nameKey: "nav.salesInvoices",        href: "/sales/invoices",    icon: ShoppingBag,     permKey: "sales_invoices" },
   { nameKey: "nav.salesReturns",         href: "/sales/returns",     icon: RotateCcw,       permKey: "sales_returns" },
   { nameKey: "nav.customerSettlements",  href: "/sales/settlements", icon: ArrowDownCircle, permKey: "sales_settlements" },
-  { nameKey: "nav.zatcaBridge",          href: "/zatca-bridge",      icon: Link2,           permKey: "zatca_bridge" },
-  { nameKey: "nav.zatcaReport",          href: "/zatca-report",      icon: BarChart3,       permKey: "zatca_report" },
+  // Note: nav.zatcaBridge and nav.zatcaReport were moved out of this group
+  // into zatcaGroupSubNav (the "ربط ZATCA" group) per the user's request —
+  // they belong with the ZATCA integration screens, not the sales cycle.
 ];
 const companySystemNav: NavDef[] = [];
 
