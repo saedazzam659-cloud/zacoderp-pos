@@ -468,12 +468,16 @@ function NavItem({
   const isActive = item.exact
     ? location === item.href
     : location.startsWith(item.href) && item.href !== "/";
+  // All internal sidebar sub-links (children of every main group) use a
+  // purple text color per the user's request. The active row still uses the
+  // contrasting "primary pill" highlight so the user always knows where they
+  // are; only its label/icon color changes (white-on-pill stays).
   return (
     <div className={cn(
       "flex items-center rounded-lg pe-1 transition-colors group",
       isActive
         ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        : "text-purple-700 hover:bg-purple-50 hover:text-purple-900 dark:text-purple-300 dark:hover:bg-purple-950/40 dark:hover:text-purple-100"
     )}>
       <Link href={item.href} className="block flex-1 min-w-0" onClick={onClick}>
         <span className={cn(
@@ -491,7 +495,9 @@ function NavItem({
         title={t("nav.openInNewTab", "فتح في تبويب جديد")}
         className={cn(
           "p-1.5 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition",
-          isActive ? "text-sidebar-primary-foreground" : "text-muted-foreground"
+          isActive
+            ? "text-sidebar-primary-foreground"
+            : "text-purple-500 dark:text-purple-400",
         )}
         onClick={(e) => e.stopPropagation()}
       >
