@@ -220,6 +220,29 @@ test("email-history pagination: first page renders 20, load more appends, filter
   const loadMore = panel(page).getByRole("button", { name: "تحميل المزيد" });
   await expect(loadMore).toBeVisible();
 
+  // Lock the parenthetical remaining-count suffix into the button's
+  // accessible name (task #97). With TOTAL_ROWS=25 seeded rows on the date
+  // filter and PAGE_SIZE=20 loaded on the first page, exactly 5 attempts
+  // are still un-loaded. The button label must therefore read
+  //   "تحميل المزيد (5 متبقّية)"
+  // — character-for-character. This assertion fails (rather than silently
+  // accepting a regression) if any of the following happens:
+  //   • the parenthetical "(N متبقّية)" suffix is dropped, leaving the
+  //     bare "تحميل المزيد" prefix that the locator above would still match;
+  //   • N is hardcoded (e.g. always "(20 متبقّية)") instead of being
+  //     derived from totalCount-loadedCount;
+  //   • the Math.max(0, …) clamp is removed and remaining goes negative,
+  //     which would render "(-N متبقّية)" instead of "(N متبقّية)";
+  //   • the Arabic word "متبقّية" is misspelled / re-translated.
+  // The button's `title` attribute is "جلب صفحة إضافية من سجل البريد",
+  // which is intentionally ignored by accessible-name computation when
+  // visible text content exists, so toHaveAccessibleName here matches the
+  // visible label only.
+  const REMAINING_AFTER_FIRST_PAGE = TOTAL_ROWS - PAGE_SIZE; // 25 - 20 = 5
+  await expect(loadMore).toHaveAccessibleName(
+    `تحميل المزيد (${REMAINING_AFTER_FIRST_PAGE} متبقّية)`,
+  );
+
   // ─── Click "تحميل المزيد" → second page is appended in-place ───
   await loadMore.click();
   await expect(seededRows).toHaveCount(TOTAL_ROWS);
