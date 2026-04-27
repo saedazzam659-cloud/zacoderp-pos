@@ -160,6 +160,7 @@ const contractingSubNav: NavDef[] = [
   { nameKey: "nav.contractingDashboard",   href: "/contracting",              icon: BarChart3, permKey: "contracting", exact: true },
   { nameKey: "nav.contractingProjects",    href: "/contracting/projects",     icon: Briefcase, permKey: "contracting" },
   { nameKey: "nav.contractingContractors", href: "/contracting/contractors",  icon: Users,     permKey: "contracting" },
+  { nameKey: "nav.contractingBills",       href: "/contracting/bills",        icon: FileText,  permKey: "contracting" },
 ];
 const CONTRACTING_GROUP_PERMS = ["contracting"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.

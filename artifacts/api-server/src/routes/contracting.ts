@@ -696,6 +696,72 @@ router.delete("/sub-contracts/:id", async (req, res) => {
 //   outgoing — مستخلص يصدره مكتبنا للمالك (claim against client)
 //   incoming — مستخلص يصدره المقاول الباطن لنا (we owe a sub-contractor)
 // Filter via ?direction=outgoing|incoming. Defaults to all.
+
+// Company-wide bills list (across all projects). Powers the standalone
+// "المستخلصات" screen so finance can track every progress bill in one place.
+// Filters: direction, status, projectId, contractorId, dateFrom, dateTo.
+// Joins contractor + project so the table can render names without N+1 calls.
+router.get("/bills", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const direction    = String(req.query.direction    ?? "");
+    const status       = String(req.query.status       ?? "");
+    const projectIdQ   = req.query.projectId    ? Number(req.query.projectId)    : null;
+    const contractorIdQ= req.query.contractorId ? Number(req.query.contractorId) : null;
+    const dateFrom     = req.query.dateFrom ? String(req.query.dateFrom) : null;
+    const dateTo       = req.query.dateTo   ? String(req.query.dateTo)   : null;
+
+    const conds: any[] = [eq(contractingProgressBillsTable.companyId, cid)];
+    if (direction === "outgoing" || direction === "incoming") {
+      conds.push(eq(contractingProgressBillsTable.direction, direction));
+    }
+    if (status) conds.push(eq(contractingProgressBillsTable.status, status));
+    if (projectIdQ)    conds.push(eq(contractingProgressBillsTable.projectId,    projectIdQ));
+    if (contractorIdQ) conds.push(eq(contractingProgressBillsTable.contractorId, contractorIdQ));
+    if (dateFrom) conds.push(sql`${contractingProgressBillsTable.billDate} >= ${dateFrom}`);
+    if (dateTo)   conds.push(sql`${contractingProgressBillsTable.billDate} <= ${dateTo}`);
+
+    const rows = await db.select({
+      id:               contractingProgressBillsTable.id,
+      projectId:        contractingProgressBillsTable.projectId,
+      projectCode:      contractingProjectsTable.code,
+      projectName:      contractingProjectsTable.nameAr,
+      direction:        contractingProgressBillsTable.direction,
+      contractorId:     contractingProgressBillsTable.contractorId,
+      contractorName:   contractingContractorsTable.name,
+      billNumber:       contractingProgressBillsTable.billNumber,
+      billType:         contractingProgressBillsTable.billType,
+      billDate:         contractingProgressBillsTable.billDate,
+      progressPercent:  contractingProgressBillsTable.progressPercent,
+      grossAmount:      contractingProgressBillsTable.grossAmount,
+      retentionAmount:  contractingProgressBillsTable.retentionAmount,
+      previousPaid:     contractingProgressBillsTable.previousPaid,
+      dueAmount:        contractingProgressBillsTable.dueAmount,
+      vatAmount:        contractingProgressBillsTable.vatAmount,
+      netAmount:        contractingProgressBillsTable.netAmount,
+      paidAmount:       contractingProgressBillsTable.paidAmount,
+      status:           contractingProgressBillsTable.status,
+    })
+      .from(contractingProgressBillsTable)
+      // Joins are scoped by companyId in addition to the FK so a stray cross-tenant
+      // FK (legacy import, manual data fix, etc.) can NEVER leak another company's
+      // project/contractor name into the response. Defense in depth on top of the
+      // base WHERE.
+      .leftJoin(contractingProjectsTable, and(
+        eq(contractingProgressBillsTable.projectId, contractingProjectsTable.id),
+        eq(contractingProjectsTable.companyId, cid),
+      ))
+      .leftJoin(contractingContractorsTable, and(
+        eq(contractingProgressBillsTable.contractorId, contractingContractorsTable.id),
+        eq(contractingContractorsTable.companyId, cid),
+      ))
+      .where(and(...conds))
+      .orderBy(desc(contractingProgressBillsTable.billDate),
+               desc(contractingProgressBillsTable.id));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
 router.get("/projects/:projectId/bills", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
