@@ -534,7 +534,8 @@
     "contractingProjects": "المشاريع",
     "contractingContractors": "المقاولون والموردون",
     "contractingBills": "المستخلصات",
-    "dashboardGroup": "لوحة التحكم"
+    "dashboardGroup": "لوحة التحكم",
+    "aiToolsGroup": "أدوات الذكاء الاصطناعي"
   },
   "security": {
     "title": "الأمن والمراقبة",

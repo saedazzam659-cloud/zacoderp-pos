@@ -192,7 +192,6 @@ const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign, permKey: "currencies" },
   // accountingMappings: gate under "general_settings" since it's a chart-of-accounts wiring screen.
   { nameKey: "nav.accountingMappings", href: "/settings/accounting-mappings", icon: BookMarked, permKey: "general_settings" },
-  { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,   permKey: "data_io" },
   // Sequence management is admin-only at the backend, so the link is hidden
   // from non-admins regardless of permission grant (avoids 403/404 on click).
   { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
@@ -201,25 +200,32 @@ const dashboardSubNav: NavDef[] = [
   // user.role==="admin"; per the user's request it's now nested under the
   // dashboard/control-panel group. requireAdmin keeps the same admin-only gate.
   { nameKey: "nav.auditLog",        href: "/admin/audit-log",     icon: ScrollText, requireAdmin: true },
-  // Work-sessions: visible to every company user (each sees their own
-  // sessions; admins see the whole company). No requireAdmin gate.
-  // Hidden from superadmin entirely — superadmin has no companyId so the
-  // feature does not apply to them. Renamed in the i18n catalog to
-  // "سجل الجلسات" / "Session Log" to disambiguate from the new manual
-  // sessions admin page below — the route + behaviour are unchanged.
-  { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
-  // Manual Sessions admin: NEW entity (separate from the per-login
-  // work_sessions log above). Admin creates sessions and assigns users;
-  // each user picks one at login and operations are tagged with it.
-  // Gated on the new "sessions" perm key — admins always pass.
-  { nameKey: "nav.sessionsAdmin",   href: "/sessions",            icon: Briefcase, permKey: "sessions", requireAdmin: true },
+];
+
+// "أدوات الذكاء الاصطناعي" — top-level group for AI-related screens. Per the
+// user's request, the following items were lifted out of the dashboard /
+// control-panel group so they live in their own visible category in the
+// sidebar: Voice Assistant Settings, AI Reports, Sessions admin, Work-Sessions
+// log, Inbox, and Import/Export Data. Each item's perm gate is preserved.
+const aiToolsSubNav: NavDef[] = [
   // Voice Assistant — admin-only screen for company-wide voice activation,
   // AI model + a recent-commands log. Hidden from superadmin (no companyId).
   { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
-  // In-app inbox — every company user has one (reports, system messages).
-  { nameKey: "nav.inbox",        href: "/inbox",       icon: Inbox },
   // AI Reports — admin-only natural-language report generator.
-  { nameKey: "nav.aiReports",    href: "/ai-reports",  icon: Sparkles, requireAdmin: true },
+  { nameKey: "nav.aiReports",       href: "/ai-reports",          icon: Sparkles,  requireAdmin: true },
+  // Manual Sessions admin: admin creates sessions and assigns users; each
+  // user picks one at login and operations are tagged with it. Gated on the
+  // "sessions" perm key — admins always pass.
+  { nameKey: "nav.sessionsAdmin",   href: "/sessions",            icon: Briefcase, permKey: "sessions", requireAdmin: true },
+  // Work-sessions: visible to every company user (each sees their own
+  // sessions; admins see the whole company). No requireAdmin gate.
+  // Hidden from superadmin entirely — superadmin has no companyId so the
+  // feature does not apply to them.
+  { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
+  // In-app inbox — every company user has one (reports, system messages).
+  { nameKey: "nav.inbox",           href: "/inbox",               icon: Inbox },
+  // Import / export the company's data sets — gated by the data_io permission.
+  { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];
 
 // "ربط ZATCA" — top-level group for ZATCA integration screens. Per the
@@ -1134,6 +1140,45 @@ function ContractingNavGroup({
   );
 }
 
+// ─── AIToolsNavGroup ─────────────────────────────────────────────────────────
+// Collapsible "أدوات الذكاء الاصطناعي" group — houses the voice assistant
+// settings, AI reports, sessions admin, work-sessions log, inbox, and the
+// data import/export screen. NOT gated by a single permission key — every
+// child carries its own perm gate, and `filterNav` hides any disallowed
+// child. The group hides only when ALL children are filtered out (so e.g.
+// a non-admin user with no AI permissions still sees the inbox + work
+// sessions, since those have no perm gate).
+function AIToolsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const visibleChildren = filterNav(aiToolsSubNav, user);
+  if (visibleChildren.length === 0) return null;
+  const isOnSub = aiToolsSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref={visibleChildren[0].href}
+        icon={Sparkles}
+        label={t("nav.aiToolsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {visibleChildren.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SecurityNavGroup ────────────────────────────────────────────────────────
 // Collapsible "الأمن والمراقبة" group — mirrors ProductionNavGroup, gated
 // by the `security_events` permission.
@@ -1208,6 +1253,8 @@ function SidebarInner({
   onPosToggle,
   securityOpen,
   onSecurityToggle,
+  aiToolsOpen,
+  onAiToolsToggle,
   onNavigate,
   onLogout,
 }: {
@@ -1249,6 +1296,8 @@ function SidebarInner({
   onPosToggle: () => void;
   securityOpen: boolean;
   onSecurityToggle: () => void;
+  aiToolsOpen: boolean;
+  onAiToolsToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -1445,6 +1494,15 @@ function SidebarInner({
               />
             </div>
 
+            <div className="space-y-0.5">
+              <AIToolsNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={aiToolsOpen}
+                onToggle={onAiToolsToggle}
+              />
+            </div>
+
             {filteredBusiness.length > 0 && (
               <div className="space-y-0.5">
                 {filteredBusiness.map(item => (
@@ -1556,6 +1614,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
   };
   const all = [
     ...dashboardSubNav,
+    ...aiToolsSubNav,
     ...purchasingSubNav.map(i => ({ ...i, parent: "/purchasing" })),
     ...salesSubNav.map(i => ({ ...i, parent: "/sales" })),
     ...companySystemNav.map(i => ({ ...i, parent: "/accounting" })),
@@ -1817,6 +1876,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     location.startsWith("/pos-monitoring") || location.startsWith("/pos-terminals") || location.startsWith("/pos-settings")
   );
   const [securityOpen,   setSecurityOpen]     = useState(() => location.startsWith("/security"));
+  // AI Tools: auto-expand when the user lands on any of the contained routes.
+  const [aiToolsOpen,    setAiToolsOpen]      = useState(() =>
+    location.startsWith("/voice-assistant") ||
+    location.startsWith("/ai-reports") ||
+    location.startsWith("/sessions") ||
+    location.startsWith("/work-sessions") ||
+    location.startsWith("/inbox") ||
+    location.startsWith("/settings/data-io")
+  );
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -1829,7 +1897,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
     | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting"
-    | "pos" | "security";
+    | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
     if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
@@ -1843,6 +1911,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "contracting") setContractingOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
+    if (keep !== "aiTools")     setAiToolsOpen(false);
   };
   // Each top-level toggle: flip its own state. When the row is currently
   // CLOSED (i.e. the click is about to OPEN it), also collapse every other
@@ -1872,6 +1941,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
+  const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
   // Sub-group toggles (nested reports) — independent of the accordion.
   const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
   const handleReportsToggle           = () => setReportsOpen(v => !v);
@@ -1902,6 +1972,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
+      location.startsWith("/voice-assistant") ||
+      location.startsWith("/ai-reports") ||
+      location.startsWith("/sessions") ||
+      location.startsWith("/work-sessions") ||
+      location.startsWith("/inbox") ||
+      location.startsWith("/settings/data-io")
+    ) target = "aiTools";
+    else if (
       location.startsWith("/pos-monitoring") ||
       location.startsWith("/pos-terminals") ||
       location.startsWith("/pos-settings") ||
@@ -1928,6 +2006,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         contracting: setContractingOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
+        aiTools:     setAiToolsOpen,
       };
       setterByGroup[target](true);
       closeOtherTopLevelGroups(target);
@@ -1973,6 +2052,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onPosToggle: handlePosToggle,
     securityOpen,
     onSecurityToggle: handleSecurityToggle,
+    aiToolsOpen,
+    onAiToolsToggle: handleAiToolsToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };
