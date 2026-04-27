@@ -4910,9 +4910,48 @@ router.get("/maintenance/critical-summary", requireSuperAdmin, async (req, res) 
 // indicator on the SuperAdmin dashboard and the "broken tools" panel on the
 // maintenance page. Distinct from /critical-summary because errored runs
 // don't lift the critical count and would otherwise stay invisible.
+//
+// `?format=csv` returns the same rows as a UTF-8 BOM CSV download so
+// SuperAdmins can paste "what's broken right now" into a triage spreadsheet
+// without copying rows by hand. Mirrors the recovered-tools CSV branch
+// below: bypasses the on-screen 50-row cap (uses BROKEN_CSV_ROW_CAP, kept
+// in lock-step with RECOVERY_CSV_ROW_CAP so a noisy fleet can't blow up
+// the response) and writes a single export_csv audit row against
+// companyId=null because errors span the whole fleet.
+const BROKEN_CSV_ROW_CAP = 1000;
 router.get("/maintenance/error-summary", requireSuperAdmin, async (req, res) => {
+  const isCsv = wantsCsv(req);
   const limit = clampInt(req.query.limit, 1, 200, 50);
   try {
+    if (isCsv) {
+      const rows = await getRecentToolErrors(BROKEN_CSV_ROW_CAP);
+      const headers = ["الشركة", "الأداة", "رسالة الخطأ", "وقت آخر فشل"];
+      const csvRows = rows.map((r) => [
+        r.companyName || `#${r.companyId}`,
+        r.toolKey,
+        r.error ?? "",
+        csvDate(r.runAt),
+      ]);
+      await writeAudit({
+        userId:    req.adminUser?.id ?? null,
+        username:  req.adminUser?.username ?? null,
+        role:      "superadmin",
+        companyId: null,
+        module:    "maintenance",
+        action:    "export_csv",
+        method:    req.method,
+        path:      req.originalUrl,
+        entityType: "maintenance_error_summary",
+        entityId:   null,
+        metadata: {
+          count: rows.length,
+          format: "csv",
+          windowDays: TOOL_ERROR_WINDOW_DAYS,
+        },
+      });
+      sendCsv(res, `maintenance-broken-tools-${Date.now()}.csv`, headers, csvRows);
+      return;
+    }
     const items = await getRecentToolErrors(limit);
     res.json({
       count: items.length,

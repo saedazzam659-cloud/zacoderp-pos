@@ -1108,6 +1108,38 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
     refetchInterval: MAINTENANCE_PANEL_REFETCH_MS,
   });
 
+  // CSV export for the amber broken-tool panel — calls the same endpoint with
+  // `?format=csv` so SuperAdmins can lift the "what's broken right now" list
+  // straight into a triage spreadsheet without copy-pasting rows. The server
+  // bypasses the on-screen 50-row cap and writes a maintenance audit row for
+  // the export itself, mirroring the recovered-tools CSV pattern.
+  const errorSummaryCsvMut = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(
+        `${API}/api/admin/maintenance/error-summary?format=csv`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل تصدير الملف");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-broken-tools-${Date.now()}.csv`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
   // Mirror of the broken-tool panel above, in the positive direction. Lists
   // (company, tool) pairs whose latest run flipped from 'error' back to a
   // non-error status within the recency window — the same set the critical-
@@ -1823,7 +1855,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
             automatically. */}
         {errorSummaryQ.data && errorSummaryQ.data.items.length > 0 && (
           <div className="border border-amber-200 rounded p-3 bg-amber-50/40">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <AlertTriangle className="h-4 w-4 text-amber-700" />
               <span className="text-sm font-medium text-amber-900">
                 أدوات صيانة تعطّلت آخر {errorSummaryQ.data.windowDays} أيام
@@ -1843,6 +1875,23 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               <span className="text-[11px] text-muted-foreground mr-auto">
                 هذه الفحوصات لم تكتمل بسبب خطأ — لا تظهر ضمن النتائج الحرجة وتحتاج مراجعة فنية. تُحفظ آخر {errorSummaryQ.data.windowDays} أيام فقط.
               </span>
+              {/* CSV export — pulls every broken (company, tool) pair in the
+                  window (not just the on-screen 50) so SuperAdmins can attach
+                  the "what's broken right now" list to a triage report.
+                  Mirrors the recovered-tools CSV button; server writes an
+                  export_csv audit row. */}
+              <Button
+                size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                onClick={() => errorSummaryCsvMut.mutate()}
+                disabled={errorSummaryCsvMut.isPending}
+                title={`تنزيل قائمة الأدوات المعطّلة في آخر ${errorSummaryQ.data.windowDays} أيام كملف CSV`}
+                data-testid="error-summary-csv-button"
+              >
+                {errorSummaryCsvMut.isPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Download className="h-3 w-3" />}
+                تنزيل CSV
+              </Button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
