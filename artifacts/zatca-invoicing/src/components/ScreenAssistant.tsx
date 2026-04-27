@@ -189,6 +189,14 @@ function pathToScreenContext(path: string): string {
     [/^\/production\/orders\/[^/]+/, "production.orders.detail"],
     [/^\/production\/orders/, "production.orders.list"],
     [/^\/production\/resources/, "production.resources"],
+
+    // ── Contracting / Construction ERP ─────────────────────────────────
+    // More-specific paths must come before parents so the project-detail
+    // route doesn't get swallowed by /contracting/projects.
+    [/^\/contracting\/projects\/[^/]+/, "contracting.project.detail"],
+    [/^\/contracting\/projects/,        "contracting.projects"],
+    [/^\/contracting\/contractors/,     "contracting.contractors"],
+    [/^\/contracting\b/,                "contracting.dashboard"],
     // /production (root) is the dashboard in this app.
     [/^\/production\b/, "production.dashboard"],
 

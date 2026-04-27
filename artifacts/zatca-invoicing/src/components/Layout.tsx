@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope,
   ScrollText, Database, ListOrdered, HardDrive,
-  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase,
+  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -154,6 +154,14 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
+// Contracting/Construction ERP — gated by a single `contracting` permission key
+// matching MODULE_PERMISSIONS in api-server/auth.ts.
+const contractingSubNav: NavDef[] = [
+  { nameKey: "nav.contractingDashboard",   href: "/contracting",              icon: BarChart3, permKey: "contracting", exact: true },
+  { nameKey: "nav.contractingProjects",    href: "/contracting/projects",     icon: Briefcase, permKey: "contracting" },
+  { nameKey: "nav.contractingContractors", href: "/contracting/contractors",  icon: Users,     permKey: "contracting" },
+];
+const CONTRACTING_GROUP_PERMS = ["contracting"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.
 const securitySubNav: NavDef[] = [
   { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
@@ -1076,6 +1084,39 @@ function ProductionNavGroup({
   );
 }
 
+// ─── ContractingNavGroup ─────────────────────────────────────────────────────
+// Collapsible "إدارة المقاولات" group — mirrors ProductionNavGroup, gated by
+// the `contracting` permission key.
+function ContractingNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, CONTRACTING_GROUP_PERMS)) return null;
+  const isOnSub = contractingSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/contracting"
+        icon={HardHat}
+        label={t("nav.contractingGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {contractingSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SecurityNavGroup ────────────────────────────────────────────────────────
 // Collapsible "الأمن والمراقبة" group — mirrors ProductionNavGroup, gated
 // by the `security_events` permission.
@@ -1144,6 +1185,8 @@ function SidebarInner({
   onHrToggle,
   productionOpen,
   onProductionToggle,
+  contractingOpen,
+  onContractingToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1183,6 +1226,8 @@ function SidebarInner({
   onHrToggle: () => void;
   productionOpen: boolean;
   onProductionToggle: () => void;
+  contractingOpen: boolean;
+  onContractingToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -1357,6 +1402,15 @@ function SidebarInner({
             </div>
 
             <div className="space-y-0.5">
+              <ContractingNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={contractingOpen}
+                onToggle={onContractingToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
               <PosNavGroup
                 location={location}
                 onNavigate={onNavigate}
@@ -1503,6 +1557,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...posSubNav.map(i => ({ ...i, parent: "/pos-management" })),
     ...hrSubNav,
     ...productionSubNav,
+    ...contractingSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -1738,6 +1793,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [accountingOpen, setAccountingOpen]   = useState(() => location.startsWith("/accounting/accounts") || location.startsWith("/accounting/journals") || location.startsWith("/accounting/reports"));
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
+  const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -1755,7 +1811,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting"
     | "pos" | "security";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -1766,9 +1822,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "sales")      setSalesOpen(false);
     if (keep !== "cash")       setCashOpen(false);
     if (keep !== "hr")         setHrOpen(false);
-    if (keep !== "production") setProductionOpen(false);
-    if (keep !== "pos")        setPosOpen(false);
-    if (keep !== "security")   setSecurityOpen(false);
+    if (keep !== "production")  setProductionOpen(false);
+    if (keep !== "contracting") setContractingOpen(false);
+    if (keep !== "pos")         setPosOpen(false);
+    if (keep !== "security")    setSecurityOpen(false);
   };
   // Each top-level toggle: flip its own state. When the row is currently
   // CLOSED (i.e. the click is about to OPEN it), also collapse every other
@@ -1794,8 +1851,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleSalesToggle      = makeAccordionToggle("sales",      salesOpen,      setSalesOpen);
   const handleCashToggle       = makeAccordionToggle("cash",       cashOpen,       setCashOpen);
   const handleHrToggle         = makeAccordionToggle("hr",         hrOpen,         setHrOpen);
-  const handleProductionToggle = makeAccordionToggle("production", productionOpen, setProductionOpen);
-  const handlePosToggle        = makeAccordionToggle("pos",        posOpen,        setPosOpen);
+  const handleProductionToggle  = makeAccordionToggle("production",  productionOpen,  setProductionOpen);
+  const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
+  const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   // Sub-group toggles (nested reports) — independent of the accordion.
   const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
@@ -1823,6 +1881,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/accounting")) target = "accounting";
     else if (location.startsWith("/inventory")) target = "inventory";
     else if (location.startsWith("/production")) target = "production";
+    else if (location.startsWith("/contracting")) target = "contracting";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
@@ -1848,9 +1907,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         sales:      setSalesOpen,
         cash:       setCashOpen,
         hr:         setHrOpen,
-        production: setProductionOpen,
-        pos:        setPosOpen,
-        security:   setSecurityOpen,
+        production:  setProductionOpen,
+        contracting: setContractingOpen,
+        pos:         setPosOpen,
+        security:    setSecurityOpen,
       };
       setterByGroup[target](true);
       closeOtherTopLevelGroups(target);
@@ -1890,6 +1950,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onHrToggle: handleHrToggle,
     productionOpen,
     onProductionToggle: handleProductionToggle,
+    contractingOpen,
+    onContractingToggle: handleContractingToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

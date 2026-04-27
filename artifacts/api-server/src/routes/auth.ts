@@ -754,6 +754,9 @@ router.post("/register", async (req, res) => {
     accounting: ["accounts", "accounting_reports"],
     hr:         ["hr_module"],
     zatca:      ["zatca", "reports"],
+    // Contracting/Construction ERP — single permission key matching the
+    // requirePermission("contracting") guard in routes/contracting{,-ai}.ts.
+    contracting: ["contracting"],
   };
   // Permissions are derived from the ACTIVE module set we computed above for
   // pricing — this guarantees that a module deactivated in /admin/modules can

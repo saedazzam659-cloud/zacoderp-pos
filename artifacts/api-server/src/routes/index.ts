@@ -57,6 +57,8 @@ import securityEventsRouter from "./security-events";
 import inboxRouter from "./inbox";
 import aiReportsRouter from "./ai-reports";
 import dataDoctorRouter from "./data-doctor";
+import contractingRouter from "./contracting";
+import contractingAiRouter from "./contracting-ai";
 
 const router: IRouter = Router();
 
@@ -118,5 +120,7 @@ router.use("/sequences", sequencesRouter);
 router.use("/offers", offersRouter);
 router.use(deviceInfoRouter);
 router.use(zatcaRouter);
+router.use("/contracting", contractingRouter);
+router.use("/contracting-ai", contractingAiRouter);
 
 export default router;

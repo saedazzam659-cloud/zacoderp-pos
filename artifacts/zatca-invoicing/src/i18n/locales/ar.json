@@ -529,6 +529,10 @@
     "productionDashboard": "لوحة الإنتاج",
     "productionOrders": "أوامر الإنتاج",
     "productionResources": "الماكينات والموارد",
+    "contractingGroup": "إدارة المقاولات",
+    "contractingDashboard": "لوحة المقاولات",
+    "contractingProjects": "المشاريع",
+    "contractingContractors": "المقاولون والموردون",
     "dashboardGroup": "لوحة التحكم"
   },
   "security": {
