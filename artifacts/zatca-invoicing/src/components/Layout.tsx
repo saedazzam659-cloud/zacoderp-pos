@@ -158,7 +158,6 @@ const SECURITY_GROUP_PERMS = ["security_events"];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
-  { nameKey: "nav.zatcaLink",       href: "/zatca",               icon: Link2,      permKey: "zatca_setup" },
   { nameKey: "nav.generalSettings", href: "/general-settings",    icon: Sliders,    permKey: "general_settings" },
   { nameKey: "nav.users",           href: "/users",               icon: Users,      permKey: "users", requireAdmin: true },
   { nameKey: "nav.currencies",      href: "/settings/currencies", icon: DollarSign, permKey: "currencies" },
@@ -168,7 +167,6 @@ const dashboardSubNav: NavDef[] = [
   // Sequence management is admin-only at the backend, so the link is hidden
   // from non-admins regardless of permission grant (avoids 403/404 on click).
   { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
-  { nameKey: "nav.invoices",        href: "/invoices",            icon: FileText,   permKey: "sales_invoices" },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
   // Audit log was previously rendered as a standalone top-level item gated by
   // user.role==="admin"; per the user's request it's now nested under the
@@ -179,6 +177,14 @@ const dashboardSubNav: NavDef[] = [
   // Hidden from superadmin entirely — superadmin has no companyId so the
   // feature does not apply to them.
   { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
+];
+
+// "ربط ZATCA" — top-level group for ZATCA integration screens. Per the
+// user's request these were lifted out of the dashboard/control-panel
+// group so they get their own visible category in the sidebar.
+const zatcaGroupSubNav: NavDef[] = [
+  { nameKey: "nav.zatcaLink", href: "/zatca",    icon: Link2,    permKey: "zatca_setup" },
+  { nameKey: "nav.invoices",  href: "/invoices", icon: FileText, permKey: "sales_invoices" },
 ];
 
 const purchasingSubNav: NavDef[] = [
@@ -847,6 +853,44 @@ function DashboardNavGroup({
   );
 }
 
+// ─── ZatcaNavGroup ────────────────────────────────────────────────────────────
+// Top-level "ربط ZATCA" group. Mirrors DashboardNavGroup but with its own
+// hub href (/zatca, the most-frequently-clicked of the two children) so a
+// single click on the group header takes the user straight to the integration
+// landing page instead of needing to expand+click.
+function ZatcaNavGroup({
+  location, onNavigate, open, onToggle,
+}: {
+  location: string;
+  onNavigate: () => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const isOnSub = zatcaGroupSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/zatca"
+        icon={Link2}
+        label={t("nav.zatcaGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {zatcaGroupSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AccountingNavGroup ───────────────────────────────────────────────────────
 // Accounting reports are nested INSIDE this group (per the user's request) —
 // they no longer live as a sibling top-level item.
@@ -1031,6 +1075,8 @@ function SidebarInner({
   menuPerms,
   dashboardOpen,
   onDashboardToggle,
+  zatcaGroupOpen,
+  onZatcaGroupToggle,
   inventoryOpen,
   onInventoryToggle,
   invReportsOpen,
@@ -1068,6 +1114,8 @@ function SidebarInner({
   menuPerms: Record<string, boolean>;
   dashboardOpen: boolean;
   onDashboardToggle: () => void;
+  zatcaGroupOpen: boolean;
+  onZatcaGroupToggle: () => void;
   inventoryOpen: boolean;
   onInventoryToggle: () => void;
   invReportsOpen: boolean;
@@ -1173,6 +1221,17 @@ function SidebarInner({
                   onNavigate={onNavigate}
                   open={dashboardOpen}
                   onToggle={onDashboardToggle}
+                />
+              </div>
+            )}
+
+            {menuPerms.zatca !== false && (
+              <div className="space-y-0.5">
+                <ZatcaNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={zatcaGroupOpen}
+                  onToggle={onZatcaGroupToggle}
                 />
               </div>
             )}
@@ -1603,7 +1662,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen]           = useState(false);
   const [dashboardOpen, setDashboardOpen]     = useState(() =>
-    ["/org/", "/zatca", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/invoices", "/vat-declaration"].some(p => location.startsWith(p))
+    ["/org/", "/general-settings", "/settings/currencies", "/settings/accounting-mappings", "/vat-declaration"].some(p => location.startsWith(p))
+  );
+  // ربط ZATCA group — auto-expanded when on /zatca or /invoices.
+  const [zatcaGroupOpen, setZatcaGroupOpen]   = useState(() =>
+    ["/zatca", "/invoices"].some(p => location.startsWith(p))
   );
   // Reports are nested INSIDE the inventory group, so any /inventory/* route
   // (including /inventory/reports/*) auto-expands the parent.
@@ -1681,10 +1744,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       location === "/pos-management"
     ) setPosOpen(true);
     if (
-      ["/org/", "/zatca", "/general-settings", "/settings/",
-       "/invoices", "/vat-declaration", "/users",
+      ["/org/", "/general-settings", "/settings/",
+       "/vat-declaration", "/users",
        "/control-panel"].some(p => location.startsWith(p))
     ) setDashboardOpen(true);
+    if (["/zatca", "/invoices"].some(p => location.startsWith(p))) setZatcaGroupOpen(true);
   }, [location]);
 
   const sharedProps = {
@@ -1694,6 +1758,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     menuPerms,
     dashboardOpen,
     onDashboardToggle: handleDashboardToggle,
+    zatcaGroupOpen,
+    onZatcaGroupToggle: () => setZatcaGroupOpen(v => !v),
     inventoryOpen,
     onInventoryToggle: handleInventoryToggle,
     invReportsOpen,
