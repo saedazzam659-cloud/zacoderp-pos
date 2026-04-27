@@ -1396,9 +1396,13 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       // Server echoes truncation signals in custom response headers so we
       // can flag a clipped export in the success toast without a second
       // round-trip — same pattern as the broken-tools / recovered-tools
-      // mutations above.
+      // mutations above. We also read X-Csv-Total-Available so the toast
+      // can name the underlying total ("من أصل N") — operators triggering
+      // the export deserve to see the same total the audit-log row carries
+      // without having to open the audit log to discover what was clipped.
       const truncated = r.headers.get("X-Csv-Truncated") === "1";
       const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
+      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1407,13 +1411,13 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      return { truncated, rowCap };
+      return { truncated, rowCap, totalAvailable };
     },
-    onSuccess: ({ truncated, rowCap }) => {
+    onSuccess: ({ truncated, rowCap, totalAvailable }) => {
       toast({
         title: "تم تنزيل ملف CSV",
-        description: truncated && rowCap > 0
-          ? `تم الاقتطاع عند ${rowCap} صف`
+        description: truncated && rowCap > 0 && totalAvailable > rowCap
+          ? `تم الاقتطاع عند ${rowCap} صف من أصل ${totalAvailable}`
           : undefined,
       });
       // Refresh the maintenance-history accordion so the export_csv audit

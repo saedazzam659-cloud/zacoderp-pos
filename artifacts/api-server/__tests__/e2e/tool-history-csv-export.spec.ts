@@ -519,15 +519,22 @@ test("tool-history dialog CSV export: filename, BOM, headers, seeded runs, and e
 const TRUNC_TOOL_KEY = `${TEST_TAG}_trunc_tool`;
 let truncAuditAnchor: Date | null = null;
 
-test("tool-history CSV export: caps body at 1000 rows and records truncation in the audit row", async ({ page }) => {
+// Header phrase the broken-tools panel renders (AICompanyFix.tsx
+// ~line 1931). Matched as a prefix because the line interpolates the
+// window length ("آخر 7 أيام") which we don't want to hard-code.
+const BROKEN_PANEL_HEADER_PREFIX = "أدوات صيانة تعطّلت آخر";
+
+test("tool-history CSV export: caps body at 1000 rows, records truncation in the audit row, and surfaces clip count + total in the toast", async ({ page }) => {
   await installSuperAdminSession(page);
 
   // Seed 1001 error runs (strictly > TOOL_HISTORY_CSV_ROW_CAP=1000) for
   // a fresh tool key on the test company. All rows sit inside the 7-day
-  // window (purely cosmetic — tool-history doesn't filter by recency),
-  // staggered in the past so ORDER BY run_at DESC is deterministic.
-  // Bulk insert in chunks to stay well under Postgres's 65k bind-
-  // parameter ceiling (each row ≈ 9 parameters → 200 rows ≈ 1.8k).
+  // window (so the broken-tools panel surfaces this (company, tool)
+  // pair — that's the panel whose tool-key button we click to open the
+  // tool-history dialog), staggered in the past so ORDER BY run_at DESC
+  // is deterministic. Bulk insert in chunks to stay well under
+  // Postgres's 65k bind-parameter ceiling (each row ≈ 9 parameters →
+  // 200 rows ≈ 1.8k).
   const SEED_COUNT = 1001;
   const now = Date.now();
   const seedRows = Array.from({ length: SEED_COUNT }, (_, i) => ({
@@ -553,54 +560,127 @@ test("tool-history CSV export: caps body at 1000 rows and records truncation in 
     for (const r of inserted) seededRunIds.push(r.id);
   }
 
-  // Navigate to any SPA page so the addInitScript installs the bearer
-  // token into localStorage; we don't need to drive the AICompanyFix UI
-  // here — the cap behavior is exercised purely via a page-context fetch
-  // against the same /api route the dialog button hits.
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Capture the CSV bytes the user would have saved. The mutation in
+  // AICompanyFix.tsx (toolHistoryCsvMut) does fetch → .blob() → anchor
+  // click, which drains Playwright's response body before we can read it
+  // — so we intercept the network round-trip, refetch upstream, snapshot
+  // the bytes + headers, then forward the same response to the page so
+  // the mutation's onSuccess (which raises the toast we assert below)
+  // still runs. Mirrors the capture pattern in the first test in this
+  // file. The non-CSV `format` (the JSON dialog feed used by
+  // toolHistoryQ to render the on-screen rows) hits the same route, so
+  // we gate on `format=csv` to avoid buffering the JSON page.
+  const csvCaptures: {
+    body: Buffer;
+    contentType: string;
+    truncatedHdr: string;
+    rowCapHdr: string;
+    totalAvailHdr: string;
+  }[] = [];
+  await page.route("**/api/admin/maintenance/tool-history**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    const upstream = await route.fetch();
+    const body     = await upstream.body();
+    const headers  = upstream.headers();
+    csvCaptures.push({
+      body,
+      contentType:   headers["content-type"] ?? "",
+      truncatedHdr:  headers["x-csv-truncated"] ?? "",
+      rowCapHdr:     headers["x-csv-row-cap"] ?? "",
+      totalAvailHdr: headers["x-csv-total-available"] ?? "",
+    });
+    await route.fulfill({ response: upstream, body });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: PAGE_HEADING_RE })).toBeVisible();
+
+  // ─── Open the tool-history dialog via the broken-tools panel ───────────
+  // The 1001 seeded rows all have status='error' inside the 7-day
+  // window, so getRecentToolErrors surfaces our (company, TRUNC_TOOL_
+  // KEY) pair on the amber broken-tools panel. Anchoring the panel by
+  // its header copy keeps the locator resilient to surrounding-container
+  // styling changes.
+  const panel = page.locator("div", { hasText: BROKEN_PANEL_HEADER_PREFIX }).filter({
+    has: page.locator("table"),
+  }).first();
+  await expect(panel).toBeVisible();
+
+  // Find the row containing our unique TRUNC_TOOL_KEY (the dev DB may
+  // carry other broken tools from real maintenance sweeps; we never
+  // assert on total row count, only on our seeded pair).
+  const seededRow = panel.locator("tbody tr", { hasText: TRUNC_TOOL_KEY });
+  await expect(seededRow).toHaveCount(1);
+
+  // Tool-key button on the row sets toolHistoryTarget directly (with
+  // the row's companyId/toolKey, so no dropdown selection is needed)
+  // and opens the Radix dialog whose CSV button we exercise below.
+  await seededRow.getByRole("button", { name: TRUNC_TOOL_KEY }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("آخر تشغيلات الأداة")).toBeVisible();
+  // Sync barrier: wait for the on-screen tool-history table to surface
+  // before triggering the export, so we know toolHistoryQ has resolved
+  // against the now-targeted (companyId, TRUNC_TOOL_KEY) pair. We
+  // anchor on a padded error message we know is in the top 20 rows
+  // (`pad 0 ${TEST_TAG}` is the most-recent run by construction).
+  await expect(dialog.getByText(`pad 0 ${TEST_TAG}`)).toBeVisible();
 
   // Anchor a wall-clock moment just before the export so the audit-row
   // lookup can scope itself to this run. writeAudit() uses defaultNow
   // for created_at, so a >= filter on this anchor (and on our seeded
-  // companyId) matches only the row this fetch produced.
+  // companyId) matches only the row this click produced.
   truncAuditAnchor = new Date(Date.now() - 1_000); // 1s slack for clock skew
 
-  // Fire the CSV fetch from inside the page context so localStorage
-  // (where the SPA stores the SuperAdmin bearer token) is available.
-  // page.request lives outside the page and would need its own auth
-  // setup. Returning the body as a number[] keeps the marshal across
-  // the page boundary trivial; we rebuild the Buffer on the test side.
-  const csvUrl = `/api/admin/maintenance/tool-history?companyId=${testCompanyId}&toolKey=${encodeURIComponent(TRUNC_TOOL_KEY)}&format=csv`;
-  const csvFetch = await page.evaluate(async ({ url }) => {
-    const token = localStorage.getItem("zatca_token");
-    const r = await fetch(url, {
-      headers: { Authorization: `Bearer ${token ?? ""}` },
-    });
-    const buf = await r.arrayBuffer();
-    return {
-      status:        r.status,
-      bytes:         Array.from(new Uint8Array(buf)),
-      contentType:   r.headers.get("content-type") ?? "",
-      truncatedHdr:  r.headers.get("x-csv-truncated") ?? "",
-      rowCapHdr:     r.headers.get("x-csv-row-cap") ?? "",
-      totalAvailHdr: r.headers.get("x-csv-total-available") ?? "",
-    };
-  }, { url: csvUrl });
-  expect(csvFetch.status).toBe(200);
-  expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
+  // ─── Click "تصدير CSV" → the route handler above captures the bytes ──
+  // Multiple "تصدير CSV" / "تنزيل CSV" buttons exist on /admin/ai-fix.
+  // Only the dialog's button carries this exact `title` attribute (source:
+  // AICompanyFix.tsx ~line 3096), so anchoring on it picks the right one
+  // without depending on DOM order or visibility heuristics.
+  const csvButton = dialog.getByTitle(
+    "تنزيل سجل تشغيلات الأداة كاملاً كملف CSV",
+  );
+  await csvButton.click();
+  // Poll until the route handler records this click's response.
+  await expect.poll(() => csvCaptures.length, { timeout: 30_000 }).toBe(1);
+  const csvCapture = csvCaptures[0];
 
-  // Response headers — these drive the "تم الاقتطاع عند 1000 صف" toast
-  // suffix in AICompanyFix.tsx (toolHistoryCsvMut). A regression that
-  // drops or mistypes any of these would silently disable the user-
-  // visible truncation hint. Mirrors the parallel header assertions in
-  // email-history-csv-export.spec.ts and maintenance-history-csv-export
-  // .spec.ts.
-  expect(csvFetch.truncatedHdr).toBe("1");
-  expect(csvFetch.rowCapHdr).toBe("1000");
-  expect(csvFetch.totalAvailHdr).toBe("1001");
+  expect(csvCapture.contentType.toLowerCase()).toContain("text/csv");
+
+  // Response headers — these drive the "تم الاقتطاع عند 1000 صف من أصل
+  // N" toast suffix in AICompanyFix.tsx (toolHistoryCsvMut). A regression
+  // that drops or mistypes any of these would silently disable the
+  // user-visible truncation hint. Mirrors the parallel header assertions
+  // in email-history-csv-export.spec.ts and maintenance-history-csv-
+  // export.spec.ts.
+  expect(csvCapture.truncatedHdr).toBe("1");
+  expect(csvCapture.rowCapHdr).toBe("1000");
+  expect(csvCapture.totalAvailHdr).toBe("1001");
+
+  // ─── Toast assertion — clip count + underlying total ───────────────────
+  // The whole point of task #117: when the export was clipped, the
+  // success toast must tell the operator both how many rows came back
+  // (the cap) AND how many really existed upstream. Without this,
+  // SuperAdmins would only learn about the clip by combing the audit
+  // log later. We assert on the toast description text so a regression
+  // that drops `totalAvailable` from the header read or from the
+  // template string would fail loudly. Toast lives at document scope
+  // (Radix portal under <Toaster /> in App.tsx), so we query from
+  // `page` not the dialog.
+  await expect(
+    page.getByText("تم الاقتطاع عند 1000 صف من أصل 1001"),
+  ).toBeVisible();
+  // Also assert the success title rendered, so a future regression
+  // that flipped the mutation into onError (and silently swallowed the
+  // truncation suffix) would still trip this expectation.
+  await expect(page.getByText("تم تنزيل ملف CSV").first()).toBeVisible();
 
   // ─── Body bytes — UTF-8 BOM and the 1000-row cap ────────────────────────
-  const csvBuf = Buffer.from(csvFetch.bytes);
+  const csvBuf = csvCapture.body;
   expect(csvBuf.length).toBeGreaterThan(3);
   expect(csvBuf[0]).toBe(0xEF);
   expect(csvBuf[1]).toBe(0xBB);
