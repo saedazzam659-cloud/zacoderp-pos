@@ -14,7 +14,6 @@ import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeFilter, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
-import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 

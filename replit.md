@@ -24,7 +24,7 @@ The frontend uses React with Vite and TailwindCSS, supporting a multi-company, A
 - **Modules:**
     - **Inventory Management:** Tracks warehouses, items, stock, transfers, adjustments, and counts with Weighted Average costing and multi-unit support.
     - **Fiscal Periods:** Manages fiscal years and periods with status tracking and overlap detection.
-    - **Sales Documents:** Includes `priceIncludesVat` flag, document-level discount implementation, and auto-application of promotions via a server-authoritative engine.
+    - **Sales Documents:** Includes `priceIncludesVat` flag, document-level discount implementation, and auto-application of promotions via a server-authoritative engine. Posting a cash/bank sales invoice (or sales return) writes the journal entry only — receipt/payment vouchers are NOT auto-created and must be entered manually when desired.
     - **Support System:** In-app ticket system.
     - **POS Management:** Monitors cashier shifts, links sales invoices to sessions, provides live KPIs, and manages POS terminals.
     - **Sequence Management:** Centralized, admin-only module for managing and auditing transaction document numbers with concurrent handling and per-branch counters.

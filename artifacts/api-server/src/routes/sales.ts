@@ -15,7 +15,6 @@ import { eq, and, asc, desc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
-import { createPostedPaymentVoucher, createPostedReceiptVoucher } from "../lib/cashVouchers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 
@@ -741,37 +740,8 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       .where(eq(salesInvoicesTable.id, id))
       .returning();
 
-    if (inv.paymentType === "cash" && inv.cashBoxId) {
-      await createPostedReceiptVoucher({
-        companyId: cid,
-        branchId: inv.branchId,
-        date: inv.invoiceDate,
-        cashBoxId: inv.cashBoxId,
-        paymentType: "cash",
-        entityType: "customer",
-        entityId: inv.customerId,
-        amount: inv.totalAmount,
-        exchangeRate: inv.exchangeRate,
-        refType: "sales_invoice",
-        refNumber: inv.docNumber || String(inv.id),
-        description: `قبض نقدي للفاتورة رقم ${inv.docNumber || inv.id}`,
-      });
-    } else if (inv.paymentType === "bank" && (inv as any).bankAccountId) {
-      await createPostedReceiptVoucher({
-        companyId: cid,
-        branchId: inv.branchId,
-        date: inv.invoiceDate,
-        bankAccountId: (inv as any).bankAccountId,
-        paymentType: "bank",
-        entityType: "customer",
-        entityId: inv.customerId,
-        amount: inv.totalAmount,
-        exchangeRate: inv.exchangeRate,
-        refType: "sales_invoice",
-        refNumber: inv.docNumber || String(inv.id),
-        description: `قبض بنكي للفاتورة رقم ${inv.docNumber || inv.id}`,
-      });
-    }
+    // NOTE: لا نُنشئ سند قبض تلقائياً عند ترحيل فاتورة نقدية/بنكية.
+    // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند القبض يُنشأ يدوياً عند الحاجة.
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1257,37 +1227,8 @@ router.patch("/sales-returns/:id/post", async (req, res) => {
       .where(eq(salesReturnsTable.id, id))
       .returning();
 
-    if (ret.paymentType === "cash" && ret.cashBoxId) {
-      await createPostedPaymentVoucher({
-        companyId: cid,
-        branchId: ret.branchId,
-        date: ret.returnDate,
-        cashBoxId: ret.cashBoxId,
-        paymentType: "cash",
-        entityType: "customer",
-        entityId: ret.customerId,
-        amount: ret.totalAmount,
-        exchangeRate: ret.exchangeRate,
-        refType: "sales_return",
-        refNumber: ret.docNumber || String(ret.id),
-        description: `رد نقدي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
-      });
-    } else if (ret.paymentType === "bank" && (ret as any).bankAccountId) {
-      await createPostedPaymentVoucher({
-        companyId: cid,
-        branchId: ret.branchId,
-        date: ret.returnDate,
-        bankAccountId: (ret as any).bankAccountId,
-        paymentType: "bank",
-        entityType: "customer",
-        entityId: ret.customerId,
-        amount: ret.totalAmount,
-        exchangeRate: ret.exchangeRate,
-        refType: "sales_return",
-        refNumber: ret.docNumber || String(ret.id),
-        description: `رد بنكي لمرتجع المبيعات رقم ${ret.docNumber || ret.id}`,
-      });
-    }
+    // NOTE: لا نُنشئ سند صرف تلقائياً عند ترحيل مرتجع نقدي/بنكي.
+    // القيد المحاسبي أعلاه يكفي لتسجيل الأثر النقدي؛ سند الصرف يُنشأ يدوياً عند الحاجة.
 
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
