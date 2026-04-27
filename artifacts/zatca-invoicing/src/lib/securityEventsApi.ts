@@ -176,3 +176,43 @@ export function mediaUrl(p: string | null | undefined): string {
   if (p.startsWith("/objects/")) return `${API}/api/storage${p}`;
   return p;
 }
+
+// ─── Notification rules (Phase 3) ────────────────────────────────────
+// Per-company rules that decide who gets an in-app notification when a
+// security_events row is created. The matching evaluator runs on the
+// server right after the event is inserted; this helper just exposes
+// the CRUD surface for the rules-management page.
+export interface SecurityNotificationRule {
+  id: number;
+  companyId: number;
+  name: string;
+  isActive: boolean;
+  minSeverity: "low" | "medium" | "high" | "critical";
+  eventTypes: string[];           // empty = match any event type
+  branchIds: number[];            // empty = any branch
+  targetMode: "broadcast" | "users";
+  targetUserIds: number[];        // populated only when targetMode = "users"
+  createdByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface SecurityNotificationRuleInput {
+  name: string;
+  isActive?: boolean;
+  minSeverity: "low" | "medium" | "high" | "critical";
+  eventTypes: string[];
+  branchIds: number[];
+  targetMode: "broadcast" | "users";
+  targetUserIds: number[];
+}
+
+export const securityNotificationRulesApi = {
+  list: () => get<SecurityNotificationRule[]>("/notification-rules"),
+  create: (data: SecurityNotificationRuleInput) =>
+    post<SecurityNotificationRule>("/notification-rules", data),
+  update: (id: number, data: Partial<SecurityNotificationRuleInput>) =>
+    put<SecurityNotificationRule>(`/notification-rules/${id}`, data),
+  toggle: (id: number) =>
+    post<SecurityNotificationRule>(`/notification-rules/${id}/toggle`, {}),
+  remove: (id: number) => del<{ ok: true }>(`/notification-rules/${id}`),
+};

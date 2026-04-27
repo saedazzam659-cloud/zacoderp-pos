@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   securityEventsTable,
   securityEventMediaTable,
+  securityNotificationRulesTable,
   SECURITY_EVENT_TYPES,
   SECURITY_EVENT_SEVERITIES,
   SECURITY_EVENT_STATUSES,
@@ -13,6 +14,7 @@ import { eq, and, desc, gte, lte, sql, inArray, ilike, or } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ObjectStorageService } from "../lib/objectStorage.js";
+import { runSecurityNotificationRules } from "../lib/securityNotifyOnEvent.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -240,6 +242,213 @@ router.get("/", async (req, res) => {
   }
 });
 
+// ── Notification Rules CRUD ─────────────────────────────────────────
+// Mounted BEFORE the :id catch-alls so the literal `notification-rules`
+// path is matched first by Express. Per-company rules that decide who
+// gets notified when a security_events row is created.
+
+function isMinSeverity(s: unknown): s is "low" | "medium" | "high" | "critical" {
+  return s === "low" || s === "medium" || s === "high" || s === "critical";
+}
+function isTargetMode(s: unknown): s is "broadcast" | "users" {
+  return s === "broadcast" || s === "users";
+}
+function sanitizeEventTypesArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v === "string" && (SECURITY_EVENT_TYPES as readonly string[]).includes(v)) out.push(v);
+  }
+  return Array.from(new Set(out));
+}
+function sanitizeIntArray(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const out: number[] = [];
+  for (const v of raw) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0) out.push(n);
+  }
+  return Array.from(new Set(out));
+}
+async function validateBranchIdsForCompany(cid: number, ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.select({ id: branchesTable.id })
+    .from(branchesTable)
+    .where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, ids)));
+  const valid = new Set(rows.map((r) => r.id));
+  return ids.filter((id) => valid.has(id));
+}
+async function validateUserIdsForCompany(cid: number, ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(eq(usersTable.companyId, cid), inArray(usersTable.id, ids)));
+  const valid = new Set(rows.map((r) => r.id));
+  return ids.filter((id) => valid.has(id));
+}
+
+// GET /notification-rules — list rules for the current company.
+router.get("/notification-rules", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const rows = await db.select().from(securityNotificationRulesTable)
+      .where(eq(securityNotificationRulesTable.companyId, cid))
+      .orderBy(desc(securityNotificationRulesTable.createdAt));
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "list failed" });
+  }
+});
+
+// POST /notification-rules — create.
+router.post("/notification-rules", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const b = req.body ?? {};
+    const name = String(b.name ?? "").trim().slice(0, 200);
+    if (!name) { res.status(400).json({ error: "اسم القاعدة مطلوب" }); return; }
+    const minSeverity = isMinSeverity(b.minSeverity) ? b.minSeverity : "medium";
+    const targetMode = isTargetMode(b.targetMode) ? b.targetMode : "broadcast";
+    const eventTypes = sanitizeEventTypesArray(b.eventTypes);
+    const branchIds = await validateBranchIdsForCompany(cid, sanitizeIntArray(b.branchIds));
+    const targetUserIds = targetMode === "users"
+      ? await validateUserIdsForCompany(cid, sanitizeIntArray(b.targetUserIds))
+      : [];
+    if (targetMode === "users" && targetUserIds.length === 0) {
+      res.status(400).json({ error: "يجب اختيار مستخدم واحد على الأقل عند الاستهداف الفردي" });
+      return;
+    }
+    const isActive = b.isActive === false ? false : true;
+
+    const [row] = await db.insert(securityNotificationRulesTable).values({
+      companyId: cid,
+      name,
+      isActive,
+      minSeverity,
+      eventTypes,
+      branchIds,
+      targetMode,
+      targetUserIds,
+      createdByUserId: req.authUser?.id ?? null,
+    }).returning();
+    res.status(201).json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "create failed" });
+  }
+});
+
+// PUT /notification-rules/:id — update.
+router.put("/notification-rules/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "id غير صالح" }); return; }
+
+    const [existing] = await db.select().from(securityNotificationRulesTable)
+      .where(and(
+        eq(securityNotificationRulesTable.id, id),
+        eq(securityNotificationRulesTable.companyId, cid),
+      ));
+    if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+
+    const b = req.body ?? {};
+    const updates: any = { updatedAt: new Date() };
+    if (b.name !== undefined) {
+      const n = String(b.name ?? "").trim().slice(0, 200);
+      if (!n) { res.status(400).json({ error: "اسم القاعدة مطلوب" }); return; }
+      updates.name = n;
+    }
+    if (b.isActive !== undefined) updates.isActive = !!b.isActive;
+    if (b.minSeverity !== undefined) {
+      if (!isMinSeverity(b.minSeverity)) { res.status(400).json({ error: "مستوى الخطورة غير صالح" }); return; }
+      updates.minSeverity = b.minSeverity;
+    }
+    if (b.eventTypes !== undefined) updates.eventTypes = sanitizeEventTypesArray(b.eventTypes);
+    if (b.branchIds !== undefined) {
+      updates.branchIds = await validateBranchIdsForCompany(cid, sanitizeIntArray(b.branchIds));
+    }
+    const newMode = b.targetMode !== undefined
+      ? (isTargetMode(b.targetMode) ? b.targetMode : existing.targetMode)
+      : existing.targetMode;
+    if (b.targetMode !== undefined) updates.targetMode = newMode;
+    if (b.targetUserIds !== undefined || b.targetMode !== undefined) {
+      if (newMode === "users") {
+        const ids = await validateUserIdsForCompany(
+          cid,
+          sanitizeIntArray(b.targetUserIds ?? existing.targetUserIds),
+        );
+        if (ids.length === 0) {
+          res.status(400).json({ error: "يجب اختيار مستخدم واحد على الأقل عند الاستهداف الفردي" });
+          return;
+        }
+        updates.targetUserIds = ids;
+      } else {
+        updates.targetUserIds = [];
+      }
+    }
+
+    const [row] = await db.update(securityNotificationRulesTable)
+      .set(updates)
+      .where(and(
+        eq(securityNotificationRulesTable.id, id),
+        eq(securityNotificationRulesTable.companyId, cid),
+      ))
+      .returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "update failed" });
+  }
+});
+
+// POST /notification-rules/:id/toggle — flip isActive.
+router.post("/notification-rules/:id/toggle", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "id غير صالح" }); return; }
+    const [existing] = await db.select().from(securityNotificationRulesTable)
+      .where(and(
+        eq(securityNotificationRulesTable.id, id),
+        eq(securityNotificationRulesTable.companyId, cid),
+      ));
+    if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+    const [row] = await db.update(securityNotificationRulesTable)
+      .set({ isActive: !existing.isActive, updatedAt: new Date() })
+      .where(and(
+        eq(securityNotificationRulesTable.id, id),
+        eq(securityNotificationRulesTable.companyId, cid),
+      ))
+      .returning();
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "toggle failed" });
+  }
+});
+
+// DELETE /notification-rules/:id
+router.delete("/notification-rules/:id", async (req, res) => {
+  try {
+    const cid = guard(req, res);
+    if (!cid) return;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "id غير صالح" }); return; }
+    const result = await db.delete(securityNotificationRulesTable)
+      .where(and(
+        eq(securityNotificationRulesTable.id, id),
+        eq(securityNotificationRulesTable.companyId, cid),
+      ))
+      .returning({ id: securityNotificationRulesTable.id });
+    if (result.length === 0) { res.status(404).json({ error: "غير موجود" }); return; }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "delete failed" });
+  }
+});
+
 // ── GET /:id ────────────────────────────────────────────────────────
 router.get("/:id", async (req, res) => {
   try {
@@ -343,6 +552,20 @@ router.post("/", async (req, res) => {
       resolvedAt,
       resolutionNote: b.resolutionNote ? String(b.resolutionNote) : null,
     }).returning();
+
+    // Fire-and-forget rule evaluation. The helper has its own
+    // try/catch so it can never break event creation.
+    if (row) {
+      void runSecurityNotificationRules(cid, {
+        id: row.id,
+        eventType: row.eventType,
+        severity: row.severity,
+        title: row.title,
+        branchId: row.branchId,
+        cameraLabel: row.cameraLabel,
+      }, req.authUser?.id ?? null);
+    }
+
     res.status(201).json(row);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "create failed" });

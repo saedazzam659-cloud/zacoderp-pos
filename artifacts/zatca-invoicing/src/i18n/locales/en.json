@@ -528,7 +528,49 @@
       "eventsDesc": "View and manage all security events",
       "openOnly": "Open Events",
       "investigating": "Under Investigation",
-      "history": "Closed Event History"
+      "history": "Closed Event History",
+      "notificationRules": "Notification Rules"
+    },
+    "rules": {
+      "title": "Security Notification Rules",
+      "description": "Decide who gets an in-app alert when a new security event is logged.",
+      "newRule": "New Rule",
+      "editRule": "Edit Rule",
+      "deleteRule": "Delete Rule",
+      "deleteConfirm": "Delete this rule?",
+      "ruleName": "Rule Name",
+      "minSeverity": "Minimum Severity",
+      "eventTypes": "Event Types",
+      "eventTypesHint": "Leave all unselected to match any event type.",
+      "branches": "Branches",
+      "branchesHint": "Leave all unselected to apply to every branch.",
+      "anyType": "Any type",
+      "anyBranch": "Any branch",
+      "targetMode": "Target",
+      "broadcast": "Broadcast (whole company)",
+      "specificUsers": "Specific users",
+      "targetUsers": "Pick users",
+      "noUsers": "No users available",
+      "status": "Status",
+      "active": "Active",
+      "inactive": "Inactive",
+      "empty": "No rules yet. Create your first one.",
+      "ruleSaved": "Rule saved",
+      "ruleDeleted": "Rule deleted",
+      "ruleToggled": "Status updated",
+      "col": {
+        "name": "Name",
+        "status": "Status",
+        "minSeverity": "Min Severity",
+        "eventTypes": "Types",
+        "branches": "Branches",
+        "target": "Target",
+        "actions": "Actions"
+      },
+      "validation": {
+        "nameRequired": "Rule name is required",
+        "usersRequired": "Pick at least one user when targeting specific users"
+      }
     },
     "stats": {
       "total": "Total Events",

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ShieldAlert, ListChecks, BarChart3, AlertOctagon, Activity, ClipboardList,
+  ShieldAlert, ListChecks, BarChart3, AlertOctagon, Activity, ClipboardList, BellRing,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +12,7 @@ const tiles: HubTile[] = [
   { nameKey: "security.tiles.openOnly", href: "/security/events?status=open", icon: AlertOctagon, tone: "orange", permKey: "security_events" },
   { nameKey: "security.tiles.investigating", href: "/security/events?status=investigating", icon: Activity, tone: "amber", permKey: "security_events" },
   { nameKey: "security.tiles.history",  href: "/security/events?status=closed", icon: ClipboardList, tone: "slate",   permKey: "security_events" },
+  { nameKey: "security.tiles.notificationRules", href: "/security/notification-rules", icon: BellRing, tone: "violet", permKey: "security_events" },
 ];
 
 function StatCard({ label, value, tone }: { label: string; value: number; tone: string }) {
