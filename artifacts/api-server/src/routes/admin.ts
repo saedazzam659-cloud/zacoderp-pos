@@ -4377,6 +4377,16 @@ router.put("/maintenance/retention-settings/:toolKey", requireSuperAdmin, async 
 //    on-screen 50 rows) so admins can archive it for compliance review. The
 //    export call itself is audit-logged via `logMaint` so the trail stays
 //    complete.
+//
+// CSV branch is row-capped at MAINT_HISTORY_CSV_ROW_CAP (1000, matching the
+// sibling BROKEN_CSV_ROW_CAP / RECOVERY_CSV_ROW_CAP / TOOL_HISTORY_CSV_ROW_CAP)
+// so a tenant with a long maintenance trail can't blow up the download or pin
+// the API server while it streams hundreds of thousands of audit rows. When
+// the cap kicks in the audit metadata records `truncated`/`totalAvailable`/
+// `rowCap` (mirroring the contract the sibling broken-tools / recovered-tools
+// / tool-history exports use) so SuperAdmins reviewing past exports can tell
+// the data was clipped.
+const MAINT_HISTORY_CSV_ROW_CAP = 1000;
 router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
   const g = maintGuard(req, res); if (!g) return;
   const limit  = clampInt(req.query.limit,  1, 200,        50);
@@ -4439,7 +4449,24 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
       })
         .from(auditLogTable)
         .where(where)
-        .orderBy(desc(auditLogTable.createdAt));
+        .orderBy(desc(auditLogTable.createdAt))
+        .limit(MAINT_HISTORY_CSV_ROW_CAP);
+      // Resolve the underlying total only when the result set hit the cap —
+      // an export of exactly MAINT_HISTORY_CSV_ROW_CAP rows (no clipping)
+      // must not falsely show as truncated. The common (under-cap) path
+      // skips the COUNT scan entirely. Mirrors the pattern on
+      // /maintenance/error-summary, /maintenance/recent-recoveries, and
+      // /maintenance/tool-history.
+      const atCap = rows.length >= MAINT_HISTORY_CSV_ROW_CAP;
+      let totalAvailable = rows.length;
+      if (atCap) {
+        const [{ total }] = await db
+          .select({ total: sql<number>`count(*)::int` })
+          .from(auditLogTable)
+          .where(where);
+        totalAvailable = Number(total) || rows.length;
+      }
+      const truncated = totalAvailable > MAINT_HISTORY_CSV_ROW_CAP;
       // Task #64: surface the retention window that was active for each
       // entry as its own column so admins auditing offline (Excel) can sort
       // / filter on it without parsing the JSON details cell. The same
@@ -4454,12 +4481,27 @@ router.get("/maintenance/history", requireSuperAdmin, async (req, res) => {
         r.metadata ? JSON.stringify(r.metadata) : "",
       ]);
       await logMaint(req, g.companyId, "export_csv", "maintenance_history", {
-        count: rows.length, format: "csv",
+        count: rows.length,
+        totalAvailable,
+        truncated,
+        rowCap: MAINT_HISTORY_CSV_ROW_CAP,
+        format: "csv",
         filters: {
           from: fromRaw || null, to: toRaw || null,
           action: actionFilter || null, entityType: entityTypeFilter || null,
         },
       });
+      // Echo the truncation signal in response headers so the page-side
+      // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
+      // without needing a second round-trip. Mirrors the broken-tools /
+      // recovered-tools branches.
+      res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
+      res.setHeader("X-Csv-Row-Cap", String(MAINT_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+      );
       sendCsv(res, `maintenance-history-${g.companyId}-${Date.now()}.csv`, headers, csvRows);
       return;
     }
@@ -4828,6 +4870,17 @@ router.get("/maintenance/tool-history", requireSuperAdmin, async (req, res) => {
         format: "csv",
         toolKey,
       });
+      // Echo the truncation signal in response headers so the page-side
+      // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
+      // without needing a second round-trip. Mirrors the broken-tools /
+      // recovered-tools branches.
+      res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
+      res.setHeader("X-Csv-Row-Cap", String(TOOL_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+      );
       // `toolKey` is a vetted machine identifier (matches existing keys), but
       // strip anything outside [A-Za-z0-9._-] defensively so the
       // Content-Disposition filename never gains stray punctuation.
@@ -5220,6 +5273,14 @@ const EMAIL_HISTORY_STATUS_BUCKETS: Record<string, string[]> = {
   failed:     ["failed", "no_recipients", "no_transport"],
   suppressed: ["skipped", "snoozed", "rate_limited"],
 };
+// CSV branch is row-capped at EMAIL_HISTORY_CSV_ROW_CAP (1000, matching the
+// sibling BROKEN_CSV_ROW_CAP / RECOVERY_CSV_ROW_CAP / TOOL_HISTORY_CSV_ROW_CAP /
+// MAINT_HISTORY_CSV_ROW_CAP) so a tenant with a long email-attempt history
+// can't blow up the download or pin the API server while it streams thousands
+// of dispatch attempts. When the cap kicks in the audit metadata records
+// `truncated`/`totalAvailable`/`rowCap` so SuperAdmins reviewing past exports
+// can tell the data was clipped.
+const EMAIL_HISTORY_CSV_ROW_CAP = 1000;
 router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => {
   const isCsv = wantsCsv(req);
   const limit  = clampInt(req.query.limit,  1, 100,        20);
@@ -5258,10 +5319,29 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
 
   try {
     if (isCsv) {
-      // CSV branch — full filtered history (no limit) so admins can archive
-      // it for compliance review. Columns mirror the on-screen table 1:1.
+      // CSV branch — filtered history capped at EMAIL_HISTORY_CSV_ROW_CAP
+      // rows so a long dispatch trail can't blow up the download. Columns
+      // mirror the on-screen table 1:1.
       const q = db.select().from(maintenanceEmailRunsTable);
-      const rows = await (where ? q.where(where) : q).orderBy(desc(maintenanceEmailRunsTable.ranAt));
+      const rows = await (where ? q.where(where) : q)
+        .orderBy(desc(maintenanceEmailRunsTable.ranAt))
+        .limit(EMAIL_HISTORY_CSV_ROW_CAP);
+      // Resolve the underlying total only when the result set hit the cap —
+      // an export of exactly EMAIL_HISTORY_CSV_ROW_CAP rows (no clipping)
+      // must not falsely show as truncated. The common (under-cap) path
+      // skips the COUNT scan entirely. Mirrors the pattern on
+      // /maintenance/error-summary, /maintenance/recent-recoveries,
+      // /maintenance/tool-history, and /maintenance/history.
+      const atCap = rows.length >= EMAIL_HISTORY_CSV_ROW_CAP;
+      let totalAvailable = rows.length;
+      if (atCap) {
+        const cq = db
+          .select({ total: sql<number>`count(*)::int` })
+          .from(maintenanceEmailRunsTable);
+        const [{ total }] = await (where ? cq.where(where) : cq);
+        totalAvailable = Number(total) || rows.length;
+      }
+      const truncated = totalAvailable > EMAIL_HISTORY_CSV_ROW_CAP;
       const headers = ["الوقت", "المصدر", "الحالة", "السبب", "المستلمون", "صفوف حرجة", "بصمة القائمة الحرجة", "الخطأ"];
       const csvRows = rows.map((r) => [
         csvDate(r.ranAt),
@@ -5288,13 +5368,28 @@ router.get("/maintenance/email-history", requireSuperAdmin, async (req, res) => 
         entityType: "maintenance_email_history",
         entityId:   null,
         metadata: {
-          count: rows.length, format: "csv",
+          count: rows.length,
+          totalAvailable,
+          truncated,
+          rowCap: EMAIL_HISTORY_CSV_ROW_CAP,
+          format: "csv",
           filters: {
             from: fromRaw || null, to: toRaw || null,
             trigger: triggerRaw || null, status: statusRaw || null,
           },
         },
       });
+      // Echo the truncation signal in response headers so the page-side
+      // mutation can mention "تم الاقتطاع عند 1000 صف" in its toast
+      // without needing a second round-trip. Mirrors the broken-tools /
+      // recovered-tools branches.
+      res.setHeader("X-Csv-Truncated", truncated ? "1" : "0");
+      res.setHeader("X-Csv-Row-Cap", String(EMAIL_HISTORY_CSV_ROW_CAP));
+      res.setHeader("X-Csv-Total-Available", String(totalAvailable));
+      res.setHeader(
+        "Access-Control-Expose-Headers",
+        "Content-Disposition, X-Csv-Truncated, X-Csv-Row-Cap, X-Csv-Total-Available",
+      );
       sendCsv(res, `maintenance-email-history-${Date.now()}.csv`, headers, csvRows);
       return;
     }

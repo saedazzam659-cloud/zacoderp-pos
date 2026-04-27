@@ -51,10 +51,11 @@
 
 import { test, expect, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { eq, inArray, like } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, like } from "drizzle-orm";
 import {
   db,
   usersTable,
+  auditLogTable,
   maintenanceEmailRunsTable,
   superAdminSessionsTable,
 } from "@workspace/db";
@@ -74,6 +75,12 @@ const TOTAL_ROWS = 3;
 let saSessionRowId: number | null = null;
 let saSessionToken: string | null = null;
 const seededEmailRunIds: number[] = [];
+// Audit-log rows our two test cases write (one export_csv per click) are
+// tracked so afterAll can strip them by PK without LIKE wildcards. The
+// email-history endpoint records exports with companyId=null, so we can't
+// scope cleanup by tenant — strict-by-PK is the only safe option on a
+// shared dev DB.
+const seededAuditIds: number[] = [];
 
 // ─── Setup: insert sa_session for the existing superadmin user + 3 rows ────
 test.beforeAll(async () => {
@@ -143,6 +150,11 @@ test.afterAll(async () => {
     await db
       .delete(maintenanceEmailRunsTable)
       .where(inArray(maintenanceEmailRunsTable.id, seededEmailRunIds));
+  }
+  if (seededAuditIds.length) {
+    await db
+      .delete(auditLogTable)
+      .where(inArray(auditLogTable.id, seededAuditIds));
   }
   if (saSessionRowId !== null) {
     await db
@@ -233,6 +245,13 @@ test("email-history CSV export: respects date filter (exact seeded rows) and sta
   const csvButton = page.getByTitle(
     "تنزيل سجل البريد الكامل كملف CSV (يحترم الفلاتر أدناه)",
   );
+  // Anchor a wall-clock moment just before the click so the audit-row
+  // lookup below can scope itself to this run. writeAudit() uses
+  // defaultNow for created_at; a >= filter on this anchor (combined with
+  // entityType='maintenance_email_history') matches only the row this
+  // export produced. 1s slack covers clock skew between the test process
+  // and the api-server.
+  const okAuditAnchor = new Date(Date.now() - 1_000);
   await csvButton.click();
   // Wait for the route handler to record this click's response. We poll
   // until the captures array grows to length 1 instead of using
@@ -287,6 +306,45 @@ test("email-history CSV export: respects date filter (exact seeded rows) and sta
     expect(line).toContain("digest_sent");
   }
 
+  // ─── Audit-row metadata — non-truncated branch ────────────────────────
+  // The export must record an audit entry under
+  // module='maintenance' / action='export_csv' /
+  // entityType='maintenance_email_history'. The endpoint scopes its
+  // audit row to companyId=null (email-history is a global, cross-tenant
+  // resource), so the lookup is anchored by createdAt + entityType only.
+  // We also lock in the new `truncated`/`rowCap`/`totalAvailable` shape
+  // so a regression that drops any of those fields fails loudly here
+  // instead of silently shipping — matching the contract enforced on
+  // /maintenance/error-summary, /maintenance/recent-recoveries,
+  // /maintenance/tool-history, and /maintenance/history.
+  const okAuditRows = await db
+    .select({
+      id:       auditLogTable.id,
+      metadata: auditLogTable.metadata,
+    })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_email_history"),
+      gte(auditLogTable.createdAt, okAuditAnchor),
+    ));
+  expect(okAuditRows).toHaveLength(1);
+  const okMeta = (okAuditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(okMeta.format).toBe("csv");
+  expect(okMeta.rowCap).toBe(1000);
+  expect(okMeta.truncated).toBe(false);
+  // count must equal totalAvailable when not truncated — the route uses
+  // rows.length for both rather than re-running a COUNT query in the
+  // common (cheap) path.
+  expect(typeof okMeta.count).toBe("number");
+  expect(typeof okMeta.totalAvailable).toBe("number");
+  expect(okMeta.count).toBe(okMeta.totalAvailable);
+  // The SEED_DATE..SEED_DATE date window pins the universe to exactly
+  // the TOTAL_ROWS seeded rows, so count / totalAvailable are bounded.
+  expect(okMeta.count).toBe(TOTAL_ROWS);
+  for (const r of okAuditRows) seededAuditIds.push(r.id);
+
   // ─── Variant: change the status filter to "فاشلة" and re-export. The
   //     seeded rows are status='ok' so they fall outside the "failed"
   //     bucket; combined with the SEED_DATE date window, the export must
@@ -304,6 +362,12 @@ test("email-history CSV export: respects date filter (exact seeded rows) and sta
     panel(page).getByText("لا توجد محاولات إرسال مطابقة للفلاتر."),
   ).toBeVisible();
 
+  // Capture the first export's audit-row id so the second lookup can
+  // scope itself by `id > okAuditRowId` instead of by createdAt. A
+  // wall-clock anchor with any slack risks straddling the first audit
+  // row when the two clicks fall within the slack window — id-based
+  // scoping is unconditionally monotonic and immune to clock skew.
+  const okAuditRowId = okAuditRows[0].id;
   await csvButton.click();
   // Wait for the second capture to land via the same route handler.
   await expect.poll(() => csvCaptures.length, { timeout: 15_000 }).toBe(2);
@@ -336,4 +400,165 @@ test("email-history CSV export: respects date filter (exact seeded rows) and sta
     .filter(Boolean);
   expect(failedCsvLines).toHaveLength(1); // header only
   expect(failedCsvLines[0]).toContain("بصمة القائمة الحرجة");
+
+  // ─── Audit-row metadata — empty-result, non-truncated branch ──────────
+  // The empty-result export still writes a `truncated=false` audit row
+  // with count=0 and totalAvailable=0; the truncation fields are
+  // unconditionally emitted, not gated on a non-empty result. Without
+  // this assertion, a regression that only emitted the truncation fields
+  // when rows.length > 0 would slip through.
+  const failedAuditRows = await db
+    .select({
+      id:       auditLogTable.id,
+      metadata: auditLogTable.metadata,
+    })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_email_history"),
+      gt(auditLogTable.id, okAuditRowId),
+    ));
+  expect(failedAuditRows).toHaveLength(1);
+  const failedMeta = (failedAuditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(failedMeta.format).toBe("csv");
+  expect(failedMeta.rowCap).toBe(1000);
+  expect(failedMeta.truncated).toBe(false);
+  expect(failedMeta.count).toBe(0);
+  expect(failedMeta.totalAvailable).toBe(0);
+  for (const r of failedAuditRows) seededAuditIds.push(r.id);
+});
+
+// ─── Second test: 1000-row server-side cap on the email-history CSV branch ─
+// We seed 1001 maintenance_email_runs rows on a brand-new isolated calendar
+// day (1985-02-16, distinct from the first test's 1985-02-15 SEED_DATE so
+// the two tests can't interfere) and then exercise the CSV branch with a
+// from=to date filter pinned to that day. EMAIL_HISTORY_CSV_ROW_CAP=1000
+// must clip the body to exactly 1000 data rows and the audit row must
+// carry truncated=true / totalAvailable=1001 / rowCap=1000. Mirrors the
+// truncation tests in tool-history-csv-export.spec.ts and
+// broken-tools-panel.spec.ts.
+//
+// We trigger the export directly via a page-context fetch (Bearer token
+// from localStorage) rather than driving the UI a second time — the click
+// flow is already covered above; here the focus is purely the server cap.
+const TRUNC_DATE = "1985-02-16";
+const TRUNC_TAG  = `e2e_task80_trunc_${randomBytes(4).toString("hex")}`;
+
+test("email-history CSV export: caps body at 1000 rows and records truncation in the audit row", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Seed 1001 rows (strictly > EMAIL_HISTORY_CSV_ROW_CAP=1000) on a
+  // dedicated calendar day. Each row carries a per-test tag in
+  // criticalSignature so cleanup-by-PK and any debugging stays scoped.
+  // Bulk insert in chunks to stay under Postgres's 65k bind-parameter
+  // limit (each row ≈ 8 params → 200 rows ≈ 1.6k params per batch).
+  const SEED_COUNT = 1001;
+  const truncDayStartMs = new Date(`${TRUNC_DATE}T00:00:00.000Z`).getTime();
+  const truncRows = Array.from({ length: SEED_COUNT }, (_, i) => ({
+    // Stagger seconds across the day so ORDER BY ranAt DESC is stable.
+    // 1001 seconds < 24h, so every row stays inside TRUNC_DATE.
+    ranAt:             new Date(truncDayStartMs + i * 1_000),
+    trigger:           "scheduled" as const,
+    status:            "ok",
+    recipients:        1,
+    criticalCount:     0,
+    error:             null as string | null,
+    reason:            "digest_sent",
+    criticalSignature: TRUNC_TAG,
+  }));
+  const CHUNK = 200;
+  for (let i = 0; i < truncRows.length; i += CHUNK) {
+    const inserted = await db
+      .insert(maintenanceEmailRunsTable)
+      .values(truncRows.slice(i, i + CHUNK))
+      .returning({ id: maintenanceEmailRunsTable.id });
+    for (const r of inserted) seededEmailRunIds.push(r.id);
+  }
+
+  // Navigate so addInitScript installs the bearer token; we don't need
+  // to drive the AICompanyFix UI here — the cap behavior is exercised
+  // purely via a page-context fetch against the same /api route the
+  // email-history "تصدير CSV" button hits.
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  // Anchor a wall-clock moment just before the fetch so the audit-row
+  // lookup can scope itself to this run.
+  const truncAuditAnchor = new Date(Date.now() - 1_000);
+
+  // Fire the CSV fetch from inside the page context so localStorage
+  // (where the SPA stores the SuperAdmin bearer token) is available.
+  // Returning the body as a number[] keeps the marshal across the page
+  // boundary trivial; we rebuild the Buffer on the test side. Headers
+  // are also returned so we can lock in the X-Csv-* response headers
+  // the page-side mutation reads to build its truncation toast.
+  const csvUrl = `/api/admin/maintenance/email-history?format=csv&from=${TRUNC_DATE}&to=${TRUNC_DATE}`;
+  const csvFetch = await page.evaluate(async ({ url }) => {
+    const token = localStorage.getItem("zatca_token");
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+    });
+    const buf = await r.arrayBuffer();
+    return {
+      status:         r.status,
+      bytes:          Array.from(new Uint8Array(buf)),
+      contentType:    r.headers.get("content-type") ?? "",
+      truncatedHdr:   r.headers.get("x-csv-truncated") ?? "",
+      rowCapHdr:      r.headers.get("x-csv-row-cap") ?? "",
+      totalAvailHdr:  r.headers.get("x-csv-total-available") ?? "",
+    };
+  }, { url: csvUrl });
+  expect(csvFetch.status).toBe(200);
+  expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
+
+  // Response headers — these drive the "تم الاقتطاع عند 1000 صف" toast
+  // suffix in AICompanyFix.tsx. A regression that drops or mistypes any
+  // of these would silently disable the user-visible truncation hint.
+  expect(csvFetch.truncatedHdr).toBe("1");
+  expect(csvFetch.rowCapHdr).toBe("1000");
+  expect(csvFetch.totalAvailHdr).toBe("1001");
+
+  // ─── Body bytes — UTF-8 BOM and the 1000-row cap ────────────────────
+  const csvBuf = Buffer.from(csvFetch.bytes);
+  expect(csvBuf.length).toBeGreaterThan(3);
+  expect(csvBuf[0]).toBe(0xEF);
+  expect(csvBuf[1]).toBe(0xBB);
+  expect(csvBuf[2]).toBe(0xBF);
+
+  const csvText = csvBuf.toString("utf8").replace(/^\uFEFF/, "");
+  // sendCsv emits CRLF row separators; filter(Boolean) drops the trailing
+  // empty element from a final CRLF (if any). Our seed payload is plain
+  // ASCII for every column except criticalSignature (also ASCII), so no
+  // cell can contain a CRLF — split("\r\n") yields exactly one entry per
+  // logical row.
+  const csvLines = csvText.split("\r\n").filter(Boolean);
+  // 1000-row cap: EMAIL_HISTORY_CSV_ROW_CAP=1000 in admin.ts. We seeded
+  // 1001 raw runs on TRUNC_DATE, so the LIMIT clause must clip the CSV
+  // output to exactly 1000 data rows. Asserting on === 1000 (not >= or
+  // <=) catches accidental cap drift in either direction.
+  expect(csvLines.length - 1).toBe(1000);
+
+  // ─── Audit assertion — exactly one export_csv row + truncation flag ──
+  const truncAuditRows = await db
+    .select({
+      id:       auditLogTable.id,
+      metadata: auditLogTable.metadata,
+    })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_email_history"),
+      gte(auditLogTable.createdAt, truncAuditAnchor),
+    ));
+  expect(truncAuditRows).toHaveLength(1);
+  const truncMeta = (truncAuditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(truncMeta.format).toBe("csv");
+  expect(truncMeta.count).toBe(1000);
+  expect(truncMeta.rowCap).toBe(1000);
+  expect(truncMeta.truncated).toBe(true);
+  // We seeded exactly 1001 rows on TRUNC_DATE and the date filter pins
+  // the COUNT(*) universe to that day, so totalAvailable is bounded.
+  expect(truncMeta.totalAvailable).toBe(1001);
+  for (const r of truncAuditRows) seededAuditIds.push(r.id);
 });

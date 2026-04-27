@@ -111,10 +111,15 @@ const SEED_USERNAME = `${TEST_TAG}_admin`;
 // ever fails. Not asserted directly — the username is the stable anchor.
 const SEED_METADATA = { tag: TEST_TAG, source: "task99-e2e-seed" };
 
-let saSessionRowId: number | null   = null;
-let saSessionToken: string | null   = null;
-let testCompanyId: number | null    = null;
-const seededAuditIds: number[]      = [];
+let saSessionRowId: number | null    = null;
+let saSessionToken: string | null    = null;
+let testCompanyId: number | null     = null;
+// Separate throwaway company used solely by the truncation test (third
+// test in this file). Keeping it isolated from `testCompanyId` lets the
+// other two tests continue to assert exact on-screen row counts without
+// being inflated by the 1001 truncation-test seeds.
+let truncCompanyId: number | null    = null;
+const seededAuditIds: number[]       = [];
 // Captured just before the export click so the audit-row lookup that
 // confirms the export_csv row was written can scope its query to this run.
 let exportAuditAnchor: Date | null  = null;
@@ -242,6 +247,18 @@ test.afterAll(async () => {
     await db
       .delete(companiesTable)
       .where(eq(companiesTable.id, testCompanyId));
+  }
+  if (truncCompanyId !== null) {
+    // Same wholesale strip for the truncation test's throwaway company
+    // (1001 seeded audit rows + the export_csv row the truncation fetch
+    // produced). Safe because this company is exclusively ours and was
+    // created fresh during the truncation test.
+    await db
+      .delete(auditLogTable)
+      .where(eq(auditLogTable.companyId, truncCompanyId));
+    await db
+      .delete(companiesTable)
+      .where(eq(companiesTable.id, truncCompanyId));
   }
   if (saSessionRowId !== null) {
     await db
@@ -422,9 +439,14 @@ test("maintenance-history CSV export: filename, BOM, headers, seeded row, and ex
   // action='export_csv' / entityType='maintenance_history' scoped to the
   // selected companyId. Scoping the lookup by createdAt >= our anchor
   // (and by our test companyId) keeps the assertion stable on a shared
-  // dev DB without inspecting the JSON metadata column.
+  // dev DB. We project metadata so the truncation-flag shape can be
+  // locked in below.
   const auditRows = await db
-    .select({ id: auditLogTable.id, companyId: auditLogTable.companyId })
+    .select({
+      id:        auditLogTable.id,
+      companyId: auditLogTable.companyId,
+      metadata:  auditLogTable.metadata,
+    })
     .from(auditLogTable)
     .where(and(
       eq(auditLogTable.module, "maintenance"),
@@ -434,6 +456,27 @@ test("maintenance-history CSV export: filename, BOM, headers, seeded row, and ex
       gte(auditLogTable.createdAt, exportAuditAnchor!),
     ));
   expect(auditRows).toHaveLength(1);
+  // Truncation visibility — even when the cap doesn't kick in, the audit
+  // row must carry the new `truncated`/`rowCap`/`totalAvailable` fields
+  // so a SuperAdmin reviewing past exports can tell at a glance whether
+  // the data was clipped (the truncated=true branch is covered by the
+  // sibling truncation test below; here we lock in the shape of the
+  // non-truncated branch). Without this assertion, the route could
+  // silently drop the truncation fields and a real clipped export would
+  // once again be indistinguishable from a complete one. Mirrors the
+  // contract enforced on /maintenance/error-summary,
+  // /maintenance/recent-recoveries, /maintenance/tool-history, and
+  // /maintenance/email-history.
+  const meta = (auditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(meta.format).toBe("csv");
+  expect(meta.rowCap).toBe(1000);
+  expect(meta.truncated).toBe(false);
+  // count must equal totalAvailable when not truncated — the route uses
+  // rows.length for both rather than re-running a COUNT query in the
+  // common (cheap) path.
+  expect(typeof meta.count).toBe("number");
+  expect(typeof meta.totalAvailable).toBe("number");
+  expect(meta.count).toBe(meta.totalAvailable);
   // Track the id so afterAll can strip it by PK and the dev DB doesn't
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);
@@ -616,4 +659,182 @@ test("maintenance-history CSV export: forwards on-screen filters (narrow + flip)
     .split("\r\n")
     .filter(Boolean);
   expect(bLines).toHaveLength(1); // header only — no data rows
+});
+
+// ─── Third test: 1000-row server-side cap on the maintenance-history CSV ───
+// We create a brand-new throwaway company and seed exactly 1001 audit rows
+// scoped to it (strictly > MAINT_HISTORY_CSV_ROW_CAP=1000). The CSV branch
+// must clip the body to exactly 1000 data rows and the audit row's
+// metadata must record `truncated=true` / `totalAvailable=1001` /
+// `rowCap=1000`. Mirrors the truncation tests in
+// tool-history-csv-export.spec.ts and broken-tools-panel.spec.ts.
+//
+// We trigger the export directly via a page-context fetch (Bearer token
+// from localStorage) rather than driving the dialog open through the UI
+// for a third time — the click flow is already covered by the first two
+// tests; here the focus is purely the server cap. This keeps the test
+// fast (no extra dropdown/accordion navigation) while still exercising
+// the exact /api route the UI hits.
+test("maintenance-history CSV export: caps body at 1000 rows and records truncation in the audit row", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Brand-new company exclusively for this test. Keeping its audit_log
+  // partition fully under our control means totalAvailable is exactly
+  // SEED_COUNT — no co-tenant rows can inflate the COUNT(*) the route
+  // runs when atCap. nameAr carries TEST_TAG so any leftover row in the
+  // dev DB after a crash is traceable back to this spec.
+  const [truncCo] = await db
+    .insert(companiesTable)
+    .values({
+      nameAr:         `${TEST_TAG} شركة الاختبار للسجل (اقتطاع)`,
+      nameEn:         `${TEST_TAG} Test Co Maint History Trunc`,
+      vatNumber:      "300000000000199",
+      crNumber:       `CR_${TEST_TAG}_trunc`,
+      city:           "Riyadh",
+      street:         "Test St",
+      buildingNumber: "1",
+      postalCode:     "12345",
+      country:        "SA",
+      invoiceType:    "both",
+      status:         "active",
+    })
+    .returning({ id: companiesTable.id });
+  truncCompanyId = truncCo.id;
+
+  // Resolve the SuperAdmin user id once so every seeded audit row carries
+  // a consistent userId. We can't reuse the beforeAll's `sa` binding here
+  // because it lives in a different lexical scope.
+  const [sa] = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.role, "superadmin"))
+    .limit(1);
+  if (!sa) {
+    throw new Error(
+      "No superadmin user exists in the DB; create one before running the E2E suite.",
+    );
+  }
+
+  // Seed 1001 maintenance audit rows (strictly > MAINT_HISTORY_CSV_ROW_CAP
+  // =1000) for the throwaway company. Each row mirrors the shape
+  // logMaint() writes so the CSV body has plausible column values.
+  // Bulk insert in chunks to stay well under Postgres's 65k bind-
+  // parameter ceiling (each row ≈ 9 params → 200 rows ≈ 1.8k params per
+  // batch).
+  const SEED_COUNT = 1001;
+  const truncSeedRows = Array.from({ length: SEED_COUNT }, (_, i) => ({
+    userId:     sa.id,
+    username:   `${TEST_TAG}_trunc_${i}`,
+    role:       "superadmin",
+    companyId:  truncCompanyId!,
+    module:     "maintenance",
+    action:     "fix",
+    method:     "POST",
+    path:       "/api/admin/maintenance/journal-pending/fix",
+    entityType: "journal_pending",
+    entityId:   null,
+    metadata:   { tag: TEST_TAG, seq: i },
+  }));
+  const CHUNK = 200;
+  for (let i = 0; i < truncSeedRows.length; i += CHUNK) {
+    await db
+      .insert(auditLogTable)
+      .values(truncSeedRows.slice(i, i + CHUNK));
+  }
+
+  // Navigate so addInitScript installs the bearer token; we don't need
+  // to drive the AICompanyFix UI here — the cap behavior is exercised
+  // purely via a page-context fetch against the same /api route the
+  // maintenance-history "تصدير CSV" button hits.
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  // Anchor a wall-clock moment just before the fetch so the audit-row
+  // lookup can scope itself to this run.
+  const truncAuditAnchor = new Date(Date.now() - 1_000); // 1s slack
+
+  // Fire the CSV fetch from inside the page context so localStorage
+  // (where the SPA stores the SuperAdmin bearer token) is available.
+  // page.request lives outside the page and would need its own auth
+  // setup. Returning the body as a number[] keeps the marshal across
+  // the page boundary trivial; we rebuild the Buffer on the test side.
+  // Headers are also returned so we can lock in the X-Csv-* response
+  // headers the page-side mutation reads to build its truncation toast.
+  //
+  // Deliberately omit `includeSystem=1` — that flag widens the WHERE to
+  // also include companyId=0 (system) rows, which would inflate the
+  // route's COUNT(*) past our seeded 1001 in any environment that has
+  // system maintenance rows (real dev DBs always do). Pinning the query
+  // to companyId=truncCompanyId only keeps `totalAvailable` deterministic
+  // at exactly the seed count regardless of co-tenant audit history.
+  const csvUrl = `/api/admin/maintenance/history?companyId=${truncCompanyId}&format=csv`;
+  const csvFetch = await page.evaluate(async ({ url }) => {
+    const token = localStorage.getItem("zatca_token");
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+    });
+    const buf = await r.arrayBuffer();
+    return {
+      status:        r.status,
+      bytes:         Array.from(new Uint8Array(buf)),
+      contentType:   r.headers.get("content-type") ?? "",
+      truncatedHdr:  r.headers.get("x-csv-truncated") ?? "",
+      rowCapHdr:     r.headers.get("x-csv-row-cap") ?? "",
+      totalAvailHdr: r.headers.get("x-csv-total-available") ?? "",
+    };
+  }, { url: csvUrl });
+  expect(csvFetch.status).toBe(200);
+  expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
+
+  // Response headers — these drive the "تم الاقتطاع عند 1000 صف" toast
+  // suffix in AICompanyFix.tsx. A regression that drops or mistypes any
+  // of these would silently disable the user-visible truncation hint.
+  expect(csvFetch.truncatedHdr).toBe("1");
+  expect(csvFetch.rowCapHdr).toBe("1000");
+  expect(csvFetch.totalAvailHdr).toBe("1001");
+
+  // ─── Body bytes — UTF-8 BOM and the 1000-row cap ────────────────────
+  const csvBuf = Buffer.from(csvFetch.bytes);
+  expect(csvBuf.length).toBeGreaterThan(3);
+  expect(csvBuf[0]).toBe(0xEF);
+  expect(csvBuf[1]).toBe(0xBB);
+  expect(csvBuf[2]).toBe(0xBF);
+
+  const csvText = csvBuf.toString("utf8").replace(/^\uFEFF/, "");
+  // sendCsv emits CRLF row separators; filter(Boolean) drops the trailing
+  // empty element from a final CRLF (if any). Our seed payload uses
+  // simple ASCII for every column so no cell can contain a CRLF —
+  // split("\r\n") yields exactly one entry per logical row.
+  const csvLines = csvText.split("\r\n").filter(Boolean);
+  // 1000-row cap: MAINT_HISTORY_CSV_ROW_CAP=1000 in admin.ts. We seeded
+  // 1001 audit rows, so the LIMIT clause must clip the CSV output to
+  // exactly 1000 data rows. Asserting on === 1000 (not >= or <=) catches
+  // accidental cap drift in either direction.
+  expect(csvLines.length - 1).toBe(1000);
+
+  // ─── Audit assertion — exactly one export_csv row + truncation flag ──
+  const truncAuditRows = await db
+    .select({
+      id:       auditLogTable.id,
+      metadata: auditLogTable.metadata,
+    })
+    .from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.module, "maintenance"),
+      eq(auditLogTable.action, "export_csv"),
+      eq(auditLogTable.entityType, "maintenance_history"),
+      eq(auditLogTable.companyId, truncCompanyId!),
+      gte(auditLogTable.createdAt, truncAuditAnchor),
+    ));
+  expect(truncAuditRows).toHaveLength(1);
+  const truncMeta = (truncAuditRows[0].metadata ?? {}) as Record<string, unknown>;
+  expect(truncMeta.format).toBe("csv");
+  expect(truncMeta.count).toBe(1000);
+  expect(truncMeta.rowCap).toBe(1000);
+  expect(truncMeta.truncated).toBe(true);
+  // We seeded exactly 1001 rows for this brand-new company; the
+  // companyId WHERE in the route's COUNT(*) pins the universe to those
+  // rows, so totalAvailable is exactly 1001.
+  expect(truncMeta.totalAvailable).toBe(1001);
+  // The export_csv audit row is on the throwaway company, so afterAll's
+  // companyId-wholesale strip will catch it.
 });

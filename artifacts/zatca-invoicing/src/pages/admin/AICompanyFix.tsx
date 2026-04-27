@@ -754,6 +754,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const cd = r.headers.get("Content-Disposition") ?? "";
       const m = cd.match(/filename="?([^";]+)"?/i);
       const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-history-${companyId}.csv`;
+      // Server echoes truncation signals in custom response headers so we
+      // can flag a clipped export in the success toast without a second
+      // round-trip — same pattern as the broken-tools / recovered-tools
+      // mutations above.
+      const truncated = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -762,9 +768,15 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      return { truncated, rowCap };
     },
-    onSuccess: () => {
-      toast({ title: "تم تنزيل ملف CSV" });
+    onSuccess: ({ truncated, rowCap }) => {
+      toast({
+        title: "تم تنزيل ملف CSV",
+        description: truncated && rowCap > 0
+          ? `تم الاقتطاع عند ${rowCap} صف`
+          : undefined,
+      });
       // Refresh the history panel so the export entry shows up.
       setHistoryTick((t) => t + 1);
     },
@@ -990,6 +1002,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const cd = r.headers.get("Content-Disposition") ?? "";
       const m = cd.match(/filename="?([^";]+)"?/i);
       const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-email-history-${Date.now()}.csv`;
+      // Server echoes truncation signals in custom response headers so we
+      // can flag a clipped export in the success toast without a second
+      // round-trip — same pattern as the broken-tools / recovered-tools
+      // mutations above.
+      const truncated = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -998,8 +1016,14 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      return { truncated, rowCap };
     },
-    onSuccess: () => toast({ title: "تم تنزيل ملف CSV" }),
+    onSuccess: ({ truncated, rowCap }) => toast({
+      title: "تم تنزيل ملف CSV",
+      description: truncated && rowCap > 0
+        ? `تم الاقتطاع عند ${rowCap} صف`
+        : undefined,
+    }),
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
   // Wipe the cooldown anchor so the next sweep fires immediately regardless of
@@ -1369,6 +1393,12 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       const filename = m?.[1]
         ? decodeURIComponent(m[1])
         : `tool-history-${t.companyId}-${t.toolKey}.csv`;
+      // Server echoes truncation signals in custom response headers so we
+      // can flag a clipped export in the success toast without a second
+      // round-trip — same pattern as the broken-tools / recovered-tools
+      // mutations above.
+      const truncated = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1377,9 +1407,15 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      return { truncated, rowCap };
     },
-    onSuccess: () => {
-      toast({ title: "تم تنزيل ملف CSV" });
+    onSuccess: ({ truncated, rowCap }) => {
+      toast({
+        title: "تم تنزيل ملف CSV",
+        description: truncated && rowCap > 0
+          ? `تم الاقتطاع عند ${rowCap} صف`
+          : undefined,
+      });
       // Refresh the maintenance-history accordion so the export_csv audit
       // row this download just produced shows up without a manual reload.
       setHistoryTick((t) => t + 1);

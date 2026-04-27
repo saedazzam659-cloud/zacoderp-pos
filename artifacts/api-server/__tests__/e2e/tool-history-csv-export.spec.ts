@@ -578,13 +578,26 @@ test("tool-history CSV export: caps body at 1000 rows and records truncation in 
     });
     const buf = await r.arrayBuffer();
     return {
-      status:      r.status,
-      bytes:       Array.from(new Uint8Array(buf)),
-      contentType: r.headers.get("content-type") ?? "",
+      status:        r.status,
+      bytes:         Array.from(new Uint8Array(buf)),
+      contentType:   r.headers.get("content-type") ?? "",
+      truncatedHdr:  r.headers.get("x-csv-truncated") ?? "",
+      rowCapHdr:     r.headers.get("x-csv-row-cap") ?? "",
+      totalAvailHdr: r.headers.get("x-csv-total-available") ?? "",
     };
   }, { url: csvUrl });
   expect(csvFetch.status).toBe(200);
   expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
+
+  // Response headers — these drive the "تم الاقتطاع عند 1000 صف" toast
+  // suffix in AICompanyFix.tsx (toolHistoryCsvMut). A regression that
+  // drops or mistypes any of these would silently disable the user-
+  // visible truncation hint. Mirrors the parallel header assertions in
+  // email-history-csv-export.spec.ts and maintenance-history-csv-export
+  // .spec.ts.
+  expect(csvFetch.truncatedHdr).toBe("1");
+  expect(csvFetch.rowCapHdr).toBe("1000");
+  expect(csvFetch.totalAvailHdr).toBe("1001");
 
   // ─── Body bytes — UTF-8 BOM and the 1000-row cap ────────────────────────
   const csvBuf = Buffer.from(csvFetch.bytes);
