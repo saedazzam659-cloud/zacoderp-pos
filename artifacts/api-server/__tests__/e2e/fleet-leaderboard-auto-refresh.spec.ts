@@ -3,21 +3,28 @@
 // artifact (task #103).
 //
 // What this verifies (mirrors the regression task acceptance criteria):
-//   - A NEW critical-finding burst inserted for a different active company
-//     while the page is open promotes that company into the panel without a
-//     manual reload — proving the background refetch actually fetches fresh
-//     data and the UI re-renders against it. If a future change drops
-//     `refetchInterval: MAINTENANCE_PANEL_REFETCH_MS` from `fleetQ` in
-//     AICompanyFix.tsx the leaderboard would silently freeze between manual
-//     reloads — exactly the regression this spec is here to catch.
+//   1. The "آخر تحديث: …" timestamp surfaced via
+//      data-testid="fleet-summary-last-updated" advances on its own (no
+//      reload, no user interaction) after the configured polling interval —
+//      proving `fleetQ` keeps `refetchInterval: MAINTENANCE_PANEL_REFETCH_
+//      MS` (30s).
+//   2. A NEW critical-finding burst inserted for a different active company
+//      while the page is open promotes that company into the panel without a
+//      manual reload — proving the background refetch actually fetches fresh
+//      data and the UI re-renders against it. Combined with (1), if a future
+//      change drops `refetchInterval: MAINTENANCE_PANEL_REFETCH_MS` from
+//      `fleetQ` in AICompanyFix.tsx the leaderboard would silently freeze
+//      between manual reloads — exactly the regression this spec is here to
+//      catch.
 //
 // This is the fleet-leaderboard sibling of:
 //   - critical-alerts-auto-refresh.spec.ts (task #83)
 //   - broken-tools-auto-refresh.spec.ts   (task #96)
-// Unlike those two, the fleet panel does NOT render a `data-testid`
-// "آخر تحديث" timestamp, so the auto-refresh contract is asserted purely
-// from a row-level diff: a fresh company appearing without reload is only
-// possible if the polling interval is wired up.
+// The fleet panel now renders the same `data-testid` "آخر تحديث" timestamp
+// as those two siblings (task #109), so the timestamp-advance assertion
+// below mirrors their pattern — a row-level diff alone could miss a
+// regression where the panel keeps refetching but the rendered surface
+// stops re-rendering for the timestamp.
 //
 // Determinism story:
 //   - We seed two brand-new `companies` rows tagged with a per-run TEST_TAG
@@ -280,6 +287,20 @@ test("fleet leaderboard auto-refresh: a newly hammered company joins the panel w
   const rowB = fleetTable.locator("tbody tr", { hasText: COMPANY_B_NAME_AR });
   await expect(rowB).toHaveCount(0);
 
+  // Capture the initial "آخر تحديث: HH:MM:SS" text. The data-testid hook
+  // is the contract task #109 explicitly calls out, and `dataUpdatedAt`
+  // is sourced from TanStack Query so the rendered time advances on
+  // every successful refetch. The testid is unique on the page so we
+  // locate it directly without re-scoping through the panel container.
+  const timestamp = page.locator('[data-testid="fleet-summary-last-updated"]');
+  await expect(timestamp).toBeVisible();
+  const initialTimestampText = (await timestamp.textContent())?.trim() ?? "";
+  expect(initialTimestampText.length).toBeGreaterThan(0);
+  // Sanity check: the rendered prefix is "آخر تحديث:" — if a future
+  // refactor changes the label, this assertion catches it before we hang
+  // on the "did the time change?" poll below.
+  expect(initialTimestampText).toContain("آخر تحديث");
+
   // While the page is open, create company B and seed its critical burst.
   // This must surface in the panel without a manual reload — that's the
   // auto-refresh behaviour the task is protecting. Inserted AFTER the
@@ -318,4 +339,20 @@ test("fleet leaderboard auto-refresh: a newly hammered company joins the panel w
   // replaced one with the other. This catches a subtle regression where a
   // refetch wipes prior state mid-render.
   await expect(rowA).toHaveCount(1);
+
+  // After a successful refetch, dataUpdatedAt must change, so the rendered
+  // toLocaleTimeString("ar-SA") string in the timestamp span must differ
+  // from what we captured before raising company B. Polling instead of a
+  // single read because the timestamp text and the new row are updated by
+  // separate React renders — the row may flash in slightly before the
+  // span re-renders depending on scheduling. Polling keeps the assertion
+  // robust without admitting flakiness in either direction. Mirrors the
+  // pattern used by critical-alerts-auto-refresh.spec.ts and
+  // broken-tools-auto-refresh.spec.ts.
+  await expect
+    .poll(
+      async () => ((await timestamp.textContent()) ?? "").trim(),
+      { timeout: 15_000 },
+    )
+    .not.toBe(initialTimestampText);
 });

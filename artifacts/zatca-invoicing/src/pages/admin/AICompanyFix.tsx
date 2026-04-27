@@ -2059,6 +2059,15 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               <span className="text-sm font-medium text-red-900">
                 أكثر الشركات نتائج حرجة آخر {fleetQ.data.days} يوماً
               </span>
+              {fleetQ.dataUpdatedAt > 0 && (
+                <span
+                  className="text-[11px] text-muted-foreground tabular-nums"
+                  title="يُحدَّث تلقائياً كل 30 ثانية أثناء فتح التبويب"
+                  data-testid="fleet-summary-last-updated"
+                >
+                  آخر تحديث: {new Date(fleetQ.dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                </span>
+              )}
               <span className="text-[11px] text-muted-foreground mr-auto">
                 اضغط على اسم الشركة لاختيارها
               </span>
