@@ -24,3 +24,9 @@ id = "QTnnES8sCcEuHhhuqz23M"
 uri = "file://docs/SETUP_AR.md"
 type = "text"
 title = "دليل التشغيل الكامل (محلي + سحابي)"
+
+[[outputs]]
+id = "lIAQ6Ya8NSN6jm4mJ0do6"
+uri = "file://exports/zatca-source-20260427-231316.tar.gz"
+type = "unspecified"
+title = "السورس كود (zatca-source.tar.gz)"
