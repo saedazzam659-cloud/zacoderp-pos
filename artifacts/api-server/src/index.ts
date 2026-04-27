@@ -115,6 +115,11 @@ async function seedPlanConfigs() {
   try {
     const existing = await db.select().from(planConfigsTable);
     if (existing.length === 0) {
+      // Per-plan `includedModulesCount` mirrors the legacy static
+      // PLAN_INCLUDED map (starter:2, pro:5, ent:100). Without these the
+      // schema default of 0 would mean every selected module gets billed
+      // on a freshly-seeded environment, breaking the "free with plan"
+      // story shown to users in the registration wizard.
       const defaults = [
         {
           key: "starter",
@@ -124,6 +129,7 @@ async function seedPlanConfigs() {
           annualPrice: "990",
           maxUsers: 1,
           maxInvoices: 50,
+          includedModulesCount: 2,
           features: JSON.stringify(["مستخدم واحد", "50 فاتورة شهرياً", "فواتير ضريبية ومبسطة", "دعم بريد إلكتروني"]),
           isRecommended: false,
           isActive: true,
@@ -137,6 +143,7 @@ async function seedPlanConfigs() {
           annualPrice: "2990",
           maxUsers: 5,
           maxInvoices: 500,
+          includedModulesCount: 5,
           features: JSON.stringify(["5 مستخدمين", "500 فاتورة شهرياً", "تقارير متقدمة", "API مفتوح", "دعم أولوية"]),
           isRecommended: true,
           isActive: true,
@@ -150,6 +157,7 @@ async function seedPlanConfigs() {
           annualPrice: "8990",
           maxUsers: 999,
           maxInvoices: 999999,
+          includedModulesCount: 100,
           features: JSON.stringify(["مستخدمون غير محدودين", "فواتير غير محدودة", "تقارير مخصصة", "SLA 99.9%", "مدير حساب مخصص"]),
           isRecommended: false,
           isActive: true,

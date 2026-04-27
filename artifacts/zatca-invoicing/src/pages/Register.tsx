@@ -134,7 +134,8 @@ export default function Register() {
   // industry's recommended modules (UNION); the user can then add/remove
   // individual modules. Empty = no recommendations applied yet.
   const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
-  // Per-module checkbox state — keys from systemModules.SELECTABLE_MODULES.
+  // Per-module checkbox state — keys from the live /api/admin/modules/public
+  // catalog (sourced from the SuperAdmin-managed `modules` table).
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
 
   const [form, setForm] = useState<Partial<RegisterData>>({
@@ -219,7 +220,7 @@ export default function Register() {
   const MODULES: LiveModule[] = modulesQ.data ?? [];
   // Group modules by category in their server-supplied order. Using a Map
   // (insertion-ordered) preserves the SuperAdmin's intended grouping
-  // without needing a separate CATEGORIES whitelist.
+  // without needing a separate hardcoded category whitelist.
   const MODULE_GROUPS: Array<{ name: string; mods: LiveModule[] }> = useMemo(() => {
     const map = new Map<string, LiveModule[]>();
     for (const m of MODULES) {
@@ -318,15 +319,21 @@ export default function Register() {
   //
   // Pricing model (mirrors api-server/src/routes/auth.ts so the client
   // and server agree on the final price):
-  //   monthlyTotal = basePlanMonthly
-  //                + sum(prices of selected modules)
-  //                - sum(cheapest `includedModulesCount` modules' prices)
-  // Unknown / inactive keys are ignored — a module deactivated in
+  //   monthlyTotal = plan.monthly + sum(selected module prices)
+  //                                - sum(cheapest `includedModulesCount` prices)
+  //   annualTotal  = plan.annual  + (extraSubtotal × 10)
+  //
+  // Note: the annual base (`plan.annual`) is taken straight from the
+  // plan_configs row, NOT computed as monthly × 10. This lets a SuperAdmin
+  // configure a custom annual price (e.g. promo) and have it flow through
+  // both the displayed total and the price submitted to /register.
+  // Unknown / inactive module keys are ignored — a module deactivated in
   // /admin/modules between picker render and submit just falls out.
   const priceCalc = useMemo(() => {
-    const base     = selectedPlan.monthly;
-    const included = selectedPlan.includedModulesCount;
-    const prices   = selectedModules
+    const base       = selectedPlan.monthly;
+    const annualBase = selectedPlan.annual;
+    const included   = selectedPlan.includedModulesCount;
+    const prices     = selectedModules
       .map(k => MODULE_BY_KEY[k])
       .filter((m): m is LiveModule => !!m)
       .map(m => Number(m.monthlyPrice))
@@ -343,8 +350,9 @@ export default function Register() {
       extraCount:    prices.length - freeCount,
       extraSubtotal,
       total:         base + extraSubtotal,
+      annualTotal:   annualBase + extraSubtotal * 10,
     };
-  }, [selectedPlan.monthly, selectedPlan.includedModulesCount, selectedModules, MODULE_BY_KEY]);
+  }, [selectedPlan.monthly, selectedPlan.annual, selectedPlan.includedModulesCount, selectedModules, MODULE_BY_KEY]);
 
   const selectPlan = (planId: string) => {
     const plan = PLANS.find(p => p.id === planId)!;
@@ -379,7 +387,7 @@ export default function Register() {
           selectedModules,
           // Send the dynamically-computed price (base + module add-ons) so
           // the subscription record matches what the user actually saw.
-          price: String(billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total),
+          price: String(billingCycle === "annual" ? priceCalc.annualTotal : priceCalc.total),
         }),
       });
       const data = await res.json();
@@ -751,7 +759,7 @@ export default function Register() {
                   <div className="border-t border-primary/20 pt-2 flex items-center justify-between">
                     <span className="font-bold text-foreground">الإجمالي:</span>
                     <span className="text-2xl font-bold text-primary" data-testid="price-total">
-                      {billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total}
+                      {billingCycle === "annual" ? priceCalc.annualTotal : priceCalc.total}
                       <span className="text-xs font-normal text-muted-foreground mr-1">
                         {" "}ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}
                       </span>
@@ -839,7 +847,7 @@ export default function Register() {
                     <span className="text-muted-foreground">العملة:</span><span className="font-medium">{selectedCountry.currency.nameAr} ({selectedCountry.currency.code})</span>
                     <span className="text-muted-foreground">الرقم الضريبي:</span><span className="font-mono text-xs">{form.vatNumber}</span>
                     <span className="text-muted-foreground">الباقة:</span>
-                    <span className="font-medium">{selectedPlan.name} — {billingCycle === "annual" ? priceCalc.total * 10 : priceCalc.total} ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
+                    <span className="font-medium">{selectedPlan.name} — {billingCycle === "annual" ? priceCalc.annualTotal : priceCalc.total} ر.س/{billingCycle === "annual" ? "سنة" : "شهر"}</span>
                     <span className="text-muted-foreground">المستخدمون:</span><span>{selectedPlan.maxUsers === 999 ? "غير محدود" : selectedPlan.maxUsers}</span>
                     <span className="text-muted-foreground">الفواتير الشهرية:</span><span>{selectedPlan.maxInvoices === 999999 ? "غير محدودة" : selectedPlan.maxInvoices}</span>
                     <span className="text-muted-foreground">نشاط الشركة:</span>

@@ -630,11 +630,23 @@ router.post("/register", async (req, res) => {
   const planKeyForPricing = plan ?? "starter";
   const [planRow] = await db.select({
     monthlyPrice:         planConfigsTable.monthlyPrice,
+    annualPrice:          planConfigsTable.annualPrice,
     includedModulesCount: planConfigsTable.includedModulesCount,
+    isActive:             planConfigsTable.isActive,
   }).from(planConfigsTable).where(eq(planConfigsTable.key, planKeyForPricing));
 
-  const basePlanMonthly = Number(planRow?.monthlyPrice ?? 100);
-  const includedFreeCount = Number(planRow?.includedModulesCount ?? 0);
+  // Reject unknown / inactive plan keys outright. Falling back to a
+  // hard-coded 100 SAR (the prior behaviour) effectively let an attacker
+  // submit `plan: "free-forever"` and pay near-zero. Forcing a 400 here
+  // means billing can only ever use prices the SuperAdmin actually
+  // configured in /admin/plans.
+  if (!planRow || !planRow.isActive) {
+    res.status(400).json({ error: "الباقة المحددة غير صالحة" });
+    return;
+  }
+  const basePlanMonthly = Number(planRow.monthlyPrice);
+  const basePlanAnnual  = Number(planRow.annualPrice);
+  const includedFreeCount = Number(planRow.includedModulesCount ?? 0);
 
   // Build a set of ACTIVE module keys + a price lookup. We use this set as
   // the single authority for two things:
@@ -642,7 +654,12 @@ router.post("/register", async (req, res) => {
   //   2. permission grants (deactivated modules cannot leak permissions)
   // Industry templates auto-add module keys via `selectedModules`, so without
   // this filter a deactivated module would still grant access without billing.
-  let monthlyTotal = basePlanMonthly;
+  //
+  // `extraSubtotal` is the monthly cost of the modules billed beyond the
+  // plan's `includedModulesCount` (cheapest N modules go free). We keep
+  // it as a separate variable from the base plan price so we can compose
+  // the right total per billing cycle below.
+  let extraSubtotal = 0;
   const activeKeys = new Set<string>();
   if (Array.isArray(selectedModules) && selectedModules.length > 0) {
     const wantedKeys = selectedModules
@@ -660,14 +677,26 @@ router.post("/register", async (req, res) => {
         .map(r => Number(r.monthlyPrice))
         .filter(n => Number.isFinite(n) && n >= 0)
         .sort((a, b) => a - b);
-      const freeCount   = Math.min(includedFreeCount, prices.length);
-      const freeAmount  = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
-      const grossTotal  = prices.reduce((s, p) => s + p, 0);
-      monthlyTotal      = basePlanMonthly + (grossTotal - freeAmount);
+      const freeCount  = Math.min(includedFreeCount, prices.length);
+      const freeAmount = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
+      const grossTotal = prices.reduce((s, p) => s + p, 0);
+      extraSubtotal    = grossTotal - freeAmount;
     }
   }
+
+  // Compose the final billed price per cycle:
+  //   • Monthly: configured monthlyPrice + monthly module extras.
+  //   • Annual:  configured annualPrice + (monthly module extras × 10).
+  // Using `planRow.annualPrice` as the annual base means a SuperAdmin
+  // edit to a plan's annual price (e.g. running a promo at 8x instead of
+  // the default 10x) flows straight through to billing — without this
+  // the server would silently charge `monthlyPrice * 10` and ignore the
+  // override. The 10x on module extras preserves the long-standing
+  // ~17% module discount on annual subscriptions.
+  const monthlyTotal = basePlanMonthly + extraSubtotal;
+  const annualTotal  = basePlanAnnual  + extraSubtotal * 10;
   const finalPrice: string = billingCycle === "annual"
-    ? String(monthlyTotal * 10)
+    ? String(annualTotal)
     : String(monthlyTotal);
 
   // Tamper detection — log mismatches but don't reject (gives us a

@@ -39,3 +39,4 @@ export * from "./voiceAssistant";
 export * from "./sessions";
 export * from "./inboxMessages";
 export * from "./deletedRecords";
+export * from "./contracting";
