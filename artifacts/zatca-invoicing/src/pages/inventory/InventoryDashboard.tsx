@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Link } from "wouter";
@@ -11,6 +12,25 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+import {
+  Package as PackageIcon, Tag, Ruler, Warehouse as WarehouseIcon, Layers,
+  ArrowRightLeft as ArrowRightLeftIcon, SlidersHorizontal as SlidersHIcon,
+  ClipboardList as ClipboardListIcon, BarChart2,
+} from "lucide-react";
+
+const inventoryHubTiles: HubTile[] = [
+  { nameKey: "nav.items",            href: "/inventory/items",            icon: PackageIcon,    tone: "blue",    permKey: "items" },
+  { nameKey: "nav.itemGroups",       href: "/inventory/item-groups",      icon: Tag,            tone: "indigo",  permKey: "items" },
+  { nameKey: "nav.units",            href: "/inventory/units",            icon: Ruler,          tone: "violet",  permKey: "items" },
+  { nameKey: "nav.warehouses",       href: "/inventory/warehouses",       icon: WarehouseIcon,  tone: "emerald", permKey: "warehouses" },
+  { nameKey: "nav.warehouseGroups",  href: "/inventory/warehouse-groups", icon: Layers,         tone: "teal",    permKey: "warehouses" },
+  { nameKey: "nav.stockTransfers",   href: "/inventory/transfers",        icon: ArrowRightLeftIcon, tone: "cyan", permKey: "stock_transfers" },
+  { nameKey: "nav.stockAdjustments", href: "/inventory/adjustments",      icon: SlidersHIcon,   tone: "amber",   permKey: "stock_adjustments" },
+  { nameKey: "nav.stockCounts",      href: "/inventory/counts",           icon: ClipboardListIcon, tone: "rose", permKey: "stock_counts" },
+  { nameKey: "nav.offers",           href: "/inventory/offers",           icon: Tag,            tone: "fuchsia", permKey: "items" },
+  { nameKey: "nav.inventoryReports", href: "/inventory/reports",          icon: BarChart2,      tone: "slate",   permKey: "items" },
+];
 
 const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
   transfer_out: { label: "تحويل خارج",  color: "text-orange-600 bg-orange-50" },
@@ -23,6 +43,7 @@ const TX_TYPE_LABEL: Record<string, { label: string; color: string }> = {
 };
 
 export default function InventoryDashboard() {
+  const { t } = useTranslation();
   const { fmtQty, fmtVal } = useFmt();
   const { user } = useAuth();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
@@ -76,6 +97,16 @@ export default function InventoryDashboard() {
 
   return (
     <div className="space-y-6" dir="rtl">
+      {/* Module landing tiles (Odoo-style) */}
+      <MenuHub
+        title={t("hub.inventoryTitle")}
+        subtitle={t("hub.inventorySubtitle")}
+        icon={Package}
+        headerTone="emerald"
+        tiles={inventoryHubTiles}
+        variant="compact"
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

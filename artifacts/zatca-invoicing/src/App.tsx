@@ -48,6 +48,14 @@ import LicenseManagement from "@/pages/LicenseManagement";
 import BackupOperations from "@/pages/BackupOperations";
 import GeneralSettings from "@/pages/GeneralSettings";
 import VATDeclaration from "@/pages/VATDeclaration";
+// Hubs (Odoo-style large-tile landing pages)
+import SalesHub from "@/pages/sales/SalesHub";
+import PurchasingHub from "@/pages/purchasing/PurchasingHub";
+import CashHub from "@/pages/cash/CashHub";
+import AccountingHub from "@/pages/accounting/AccountingHub";
+import HrHub from "@/pages/hr/HrHub";
+import PosHub from "@/pages/pos/PosHub";
+import ControlPanelHub from "@/pages/ControlPanelHub";
 // HR
 import Employees from "@/pages/hr/Employees";
 import EmployeeContracts from "@/pages/hr/EmployeeContracts";
@@ -273,11 +281,19 @@ function AppRoutes() {
 
             {/* POS routes (gated behind the "pos" module — same as the sidebar permKey) */}
             {isSuperAdmin && <Route path="/pos-monitoring" component={PosMonitoring} />}
+            {!isSuperAdmin && <PermRoute path="/pos-management"  module="pos" component={PosHub} />}
             {!isSuperAdmin && <PermRoute path="/pos-monitoring" module="pos" component={PosMonitoring} />}
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
             {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
+            {/* Control-Panel hub: any tenant user can land here; tile-level perm gating filters which tiles render. */}
+            {!isSuperAdmin && <Route path="/control-panel" component={ControlPanelHub} />}
 
             {/* HR routes — gated per logical screen against the matching hr_* module */}
+            {/* HR hub landing: open to any tenant user — the hub itself filters
+                tiles by perm, and the sidebar HR group is hidden when the user
+                has no hr_* perms at all. Don't gate against hr_employees here
+                or users with only payroll/attendance perms get a 403 wall. */}
+            <Route path="/hr" component={HrHub} />
             {!isSuperAdmin && <PermRoute path="/hr/employees"               module="hr_employees"   component={Employees} />}
             {!isSuperAdmin && <PermRoute path="/hr/employees/:id/contracts" module="hr_employees"   component={EmployeeContracts} />}
             {!isSuperAdmin && <PermRoute path="/hr/contracts"               module="hr_employees"   component={AllContracts} />}
@@ -339,7 +355,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/inventory/reports/slow-moving"      module="items" component={SlowMovingItems} />}
 
             {/* Accounting routes */}
-            {!isSuperAdmin && <Route path="/accounting"><Redirect to="/accounting/accounts" /></Route>}
+            {!isSuperAdmin && <Route path="/accounting" component={AccountingHub} />}
             {!isSuperAdmin && <PermRoute path="/accounting/accounts"       module="accounts"        component={ChartOfAccounts} />}
             {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}
             {!isSuperAdmin && <PermRoute path="/accounting/fiscal-periods" module="accounts"        component={FiscalPeriods} />}
@@ -359,7 +375,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/org/branches" module="branches" component={Branches} />}
 
             {/* Purchasing routes */}
-            {!isSuperAdmin && <Route path="/purchasing"><Redirect to="/purchasing/invoices" /></Route>}
+            {!isSuperAdmin && <Route path="/purchasing" component={PurchasingHub} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/supplier-groups" module="suppliers"             component={SupplierGroups} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/lc"              module="purchase_invoices"     component={LetterOfCredit} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/invoices/new"    module="purchase_invoices" action="create" component={PurchaseInvoiceForm} />}
@@ -373,7 +389,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/settlements"     module="supplier_settlements"  component={SupplierSettlement} />}
 
             {/* Sales routes */}
-            {!isSuperAdmin && <Route path="/sales"><Redirect to="/sales/invoices" /></Route>}
+            {!isSuperAdmin && <Route path="/sales" component={SalesHub} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/new"   module="sales_invoices"   action="create" component={SalesInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesInvoices} />}
@@ -421,7 +437,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/settlements"               module="sales_settlements" component={CustomerSettlement} />}
 
             {/* Cash & Banks */}
-            {!isSuperAdmin && <Route path="/cash"><Redirect to="/cash/boxes" /></Route>}
+            {!isSuperAdmin && <Route path="/cash" component={CashHub} />}
             {!isSuperAdmin && <PermRoute path="/cash/boxes"            module="cash_boxes"        component={CashBoxes}       />}
             {!isSuperAdmin && <PermRoute path="/cash/banks"            module="bank_accounts"     component={BankAccounts}    />}
             {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers" module="receipt_vouchers"  component={ReceiptVouchers} />}

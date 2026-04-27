@@ -513,7 +513,19 @@
     "productionGroup": "Manufacturing",
     "productionDashboard": "Production Dashboard",
     "productionOrders": "Production Orders",
-    "productionResources": "Machines & Resources"
+    "productionResources": "Machines & Resources",
+    "dashboardGroup": "Control Panel"
+  },
+  "hub": {
+    "salesSubtitle": "All customers and sales screens and reports in one place",
+    "purchasingSubtitle": "All suppliers and purchasing screens and reports in one place",
+    "cashSubtitle": "Cash, banks, vouchers, transfers, and reports",
+    "accountingSubtitle": "Chart of accounts, journal entries, and financial reports",
+    "hrSubtitle": "Employee files, attendance, payroll, and reports",
+    "posSubtitle": "POS terminals, monitoring, and settings",
+    "controlPanelSubtitle": "System settings, permissions, subscription, and audit",
+    "inventoryTitle": "Warehouse Management",
+    "inventorySubtitle": "All warehouse screens in one place"
   },
   "navExtra": {
     "inventoryModule": "Inventory Module",

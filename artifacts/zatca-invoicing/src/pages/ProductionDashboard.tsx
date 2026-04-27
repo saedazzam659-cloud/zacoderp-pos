@@ -7,6 +7,14 @@ import {
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import ProductionAIAssistant from "@/components/ProductionAIAssistant";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+import { ClipboardList } from "lucide-react";
+
+const productionHubTiles: HubTile[] = [
+  { nameKey: "nav.productionDashboard", href: "/production",           icon: BarChart3,     tone: "violet",  permKey: "production" },
+  { nameKey: "nav.productionOrders",    href: "/production/orders",    icon: ClipboardList, tone: "indigo",  permKey: "production" },
+  { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog,           tone: "amber",   permKey: "production" },
+];
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -60,6 +68,16 @@ export default function ProductionDashboard() {
 
   return (
     <div className="space-y-4">
+      {/* Module landing tiles (Odoo-style) */}
+      <MenuHub
+        title={t("production.dashboard")}
+        subtitle={t("production.subtitle")}
+        icon={Factory}
+        headerTone="violet"
+        tiles={productionHubTiles}
+        variant="compact"
+      />
+
       <div className="flex items-center gap-3">
         <div className="rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 p-2 text-white shadow">
           <Factory className="h-5 w-5" />

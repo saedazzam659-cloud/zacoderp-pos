@@ -14,6 +14,7 @@ import {
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
   Factory, Cog, ScanFace, Store,
+  type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -240,6 +241,56 @@ const inventoryReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.slowMoving",   href: "/inventory/reports/slow-moving",   icon: Layers,            permKey: "items" },
 ];
 
+// ─── HubGroupButton ───────────────────────────────────────────────────────────
+// Shared parent-row for a top-level NavGroup. Splits the row into a Link
+// (icon + label → hub landing page) and a separate chevron button (toggle
+// expand/collapse only). Clicking the link auto-expands the group as well,
+// so the user lands on the hub AND sees the children in the sidebar.
+function HubGroupButton({
+  hubHref, icon: Icon, label, isOn, open, onToggle, onNavigate,
+}: {
+  hubHref: string;
+  icon: LucideIcon;
+  label: string;
+  isOn: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onNavigate: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center rounded-lg pe-1 transition-colors group",
+        isOn && !open
+          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}
+    >
+      <Link
+        href={hubHref}
+        onClick={() => { if (!open) onToggle(); onNavigate(); }}
+        className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 text-sm font-medium"
+        data-testid={`hub-group-link-${hubHref.replace(/\//g, "")}`}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-start">{label}</span>
+      </Link>
+      <button
+        type="button"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(); }}
+        aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+        data-testid={`hub-group-toggle-${hubHref.replace(/\//g, "")}`}
+        data-state={open ? "open" : "closed"}
+        className="p-1.5 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition shrink-0"
+      >
+        {open
+          ? <ChevronDown  className="h-3.5 w-3.5" />
+          : <ChevronRight className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  );
+}
+
 // ─── CashNavGroup ──────────────────────────────────────────────────────────────
 // Cash & bank reports are nested INSIDE this group (per the user's request).
 function CashNavGroup({
@@ -256,11 +307,15 @@ function CashNavGroup({
   const isOnCash = location.startsWith("/cash");
   return (
     <div>
-      <button onClick={onToggle} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isOnCash && !open ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground")}>
-        <Wallet className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.cashGroup")}</span>
-        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/cash"
+        icon={Wallet}
+        label={t("nav.cashGroup")}
+        isOn={isOnCash}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -414,22 +469,15 @@ function PurchasingNavGroup({
   const isOnPurchasing = (location.startsWith("/purchasing") || location.startsWith("/suppliers"));
   return (
     <div>
-      <button
-        onClick={onToggle}
-        className={cn(
-          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-          isOnPurchasing && !open
-            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
-      >
-        <ShoppingCart className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.purchasingGroup")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-        }
-      </button>
+      <HubGroupButton
+        hubHref="/purchasing"
+        icon={ShoppingCart}
+        label={t("nav.purchasingGroup")}
+        isOn={isOnPurchasing}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -472,22 +520,15 @@ function SalesNavGroup({
   const isOnSales = location.startsWith("/sales") || location.startsWith("/customers");
   return (
     <div>
-      <button
-        onClick={onToggle}
-        className={cn(
-          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-          isOnSales && !open
-            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
-      >
-        <ShoppingBag className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.salesGroup")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-        }
-      </button>
+      <HubGroupButton
+        hubHref="/sales"
+        icon={ShoppingBag}
+        label={t("nav.salesGroup")}
+        isOn={isOnSales}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -642,22 +683,15 @@ function InventoryNavGroup({
   return (
     <div>
       {/* Toggle button */}
-      <button
-        onClick={onToggle}
-        className={cn(
-          "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-          isOnInventory && !open
-            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        )}
-      >
-        <Warehouse className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("navExtra.inventoryModule")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-        }
-      </button>
+      <HubGroupButton
+        hubHref="/inventory"
+        icon={Warehouse}
+        label={t("navExtra.inventoryModule")}
+        isOn={isOnInventory}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
 
       {/* Sub-items */}
       {open && (
@@ -781,18 +815,15 @@ function DashboardNavGroup({
   const isOnSub = dashboardSubNav.some(i => location.startsWith(i.href) && i.href !== "/");
   return (
     <div>
-      <button onClick={onToggle} className={cn(
-        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        isOnSub && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <Settings className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.dashboard")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/control-panel"
+        icon={Settings}
+        label={t("nav.dashboard")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -822,18 +853,15 @@ function AccountingNavGroup({
   const isOnSub = accountingSubNav.some(i => location.startsWith(i.href)) || location.startsWith("/accounting/reports");
   return (
     <div>
-      <button onClick={onToggle} className={cn(
-        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        isOnSub && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <BookMarked className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.accountingGroup")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/accounting"
+        icon={BookMarked}
+        label={t("nav.accountingGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -865,18 +893,15 @@ function PosNavGroup({
   const isOnSub = posSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
-      <button onClick={onToggle} className={cn(
-        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        isOnSub && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <Store className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.posManagement")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/pos-management"
+        icon={Store}
+        label={t("nav.posManagement")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -899,18 +924,15 @@ function HrNavGroup({
   const isOnSub = hrSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
-      <button onClick={onToggle} className={cn(
-        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        isOnSub && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <UserCog className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.hrEmployees")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/hr"
+        icon={UserCog}
+        label={t("nav.hrEmployees")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -935,18 +957,15 @@ function ProductionNavGroup({
   const isOnSub = productionSubNav.some(i => location.startsWith(i.href));
   return (
     <div>
-      <button onClick={onToggle} className={cn(
-        "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        isOnSub && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}>
-        <Factory className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-start">{t("nav.productionGroup")}</span>
-        {open
-          ? <ChevronDown  className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" />}
-      </button>
+      <HubGroupButton
+        hubHref="/production"
+        icon={Factory}
+        label={t("nav.productionGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
       {open && (
         <div className="mt-0.5 space-y-0.5 relative">
           <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
@@ -1303,7 +1322,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     "/org":                           { label: "navExtra.orgRoot" },
     // Virtual "POS Management" parent — has no dedicated route, but supplies
     // a breadcrumb label for posSubNav children below.
-    "/pos":                           { label: "nav.posManagement" },
+    "/pos-management":                 { label: "nav.posManagement" },
   };
   const all = [
     ...dashboardSubNav,
@@ -1322,7 +1341,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     inventoryReportsHeader,
     ...inventoryReportsSubNav.map(i => ({ ...i, parent: "/inventory/reports" })),
     ...companyBusinessNav,
-    ...posSubNav.map(i => ({ ...i, parent: "/pos" })),
+    ...posSubNav.map(i => ({ ...i, parent: "/pos-management" })),
     ...hrSubNav,
     ...productionSubNav,
   ];
@@ -1574,6 +1593,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleProductionToggle = () => setProductionOpen(v => !v);
   const handlePosToggle        = () => setPosOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
+
+  // ─── Auto-expand groups on direct URL navigation ───────────────────────
+  // The useState initializers above only run ONCE at mount. When the user
+  // navigates between routes (via Link or by typing the URL), the relevant
+  // group must auto-expand so the children become visible. We only OPEN
+  // (never CLOSE) here so that a manual chevron-collapse stays sticky while
+  // the user remains inside the group.
+  useEffect(() => {
+    if (location.startsWith("/sales") || location.startsWith("/customers")) setSalesOpen(true);
+    if (location.startsWith("/purchasing") || location.startsWith("/suppliers")) setPurchasingOpen(true);
+    if (location.startsWith("/cash")) setCashOpen(true);
+    if (
+      location === "/accounting" ||
+      location.startsWith("/accounting/accounts") ||
+      location.startsWith("/accounting/journals") ||
+      location.startsWith("/accounting/reports")
+    ) setAccountingOpen(true);
+    if (location.startsWith("/inventory")) setInventoryOpen(true);
+    if (location.startsWith("/production")) setProductionOpen(true);
+    if (location.startsWith("/hr/") || location === "/hr") setHrOpen(true);
+    if (
+      location.startsWith("/pos-monitoring") ||
+      location.startsWith("/pos-terminals") ||
+      location.startsWith("/pos-settings") ||
+      location === "/pos-management"
+    ) setPosOpen(true);
+    if (
+      ["/org/", "/zatca", "/general-settings", "/settings/",
+       "/invoices", "/vat-declaration", "/users",
+       "/control-panel"].some(p => location.startsWith(p))
+    ) setDashboardOpen(true);
+  }, [location]);
 
   const sharedProps = {
     location,

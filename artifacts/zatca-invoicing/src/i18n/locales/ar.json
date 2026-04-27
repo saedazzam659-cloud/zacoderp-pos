@@ -514,7 +514,19 @@
     "productionGroup": "الإنتاج والتصنيع",
     "productionDashboard": "لوحة الإنتاج",
     "productionOrders": "أوامر الإنتاج",
-    "productionResources": "الماكينات والموارد"
+    "productionResources": "الماكينات والموارد",
+    "dashboardGroup": "لوحة التحكم"
+  },
+  "hub": {
+    "salesSubtitle": "كل شاشات وتقارير العملاء والمبيعات في مكان واحد",
+    "purchasingSubtitle": "كل شاشات وتقارير الموردين والمشتريات في مكان واحد",
+    "cashSubtitle": "كل شاشات النقد والبنوك والسندات والتقارير",
+    "accountingSubtitle": "دليل الحسابات، القيود اليومية، والتقارير المالية",
+    "hrSubtitle": "ملفات الموظفين، الحضور، الرواتب، والتقارير",
+    "posSubtitle": "نقاط البيع، الأجهزة، المراقبة والإعدادات",
+    "controlPanelSubtitle": "إعدادات النظام والصلاحيات والاشتراك والتدقيق",
+    "inventoryTitle": "إدارة المخازن",
+    "inventorySubtitle": "كل شاشات المخازن في مكان واحد"
   },
   "navExtra": {
     "inventoryModule": "موديل المخازن",
