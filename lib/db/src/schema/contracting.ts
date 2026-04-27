@@ -156,6 +156,100 @@ export const contractingResourcesTable = pgTable(
   }),
 );
 
+// ─── Owner contracts ──────────────────────────────────────────────────
+// The formal contract between OUR company (the contractor) and the
+// project's OWNER (client). One project usually has 1 main contract
+// plus optional change-orders, so we allow many rows per project but
+// the UI defaults to the most recent active row.
+export const contractingOwnerContractsTable = pgTable(
+  "contracting_owner_contracts",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    projectId: integer("project_id").notNull()
+      .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    // Snapshot of the customer at signing time + live link.
+    customerId: integer("customer_id")
+      .references(() => customersTable.id, { onDelete: "set null" }),
+    clientName: text("client_name"),
+    contractNumber: text("contract_number").notNull(),
+    contractDate: date("contract_date").notNull(),
+    signedAt: date("signed_at"),
+    // main | addendum | change_order
+    contractType: text("contract_type").notNull().default("main"),
+    value:            numeric("value",             { precision: 14, scale: 2 }).notNull().default("0"),
+    advancePayment:   numeric("advance_payment",   { precision: 14, scale: 2 }).notNull().default("0"),
+    advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
+    retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
+    vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
+    durationDays: integer("duration_days").notNull().default(0),
+    startDate: date("start_date"),
+    endDate:   date("end_date"),
+    paymentTerms: text("payment_terms"),
+    scopeOfWork:  text("scope_of_work"),
+    penaltiesClause: text("penalties_clause"),
+    // draft | active | suspended | completed | terminated
+    status: text("status").notNull().default("draft"),
+    notes: text("notes"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byProject: index("ctg_oc_project_idx").on(t.projectId),
+    byCompany: index("ctg_oc_company_idx").on(t.companyId),
+  }),
+);
+
+// ─── Subcontractor contracts ──────────────────────────────────────────
+// Formal contract between OUR company and a SUB-CONTRACTOR (المقاول
+// الباطن). Many per project (one per trade/scope). Drives incoming
+// progress bills (مستخلصات الباطن).
+export const contractingSubContractsTable = pgTable(
+  "contracting_sub_contracts",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").notNull()
+      .references(() => companiesTable.id, { onDelete: "cascade" }),
+    projectId: integer("project_id").notNull()
+      .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    contractorId: integer("contractor_id").notNull()
+      .references(() => contractingContractorsTable.id, { onDelete: "restrict" }),
+    contractNumber: text("contract_number").notNull(),
+    contractDate: date("contract_date").notNull(),
+    signedAt: date("signed_at"),
+    scopeOfWork: text("scope_of_work"),
+    value:            numeric("value",             { precision: 14, scale: 2 }).notNull().default("0"),
+    advancePayment:   numeric("advance_payment",   { precision: 14, scale: 2 }).notNull().default("0"),
+    advancePercent:   numeric("advance_percent",   { precision: 5,  scale: 2 }).notNull().default("0"),
+    retentionPercent: numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("5"),
+    vatPercent:       numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
+    durationDays: integer("duration_days").notNull().default(0),
+    startDate: date("start_date"),
+    endDate:   date("end_date"),
+    paymentTerms: text("payment_terms"),
+    penaltiesClause: text("penalties_clause"),
+    // draft | active | suspended | completed | terminated
+    status: text("status").notNull().default("draft"),
+    notes: text("notes"),
+    meta: jsonb("meta").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    byProject:    index("ctg_sc_project_idx").on(t.projectId),
+    byContractor: index("ctg_sc_contractor_idx").on(t.contractorId),
+    byCompany:    index("ctg_sc_company_idx").on(t.companyId),
+  }),
+);
+
+// ─── Progress bills (مستخلصات) ────────────────────────────────────────
+// `direction` distinguishes:
+//   outgoing — مستخلص يصدره مكتبنا للمالك  (our claim against client)
+//   incoming — مستخلص يصدره المقاول الباطن لنا (we owe a subcontractor)
+// `contractorId` + `subcontractorContractId` are required for incoming.
+// `ownerContractId` is required for outgoing.
 export const contractingProgressBillsTable = pgTable(
   "contracting_progress_bills",
   {
@@ -164,21 +258,32 @@ export const contractingProgressBillsTable = pgTable(
       .references(() => companiesTable.id, { onDelete: "cascade" }),
     projectId: integer("project_id").notNull()
       .references(() => contractingProjectsTable.id, { onDelete: "cascade" }),
+    // outgoing | incoming  (default outgoing for backwards compat with
+    // bills created before this column existed)
+    direction: text("direction").notNull().default("outgoing"),
+    contractorId: integer("contractor_id")
+      .references(() => contractingContractorsTable.id, { onDelete: "set null" }),
+    ownerContractId: integer("owner_contract_id")
+      .references(() => contractingOwnerContractsTable.id, { onDelete: "set null" }),
+    subcontractorContractId: integer("subcontractor_contract_id")
+      .references(() => contractingSubContractsTable.id, { onDelete: "set null" }),
     billNumber: text("bill_number").notNull(),
     // interim (مرحلي) | final (نهائي)
     billType: text("bill_type").notNull().default("interim"),
     billDate: date("bill_date").notNull(),
     fromDate: date("from_date"),
     toDate:   date("to_date"),
-    // Cumulative project progress at the time of this bill (0-100).
+    // Cumulative project (or scope) progress at the time of this bill (0-100).
     progressPercent: numeric("progress_percent", { precision: 5, scale: 2 }).notNull().default("0"),
     grossAmount:     numeric("gross_amount",      { precision: 14, scale: 2 }).notNull().default("0"),
     retentionPercent:numeric("retention_percent", { precision: 5,  scale: 2 }).notNull().default("0"),
     retentionAmount: numeric("retention_amount",  { precision: 14, scale: 2 }).notNull().default("0"),
     previousPaid:    numeric("previous_paid",     { precision: 14, scale: 2 }).notNull().default("0"),
     dueAmount:       numeric("due_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
+    vatPercent:      numeric("vat_percent",       { precision: 5,  scale: 2 }).notNull().default("15"),
     vatAmount:       numeric("vat_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
     netAmount:       numeric("net_amount",        { precision: 14, scale: 2 }).notNull().default("0"),
+    paidAmount:      numeric("paid_amount",       { precision: 14, scale: 2 }).notNull().default("0"),
     // draft | submitted | approved | paid | rejected
     status: text("status").notNull().default("draft"),
     approvedByUserId: integer("approved_by_user_id")
@@ -190,8 +295,9 @@ export const contractingProgressBillsTable = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (t) => ({
-    byProject: index("ctg_bill_project_idx").on(t.projectId),
-    byCompany: index("ctg_bill_company_idx").on(t.companyId),
+    byProject:   index("ctg_bill_project_idx").on(t.projectId),
+    byCompany:   index("ctg_bill_company_idx").on(t.companyId),
+    byDirection: index("ctg_bill_direction_idx").on(t.projectId, t.direction),
   }),
 );
 

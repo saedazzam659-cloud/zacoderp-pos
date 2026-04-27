@@ -69,3 +69,38 @@ The frontend employs React with Vite and TailwindCSS to deliver a bilingual (Ara
 - **openssl:** Used for CSR generation.
 - **OpenAI:** AI services for suggestions and validations.
 - **xlsx (SheetJS):** Library for Excel/CSV parsing and generation.
+## Contracting Module — Owner & Subcontractor Contracts (Apr 2026)
+
+The Contracting module now distinguishes formal contracts from progress
+billing:
+
+- **Owner contract** (`contracting_owner_contracts`) — the master agreement
+  between the company and its client (المالك). One main contract per
+  project plus N change orders. Captures value, advance, retention %, VAT %,
+  duration, signed date, status, and free-text scope/payment/penalty
+  clauses. Routes: `GET/POST /api/contracting/projects/:projectId/owner-contracts`,
+  `PUT/DELETE /api/contracting/owner-contracts/:id`.
+
+- **Sub contract** (`contracting_sub_contracts`) — agreement we sign with a
+  sub-contractor for a specific scope of work. `contractorId` required
+  (FK to `contracting_contractors`). Routes: `GET/POST /api/contracting/projects/:projectId/sub-contracts`,
+  `PUT/DELETE /api/contracting/sub-contracts/:id`.
+
+- **Progress bills** (`contracting_progress_bills`) now carry a
+  `direction` column:
+  - `outgoing` — claims our company issues to the owner (linked optionally
+    to an owner contract).
+  - `incoming` — claims sub-contractors submit to us (linked to a
+    contractor + sub contract). `contractorId` is required at create time
+    AND on update (direction is immutable).
+  Bills also persist `vatPercent` per row so editing a non-15% bill no
+  longer silently rewrites its tax to 15%, and persist `paidAmount` so the
+  dashboard can show outstanding vs paid.
+  Filter via `?direction=outgoing|incoming` on the list endpoint.
+
+All new POST/PUT routes validate every cross-table FK reference
+(`projectId`, `contractorId`, `customerId`, `ownerContractId`,
+`subcontractorContractId`) belongs to the caller's `companyId` to prevent
+cross-tenant data leakage. The frontend project detail page (`ContractingProjectDetail.tsx`)
+exposes two new tabs (`عقد المالك`, `عقود الباطن`) and the bills tab now
+splits into outgoing/incoming sub-tabs with totals header.

@@ -46,10 +46,38 @@ type Resource = {
 };
 type Bill = {
   id: number; billNumber: string; billType: string; billDate: string;
+  direction: "outgoing" | "incoming";
+  contractorId: number | null;
+  ownerContractId: number | null;
+  subcontractorContractId: number | null;
   fromDate: string | null; toDate: string | null; progressPercent: string;
   grossAmount: string; retentionPercent: string; retentionAmount: string;
   previousPaid: string; dueAmount: string; vatAmount: string; netAmount: string;
+  paidAmount: string;
   status: string; notes: string | null;
+};
+type OwnerContract = {
+  id: number; projectId: number; customerId: number | null; clientName: string | null;
+  contractNumber: string; contractDate: string; signedAt: string | null;
+  contractType: string;
+  value: string; advancePayment: string; advancePercent: string;
+  retentionPercent: string; vatPercent: string;
+  durationDays: number; startDate: string | null; endDate: string | null;
+  paymentTerms: string | null; scopeOfWork: string | null; penaltiesClause: string | null;
+  status: string; notes: string | null;
+};
+type SubContract = {
+  id: number; projectId: number; contractorId: number;
+  contractNumber: string; contractDate: string; signedAt: string | null;
+  scopeOfWork: string | null;
+  value: string; advancePayment: string; advancePercent: string;
+  retentionPercent: string; vatPercent: string;
+  durationDays: number; startDate: string | null; endDate: string | null;
+  paymentTerms: string | null; penaltiesClause: string | null;
+  status: string; notes: string | null;
+};
+type Contractor = {
+  id: number; name: string; specialty: string; phone: string | null; status: string;
 };
 type Risk = {
   id: number; title: string; description: string | null; category: string;
@@ -150,8 +178,10 @@ export default function ContractingProjectDetail() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-7 w-full">
+        <TabsList className="flex flex-wrap w-full h-auto gap-1 justify-start">
           <TabsTrigger value="overview">{t("contracting.tabs.overview", "نظرة عامة")}</TabsTrigger>
+          <TabsTrigger value="owner-contract">{t("contracting.tabs.ownerContract", "عقد المالك")}</TabsTrigger>
+          <TabsTrigger value="sub-contracts">{t("contracting.tabs.subContracts", "عقود الباطن")}</TabsTrigger>
           <TabsTrigger value="work-items">{t("contracting.tabs.workItems", "بنود التنفيذ")}</TabsTrigger>
           <TabsTrigger value="resources">{t("contracting.tabs.resources", "الموارد")}</TabsTrigger>
           <TabsTrigger value="bills">{t("contracting.tabs.bills", "المستخلصات")}</TabsTrigger>
@@ -183,12 +213,14 @@ export default function ContractingProjectDetail() {
           </div>
         </TabsContent>
 
+        <TabsContent value="owner-contract" className="mt-4"><OwnerContractTab projectId={projectId} project={project} /></TabsContent>
+        <TabsContent value="sub-contracts"  className="mt-4"><SubContractsTab  projectId={projectId} /></TabsContent>
         <TabsContent value="work-items" className="mt-4"><WorkItemsTab projectId={projectId} onChange={loadProject} /></TabsContent>
         <TabsContent value="resources"  className="mt-4"><ResourcesTab projectId={projectId} /></TabsContent>
-        <TabsContent value="bills"      className="mt-4"><BillsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="risks"      className="mt-4"><RisksTab projectId={projectId} /></TabsContent>
-        <TabsContent value="events"     className="mt-4"><EventsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="ai"         className="mt-4"><AITab projectId={projectId} /></TabsContent>
+        <TabsContent value="bills"      className="mt-4"><BillsTab     projectId={projectId} /></TabsContent>
+        <TabsContent value="risks"      className="mt-4"><RisksTab     projectId={projectId} /></TabsContent>
+        <TabsContent value="events"     className="mt-4"><EventsTab    projectId={projectId} /></TabsContent>
+        <TabsContent value="ai"         className="mt-4"><AITab        projectId={projectId} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -497,25 +529,48 @@ function BillsTab({ projectId }: { projectId: number }) {
   const { t } = useTranslation();
   const { token } = useAuth() as any;
   const { toast } = useToast();
+  const [direction, setDirection] = useState<"outgoing" | "incoming">("outgoing");
   const [rows, setRows] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Bill> | null>(null);
+  const [contractors, setContractors] = useState<Contractor[]>([]);
+  const [ownerContracts, setOwnerContracts] = useState<OwnerContract[]>([]);
+  const [subContracts,   setSubContracts]   = useState<SubContract[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/api/contracting/projects/${projectId}/bills`, {
+      const r = await fetch(`${API}/api/contracting/projects/${projectId}/bills?direction=${direction}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRows(await r.json());
     } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
     finally { setLoading(false); }
-  }, [token, projectId, toast]);
+  }, [token, projectId, direction, toast]);
   useEffect(() => { void load(); }, [load]);
+
+  // Auxiliary loads (contractors, contracts) — needed for the dialog form
+  // dropdowns. Pulled lazily once on mount (rarely changes).
+  useEffect(() => {
+    if (!token) return;
+    void (async () => {
+      try {
+        const [c, oc, sc] = await Promise.all([
+          fetch(`${API}/api/contracting/contractors`,                          { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+          fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`,{ headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+          fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`,  { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+        ]);
+        setContractors(c); setOwnerContracts(oc); setSubContracts(sc);
+      } catch { /* non-fatal — form still works without auto-fill */ }
+    })();
+  }, [token, projectId]);
 
   async function save() {
     if (!editing?.billNumber || !editing?.billDate) { toast({ title: t("contracting.bills.required", "الرقم والتاريخ مطلوبان"), variant: "destructive" }); return; }
+    if (direction === "incoming" && !editing.contractorId) {
+      toast({ title: t("contracting.bills.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
+    }
     try {
       const isEdit = (editing as any).id != null;
       const url = isEdit
@@ -524,7 +579,7 @@ function BillsTab({ projectId }: { projectId: number }) {
       const r = await fetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(editing),
+        body: JSON.stringify({ ...editing, direction }),
       });
       if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
       setEditing(null); await load();
@@ -536,51 +591,148 @@ function BillsTab({ projectId }: { projectId: number }) {
     await load();
   }
 
+  // When opening the "add new" form, prefill retention from the most
+  // recent active contract on the relevant side (saves typing for the
+  // common case where retention% is identical across all bills).
+  function openNew() {
+    const today = new Date().toISOString().slice(0,10);
+    let retention = "10";
+    let ownerContractId: number | null = null;
+    let subcontractorContractId: number | null = null;
+    if (direction === "outgoing") {
+      const latest = ownerContracts.find(c => c.status === "active") ?? ownerContracts[0];
+      if (latest) { retention = latest.retentionPercent; ownerContractId = latest.id; }
+    } else {
+      // For incoming we don't preselect — user picks contractor first.
+    }
+    setEditing({
+      billNumber: "", billType: "interim", billDate: today,
+      progressPercent: "0", grossAmount: "0", retentionPercent: retention,
+      previousPaid: "0", paidAmount: "0", status: "draft",
+      ownerContractId, subcontractorContractId,
+      contractorId: null,
+    });
+  }
+
+  // Quick totals for the header (helps SuperAdmins see exposure at a glance)
+  const totals = rows.reduce((acc, b) => {
+    acc.gross += Number(b.grossAmount); acc.due += Number(b.dueAmount);
+    acc.net   += Number(b.netAmount);   acc.paid += Number(b.paidAmount);
+    return acc;
+  }, { gross: 0, due: 0, net: 0, paid: 0 });
+
+  // Sub-contract auto-fill: when contractor is picked in incoming bill,
+  // narrow to that contractor's contracts on this project and pick latest.
+  function onContractorChange(cid: number | null) {
+    let retention = editing?.retentionPercent ?? "10";
+    let scId: number | null = editing?.subcontractorContractId ?? null;
+    if (cid) {
+      const match = subContracts.filter(s => s.contractorId === cid).sort((a,b)=>b.id-a.id)[0];
+      if (match) { retention = match.retentionPercent; scId = match.id; }
+    }
+    setEditing({ ...editing, contractorId: cid, retentionPercent: retention, subcontractorContractId: scId });
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex justify-between">
-        <h3 className="font-bold">{t("contracting.bills.title", "المستخلصات")} ({rows.length})</h3>
-        <Button size="sm" onClick={() => setEditing({ billNumber: "", billType: "interim", billDate: new Date().toISOString().slice(0,10), progressPercent: "0", grossAmount: "0", retentionPercent: "10", previousPaid: "0", status: "draft" })}>
+      <Tabs value={direction} onValueChange={v => setDirection(v as any)}>
+        <TabsList className="grid grid-cols-2 w-full max-w-md">
+          <TabsTrigger value="outgoing">{t("contracting.bills.outgoing", "للمالك (صادر)")}</TabsTrigger>
+          <TabsTrigger value="incoming">{t("contracting.bills.incoming", "من الباطن (وارد)")}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalGross", "إجمالي")}</div><div className="font-bold tabular-nums">{totals.gross.toLocaleString()} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalDue", "مستحق")}</div><div className="font-bold tabular-nums">{totals.due.toLocaleString()} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalNet", "صافي")}</div><div className="font-bold tabular-nums">{totals.net.toLocaleString()} ر.س</div></div>
+        <div className="rounded-md border p-2 bg-white dark:bg-slate-900"><div className="text-slate-500">{t("contracting.bills.totalPaid", "مدفوع")}</div><div className="font-bold tabular-nums text-emerald-600">{totals.paid.toLocaleString()} ر.س</div></div>
+      </div>
+
+      <div className="flex justify-between items-center">
+        <h3 className="font-bold">
+          {direction === "outgoing"
+            ? t("contracting.bills.outgoingTitle", "مستخلصات صادرة للمالك")
+            : t("contracting.bills.incomingTitle", "مستخلصات واردة من المقاولين الباطنين")}
+          <span className="text-slate-500 font-normal text-sm mx-2">({rows.length})</span>
+        </h3>
+        <Button size="sm" onClick={openNew}>
           <Plus className="h-4 w-4 mx-1" /> {t("contracting.bills.add", "مستخلص جديد")}
         </Button>
       </div>
+
       <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
         <Table>
           <TableHeader><TableRow>
             <TableHead>{t("contracting.bills.number", "الرقم")}</TableHead>
             <TableHead>{t("contracting.bills.date", "التاريخ")}</TableHead>
+            {direction === "incoming" && <TableHead>{t("contracting.bills.contractor", "المقاول الباطن")}</TableHead>}
+            <TableHead>{t("contracting.bills.progress", "إنجاز %")}</TableHead>
             <TableHead>{t("contracting.bills.gross", "إجمالي")}</TableHead>
             <TableHead>{t("contracting.bills.retention", "محتجز")}</TableHead>
             <TableHead>{t("contracting.bills.due", "مستحق")}</TableHead>
             <TableHead>{t("contracting.bills.net", "صافي")}</TableHead>
+            <TableHead>{t("contracting.bills.paid", "مدفوع")}</TableHead>
             <TableHead>{t("contracting.bills.status", "الحالة")}</TableHead>
             <TableHead className="text-end">—</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {loading && rows.length === 0 && <TableRow><TableCell colSpan={8}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
-            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-sm text-slate-500 py-4">{t("contracting.bills.empty", "لا توجد مستخلصات")}</TableCell></TableRow>}
-            {rows.map(b => (
-              <TableRow key={b.id}>
-                <TableCell className="font-mono">{b.billNumber}</TableCell>
-                <TableCell>{b.billDate}</TableCell>
-                <TableCell className="tabular-nums">{Number(b.grossAmount).toLocaleString()}</TableCell>
-                <TableCell className="tabular-nums">{Number(b.retentionAmount).toLocaleString()}</TableCell>
-                <TableCell className="tabular-nums">{Number(b.dueAmount).toLocaleString()}</TableCell>
-                <TableCell className="tabular-nums font-bold">{Number(b.netAmount).toLocaleString()}</TableCell>
-                <TableCell><Badge>{b.status}</Badge></TableCell>
-                <TableCell className="text-end">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => del(b.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {loading && rows.length === 0 && <TableRow><TableCell colSpan={11}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
+            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-sm text-slate-500 py-4">{t("contracting.bills.empty", "لا توجد مستخلصات")}</TableCell></TableRow>}
+            {rows.map(b => {
+              const contractor = contractors.find(c => c.id === b.contractorId);
+              return (
+                <TableRow key={b.id}>
+                  <TableCell className="font-mono">{b.billNumber}</TableCell>
+                  <TableCell>{b.billDate}</TableCell>
+                  {direction === "incoming" && <TableCell>{contractor?.name ?? "—"}</TableCell>}
+                  <TableCell className="tabular-nums">{Number(b.progressPercent).toFixed(1)}%</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.grossAmount).toLocaleString()}</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.retentionAmount).toLocaleString()}</TableCell>
+                  <TableCell className="tabular-nums">{Number(b.dueAmount).toLocaleString()}</TableCell>
+                  <TableCell className="tabular-nums font-bold">{Number(b.netAmount).toLocaleString()}</TableCell>
+                  <TableCell className="tabular-nums text-emerald-600">{Number(b.paidAmount).toLocaleString()}</TableCell>
+                  <TableCell><Badge>{b.status}</Badge></TableCell>
+                  <TableCell className="text-end">
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => del(b.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
+
       <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{(editing as any)?.id ? t("contracting.bills.edit", "تعديل المستخلص") : t("contracting.bills.add", "مستخلص جديد")}</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>
+            {(editing as any)?.id ? t("contracting.bills.edit", "تعديل المستخلص") : t("contracting.bills.add", "مستخلص جديد")}
+            <span className="text-xs font-normal text-slate-500 mx-2">
+              ({direction === "outgoing" ? t("contracting.bills.outgoing", "للمالك (صادر)") : t("contracting.bills.incoming", "من الباطن (وارد)")})
+            </span>
+          </DialogTitle></DialogHeader>
           {editing && <div className="grid grid-cols-2 gap-3">
+            {direction === "incoming" && (
+              <Field label={t("contracting.bills.contractor", "المقاول الباطن")} required>
+                <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => onContractorChange(v ? Number(v) : null)}>
+                  <SelectTrigger><SelectValue placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")} /></SelectTrigger>
+                  <SelectContent>
+                    {contractors.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name} {c.specialty && `(${c.specialty})`}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {direction === "outgoing" && ownerContracts.length > 0 && (
+              <Field label={t("contracting.bills.linkedContract", "العقد المرتبط")}>
+                <Select value={editing.ownerContractId ? String(editing.ownerContractId) : ""} onValueChange={v => setEditing({ ...editing, ownerContractId: v ? Number(v) : null })}>
+                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>
+                    {ownerContracts.map(c => <SelectItem key={c.id} value={String(c.id)}>#{c.contractNumber} ({c.contractType})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Field label={t("contracting.bills.number", "الرقم")} required><Input value={editing.billNumber ?? ""} onChange={e => setEditing({ ...editing, billNumber: e.target.value })} /></Field>
             <Field label={t("contracting.bills.date", "التاريخ")} required><Input type="date" value={editing.billDate ?? ""} onChange={e => setEditing({ ...editing, billDate: e.target.value })} /></Field>
             <Field label={t("contracting.bills.type", "النوع")}>
@@ -595,6 +747,7 @@ function BillsTab({ projectId }: { projectId: number }) {
             <Field label={t("contracting.bills.gross", "إجمالي (ر.س)")} required><Input type="number" value={editing.grossAmount ?? "0"} onChange={e => setEditing({ ...editing, grossAmount: e.target.value })} /></Field>
             <Field label={t("contracting.bills.retentionPercent", "% محتجز")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
             <Field label={t("contracting.bills.previousPaid", "المدفوع سابقاً")}><Input type="number" value={editing.previousPaid ?? "0"} onChange={e => setEditing({ ...editing, previousPaid: e.target.value })} /></Field>
+            <Field label={t("contracting.bills.paidAmount", "مبلغ مدفوع لهذا المستخلص")}><Input type="number" value={editing.paidAmount ?? "0"} onChange={e => setEditing({ ...editing, paidAmount: e.target.value })} /></Field>
             <Field label={t("contracting.bills.status", "الحالة")}>
               <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -939,6 +1092,350 @@ function AITab({ projectId }: { projectId: number }) {
       </div>
 
       <ContractingAIAssistant screenContext="contracting.project.detail" projectId={projectId} currentAction="reviewing project" />
+    </div>
+  );
+}
+
+// ─────────────────── OWNER CONTRACT TAB ───────────────────
+function OwnerContractTab({ projectId, project }: { projectId: number; project: Project }) {
+  const { t } = useTranslation();
+  const { token } = useAuth() as any;
+  const { toast } = useToast();
+  const [rows, setRows] = useState<OwnerContract[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<Partial<OwnerContract> | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/contracting/projects/${projectId}/owner-contracts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRows(await r.json());
+    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+    finally { setLoading(false); }
+  }, [token, projectId, toast]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function save() {
+    if (!editing?.contractNumber || !editing?.contractDate) {
+      toast({ title: t("contracting.ownerContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
+    }
+    try {
+      const isEdit = (editing as any).id != null;
+      const url = isEdit
+        ? `${API}/api/contracting/owner-contracts/${(editing as any).id}`
+        : `${API}/api/contracting/projects/${projectId}/owner-contracts`;
+      const r = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(editing),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      setEditing(null); await load();
+    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+  }
+  async function del(id: number) {
+    if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
+    await fetch(`${API}/api/contracting/owner-contracts/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  }
+
+  function openNew() {
+    setEditing({
+      contractNumber: "", contractDate: new Date().toISOString().slice(0,10),
+      contractType: rows.length === 0 ? "main" : "change_order",
+      clientName: project.clientName ?? "",
+      value: project.contractValue ?? "0",
+      advancePayment: "0", advancePercent: "0",
+      retentionPercent: "5", vatPercent: "15",
+      durationDays: 0, status: "draft",
+    });
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <div>
+          <h3 className="font-bold">{t("contracting.ownerContract.title", "عقد المالك")}</h3>
+          <div className="text-xs text-slate-500">{t("contracting.ownerContract.subtitle", "العقد الرئيسي وأوامر التغيير")}</div>
+        </div>
+        <Button size="sm" onClick={openNew}>
+          <Plus className="h-4 w-4 mx-1" />
+          {rows.length === 0
+            ? t("contracting.ownerContract.addMain", "إضافة العقد الرئيسي")
+            : t("contracting.ownerContract.addChangeOrder", "إضافة أمر تغيير")}
+        </Button>
+      </div>
+
+      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>{t("contracting.ownerContract.number", "رقم العقد")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.type", "النوع")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.client", "العميل")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.value", "القيمة")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.advance", "دفعة مقدمة")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.retention", "محتجز %")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.duration", "المدة (يوم)")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.signedAt", "تاريخ التوقيع")}</TableHead>
+            <TableHead>{t("contracting.ownerContract.status", "الحالة")}</TableHead>
+            <TableHead className="text-end">—</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {loading && rows.length === 0 && <TableRow><TableCell colSpan={10}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
+            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-sm text-slate-500 py-6">{t("contracting.ownerContract.empty", "لم يتم تسجيل عقد المالك بعد")}</TableCell></TableRow>}
+            {rows.map(c => (
+              <TableRow key={c.id}>
+                <TableCell className="font-mono">{c.contractNumber}</TableCell>
+                <TableCell><Badge variant={c.contractType === "main" ? "default" : "secondary"}>{c.contractType === "main" ? t("contracting.ownerContract.main", "رئيسي") : t("contracting.ownerContract.changeOrder", "أمر تغيير")}</Badge></TableCell>
+                <TableCell>{c.clientName ?? "—"}</TableCell>
+                <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString()}</TableCell>
+                <TableCell className="tabular-nums">{Number(c.advancePayment).toLocaleString()}</TableCell>
+                <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
+                <TableCell className="tabular-nums">{c.durationDays}</TableCell>
+                <TableCell>{c.signedAt ?? "—"}</TableCell>
+                <TableCell><Badge>{c.status}</Badge></TableCell>
+                <TableCell className="text-end">
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>
+            {(editing as any)?.id ? t("contracting.ownerContract.edit", "تعديل عقد المالك") : t("contracting.ownerContract.add", "إضافة عقد")}
+          </DialogTitle></DialogHeader>
+          {editing && <div className="grid grid-cols-2 gap-3">
+            <Field label={t("contracting.ownerContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.date", "تاريخ العقد")} required><Input type="date" value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.type", "النوع")}>
+              <Select value={editing.contractType ?? "main"} onValueChange={v => setEditing({ ...editing, contractType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="main">{t("contracting.ownerContract.main", "رئيسي")}</SelectItem>
+                  <SelectItem value="change_order">{t("contracting.ownerContract.changeOrder", "أمر تغيير")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.ownerContract.client", "اسم العميل")}><Input value={editing.clientName ?? ""} onChange={e => setEditing({ ...editing, clientName: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.advancePercent", "% دفعة مقدمة")}><Input type="number" value={editing.advancePercent ?? "0"} onChange={e => setEditing({ ...editing, advancePercent: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "5"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
+            <Field label={t("contracting.ownerContract.startDate", "تاريخ البدء")}><Input type="date" value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.endDate", "تاريخ الانتهاء")}><Input type="date" value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.signedAt", "تاريخ التوقيع")}><Input type="date" value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
+            <Field label={t("contracting.ownerContract.status", "الحالة")}>
+              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["draft","active","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="col-span-2">
+              <Field label={t("contracting.ownerContract.scope", "نطاق العمل")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[80px] text-sm bg-white dark:bg-slate-900" value={editing.scopeOfWork ?? ""} onChange={e => setEditing({ ...editing, scopeOfWork: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.ownerContract.paymentTerms", "شروط الدفع")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.paymentTerms ?? ""} onChange={e => setEditing({ ...editing, paymentTerms: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.ownerContract.penalties", "بنود الغرامات")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.penaltiesClause ?? ""} onChange={e => setEditing({ ...editing, penaltiesClause: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.ownerContract.notes", "ملاحظات")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
+              </Field>
+            </div>
+          </div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─────────────────── SUB CONTRACTS TAB ───────────────────
+function SubContractsTab({ projectId }: { projectId: number }) {
+  const { t } = useTranslation();
+  const { token } = useAuth() as any;
+  const { toast } = useToast();
+  const [rows, setRows] = useState<SubContract[]>([]);
+  const [contractors, setContractors] = useState<Contractor[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<Partial<SubContract> | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [r, cr] = await Promise.all([
+        fetch(`${API}/api/contracting/projects/${projectId}/sub-contracts`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/api/contracting/contractors`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRows(await r.json());
+      if (cr.ok) setContractors(await cr.json());
+    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+    finally { setLoading(false); }
+  }, [token, projectId, toast]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function save() {
+    if (!editing?.contractorId) {
+      toast({ title: t("contracting.subContract.contractorRequired", "يجب اختيار المقاول الباطن"), variant: "destructive" }); return;
+    }
+    if (!editing?.contractNumber || !editing?.contractDate) {
+      toast({ title: t("contracting.subContract.required", "رقم العقد والتاريخ مطلوبان"), variant: "destructive" }); return;
+    }
+    try {
+      const isEdit = (editing as any).id != null;
+      const url = isEdit
+        ? `${API}/api/contracting/sub-contracts/${(editing as any).id}`
+        : `${API}/api/contracting/projects/${projectId}/sub-contracts`;
+      const r = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(editing),
+      });
+      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`);
+      setEditing(null); await load();
+    } catch (e: any) { toast({ title: e?.message, variant: "destructive" }); }
+  }
+  async function del(id: number) {
+    if (!confirm(t("common.confirmDelete", "تأكيد الحذف؟"))) return;
+    await fetch(`${API}/api/contracting/sub-contracts/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <div>
+          <h3 className="font-bold">{t("contracting.subContract.title", "عقود المقاولين الباطنين")} <span className="text-slate-500 font-normal text-sm mx-2">({rows.length})</span></h3>
+          <div className="text-xs text-slate-500">{t("contracting.subContract.subtitle", "عقود إسناد العمل لمقاولين الباطن")}</div>
+        </div>
+        <Button size="sm" onClick={() => setEditing({ contractNumber: "", contractDate: new Date().toISOString().slice(0,10), value: "0", advancePayment: "0", advancePercent: "0", retentionPercent: "10", vatPercent: "15", durationDays: 0, status: "draft" })}>
+          <Plus className="h-4 w-4 mx-1" /> {t("contracting.subContract.add", "عقد باطن جديد")}
+        </Button>
+      </div>
+
+      <div className="rounded-lg border bg-white dark:bg-slate-900 overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>{t("contracting.subContract.number", "رقم العقد")}</TableHead>
+            <TableHead>{t("contracting.subContract.contractor", "المقاول الباطن")}</TableHead>
+            <TableHead>{t("contracting.subContract.scope", "نطاق العمل")}</TableHead>
+            <TableHead>{t("contracting.subContract.value", "القيمة")}</TableHead>
+            <TableHead>{t("contracting.subContract.retention", "محتجز %")}</TableHead>
+            <TableHead>{t("contracting.subContract.duration", "المدة (يوم)")}</TableHead>
+            <TableHead>{t("contracting.subContract.signedAt", "تاريخ التوقيع")}</TableHead>
+            <TableHead>{t("contracting.subContract.status", "الحالة")}</TableHead>
+            <TableHead className="text-end">—</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {loading && rows.length === 0 && <TableRow><TableCell colSpan={9}><Skeleton className="h-16 w-full" /></TableCell></TableRow>}
+            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-sm text-slate-500 py-6">{t("contracting.subContract.empty", "لا توجد عقود باطن")}</TableCell></TableRow>}
+            {rows.map(c => {
+              const con = contractors.find(x => x.id === c.contractorId);
+              return (
+                <TableRow key={c.id}>
+                  <TableCell className="font-mono">{c.contractNumber}</TableCell>
+                  <TableCell>{con?.name ?? `#${c.contractorId}`}{con?.specialty && <span className="text-xs text-slate-500 mx-1">({con.specialty})</span>}</TableCell>
+                  <TableCell className="max-w-[240px] truncate" title={c.scopeOfWork ?? ""}>{c.scopeOfWork ?? "—"}</TableCell>
+                  <TableCell className="tabular-nums font-bold">{Number(c.value).toLocaleString()}</TableCell>
+                  <TableCell className="tabular-nums">{Number(c.retentionPercent).toFixed(1)}%</TableCell>
+                  <TableCell className="tabular-nums">{c.durationDays}</TableCell>
+                  <TableCell>{c.signedAt ?? "—"}</TableCell>
+                  <TableCell><Badge>{c.status}</Badge></TableCell>
+                  <TableCell className="text-end">
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(c)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => del(c.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+
+      <Dialog open={!!editing} onOpenChange={o => !o && setEditing(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>
+            {(editing as any)?.id ? t("contracting.subContract.edit", "تعديل عقد الباطن") : t("contracting.subContract.add", "عقد باطن جديد")}
+          </DialogTitle></DialogHeader>
+          {editing && <div className="grid grid-cols-2 gap-3">
+            <Field label={t("contracting.subContract.contractor", "المقاول الباطن")} required>
+              <Select value={editing.contractorId ? String(editing.contractorId) : ""} onValueChange={v => setEditing({ ...editing, contractorId: v ? Number(v) : undefined })}>
+                <SelectTrigger><SelectValue placeholder={t("contracting.bills.pickContractor", "اختر مقاولاً")} /></SelectTrigger>
+                <SelectContent>
+                  {contractors.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name} {c.specialty && `(${c.specialty})`}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t("contracting.subContract.number", "رقم العقد")} required><Input value={editing.contractNumber ?? ""} onChange={e => setEditing({ ...editing, contractNumber: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.date", "تاريخ العقد")} required><Input type="date" value={editing.contractDate ?? ""} onChange={e => setEditing({ ...editing, contractDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.signedAt", "تاريخ التوقيع")}><Input type="date" value={editing.signedAt ?? ""} onChange={e => setEditing({ ...editing, signedAt: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.value", "قيمة العقد (ر.س)")}><Input type="number" value={editing.value ?? "0"} onChange={e => setEditing({ ...editing, value: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.advance", "دفعة مقدمة (ر.س)")}><Input type="number" value={editing.advancePayment ?? "0"} onChange={e => setEditing({ ...editing, advancePayment: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.advancePercent", "% دفعة مقدمة")}><Input type="number" value={editing.advancePercent ?? "0"} onChange={e => setEditing({ ...editing, advancePercent: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.retention", "محتجز %")}><Input type="number" value={editing.retentionPercent ?? "10"} onChange={e => setEditing({ ...editing, retentionPercent: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.vat", "ضريبة %")}><Input type="number" value={editing.vatPercent ?? "15"} onChange={e => setEditing({ ...editing, vatPercent: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.duration", "المدة (يوم)")}><Input type="number" value={editing.durationDays ?? 0} onChange={e => setEditing({ ...editing, durationDays: Number(e.target.value) })} /></Field>
+            <Field label={t("contracting.subContract.startDate", "تاريخ البدء")}><Input type="date" value={editing.startDate ?? ""} onChange={e => setEditing({ ...editing, startDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.endDate", "تاريخ الانتهاء")}><Input type="date" value={editing.endDate ?? ""} onChange={e => setEditing({ ...editing, endDate: e.target.value })} /></Field>
+            <Field label={t("contracting.subContract.status", "الحالة")}>
+              <Select value={editing.status ?? "draft"} onValueChange={v => setEditing({ ...editing, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["draft","active","completed","terminated","on_hold"].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="col-span-2">
+              <Field label={t("contracting.subContract.scope", "نطاق العمل")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[80px] text-sm bg-white dark:bg-slate-900" value={editing.scopeOfWork ?? ""} onChange={e => setEditing({ ...editing, scopeOfWork: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.subContract.paymentTerms", "شروط الدفع")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.paymentTerms ?? ""} onChange={e => setEditing({ ...editing, paymentTerms: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.subContract.penalties", "بنود الغرامات")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.penaltiesClause ?? ""} onChange={e => setEditing({ ...editing, penaltiesClause: e.target.value })} />
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label={t("contracting.subContract.notes", "ملاحظات")}>
+                <textarea className="w-full rounded-md border p-2 min-h-[60px] text-sm bg-white dark:bg-slate-900" value={editing.notes ?? ""} onChange={e => setEditing({ ...editing, notes: e.target.value })} />
+              </Field>
+            </div>
+          </div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>{t("common.cancel", "إلغاء")}</Button>
+            <Button onClick={save}>{t("common.save", "حفظ")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

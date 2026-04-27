@@ -15,6 +15,9 @@ import {
   contractingProgressBillsTable,
   contractingEventsTable,
   contractingRisksTable,
+  contractingOwnerContractsTable,
+  contractingSubContractsTable,
+  customersTable,
 } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -33,6 +36,51 @@ async function scope(req: any, res: any): Promise<number | null> {
   const cid = await resolveCompanyId(req);
   if (!cid) { res.status(400).json({ error: "لا يوجد شركة" }); return null; }
   return cid;
+}
+
+// Tenant-isolation guards. Each helper returns a string error message
+// (in Arabic) if the referenced row is missing or doesn't belong to the
+// caller's company / project — caller should 400 / 403 on non-null.
+async function ensureProject(cid: number, projectId: number): Promise<string | null> {
+  if (!projectId) return "المشروع مطلوب";
+  const [r] = await db.select({ id: contractingProjectsTable.id })
+    .from(contractingProjectsTable)
+    .where(and(eq(contractingProjectsTable.id, projectId), eq(contractingProjectsTable.companyId, cid)));
+  return r ? null : "المشروع غير صالح";
+}
+async function ensureContractor(cid: number, contractorId: number): Promise<string | null> {
+  if (!contractorId) return "المقاول الباطن مطلوب";
+  const [r] = await db.select({ id: contractingContractorsTable.id })
+    .from(contractingContractorsTable)
+    .where(and(eq(contractingContractorsTable.id, contractorId), eq(contractingContractorsTable.companyId, cid)));
+  return r ? null : "المقاول الباطن غير صالح";
+}
+async function ensureOwnerContract(cid: number, projectId: number, ocId: number): Promise<string | null> {
+  const [r] = await db.select({ id: contractingOwnerContractsTable.id })
+    .from(contractingOwnerContractsTable)
+    .where(and(
+      eq(contractingOwnerContractsTable.id, ocId),
+      eq(contractingOwnerContractsTable.companyId, cid),
+      eq(contractingOwnerContractsTable.projectId, projectId),
+    ));
+  return r ? null : "عقد المالك غير صالح";
+}
+async function ensureCustomer(cid: number, customerId: number): Promise<string | null> {
+  if (!customerId) return "العميل غير صالح";
+  const [r] = await db.select({ id: customersTable.id })
+    .from(customersTable)
+    .where(and(eq(customersTable.id, customerId), eq(customersTable.companyId, cid)));
+  return r ? null : "العميل غير صالح";
+}
+async function ensureSubContract(cid: number, projectId: number, scId: number): Promise<string | null> {
+  const [r] = await db.select({ id: contractingSubContractsTable.id, contractorId: contractingSubContractsTable.contractorId })
+    .from(contractingSubContractsTable)
+    .where(and(
+      eq(contractingSubContractsTable.id, scId),
+      eq(contractingSubContractsTable.companyId, cid),
+      eq(contractingSubContractsTable.projectId, projectId),
+    ));
+  return r ? null : "عقد الباطن غير صالح";
 }
 
 // Helper: write a system event so the project timeline + dashboard alerts
@@ -433,16 +481,235 @@ router.delete("/contractors/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
 });
 
+// ─────────────────── OWNER CONTRACTS (عقود المالك) ───────────────────
+// Formal contracts between our company and the project's owner/client.
+// One project usually has 1 main + N change orders.
+router.get("/projects/:projectId/owner-contracts", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const rows = await db.select().from(contractingOwnerContractsTable)
+      .where(and(
+        eq(contractingOwnerContractsTable.companyId, cid),
+        eq(contractingOwnerContractsTable.projectId, projectId),
+      ))
+      .orderBy(desc(contractingOwnerContractsTable.contractDate));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.post("/projects/:projectId/owner-contracts", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const b = req.body as any;
+    if (!b?.contractNumber || !b?.contractDate) {
+      res.status(400).json({ error: "رقم العقد وتاريخه مطلوبان" }); return;
+    }
+    const projErr = await ensureProject(cid, projectId);
+    if (projErr) { res.status(400).json({ error: projErr }); return; }
+    if (b.customerId) {
+      const cusErr = await ensureCustomer(cid, Number(b.customerId));
+      if (cusErr) { res.status(400).json({ error: cusErr }); return; }
+    }
+    const value = Number(b.value ?? 0);
+    const advancePct = Number(b.advancePercent ?? 0);
+    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : Math.round((value * advancePct / 100) * 100) / 100;
+    const [row] = await db.insert(contractingOwnerContractsTable).values({
+      companyId: cid, projectId,
+      customerId: b.customerId ? Number(b.customerId) : null,
+      clientName: b.clientName ?? null,
+      contractNumber: String(b.contractNumber),
+      contractDate: b.contractDate,
+      signedAt: b.signedAt ?? null,
+      contractType: b.contractType ?? "main",
+      value:            String(value),
+      advancePayment:   String(advancePay),
+      advancePercent:   String(advancePct),
+      retentionPercent: String(b.retentionPercent ?? 5),
+      vatPercent:       String(b.vatPercent ?? 15),
+      durationDays: Number(b.durationDays ?? 0),
+      startDate: b.startDate ?? null,
+      endDate:   b.endDate   ?? null,
+      paymentTerms: b.paymentTerms ?? null,
+      scopeOfWork:  b.scopeOfWork  ?? null,
+      penaltiesClause: b.penaltiesClause ?? null,
+      status: b.status ?? "draft",
+      notes: b.notes ?? null,
+    }).returning();
+    await logEvent({
+      companyId: cid, projectId, userId: req.authUser!.id,
+      eventType: "owner_contract_created",
+      title: `عقد مالك جديد رقم ${row.contractNumber}`,
+      description: `قيمة العقد: ${row.value} ر.س`,
+    });
+    res.status(201).json(row);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.put("/owner-contracts/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body as any;
+    const [cur] = await db.select().from(contractingOwnerContractsTable)
+      .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)));
+    if (!cur) { res.status(404).json({ error: "غير موجود" }); return; }
+    const upd: any = { updatedAt: new Date() };
+    for (const k of ["contractNumber","contractType","status","clientName","paymentTerms","scopeOfWork","penaltiesClause","notes"]) {
+      if (b[k] !== undefined) upd[k] = b[k];
+    }
+    for (const k of ["contractDate","signedAt","startDate","endDate"]) {
+      if (b[k] !== undefined) upd[k] = b[k] || null;
+    }
+    if (b.customerId !== undefined) {
+      if (b.customerId) {
+        const cusErr = await ensureCustomer(cid, Number(b.customerId));
+        if (cusErr) { res.status(400).json({ error: cusErr }); return; }
+      }
+      upd.customerId = b.customerId ? Number(b.customerId) : null;
+    }
+    if (b.durationDays !== undefined) upd.durationDays = Number(b.durationDays);
+    for (const k of ["value","advancePayment","advancePercent","retentionPercent","vatPercent"]) {
+      if (b[k] !== undefined) upd[k] = String(b[k]);
+    }
+    const [row] = await db.update(contractingOwnerContractsTable).set(upd)
+      .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)))
+      .returning();
+    res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.delete("/owner-contracts/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    await db.delete(contractingOwnerContractsTable)
+      .where(and(eq(contractingOwnerContractsTable.id, id), eq(contractingOwnerContractsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+// ─────────────────── SUB-CONTRACTS (عقود المقاولين الباطنين) ───────────────────
+router.get("/projects/:projectId/sub-contracts", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const rows = await db.select().from(contractingSubContractsTable)
+      .where(and(
+        eq(contractingSubContractsTable.companyId, cid),
+        eq(contractingSubContractsTable.projectId, projectId),
+      ))
+      .orderBy(desc(contractingSubContractsTable.contractDate));
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.post("/projects/:projectId/sub-contracts", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const projectId = Number(req.params.projectId);
+    const b = req.body as any;
+    if (!b?.contractNumber || !b?.contractDate || !b?.contractorId) {
+      res.status(400).json({ error: "رقم العقد، التاريخ، والمقاول الباطن مطلوبة" }); return;
+    }
+    const projErr = await ensureProject(cid, projectId);
+    if (projErr) { res.status(400).json({ error: projErr }); return; }
+    const conErr  = await ensureContractor(cid, Number(b.contractorId));
+    if (conErr)  { res.status(400).json({ error: conErr }); return; }
+    const value = Number(b.value ?? 0);
+    const advancePct = Number(b.advancePercent ?? 0);
+    const advancePay = b.advancePayment !== undefined ? Number(b.advancePayment) : Math.round((value * advancePct / 100) * 100) / 100;
+    const [row] = await db.insert(contractingSubContractsTable).values({
+      companyId: cid, projectId,
+      contractorId: Number(b.contractorId),
+      contractNumber: String(b.contractNumber),
+      contractDate: b.contractDate,
+      signedAt: b.signedAt ?? null,
+      scopeOfWork: b.scopeOfWork ?? null,
+      value:            String(value),
+      advancePayment:   String(advancePay),
+      advancePercent:   String(advancePct),
+      retentionPercent: String(b.retentionPercent ?? 5),
+      vatPercent:       String(b.vatPercent ?? 15),
+      durationDays: Number(b.durationDays ?? 0),
+      startDate: b.startDate ?? null,
+      endDate:   b.endDate   ?? null,
+      paymentTerms: b.paymentTerms ?? null,
+      penaltiesClause: b.penaltiesClause ?? null,
+      status: b.status ?? "draft",
+      notes: b.notes ?? null,
+    }).returning();
+    await logEvent({
+      companyId: cid, projectId, userId: req.authUser!.id,
+      eventType: "sub_contract_created",
+      title: `عقد مقاول باطن جديد رقم ${row.contractNumber}`,
+      description: `قيمة العقد: ${row.value} ر.س`,
+    });
+    res.status(201).json(row);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.put("/sub-contracts/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    const b = req.body as any;
+    const [cur] = await db.select().from(contractingSubContractsTable)
+      .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)));
+    if (!cur) { res.status(404).json({ error: "غير موجود" }); return; }
+    const upd: any = { updatedAt: new Date() };
+    for (const k of ["contractNumber","status","scopeOfWork","paymentTerms","penaltiesClause","notes"]) {
+      if (b[k] !== undefined) upd[k] = b[k];
+    }
+    for (const k of ["contractDate","signedAt","startDate","endDate"]) {
+      if (b[k] !== undefined) upd[k] = b[k] || null;
+    }
+    if (b.contractorId !== undefined) {
+      const conErr = await ensureContractor(cid, Number(b.contractorId));
+      if (conErr) { res.status(400).json({ error: conErr }); return; }
+      upd.contractorId = Number(b.contractorId);
+    }
+    if (b.durationDays !== undefined) upd.durationDays = Number(b.durationDays);
+    for (const k of ["value","advancePayment","advancePercent","retentionPercent","vatPercent"]) {
+      if (b[k] !== undefined) upd[k] = String(b[k]);
+    }
+    const [row] = await db.update(contractingSubContractsTable).set(upd)
+      .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)))
+      .returning();
+    res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
+router.delete("/sub-contracts/:id", async (req, res) => {
+  try {
+    const cid = await scope(req, res); if (!cid) return;
+    const id = Number(req.params.id);
+    await db.delete(contractingSubContractsTable)
+      .where(and(eq(contractingSubContractsTable.id, id), eq(contractingSubContractsTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
+});
+
 // ─────────────────── PROGRESS BILLS (مستخلصات) ───────────────────
+// Bills now carry a `direction`:
+//   outgoing — مستخلص يصدره مكتبنا للمالك (claim against client)
+//   incoming — مستخلص يصدره المقاول الباطن لنا (we owe a sub-contractor)
+// Filter via ?direction=outgoing|incoming. Defaults to all.
 router.get("/projects/:projectId/bills", async (req, res) => {
   try {
     const cid = await scope(req, res); if (!cid) return;
     const projectId = Number(req.params.projectId);
+    const direction = String(req.query.direction ?? "");
+    const conds = [
+      eq(contractingProgressBillsTable.companyId, cid),
+      eq(contractingProgressBillsTable.projectId, projectId),
+    ];
+    if (direction === "outgoing" || direction === "incoming") {
+      conds.push(eq(contractingProgressBillsTable.direction, direction));
+    }
     const rows = await db.select().from(contractingProgressBillsTable)
-      .where(and(
-        eq(contractingProgressBillsTable.companyId, cid),
-        eq(contractingProgressBillsTable.projectId, projectId),
-      ))
+      .where(and(...conds))
       .orderBy(desc(contractingProgressBillsTable.billDate));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
@@ -456,19 +723,46 @@ router.post("/projects/:projectId/bills", async (req, res) => {
     if (!b?.billNumber || !b?.billDate) {
       res.status(400).json({ error: "رقم وتاريخ المستخلص مطلوبان" }); return;
     }
+    const direction = b.direction === "incoming" ? "incoming" : "outgoing";
+    if (direction === "incoming" && !b.contractorId) {
+      res.status(400).json({ error: "المقاول الباطن مطلوب لمستخلصات الباطن" }); return;
+    }
+
+    // Tenant-isolation: verify every referenced FK is in the same company
+    // (and the same project for contract links). Without these guards a
+    // crafted body could attach a bill to another tenant's project/contract.
+    const projErr = await ensureProject(cid, projectId);
+    if (projErr) { res.status(400).json({ error: projErr }); return; }
+    if (b.contractorId) {
+      const e = await ensureContractor(cid, Number(b.contractorId));
+      if (e) { res.status(400).json({ error: e }); return; }
+    }
+    if (b.ownerContractId) {
+      const e = await ensureOwnerContract(cid, projectId, Number(b.ownerContractId));
+      if (e) { res.status(400).json({ error: e }); return; }
+    }
+    if (b.subcontractorContractId) {
+      const e = await ensureSubContract(cid, projectId, Number(b.subcontractorContractId));
+      if (e) { res.status(400).json({ error: e }); return; }
+    }
 
     // Server-side computation. Client may send raw values; we recompute the
     // derived ones here so the math is consistent and tamper-resistant.
     const gross     = Number(b.grossAmount ?? 0);
     const retPct    = Number(b.retentionPercent ?? 0);
+    const vatPct    = b.vatPercent !== undefined ? Number(b.vatPercent) : 15;
     const prevPaid  = Number(b.previousPaid ?? 0);
     const retAmount = Math.round((gross * retPct / 100) * 100) / 100;
     const dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    const vatAmount = Math.round((dueAmount * 0.15) * 100) / 100; // SA standard 15%
+    const vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
     const netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
 
     const [row] = await db.insert(contractingProgressBillsTable).values({
       companyId: cid, projectId,
+      direction,
+      contractorId: b.contractorId ? Number(b.contractorId) : null,
+      ownerContractId:         b.ownerContractId         ? Number(b.ownerContractId)         : null,
+      subcontractorContractId: b.subcontractorContractId ? Number(b.subcontractorContractId) : null,
       billNumber: String(b.billNumber),
       billType: b.billType ?? "interim",
       billDate: b.billDate,
@@ -480,16 +774,18 @@ router.post("/projects/:projectId/bills", async (req, res) => {
       retentionAmount:  String(retAmount),
       previousPaid:     String(prevPaid),
       dueAmount:        String(dueAmount),
+      vatPercent:       String(vatPct),
       vatAmount:        String(vatAmount),
       netAmount:        String(netAmount),
+      paidAmount:       String(b.paidAmount ?? 0),
       status: b.status ?? "draft",
       notes: b.notes ?? null,
     }).returning();
     await logEvent({
       companyId: cid, projectId, userId: req.authUser!.id,
       eventType: "bill_submitted",
-      title: `مستخلص جديد رقم ${row.billNumber}`,
-      description: `صافي مستحق: ${row.netAmount} ر.س`,
+      title: `${direction === "incoming" ? "مستخلص باطن" : "مستخلص مالك"} جديد رقم ${row.billNumber}`,
+      description: `صافي: ${row.netAmount} ر.س`,
     });
     res.status(201).json(row);
   } catch (e: any) { res.status(500).json({ error: e?.message ?? "خطأ" }); }
@@ -510,12 +806,55 @@ router.put("/bills/:id", async (req, res) => {
     if (b.fromDate !== undefined) upd.fromDate = b.fromDate;
     if (b.toDate   !== undefined) upd.toDate   = b.toDate;
 
+    // Direction is immutable on update — flipping a bill across the
+    // outgoing/incoming boundary doesn't make business sense and would
+    // bypass the create-time direction-vs-contractorId invariant.
+    if (b.direction !== undefined && b.direction !== cur.direction) {
+      res.status(400).json({ error: "لا يمكن تغيير اتجاه المستخلص بعد إنشائه" }); return;
+    }
+    const direction = cur.direction;
+
+    // Tenant-isolation guards on FK changes.
+    if (b.contractorId !== undefined) {
+      if (b.contractorId) {
+        const e = await ensureContractor(cid, Number(b.contractorId));
+        if (e) { res.status(400).json({ error: e }); return; }
+      }
+      upd.contractorId = b.contractorId ? Number(b.contractorId) : null;
+    }
+    if (b.ownerContractId !== undefined) {
+      if (b.ownerContractId) {
+        const e = await ensureOwnerContract(cid, cur.projectId, Number(b.ownerContractId));
+        if (e) { res.status(400).json({ error: e }); return; }
+      }
+      upd.ownerContractId = b.ownerContractId ? Number(b.ownerContractId) : null;
+    }
+    if (b.subcontractorContractId !== undefined) {
+      if (b.subcontractorContractId) {
+        const e = await ensureSubContract(cid, cur.projectId, Number(b.subcontractorContractId));
+        if (e) { res.status(400).json({ error: e }); return; }
+      }
+      upd.subcontractorContractId = b.subcontractorContractId ? Number(b.subcontractorContractId) : null;
+    }
+
+    // Re-enforce: incoming bills MUST keep a valid contractor (whether
+    // because the column was unchanged or because the user just changed it).
+    const finalContractorId = upd.contractorId !== undefined ? upd.contractorId : cur.contractorId;
+    if (direction === "incoming" && !finalContractorId) {
+      res.status(400).json({ error: "المقاول الباطن مطلوب لمستخلصات الباطن" }); return;
+    }
+
     const gross    = b.grossAmount      !== undefined ? Number(b.grossAmount)      : Number(cur.grossAmount);
     const retPct   = b.retentionPercent !== undefined ? Number(b.retentionPercent) : Number(cur.retentionPercent);
     const prevPaid = b.previousPaid     !== undefined ? Number(b.previousPaid)     : Number(cur.previousPaid);
+    // VAT % is now persisted on the bill row. If the client doesn't send a
+    // new value we fall back to the stored value — never to a hard-coded
+    // 15% — so editing a non-15% bill no longer silently rewrites its tax.
+    const vatPct   = b.vatPercent       !== undefined ? Number(b.vatPercent)       : Number(cur.vatPercent ?? 15);
+    upd.vatPercent = String(vatPct);
     const retAmount = Math.round((gross * retPct / 100) * 100) / 100;
     const dueAmount = Math.max(0, Math.round((gross - retAmount - prevPaid) * 100) / 100);
-    const vatAmount = Math.round((dueAmount * 0.15) * 100) / 100;
+    const vatAmount = Math.round((dueAmount * vatPct / 100) * 100) / 100;
     const netAmount = Math.round((dueAmount + vatAmount) * 100) / 100;
     upd.grossAmount      = String(gross);
     upd.retentionPercent = String(retPct);
@@ -525,11 +864,18 @@ router.put("/bills/:id", async (req, res) => {
     upd.vatAmount        = String(vatAmount);
     upd.netAmount        = String(netAmount);
     if (b.progressPercent !== undefined) upd.progressPercent = String(b.progressPercent);
+    if (b.paidAmount !== undefined) upd.paidAmount = String(b.paidAmount);
     if (b.status === "approved" && cur.status !== "approved") {
       upd.approvedAt = new Date();
       upd.approvedByUserId = req.authUser!.id;
     }
-    if (b.status === "paid" && cur.status !== "paid") upd.paidAt = new Date();
+    if (b.status === "paid" && cur.status !== "paid") {
+      upd.paidAt = new Date();
+      // If paidAmount wasn't explicitly provided, mark the full net as paid
+      // so the dashboard's "paid vs due" math doesn't show 0 next to a
+      // bill the user just marked as paid.
+      if (b.paidAmount === undefined) upd.paidAmount = String(netAmount);
+    }
 
     const [row] = await db.update(contractingProgressBillsTable).set(upd)
       .where(and(eq(contractingProgressBillsTable.id, id), eq(contractingProgressBillsTable.companyId, cid)))
