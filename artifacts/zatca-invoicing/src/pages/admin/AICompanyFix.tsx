@@ -13,6 +13,8 @@ import {
   CalendarClock, Play, Mail, Download,
   // Toolbox expansion (F): inventory / accounting / logs categories.
   TrendingDown, Scale, Calculator, ScrollText, Trash2, Boxes, BookOpen, ClipboardList,
+  // Audit-log inspector (task #122).
+  Scissors, FileSearch,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -32,6 +34,18 @@ const MAINTENANCE_PANEL_REFETCH_MS = 30_000;
 type CheckResult = {
   key: string; label: string; severity: "high" | "medium" | "low";
   count: number; samples: any[];
+};
+
+// Shape of a single row returned by GET /api/admin/maintenance/history
+// (admin.ts ~line 4518). `metadata` is `unknown` because each writer
+// chooses its own shape; readers narrow before reading individual keys.
+type HistoryRow = {
+  id: number;
+  action: string;
+  entityType: string | null;
+  username: string | null;
+  metadata: unknown;
+  createdAt: string;
 };
 
 type SystemTree = {
@@ -721,7 +735,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
       );
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "فشل جلب السجل");
       return r.json() as Promise<{
-        count: number; items: any[];
+        count: number; items: HistoryRow[];
         offset: number; limit: number;
         hasMore: boolean; nextOffset: number | null;
       }>;
@@ -732,7 +746,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   });
   // Flatten all loaded pages into a single list for the table — this also
   // keeps the empty-state / error-state checks below readable.
-  const historyItems: any[] = (historyQ.data?.pages ?? []).flatMap((p) => p.items);
+  const historyItems: HistoryRow[] = (historyQ.data?.pages ?? []).flatMap((p) => p.items);
 
   // CSV export — calls the same history endpoint with `?format=csv` so admins
   // get the FULL audit-logged history (not just the on-screen 50 rows). The
@@ -1342,6 +1356,11 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
   const [toolHistoryTarget, setToolHistoryTarget] = useState<
     { companyId: number; companyName: string; toolKey: string } | null
   >(null);
+
+  // Audit-log inspector (task #122). Snapshots the whole row so the
+  // dialog can render without a second fetch — the history feed already
+  // returns the full metadata blob.
+  const [exportInspectorRow, setExportInspectorRow] = useState<HistoryRow | null>(null);
 
   // Resolve a friendly company display name from the parent's companies
   // query. Falls back to `#<id>` so the modal still has a meaningful title
@@ -3096,14 +3115,53 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {historyItems.map((row: any) => {
+                      {historyItems.map((row) => {
                         const retention = extractRetentionInfoAr(row);
+                        // Audit-log inspector (task #122). Pill flags
+                        // clipped exports; the "تفاصيل" link opens the
+                        // inspector dialog. Scoped to export_csv only;
+                        // other actions keep the raw-JSON snippet.
+                        const isExportCsv = row.action === "export_csv";
+                        const meta =
+                          row.metadata && typeof row.metadata === "object"
+                            ? (row.metadata as Record<string, unknown>)
+                            : {};
+                        const isTruncated = isExportCsv && meta.truncated === true;
+                        const rowCapNum =
+                          typeof meta.rowCap === "number" ? meta.rowCap : null;
+                        const totalAvailableNum =
+                          typeof meta.totalAvailable === "number"
+                            ? meta.totalAvailable
+                            : null;
                         return (
                           <tr key={row.id}>
                             <td className="px-2 py-1 whitespace-nowrap">{new Date(row.createdAt).toLocaleString("ar")}</td>
                             <td className="px-2 py-1 font-mono">{row.username || "—"}</td>
                             <td className="px-2 py-1">{row.entityType ? historyEntityTypeLabelAr(row.entityType) : "—"}</td>
-                            <td className="px-2 py-1">{historyActionLabelAr(row.action)}</td>
+                            <td className="px-2 py-1">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span>{historyActionLabelAr(row.action)}</span>
+                                {isTruncated && (
+                                  <span
+                                    data-testid="maint-history-truncated-pill"
+                                    title={
+                                      rowCapNum != null && totalAvailableNum != null
+                                        ? `تم اقتطاع التصدير عند ${rowCapNum.toLocaleString("ar-SA")} من ${totalAvailableNum.toLocaleString("ar-SA")} صف`
+                                        : "تم اقتطاع التصدير"
+                                    }
+                                    className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                                  >
+                                    <Scissors className="h-3 w-3" />
+                                    <span>تم الاقتطاع</span>
+                                    {rowCapNum != null && totalAvailableNum != null && (
+                                      <span className="font-mono text-[9px] opacity-80">
+                                        {rowCapNum.toLocaleString("ar-SA")} / {totalAvailableNum.toLocaleString("ar-SA")}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td
                               className={
                                 "px-2 py-1 whitespace-nowrap "
@@ -3112,15 +3170,30 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                                   : "")
                               }
                               title={
-                                row.action === "edit_retention" && row?.metadata?.toolKey
-                                  ? `الأداة: ${row.metadata.toolKey}`
+                                row.action === "edit_retention" && typeof meta.toolKey === "string"
+                                  ? `الأداة: ${meta.toolKey}`
                                   : undefined
                               }
                             >
                               {retention || "—"}
                             </td>
-                            <td className="px-2 py-1 font-mono text-[10px] text-muted-foreground truncate max-w-[280px]">
-                              {row.metadata ? JSON.stringify(row.metadata) : "—"}
+                            <td className="px-2 py-1 text-[11px] text-muted-foreground max-w-[280px]">
+                              {isExportCsv ? (
+                                <button
+                                  type="button"
+                                  data-testid="maint-history-details-link"
+                                  onClick={() => setExportInspectorRow(row)}
+                                  className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 hover:underline focus:outline-none focus:underline"
+                                  title="عرض بيانات التدقيق الكاملة (الفلاتر، عدد الصفوف، حالة الاقتطاع)"
+                                >
+                                  <FileSearch className="h-3 w-3" />
+                                  <span>تفاصيل</span>
+                                </button>
+                              ) : (
+                                <span className="font-mono text-[10px] block truncate">
+                                  {row.metadata ? JSON.stringify(row.metadata) : "—"}
+                                </span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -3278,6 +3351,166 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                 </div>
               )}
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Audit-log inspector modal (task #122). Renders the metadata
+            blob attached by export_csv writers in admin.ts. */}
+        <Dialog
+          open={!!exportInspectorRow}
+          onOpenChange={(o) => { if (!o) setExportInspectorRow(null); }}
+        >
+          <DialogContent
+            dir="rtl"
+            data-testid="maint-history-inspector-dialog"
+            className="max-w-2xl max-h-[85vh] overflow-y-auto"
+          >
+            <DialogHeader className="text-right sm:text-right">
+              <DialogTitle className="flex items-center gap-2 text-violet-900">
+                <FileSearch className="h-4 w-4" />
+                تفاصيل تصدير CSV
+              </DialogTitle>
+              <DialogDescription>
+                {exportInspectorRow && (
+                  <span className="font-mono text-xs">
+                    {new Date(exportInspectorRow.createdAt).toLocaleString("ar", { hour12: false })}
+                    {" · "}
+                    {historyActionLabelAr(exportInspectorRow.action)}
+                    {exportInspectorRow.entityType
+                      ? ` · ${historyEntityTypeLabelAr(exportInspectorRow.entityType)}`
+                      : ""}
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {exportInspectorRow && (() => {
+              const meta = (exportInspectorRow.metadata ?? {}) as Record<string, unknown>;
+              const truncated = meta.truncated === true;
+              const count = typeof meta.count === "number" ? meta.count : null;
+              const totalAvailable =
+                typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
+              const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
+              const format = typeof meta.format === "string" ? meta.format : null;
+              const filters =
+                meta.filters && typeof meta.filters === "object"
+                  ? (meta.filters as Record<string, unknown>)
+                  : null;
+              // Anything the writer attached beyond the documented shape.
+              const wellKnown = new Set([
+                "truncated", "count", "totalAvailable", "rowCap", "format", "filters",
+              ]);
+              const extras: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(meta)) {
+                if (!wellKnown.has(k)) extras[k] = v;
+              }
+              const hasExtras = Object.keys(extras).length > 0;
+              return (
+                <div className="space-y-4 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {truncated ? (
+                      <span
+                        data-testid="maint-history-inspector-truncated-pill"
+                        className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
+                      >
+                        <Scissors className="h-3 w-3" />
+                        <span>تم اقتطاع التصدير</span>
+                        {rowCap != null && totalAvailable != null && (
+                          <span className="font-mono text-[10px] opacity-80">
+                            {rowCap.toLocaleString("ar-SA")} / {totalAvailable.toLocaleString("ar-SA")} صف
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span
+                        data-testid="maint-history-inspector-full-pill"
+                        className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        <span>تم تنزيل الملف بالكامل</span>
+                      </span>
+                    )}
+                    {format && (
+                      <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-mono uppercase text-slate-700">
+                        {format}
+                      </span>
+                    )}
+                  </div>
+
+                  <dl
+                    data-testid="maint-history-inspector-metrics"
+                    className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+                  >
+                    <div className="border rounded p-2 bg-muted/20">
+                      <dt className="text-[11px] text-muted-foreground">عدد الصفوف في الملف</dt>
+                      <dd className="font-mono text-base text-foreground">
+                        {count != null ? count.toLocaleString("ar-SA") : "—"}
+                      </dd>
+                    </div>
+                    <div className="border rounded p-2 bg-muted/20">
+                      <dt className="text-[11px] text-muted-foreground">إجمالي الصفوف المتاحة</dt>
+                      <dd className="font-mono text-base text-foreground">
+                        {totalAvailable != null ? totalAvailable.toLocaleString("ar-SA") : "—"}
+                      </dd>
+                    </div>
+                    <div className="border rounded p-2 bg-muted/20">
+                      <dt className="text-[11px] text-muted-foreground">حد الاقتطاع</dt>
+                      <dd className="font-mono text-base text-foreground">
+                        {rowCap != null ? rowCap.toLocaleString("ar-SA") : "—"}
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <div data-testid="maint-history-inspector-filters">
+                    <div className="text-xs font-medium text-muted-foreground mb-1">
+                      الفلاتر المُطبَّقة وقت التصدير
+                    </div>
+                    {!filters || Object.values(filters).every((v) => v == null) ? (
+                      <p className="text-xs italic text-muted-foreground">
+                        لم يتم تطبيق أي فلتر — تم تصدير كامل النطاق المتاح للأمر.
+                      </p>
+                    ) : (
+                      <ul className="text-xs space-y-1">
+                        {Object.entries(filters).map(([k, v]) => {
+                          if (v == null) return null;
+                          let label = k;
+                          if (k === "from") label = "من تاريخ";
+                          else if (k === "to") label = "إلى تاريخ";
+                          else if (k === "action") label = "الإجراء";
+                          else if (k === "entityType") label = "الفئة";
+                          let display = String(v);
+                          if (k === "action" && typeof v === "string") {
+                            display = historyActionLabelAr(v);
+                          } else if (k === "entityType" && typeof v === "string") {
+                            display = historyEntityTypeLabelAr(v);
+                          }
+                          return (
+                            <li key={k} className="flex items-center gap-2">
+                              <span className="text-muted-foreground">{label}:</span>
+                              <span className="font-mono">{display}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+
+                  {hasExtras && (
+                    <div>
+                      <div className="text-xs font-medium text-muted-foreground mb-1">
+                        بيانات إضافية
+                      </div>
+                      <pre
+                        dir="ltr"
+                        data-testid="maint-history-inspector-extras"
+                        className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-60 overflow-y-auto"
+                      >
+                        {JSON.stringify(extras, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </DialogContent>
         </Dialog>
       </CardContent>
