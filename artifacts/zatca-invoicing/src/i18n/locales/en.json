@@ -5008,9 +5008,13 @@
       "copyEntityId": "Copy entity ID",
       "copyUserAgent": "Copy user agent",
       "copyPath": "Copy request path",
+      "copyShareLink": "Copy link to this entry",
       "copySuccessTitle": "Copied to clipboard",
       "copyFailureTitle": "Copy failed",
       "copyFailureDescription": "Your browser blocked clipboard access. Try selecting the text manually.",
+      "detailsShareLink": "Share link",
+      "loadingEntry": "Loading entry…",
+      "loadEntryFailed": "Could not load this entry. It may have been deleted or belongs to another company.",
       "actions": {
         "view": "View",
         "create": "Create",

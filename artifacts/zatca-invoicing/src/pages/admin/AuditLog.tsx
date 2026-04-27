@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import {
   Scissors,
   Copy,
   Check,
+  Link2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -78,9 +80,41 @@ export default function AuditLog() {
   const [from,   setFrom]   = useState("");
   const [to,     setTo]     = useState("");
   const [page,   setPage]   = useState(0);
-  const [selected, setSelected] = useState<AuditRow | null>(null);
 
   useEffect(() => { setPage(0); }, [module, action, q, from, to]);
+
+  // ── Shareable permalinks (task #126) ───────────────────────────────────
+  // The currently-open details dialog is encoded as `?entry=N` in the URL
+  // so any audit row can be linked to directly. The URL is the single
+  // source of truth for which row is selected:
+  //   • Clicking a row pushes `?entry=N` (replace, no history pollution).
+  //   • Closing the dialog drops the param.
+  //   • Loading the page with `?entry=N` already present opens the dialog
+  //     immediately — even if that entry isn't on the current filter page.
+  // When the entry isn't in the loaded rows we fall back to a single-entry
+  // fetch (`GET /api/audit-log/:id`) so the dialog still opens with full
+  // details. The entry-fetch query is only enabled while we don't already
+  // have the row in the listing, which keeps the network chatter minimal.
+  const search$ = useSearch();
+  const [, setLocation] = useLocation();
+
+  const entryId = useMemo(() => {
+    const v = new URLSearchParams(search$).get("entry");
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [search$]);
+
+  const setSelectedId = useCallback(
+    (id: number | null) => {
+      const params = new URLSearchParams(search$);
+      if (id == null) params.delete("entry");
+      else params.set("entry", String(id));
+      const qs = params.toString();
+      setLocation(qs ? `/admin/audit-log?${qs}` : "/admin/audit-log", { replace: true });
+    },
+    [search$, setLocation],
+  );
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
@@ -118,6 +152,34 @@ export default function AuditLog() {
 
   const PrevIcon = isRtl ? ChevronRight : ChevronLeft;
   const NextIcon = isRtl ? ChevronLeft : ChevronRight;
+
+  // Resolve the entry that the URL currently points at. Prefer the row from
+  // the loaded listing so we don't re-fetch when the user simply clicked a
+  // visible row; fall back to the single-entry endpoint when the entry is
+  // outside the current filter / page (the permalink case). Errors here
+  // (404 cross-tenant, 404 missing, 500) are surfaced inside the dialog so
+  // the rest of the listing keeps working.
+  const inListEntry = useMemo(
+    () => (entryId != null ? rows.find(r => r.id === entryId) ?? null : null),
+    [entryId, rows],
+  );
+
+  const {
+    data: standaloneEntry,
+    isLoading: standaloneLoading,
+    error: standaloneError,
+  } = useQuery<AuditRow>({
+    queryKey: ["audit-log-entry", entryId],
+    enabled: entryId != null && !inListEntry,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/audit-log/${entryId}`, { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    retry: false,
+  });
+
+  const selectedRow = inListEntry ?? standaloneEntry ?? null;
 
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
@@ -235,11 +297,11 @@ export default function AuditLog() {
                         tabIndex={0}
                         role="button"
                         aria-label={tr("openDetails")}
-                        onClick={() => setSelected(r)}
+                        onClick={() => setSelectedId(r.id)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            setSelected(r);
+                            setSelectedId(r.id);
                           }
                         }}
                       >
@@ -319,8 +381,12 @@ export default function AuditLog() {
       </Card>
 
       <AuditDetailsDialog
-        row={selected}
-        onClose={() => setSelected(null)}
+        open={entryId != null}
+        row={selectedRow}
+        loading={entryId != null && !inListEntry && standaloneLoading}
+        error={standaloneError as Error | null}
+        entryId={entryId}
+        onClose={() => setSelectedId(null)}
         isRtl={isRtl}
         locale={locale}
         tr={tr}
@@ -331,21 +397,28 @@ export default function AuditLog() {
 }
 
 function AuditDetailsDialog({
+  open,
   row,
+  loading,
+  error,
+  entryId,
   onClose,
   isRtl,
   locale,
   tr,
   trAction,
 }: {
+  open: boolean;
   row: AuditRow | null;
+  loading: boolean;
+  error: Error | null;
+  entryId: number | null;
   onClose: () => void;
   isRtl: boolean;
   locale: string;
   tr: (k: string, opts?: any) => string;
   trAction: (a: string) => string;
 }) {
-  const open = row !== null;
   // Metadata can be any JSON shape — usually an object for our writers, but
   // we don't want to silently drop primitives (string/number/array) if a
   // future caller stores one. Treat "no metadata" as null/undefined or an
@@ -368,6 +441,19 @@ function AuditDetailsDialog({
     ? [row.method, row.path].filter((v) => v != null && v !== "").join(" ").trim()
     : "";
 
+  // Permanent share link to this entry. We rebuild it from `window.location`
+  // so it always reflects the live origin (development domain, deployed
+  // domain, etc.) and includes the artifact's base path. Only the `entry`
+  // query param is preserved — other listing filters are intentionally
+  // dropped so the link reliably opens the same entry regardless of who
+  // clicks it. Computed lazily inside the click handler so SSR / non-browser
+  // contexts don't break component rendering.
+  const buildShareLink = () => {
+    if (entryId == null || typeof window === "undefined") return "";
+    const { origin, pathname } = window.location;
+    return `${origin}${pathname}?entry=${entryId}`;
+  };
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent
@@ -381,16 +467,40 @@ function AuditDetailsDialog({
             {tr("detailsTitle")}
           </DialogTitle>
           <DialogDescription>
-            {row && (
+            {row ? (
               <span className="font-mono text-xs">
                 {new Date(row.createdAt).toLocaleString(locale, { hour12: false })}
                 {" · "}
                 {trAction(row.action)}
                 {row.module ? ` · ${row.module}` : ""}
               </span>
-            )}
+            ) : loading ? (
+              <span className="text-xs text-muted-foreground">{tr("loadingEntry")}</span>
+            ) : error ? (
+              <span className="text-xs text-rose-600">{tr("loadEntryFailed")}</span>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Loading / error states for the permalink fetch — we never block
+            the listing UI, just the dialog body. */}
+        {!row && loading && (
+          <div className="py-8 flex justify-center" data-testid="audit-details-loading">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        )}
+        {!row && !loading && error && (
+          <div
+            className="py-8 text-center text-rose-600 flex flex-col items-center gap-2"
+            data-testid="audit-details-error"
+          >
+            <ShieldAlert className="h-8 w-8" />
+            <span className="text-sm">{tr("loadEntryFailed")}</span>
+            {entryId != null && (
+              <span className="text-xs text-muted-foreground font-mono">#{entryId}</span>
+            )}
+          </div>
+        )}
 
         {row && (
           <div className="space-y-4 text-sm">
@@ -496,6 +606,35 @@ function AuditDetailsDialog({
                   {tr("detailsMetadataEmpty")}
                 </div>
               )}
+            </div>
+
+            {/* Permanent share link (task #126) — shows the full URL so the
+                reviewer can spot-check it visually before sharing, with an
+                inline copy button that puts the same string on the
+                clipboard. The whole row is selectable text too, so a
+                manual copy is always possible if the clipboard API is
+                blocked. */}
+            <div data-testid="audit-details-share">
+              <div className="text-xs font-medium text-muted-foreground mb-1">
+                {tr("detailsShareLink")}
+              </div>
+              <div className="flex items-start gap-1.5 bg-muted/40 border rounded p-2">
+                <Link2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                <span
+                  dir="ltr"
+                  data-testid="audit-details-share-link"
+                  className="font-mono text-xs break-all flex-1 select-all"
+                >
+                  {buildShareLink()}
+                </span>
+                <CopyIconButton
+                  value={buildShareLink()}
+                  label={tr("copyShareLink")}
+                  tr={tr}
+                  testId="audit-details-copy-share-link"
+                  showText
+                />
+              </div>
             </div>
           </div>
         )}

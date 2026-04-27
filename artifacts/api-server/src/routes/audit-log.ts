@@ -79,6 +79,10 @@ router.get("/", async (req, res) => {
 
 // Distinct module list — used by the filter dropdown so the UI doesn't have
 // to hardcode the catalogue. Cheap because the index covers it.
+//
+// NOTE: Registered BEFORE `/:id` so a request for `/modules` doesn't get
+// captured by the dynamic-id route (which would then 400 on the
+// non-numeric "modules" param).
 router.get("/modules", async (req, res) => {
   try {
     const u = req.authUser!;
@@ -95,6 +99,58 @@ router.get("/modules", async (req, res) => {
     res.json(rows.map(r => r.module).filter(Boolean));
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "تعذر جلب القائمة" });
+  }
+});
+
+// Single-entry fetch — powers the shareable permalink (task #126). The
+// audit-log page encodes the open dialog's row id in `?entry=N` so a URL
+// like `/admin/audit-log?entry=12345` reopens the same details modal. When
+// the entry isn't on the current filter page (or the page was loaded fresh
+// from the link), the UI falls back to this endpoint to fetch it directly.
+//
+// Same tenant-scoping rules as the listing handler: superadmin can fetch
+// any entry, every other admin is locked to their own company. We return
+// 404 — not 403 — for cross-tenant ids so we don't leak whether a given id
+// exists in some other company.
+//
+// Registered AFTER `/modules` so the static segment wins over `:id`.
+router.get("/:id", async (req, res) => {
+  try {
+    const u = req.authUser!;
+    const isSuper = u.role === "superadmin";
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف غير صالح" });
+      return;
+    }
+
+    const conds: any[] = [eq(auditLogTable.id, id)];
+    if (!isSuper) {
+      // Non-superadmins are pinned to their own company. If they have no
+      // company assigned at all (unusual but possible), fall through to a
+      // condition that can never match so we return 404 cleanly instead of
+      // exposing every entry.
+      if (u.companyId != null) {
+        conds.push(eq(auditLogTable.companyId, u.companyId));
+      } else {
+        res.status(404).json({ error: "السجل غير موجود" });
+        return;
+      }
+    }
+
+    const [row] = await db
+      .select()
+      .from(auditLogTable)
+      .where(and(...conds))
+      .limit(1);
+
+    if (!row) {
+      res.status(404).json({ error: "السجل غير موجود" });
+      return;
+    }
+    res.json(row);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "تعذر جلب السجل" });
   }
 });
 

@@ -5086,9 +5086,13 @@
       "copyEntityId": "نسخ معرّف الكيان",
       "copyUserAgent": "نسخ متصفح المستخدم",
       "copyPath": "نسخ مسار الطلب",
+      "copyShareLink": "نسخ رابط هذا السجل",
       "copySuccessTitle": "تم النسخ إلى الحافظة",
       "copyFailureTitle": "فشل النسخ",
       "copyFailureDescription": "حظر المتصفح الوصول إلى الحافظة. حاول تحديد النص يدويًا.",
+      "detailsShareLink": "رابط المشاركة",
+      "loadingEntry": "جارٍ تحميل السجل…",
+      "loadEntryFailed": "تعذر تحميل هذا السجل. قد يكون محذوفًا أو يخص شركة أخرى.",
       "actions": {
         "view": "عرض",
         "create": "إنشاء",
