@@ -162,6 +162,7 @@ router.post("/seed", requireSuperAdmin, async (_req, res) => {
       { key: "cash",         nameAr: "النقد والبنوك",          nameEn: "Cash & Banks",          description: "الخزائن، الحسابات البنكية، سندات القبض والصرف",          monthlyPrice: "300.00", icon: "Wallet",       iconColor: "#0891b2", category: "المالية",           sortOrder: 60, isActive: true },
       { key: "hr",           nameAr: "الموارد البشرية",        nameEn: "HR & Payroll",          description: "بيانات الموظفين، كشوف الرواتب، البدلات والاستقطاعات",   monthlyPrice: "400.00", icon: "UserCog",      iconColor: "#db2777", category: "المالية",           sortOrder: 70, isActive: true },
       { key: "zatca",        nameAr: "فوترة زاتكا الإلكترونية", nameEn: "ZATCA E-Invoicing",     description: "إصدار الفواتير الإلكترونية المتوافقة مع زاتكا (المرحلتين)", monthlyPrice: "200.00", icon: "FileCheck",    iconColor: "#16a34a", category: "الالتزام",          sortOrder: 80, isActive: true },
+      { key: "security_events", nameAr: "الأمن والمراقبة",     nameEn: "Security & Monitoring", description: "تسجيل الأحداث الأمنية، التحقيقات، وتقارير المراقبة",      monthlyPrice: "300.00", icon: "ShieldAlert",  iconColor: "#dc2626", category: "الأمن",             sortOrder: 90, isActive: true },
     ];
 
     let inserted = 0;

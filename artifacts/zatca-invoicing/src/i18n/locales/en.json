@@ -516,6 +516,112 @@
     "productionResources": "Machines & Resources",
     "dashboardGroup": "Control Panel"
   },
+  "security": {
+    "title": "Security & Monitoring",
+    "subtitle": "Manage security events and alerts",
+    "nav": {
+      "group": "Security & Monitoring",
+      "events": "Security Events"
+    },
+    "tiles": {
+      "events": "All Events",
+      "eventsDesc": "View and manage all security events",
+      "openOnly": "Open Events",
+      "investigating": "Under Investigation",
+      "history": "Closed Event History"
+    },
+    "stats": {
+      "total": "Total Events",
+      "open": "Open",
+      "investigating": "Investigating",
+      "closed": "Closed",
+      "falsePositive": "False Positive",
+      "critical": "Critical"
+    },
+    "filter": {
+      "all": "All",
+      "open": "Open",
+      "investigating": "Investigating",
+      "closed": "Closed",
+      "status": "Filter by status",
+      "severity": "Filter by severity",
+      "type": "Filter by type",
+      "allStatuses": "All Statuses",
+      "allSeverities": "All Severities",
+      "allTypes": "All Types"
+    },
+    "type": {
+      "intrusion": "Intrusion",
+      "theft": "Theft",
+      "suspicious_movement": "Suspicious Movement",
+      "unknown_person": "Unknown Person",
+      "after_hours_presence": "After-hours Presence",
+      "missing_item": "Missing Item",
+      "unusual_gathering": "Unusual Gathering",
+      "tampering": "Tampering",
+      "other": "Other"
+    },
+    "severity": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "critical": "Critical"
+    },
+    "status": {
+      "open": "Open",
+      "investigating": "Investigating",
+      "closed": "Closed",
+      "false_positive": "False Positive"
+    },
+    "col": {
+      "title": "Title",
+      "type": "Type",
+      "severity": "Severity",
+      "status": "Status",
+      "branch": "Branch",
+      "camera": "Camera",
+      "datetime": "Date & Time",
+      "dateTime": "Date & Time",
+      "location": "Location / Camera",
+      "assignedTo": "Assigned To",
+      "actions": "Actions"
+    },
+    "form": {
+      "newTitle": "New Security Event",
+      "editTitle": "Edit Security Event",
+      "title": "Title",
+      "titlePlaceholder": "Brief description of the event",
+      "description": "Detailed description",
+      "descriptionPlaceholder": "Describe what happened in detail (AI can suggest type and severity)",
+      "type": "Type",
+      "severity": "Severity",
+      "status": "Status",
+      "cameraLabel": "Camera / Location",
+      "cameraLabelPlaceholder": "e.g., Main entrance camera",
+      "eventDateTime": "Event date & time",
+      "resolutionNote": "Resolution notes",
+      "resolutionPlaceholder": "How was this event resolved?"
+    },
+    "ai": {
+      "suggest": "AI Suggest",
+      "thinking": "Analyzing...",
+      "applied": "AI suggestion applied",
+      "needDescription": "Please write a description first (at least 5 characters)"
+    },
+    "validation": {
+      "titleRequired": "Title is required"
+    },
+    "toast": {
+      "created": "Security event created",
+      "updated": "Security event updated",
+      "deleted": "Security event deleted"
+    },
+    "newEvent": "New Event",
+    "eventsTitle": "Security Events",
+    "empty": "No security events recorded",
+    "searchPlaceholder": "Search title or description...",
+    "confirmDelete": "Are you sure you want to delete this event?"
+  },
   "hub": {
     "salesSubtitle": "All customers and sales screens and reports in one place",
     "purchasingSubtitle": "All suppliers and purchasing screens and reports in one place",

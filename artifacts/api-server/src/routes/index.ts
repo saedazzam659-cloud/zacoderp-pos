@@ -49,6 +49,7 @@ import offersRouter from "./offers";
 import adminModulesRouter from "./adminModules";
 import productionRouter from "./production";
 import faceAttendanceRouter from "./faceAttendance";
+import securityEventsRouter from "./security-events";
 
 const router: IRouter = Router();
 
@@ -88,6 +89,7 @@ router.use("/employees",          employeesRouter);
 router.use("/hr/settings",        hrSettingsRouter);
 router.use("/hr/reports",         hrReportsRouter);
 router.use("/hr/face",            faceAttendanceRouter);
+router.use("/security-events",    securityEventsRouter);
 router.use(storageRouter);
 router.use("/pos-sessions", posSessionsRouter);
 router.use("/pos-terminals", posTerminalsRouter);

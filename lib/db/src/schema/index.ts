@@ -30,3 +30,4 @@ export * from "./maintenanceRuns";
 export * from "./offers";
 export * from "./modules";
 export * from "./production";
+export * from "./securityEvents";

@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { and, eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
 
@@ -2731,3 +2732,88 @@ ${JSON.stringify(safe)}
 });
 
 export default router;
+
+// ═══════════════════════════════════════════════════════════════════
+// Classify a free-text security incident description into a structured
+// {eventType, severity, suggestedTitle} payload. Used by the
+// SecurityEventForm "Suggest with AI" button so operators can paste a
+// short Arabic/English description and have the form pre-filled.
+// Body: { description: string, cameraLabel?: string }
+// Returns: { eventType, severity, suggestedTitle, reasoning }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/security/classify-event", requirePermission("security_events", "view"), async (req, res) => {
+  try {
+    const { description, cameraLabel } = (req.body ?? {}) as {
+      description?: string;
+      cameraLabel?: string;
+    };
+    const desc = String(description ?? "").trim();
+    if (!desc || desc.length < 5) {
+      res.status(400).json({ error: "الوصف قصير جداً للتحليل" });
+      return;
+    }
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
+      return;
+    }
+
+    const TYPES = [
+      "intrusion", "theft", "suspicious_movement", "unknown_person",
+      "after_hours_presence", "missing_item", "unusual_gathering",
+      "tampering", "other",
+    ];
+    const SEVERITIES = ["low", "medium", "high", "critical"];
+
+    const userPrompt = `صنّف الحدث الأمني التالي إلى نوع ومستوى خطورة، واقترح عنواناً قصيراً (5-10 كلمات) باللغة العربية.
+
+الوصف: ${desc}
+${cameraLabel ? `الكاميرا/الموقع: ${cameraLabel}` : ""}
+
+الأنواع المتاحة (اختر واحداً فقط بالقيمة الإنجليزية بالضبط):
+${TYPES.map(t => `- ${t}`).join("\n")}
+
+مستويات الخطورة (اختر واحداً فقط بالقيمة الإنجليزية بالضبط):
+${SEVERITIES.map(s => `- ${s}`).join("\n")}
+
+أعد JSON فقط بهذا الشكل:
+{ "eventType": "...", "severity": "...", "suggestedTitle": "...", "reasoning": "سبب موجز جداً (جملة واحدة)" }`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 400,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "أنت مصنّف أحداث أمنية محايد. ترد بـ JSON فقط بدون أي شرح خارج الـ JSON." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any;
+    try { parsed = JSON.parse(content); }
+    catch { res.status(500).json({ error: "تعذّر تحليل استجابة الذكاء الاصطناعي" }); return; }
+
+    // Always return a valid value — fall back to safe defaults if the LLM
+    // hallucinates an unknown enum value rather than 500-ing the form.
+    const eventType = TYPES.includes(parsed?.eventType) ? parsed.eventType : "other";
+    const severity  = SEVERITIES.includes(parsed?.severity) ? parsed.severity : "medium";
+    const suggestedTitle = String(parsed?.suggestedTitle ?? "").slice(0, 200) || desc.slice(0, 80);
+    const reasoning = String(parsed?.reasoning ?? "").slice(0, 500);
+
+    res.json({ eventType, severity, suggestedTitle, reasoning });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "AI classify failed" });
+  }
+});

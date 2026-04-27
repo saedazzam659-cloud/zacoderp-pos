@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
-  Factory, Cog, ScanFace, Store,
+  Factory, Cog, ScanFace, Store, ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -149,6 +149,11 @@ const productionSubNav: NavDef[] = [
   { nameKey: "nav.productionResources", href: "/production/resources", icon: Cog, permKey: "production" },
 ];
 const PRODUCTION_GROUP_PERMS = ["production"];
+// Sub-items live under the "الأمن والمراقبة" collapsible group.
+const securitySubNav: NavDef[] = [
+  { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
+];
+const SECURITY_GROUP_PERMS = ["security_events"];
 const dashboardSubNav: NavDef[] = [
   { nameKey: "nav.regions",         href: "/org/regions",         icon: MapPin,     permKey: "regions" },
   { nameKey: "nav.branches",        href: "/org/branches",        icon: BranchIcon, permKey: "branches" },
@@ -978,6 +983,39 @@ function ProductionNavGroup({
   );
 }
 
+// ─── SecurityNavGroup ────────────────────────────────────────────────────────
+// Collapsible "الأمن والمراقبة" group — mirrors ProductionNavGroup, gated
+// by the `security_events` permission.
+function SecurityNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, SECURITY_GROUP_PERMS)) return null;
+  const isOnSub = location === "/security" || securitySubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/security"
+        icon={ShieldAlert}
+        label={t("security.nav.group")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {securitySubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── SidebarInner (stable, top-level component) ───────────────────────────────
 // All state that needs to persist lives in Layout and is passed as props here.
 function SidebarInner({
@@ -1013,6 +1051,8 @@ function SidebarInner({
   onProductionToggle,
   posOpen,
   onPosToggle,
+  securityOpen,
+  onSecurityToggle,
   onNavigate,
   onLogout,
 }: {
@@ -1048,6 +1088,8 @@ function SidebarInner({
   onProductionToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
+  securityOpen: boolean;
+  onSecurityToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
 }) {
@@ -1212,6 +1254,15 @@ function SidebarInner({
                 onNavigate={onNavigate}
                 open={posOpen}
                 onToggle={onPosToggle}
+              />
+            </div>
+
+            <div className="space-y-0.5">
+              <SecurityNavGroup
+                location={location}
+                onNavigate={onNavigate}
+                open={securityOpen}
+                onToggle={onSecurityToggle}
               />
             </div>
 
@@ -1574,6 +1625,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [posOpen,        setPosOpen]          = useState(() =>
     location.startsWith("/pos-monitoring") || location.startsWith("/pos-terminals") || location.startsWith("/pos-settings")
   );
+  const [securityOpen,   setSecurityOpen]     = useState(() => location.startsWith("/security"));
 
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
@@ -1592,6 +1644,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleHrToggle         = () => setHrOpen(v => !v);
   const handleProductionToggle = () => setProductionOpen(v => !v);
   const handlePosToggle        = () => setPosOpen(v => !v);
+  const handleSecurityToggle   = () => setSecurityOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   // ─── Auto-expand groups on direct URL navigation ───────────────────────
@@ -1613,6 +1666,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (location.startsWith("/inventory")) setInventoryOpen(true);
     if (location.startsWith("/production")) setProductionOpen(true);
     if (location.startsWith("/hr/") || location === "/hr") setHrOpen(true);
+    if (location.startsWith("/security")) setSecurityOpen(true);
     if (
       location.startsWith("/pos-monitoring") ||
       location.startsWith("/pos-terminals") ||
@@ -1659,6 +1713,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onProductionToggle: handleProductionToggle,
     posOpen,
     onPosToggle: handlePosToggle,
+    securityOpen,
+    onSecurityToggle: handleSecurityToggle,
     onNavigate: closeMobile,
     onLogout: logout,
   };

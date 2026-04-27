@@ -517,6 +517,112 @@
     "productionResources": "الماكينات والموارد",
     "dashboardGroup": "لوحة التحكم"
   },
+  "security": {
+    "title": "الأمن والمراقبة",
+    "subtitle": "إدارة الأحداث الأمنية والتنبيهات",
+    "nav": {
+      "group": "الأمن والمراقبة",
+      "events": "الأحداث الأمنية"
+    },
+    "tiles": {
+      "events": "كل الأحداث",
+      "eventsDesc": "عرض وإدارة جميع الأحداث الأمنية",
+      "openOnly": "الأحداث المفتوحة",
+      "investigating": "قيد التحقيق",
+      "history": "سجل الأحداث المغلقة"
+    },
+    "stats": {
+      "total": "إجمالي الأحداث",
+      "open": "مفتوحة",
+      "investigating": "قيد التحقيق",
+      "closed": "مغلقة",
+      "falsePositive": "إنذار كاذب",
+      "critical": "حرجة"
+    },
+    "filter": {
+      "all": "الكل",
+      "open": "مفتوحة",
+      "investigating": "قيد التحقيق",
+      "closed": "مغلقة",
+      "status": "تصفية بالحالة",
+      "severity": "تصفية بالخطورة",
+      "type": "تصفية بالنوع",
+      "allStatuses": "كل الحالات",
+      "allSeverities": "كل مستويات الخطورة",
+      "allTypes": "كل الأنواع"
+    },
+    "type": {
+      "intrusion": "اقتحام",
+      "theft": "سرقة",
+      "suspicious_movement": "حركة مشبوهة",
+      "unknown_person": "شخص غير معروف",
+      "after_hours_presence": "تواجد بعد ساعات العمل",
+      "missing_item": "عنصر مفقود",
+      "unusual_gathering": "تجمع غير عادي",
+      "tampering": "عبث",
+      "other": "أخرى"
+    },
+    "severity": {
+      "low": "منخفضة",
+      "medium": "متوسطة",
+      "high": "عالية",
+      "critical": "حرجة"
+    },
+    "status": {
+      "open": "مفتوحة",
+      "investigating": "قيد التحقيق",
+      "closed": "مغلقة",
+      "false_positive": "إنذار كاذب"
+    },
+    "col": {
+      "title": "العنوان",
+      "type": "النوع",
+      "severity": "الخطورة",
+      "status": "الحالة",
+      "branch": "الفرع",
+      "camera": "الكاميرا",
+      "datetime": "التاريخ والوقت",
+      "dateTime": "التاريخ والوقت",
+      "location": "الموقع / الكاميرا",
+      "assignedTo": "مسند إلى",
+      "actions": "الإجراءات"
+    },
+    "form": {
+      "newTitle": "حدث أمني جديد",
+      "editTitle": "تعديل الحدث الأمني",
+      "title": "العنوان",
+      "titlePlaceholder": "وصف موجز للحدث",
+      "description": "الوصف التفصيلي",
+      "descriptionPlaceholder": "اكتب وصفاً تفصيلياً لما حدث (يمكن للذكاء الاصطناعي اقتراح النوع والخطورة)",
+      "type": "النوع",
+      "severity": "الخطورة",
+      "status": "الحالة",
+      "cameraLabel": "الكاميرا / الموقع",
+      "cameraLabelPlaceholder": "مثلاً: كاميرا المدخل الرئيسي",
+      "eventDateTime": "تاريخ ووقت الحدث",
+      "resolutionNote": "ملاحظات الحل",
+      "resolutionPlaceholder": "كيف تم حل الحدث؟"
+    },
+    "ai": {
+      "suggest": "اقترح بالذكاء الاصطناعي",
+      "thinking": "جارٍ التحليل...",
+      "applied": "تم تطبيق اقتراح الذكاء الاصطناعي",
+      "needDescription": "يرجى كتابة وصف للحدث أولاً (5 أحرف على الأقل)"
+    },
+    "validation": {
+      "titleRequired": "العنوان مطلوب"
+    },
+    "toast": {
+      "created": "تم إنشاء الحدث الأمني",
+      "updated": "تم تحديث الحدث الأمني",
+      "deleted": "تم حذف الحدث الأمني"
+    },
+    "newEvent": "حدث جديد",
+    "eventsTitle": "الأحداث الأمنية",
+    "empty": "لا توجد أحداث أمنية مسجلة",
+    "searchPlaceholder": "ابحث في العنوان أو الوصف...",
+    "confirmDelete": "هل أنت متأكد من حذف هذا الحدث؟"
+  },
   "hub": {
     "salesSubtitle": "كل شاشات وتقارير العملاء والمبيعات في مكان واحد",
     "purchasingSubtitle": "كل شاشات وتقارير الموردين والمشتريات في مكان واحد",

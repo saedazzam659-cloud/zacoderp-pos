@@ -54,6 +54,8 @@ import PurchasingHub from "@/pages/purchasing/PurchasingHub";
 import CashHub from "@/pages/cash/CashHub";
 import AccountingHub from "@/pages/accounting/AccountingHub";
 import HrHub from "@/pages/hr/HrHub";
+import SecurityHub from "@/pages/security/SecurityHub";
+import SecurityEvents from "@/pages/security/SecurityEvents";
 import PosHub from "@/pages/pos/PosHub";
 import ControlPanelHub from "@/pages/ControlPanelHub";
 // HR
@@ -309,6 +311,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/face/cameras"            module="hr_face_attendance" component={AttendanceCameras} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/logs"               module="hr_face_attendance" component={FaceAttendanceLogs} />}
             {!isSuperAdmin && <PermRoute path="/hr/face/settings"           module="hr_face_attendance" component={FaceAttendanceSettings} />}
+            {!isSuperAdmin && <PermRoute path="/security"        module="security_events" component={SecurityHub} />}
+            {!isSuperAdmin && <PermRoute path="/security/events" module="security_events" component={SecurityEvents} />}
 
             {!isSuperAdmin && <PermRoute path="/production"                  module="production"     component={ProductionDashboard} />}
             {!isSuperAdmin && <PermRoute path="/production/orders"           module="production"     component={ProductionOrders} />}
