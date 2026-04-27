@@ -14,6 +14,7 @@ import SupportSettings from "@/pages/admin/SupportSettings";
 import AuditLog from "@/pages/admin/AuditLog";
 import WorkSessions from "@/pages/WorkSessions";
 import WorkSessionSettings from "@/pages/WorkSessionSettings";
+import VoiceAssistantSettings from "@/pages/VoiceAssistantSettings";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
@@ -268,6 +269,7 @@ function AppRoutes() {
                 has no companyId so the feature doesn't apply to them. */}
             {!isSuperAdmin && <Route path="/work-sessions/settings" component={WorkSessionSettings} />}
             {!isSuperAdmin && <Route path="/work-sessions" component={WorkSessions} />}
+            {!isSuperAdmin && <Route path="/voice-assistant/settings" component={VoiceAssistantSettings} />}
             <Route path="/notifications" component={Notifications} />
 
             {/* Company user routes */}

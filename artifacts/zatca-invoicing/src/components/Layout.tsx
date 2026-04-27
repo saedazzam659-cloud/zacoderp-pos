@@ -9,7 +9,7 @@ import {
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
-  Search, Home, HelpCircle, ChevronLeft,
+  Search, Home, HelpCircle, ChevronLeft, Mic,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck,
   ScrollText, Database, ListOrdered, HardDrive,
@@ -29,6 +29,7 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import SessionCountdown from "@/components/SessionCountdown";
 import ScreenAssistant from "@/components/ScreenAssistant";
+import VoiceAssistantWidget from "@/components/VoiceAssistantWidget";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
 // ─── Nav definitions ───────────────────────────────────────────────────────────
@@ -177,6 +178,9 @@ const dashboardSubNav: NavDef[] = [
   // Hidden from superadmin entirely — superadmin has no companyId so the
   // feature does not apply to them.
   { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
+  // Voice Assistant — admin-only screen for company-wide voice activation,
+  // AI model + a recent-commands log. Hidden from superadmin (no companyId).
+  { nameKey: "nav.voiceAssistantSettings", href: "/voice-assistant/settings", icon: Mic, permKey: "voiceAssistant", requireAdmin: true },
 ];
 
 // "ربط ZATCA" — top-level group for ZATCA integration screens. Per the
@@ -1836,6 +1840,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           screen. The component itself self-hides when the user is not
           authenticated and auto-derives the screen context from the URL. */}
       <ScreenAssistant />
+
+      {/* Voice Assistant — floating mic widget. Self-hides when:
+          • user is unauthenticated
+          • voice_assistant_settings.enabled is false for the company
+          • the browser does not support webkitSpeechRecognition
+          The widget calls /api/voice-assistant/settings/me/effective on
+          mount to read the gate flags. */}
+      {!isSuperAdmin && <VoiceAssistantWidget />}
     </div>
   );
 }
