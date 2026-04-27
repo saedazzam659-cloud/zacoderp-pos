@@ -4774,6 +4774,133 @@ test("GET /maintenance/history/facets: filters out NULL / empty-string action an
     "NULL entity_type must never leak into the dropdown options");
 });
 
+test("GET /maintenance/history/facets: ?includeSystem=1 surfaces companyId=0 audit rows in both dropdowns alongside tenant values", async () => {
+  // Mirrors the /maintenance/history?includeSystem=1 test above, but on the
+  // sibling /facets endpoint that drives the two filter <Select>s. The
+  // SuperAdmin AI Company Fix page sets includeSystem=1 so options like
+  // `edit_retention` / `auto_prune` (logged at companyId=0 by the daily
+  // auto-prune and the retention-settings PUT) actually appear in the
+  // dropdowns. A regression on the includeSystem branch would silently hide
+  // those documented options. Captures task #89.
+  //
+  // Test isolation: a dedicated tenant (no HISTORY_SEED rows) keeps the
+  // assertions independent of any other facet test. Sentinel values are
+  // unique to this test (mirror the `facet_keep_*` naming pattern from task
+  // #76) so a parallel system-wide row left behind by the /maintenance/history
+  // includeSystem test cannot collide with — or substitute for — what we
+  // are asserting here.
+  const [sysFacetsCo] = await db.insert(companiesTable).values({
+    nameAr:         `${TEST_TAG} شركة فلاتر النظام`,
+    nameEn:         `${TEST_TAG} Sys Facets Co`,
+    vatNumber:      `300000000000${"S".charCodeAt(0) % 10}`,
+    crNumber:       `CR_${TEST_TAG}_FS`,
+    city:           "Riyadh",
+    street:         "Test St",
+    buildingNumber: "1",
+    postalCode:     "12345",
+    country:        "SA",
+    invoiceType:    "both",
+    status:         "active",
+  }).returning({ id: companiesTable.id });
+  insertedCompanyIds.push(sysFacetsCo.id);
+
+  // Two tenant rows so we can assert the system row appears *alongside* the
+  // tenant-scoped values (not in place of them) when the flag is on.
+  const tenantRows = await db.insert(auditLogTable).values([
+    {
+      userId:     saUserId,
+      username:   `${TEST_TAG}_sa_sysfacets`,
+      role:       "superadmin",
+      companyId:  sysFacetsCo.id,
+      module:     "maintenance",
+      action:     "facet_sys_tenant_action",
+      method:     "POST",
+      path:       "/api/admin/maintenance/seed",
+      entityType: "facet_sys_tenant_entity",
+      entityId:   null,
+      statusCode: 200,
+      ip:         "127.0.0.1",
+      metadata:   { tag: "tenant" },
+      createdAt:  new Date("2010-05-10T03:00:00.000Z"),
+    },
+  ]).returning({ id: auditLogTable.id });
+  for (const row of tenantRows) insertedAuditLogIds.push(row.id);
+
+  // One system-wide row (companyId=0) with action / entityType values that
+  // appear nowhere else in the suite. These are the sentinels the assertions
+  // pivot on.
+  const SYS_ACTION = "facet_sys_action_only";
+  const SYS_ENTITY = "facet_sys_entity_only";
+  const [sysRow] = await db.insert(auditLogTable).values({
+    userId:     saUserId,
+    username:   `${TEST_TAG}_sa_sysfacets`,
+    role:       "superadmin",
+    companyId:  0,
+    module:     "maintenance",
+    action:     SYS_ACTION,
+    method:     "PUT",
+    path:       "/api/admin/maintenance/retention-settings/old-audit-logs",
+    entityType: SYS_ENTITY,
+    entityId:   "old-audit-logs",
+    statusCode: 200,
+    ip:         "127.0.0.1",
+    metadata:   { tag: "system", days: 200, previousDays: 365 },
+    createdAt:  new Date("2010-05-11T03:00:00.000Z"),
+  }).returning({ id: auditLogTable.id });
+  insertedAuditLogIds.push(sysRow.id);
+
+  // Without the flag → only the tenant's own values are surfaced. The
+  // system-wide sentinels MUST NOT leak into either dropdown.
+  const noFlag = await api<FacetsResponse>(FACETS_PATH(sysFacetsCo.id), "GET", { token: saToken });
+  assert.equal(noFlag.status, 200,
+    `expected 200, got ${noFlag.status}: ${JSON.stringify(noFlag.body).slice(0, 200)}`);
+  assert.deepEqual(noFlag.body.actions, ["facet_sys_tenant_action"],
+    `default branch must scope actions to the tenant only; got ${JSON.stringify(noFlag.body.actions)}`);
+  assert.deepEqual(noFlag.body.entityTypes, ["facet_sys_tenant_entity"],
+    `default branch must scope entityTypes to the tenant only; got ${JSON.stringify(noFlag.body.entityTypes)}`);
+  assert.ok(!noFlag.body.actions.includes(SYS_ACTION),
+    "system-wide action must NOT appear in the dropdown when includeSystem is absent");
+  assert.ok(!noFlag.body.entityTypes.includes(SYS_ENTITY),
+    "system-wide entityType must NOT appear in the dropdown when includeSystem is absent");
+
+  // With ?includeSystem=1 → the system-wide sentinels surface in BOTH
+  // dropdowns, alongside the tenant's own values. Use includes() (not
+  // deepEqual) because other tests in the suite may have left additional
+  // companyId=0 rows behind on a shared DB.
+  const withFlag = await api<FacetsResponse>(
+    FACETS_PATH(sysFacetsCo.id, "includeSystem=1"), "GET", { token: saToken });
+  assert.equal(withFlag.status, 200,
+    `expected 200, got ${withFlag.status}: ${JSON.stringify(withFlag.body).slice(0, 200)}`);
+  assert.ok(withFlag.body.actions.includes("facet_sys_tenant_action"),
+    `tenant action must still surface alongside system rows; got ${JSON.stringify(withFlag.body.actions)}`);
+  assert.ok(withFlag.body.entityTypes.includes("facet_sys_tenant_entity"),
+    `tenant entityType must still surface alongside system rows; got ${JSON.stringify(withFlag.body.entityTypes)}`);
+  assert.ok(withFlag.body.actions.includes(SYS_ACTION),
+    `system-wide action (${SYS_ACTION}) must surface in actions when includeSystem=1; got ${JSON.stringify(withFlag.body.actions)}`);
+  assert.ok(withFlag.body.entityTypes.includes(SYS_ENTITY),
+    `system-wide entityType (${SYS_ENTITY}) must surface in entityTypes when includeSystem=1; got ${JSON.stringify(withFlag.body.entityTypes)}`);
+
+  // The flag must not duplicate values, and the result must remain sorted —
+  // the SQL UNION ALL + GROUP BY relies on the route's post-process sort.
+  for (const list of [withFlag.body.actions, withFlag.body.entityTypes]) {
+    for (let i = 1; i < list.length; i++) {
+      assert.ok(list[i - 1].localeCompare(list[i]) < 0,
+        `includeSystem=1 facet list must be strictly ascending and dedup'd; ${list[i - 1]} >= ${list[i]} at index ${i}`);
+    }
+  }
+
+  // ?includeSystem=true (the alternate truthy spelling the route accepts)
+  // must behave identically — guards against a future refactor that drops
+  // one of the two accepted spellings.
+  const withFlagTrue = await api<FacetsResponse>(
+    FACETS_PATH(sysFacetsCo.id, "includeSystem=true"), "GET", { token: saToken });
+  assert.equal(withFlagTrue.status, 200);
+  assert.ok(withFlagTrue.body.actions.includes(SYS_ACTION),
+    "?includeSystem=true must surface system-wide actions just like ?includeSystem=1");
+  assert.ok(withFlagTrue.body.entityTypes.includes(SYS_ENTITY),
+    "?includeSystem=true must surface system-wide entityTypes just like ?includeSystem=1");
+});
+
 // Placed last in the history block on purpose: hitting ?format=csv writes a
 // fresh `export_csv` audit row at NOW into the seeded tenant, which would
 // shift the most-recent timestamp the JSON-shape tests above hard-code.
