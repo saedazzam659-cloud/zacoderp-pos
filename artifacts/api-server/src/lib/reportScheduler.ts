@@ -28,7 +28,10 @@ export async function ensureScheduleRow() {
   return created;
 }
 
-function isDue(lastSentAt: Date | null, frequency: string): boolean {
+// Exported so tests can pin the "is it due?" gate directly. The function is
+// pure (Date-comparing only) so a regression in the interval math or the
+// null-handling shows up immediately without booting the scheduler.
+export function isDue(lastSentAt: Date | null, frequency: string): boolean {
   if (!lastSentAt) return true;
   const interval = frequency === "monthly" ? MONTH_MS : WEEK_MS;
   return Date.now() - lastSentAt.getTime() >= interval;
@@ -139,25 +142,29 @@ async function recordRun(
   return { status, message, reports, recipients };
 }
 
+// Exported so tests can drive a single tick deterministically without
+// booting the timers in startReportDigestScheduler. Production behaviour is
+// unchanged — startReportDigestScheduler still owns the polling loop and
+// just delegates each tick here.
+export async function tickReportDigestScheduler(): Promise<void> {
+  try {
+    const cfg = await ensureScheduleRow();
+    if (!cfg.enabled) return;
+    if (!isDue(cfg.lastSentAt, cfg.frequency)) return;
+    const outcome = await runReportDigest("scheduled");
+    logger.info({ outcome }, "report-digest: scheduled tick complete");
+  } catch (err) {
+    logger.error({ err }, "report-digest: scheduler tick error");
+  }
+}
+
 let started = false;
 export function startReportDigestScheduler() {
   if (started) return;
   started = true;
 
-  async function tick() {
-    try {
-      const cfg = await ensureScheduleRow();
-      if (!cfg.enabled) return;
-      if (!isDue(cfg.lastSentAt, cfg.frequency)) return;
-      const outcome = await runReportDigest("scheduled");
-      logger.info({ outcome }, "report-digest: scheduled tick complete");
-    } catch (err) {
-      logger.error({ err }, "report-digest: scheduler tick error");
-    }
-  }
-
   setTimeout(() => {
-    void tick();
-    setInterval(() => { void tick(); }, TICK_MS);
+    void tickReportDigestScheduler();
+    setInterval(() => { void tickReportDigestScheduler(); }, TICK_MS);
   }, STARTUP_DELAY_MS);
 }
