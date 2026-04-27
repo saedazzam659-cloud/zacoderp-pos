@@ -58,6 +58,7 @@ function defaults(companyId: number) {
     aiModel:               "claude-haiku-4-5",
     wakeWord:              null as string | null,
     confidenceThreshold:   50,
+    voiceBiometricsEnabled: false,
     notes:                 "",
     updatedAt:             null as string | null,
     isDefault:             true,
@@ -104,6 +105,7 @@ router.get("/settings", async (req, res) => {
       aiModel:              row.aiModel,
       wakeWord:             row.wakeWord ?? null,
       confidenceThreshold:  row.confidenceThreshold,
+      voiceBiometricsEnabled: row.voiceBiometricsEnabled,
       notes:                row.notes ?? "",
       updatedAt:            row.updatedAt?.toISOString() ?? null,
       isDefault:            false,
@@ -132,16 +134,22 @@ router.put("/settings", async (req, res) => {
     const notes    = b.notes    ? String(b.notes).slice(0, 2000)              : "";
 
     const payload = {
-      companyId:            cid,
-      enabled:              Boolean(b.enabled),
-      autoActivateOnLogin:  Boolean(b.autoActivateOnLogin),
+      companyId:              cid,
+      enabled:                Boolean(b.enabled),
+      autoActivateOnLogin:    Boolean(b.autoActivateOnLogin),
       language,
       aiModel,
       wakeWord,
       confidenceThreshold,
+      // Voice biometrics is a placeholder: stored but not enforced. The
+      // actual speaker-verification step requires a paid vendor (Azure
+      // Speaker Recognition or similar) and will be wired up in a future
+      // task. Storing the toggle now keeps the migration cost out of that
+      // future task.
+      voiceBiometricsEnabled: Boolean(b.voiceBiometricsEnabled),
       notes,
-      updatedByUserId:      (req as any).authUser?.id ?? null,
-      updatedAt:            new Date(),
+      updatedByUserId:        (req as any).authUser?.id ?? null,
+      updatedAt:              new Date(),
     };
 
     const [existing] = await db.select().from(voiceAssistantSettingsTable)
@@ -175,6 +183,11 @@ router.put("/settings", async (req, res) => {
           autoActivateOnLogin: payload.autoActivateOnLogin,
           language: payload.language,
           aiModel: payload.aiModel,
+          // Track the policy intent toggle even though it's not enforced yet
+          // — admins should be able to see in the audit trail when the switch
+          // was flipped so the eventual enforcement rollout has a clear paper
+          // trail of who pre-opted-in.
+          voiceBiometricsEnabled: payload.voiceBiometricsEnabled,
         },
       });
     } catch { /* never block the save on audit */ }
@@ -188,6 +201,7 @@ router.put("/settings", async (req, res) => {
       aiModel:              saved.aiModel,
       wakeWord:             saved.wakeWord ?? null,
       confidenceThreshold:  saved.confidenceThreshold,
+      voiceBiometricsEnabled: saved.voiceBiometricsEnabled,
       notes:                saved.notes ?? "",
       updatedAt:            saved.updatedAt?.toISOString() ?? null,
     });

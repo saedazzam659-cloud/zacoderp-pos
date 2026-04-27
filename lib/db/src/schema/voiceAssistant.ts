@@ -41,6 +41,16 @@ export const voiceAssistantSettingsTable = pgTable("voice_assistant_settings", {
   // utterance instead of bothering the AI. 0 = always parse.
   confidenceThreshold:      integer("confidence_threshold").notNull().default(50),
 
+  // ─── Speaker biometrics (placeholder / future) ─────────────────────────────
+  // OPTIONAL: when true the system will (in a future release) verify the
+  // speaker's voice identity against the logged-in user before executing any
+  // command. Today the toggle is stored but NOT enforced anywhere — the Web
+  // Speech API doesn't expose speaker biometrics, so the actual verification
+  // requires plugging in a paid vendor (e.g. Azure Speaker Recognition). The
+  // setting is exposed now so admins can express intent and so the wiring is
+  // ready when the vendor integration lands.
+  voiceBiometricsEnabled:   boolean("voice_biometrics_enabled").notNull().default(false),
+
   // Free-text admin notes (audit / what's enabled where).
   notes:                    text("notes"),
 

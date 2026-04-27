@@ -34,6 +34,7 @@ interface Settings {
   aiModel: string;
   wakeWord: string | null;
   confidenceThreshold: number;
+  voiceBiometricsEnabled: boolean;
   notes: string;
   updatedAt: string | null;
   isDefault?: boolean;
@@ -77,6 +78,8 @@ export default function VoiceAssistantSettings() {
   const [aiModel, setAiModel]                         = useState("claude-haiku-4-5");
   const [wakeWord, setWakeWord]                       = useState("");
   const [confidenceThreshold, setConfidenceThreshold] = useState<number>(50);
+  // Optional, future feature — see schema comment / hint text below.
+  const [voiceBiometricsEnabled, setVoiceBiometricsEnabled] = useState(false);
   const [notes, setNotes]                             = useState("");
 
   const { data: settings, isLoading } = useQuery<Settings>({
@@ -108,6 +111,7 @@ export default function VoiceAssistantSettings() {
     setAiModel(settings.aiModel ?? "claude-haiku-4-5");
     setWakeWord(settings.wakeWord ?? "");
     setConfidenceThreshold(settings.confidenceThreshold ?? 50);
+    setVoiceBiometricsEnabled(Boolean(settings.voiceBiometricsEnabled));
     setNotes(settings.notes ?? "");
   }, [settings]);
 
@@ -119,7 +123,7 @@ export default function VoiceAssistantSettings() {
         body: JSON.stringify({
           enabled, autoActivateOnLogin, language, aiModel,
           wakeWord: wakeWord.trim() || null,
-          confidenceThreshold, notes,
+          confidenceThreshold, voiceBiometricsEnabled, notes,
         }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "تعذّر الحفظ");
@@ -230,6 +234,41 @@ export default function VoiceAssistantSettings() {
             <label className="text-sm font-medium">{tr("notesLabel")}</label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)}
                       rows={3} data-testid="textarea-notes" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Optional / future: speaker biometrics. The toggle is stored but the
+          actual voice-identity verification ships in a later release once a
+          vendor (Azure Speaker Recognition or similar) is wired up. The hint
+          text below makes that very clear so admins don't think they have
+          enabled real protection by flipping this switch. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Mic className="h-4 w-4" /> {tr("biometricsTitle")}
+            <Badge variant="outline" className="ms-2 text-xs font-normal">{tr("comingSoon")}</Badge>
+          </CardTitle>
+          <CardDescription>{tr("biometricsDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="font-medium">{tr("biometricsToggleLabel")}</div>
+              <div className="text-xs text-muted-foreground">{tr("biometricsToggleDesc")}</div>
+            </div>
+            {/* Intentionally NOT disabled when the master switch is off — this
+                toggle records the company's *future* preference, so admins
+                should be able to stage their intent before flipping the
+                master switch on. */}
+            <Switch
+              checked={voiceBiometricsEnabled}
+              onCheckedChange={setVoiceBiometricsEnabled}
+              data-testid="switch-voice-biometrics"
+            />
+          </div>
+          <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+            {tr("biometricsNotice")}
           </div>
         </CardContent>
       </Card>

@@ -5510,6 +5510,13 @@
     "wakeWordHint": "Reserved for a future continuous-listening mode.",
     "notesLabel": "Notes",
 
+    "biometricsTitle": "Speaker voice verification",
+    "comingSoon": "Coming soon",
+    "biometricsDesc": "Optional check that confirms the speaker's voice identity before a command runs.",
+    "biometricsToggleLabel": "Enable voice biometric verification (optional)",
+    "biometricsToggleDesc": "When enabled, the system will verify the speaker's voice matches the signed-in user before executing a command.",
+    "biometricsNotice": "Note: this check is not active in the browser today; it requires plugging in a specialised service (e.g. Azure Speaker Recognition) and will ship in a future update. Saving the toggle now records your company's preference.",
+
     "logTitle": "Recent commands",
     "logDesc": "Last 50 voice commands received from this company's users.",
     "logEmpty": "No commands logged yet.",
