@@ -11,7 +11,7 @@ import {
   Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
-  ChevronDown, ChevronUp, UserCog,
+  ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +45,12 @@ const MENU_ITEMS: MenuItem[] = [
   { key: "accounting_reports", label: "التقارير المحاسبية",         icon: PieChart,        section: "المحاسبة" },
 
   { key: "hr_module",          label: "شؤون الموظفين",              icon: UserCog,         section: "شؤون الموظفين" },
+
+  { key: "contracting",        label: "إدارة المقاولات",            icon: HardHat,         section: "إدارة المقاولات" },
+
+  { key: "production",         label: "الإنتاج والتصنيع",           icon: Factory,         section: "الإنتاج والتصنيع" },
+
+  { key: "security_events",    label: "الأمن والمراقبة",            icon: ShieldAlert,     section: "الأمن والمراقبة" },
 
   { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
 ];

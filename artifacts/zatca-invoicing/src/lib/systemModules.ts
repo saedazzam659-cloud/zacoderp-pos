@@ -94,6 +94,26 @@ export const SYSTEM_MODULES: SystemModule[] = [
     permissions: ["hr_module"],
   },
 
+  // ── Operations: Contracting + Production + Security ─────────────
+  {
+    key: "contracting", nameAr: "إدارة المقاولات", nameEn: "Contracting", descAr: "المشاريع، المقاولون الباطن، العقود، المستخلصات والموارد",
+    emoji: "🏗️", category: "operations", categoryAr: "العمليات",
+    monthlyPrice: 60,
+    permissions: ["contracting"],
+  },
+  {
+    key: "production", nameAr: "الإنتاج والتصنيع", nameEn: "Manufacturing", descAr: "أوامر الإنتاج، الماكينات والموارد الصناعية",
+    emoji: "🏭", category: "operations", categoryAr: "العمليات",
+    monthlyPrice: 50,
+    permissions: ["production"],
+  },
+  {
+    key: "security", nameAr: "الأمن والمراقبة", nameEn: "Security & Surveillance", descAr: "أحداث الأمن، تصنيف الحوادث وتحليل صور المراقبة",
+    emoji: "📹", category: "operations", categoryAr: "العمليات",
+    monthlyPrice: 40,
+    permissions: ["security_events"],
+  },
+
   // ── Compliance ───────────────────────────────────────────────────
   {
     key: "zatca", nameAr: "الفوترة الإلكترونية وZATCA", nameEn: "ZATCA Integration", descAr: "ربط هيئة الزكاة، شهادات CSR/CSID، QR وUBL XML",
