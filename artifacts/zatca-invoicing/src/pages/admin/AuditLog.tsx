@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Loader2, ScrollText, ShieldAlert, ChevronLeft, ChevronRight, RefreshCw, Scissors } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -60,6 +67,7 @@ export default function AuditLog() {
   const [from,   setFrom]   = useState("");
   const [to,     setTo]     = useState("");
   const [page,   setPage]   = useState(0);
+  const [selected, setSelected] = useState<AuditRow | null>(null);
 
   useEffect(() => { setPage(0); }, [module, action, q, from, to]);
 
@@ -209,7 +217,21 @@ export default function AuditLog() {
                     const totalAvailable =
                       typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
                     return (
-                      <tr key={r.id} className="border-b last:border-0 hover:bg-muted/20">
+                      <tr
+                        key={r.id}
+                        data-testid="audit-row"
+                        className="border-b last:border-0 hover:bg-muted/30 cursor-pointer focus:outline-none focus:bg-muted/40"
+                        tabIndex={0}
+                        role="button"
+                        aria-label={tr("openDetails")}
+                        onClick={() => setSelected(r)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelected(r);
+                          }
+                        }}
+                      >
                         <td className="px-3 py-2 whitespace-nowrap text-xs font-mono">
                           {tt.toLocaleString(locale, { hour12: false })}
                         </td>
@@ -284,6 +306,159 @@ export default function AuditLog() {
           )}
         </CardContent>
       </Card>
+
+      <AuditDetailsDialog
+        row={selected}
+        onClose={() => setSelected(null)}
+        isRtl={isRtl}
+        locale={locale}
+        tr={tr}
+        trAction={trAction}
+      />
+    </div>
+  );
+}
+
+function AuditDetailsDialog({
+  row,
+  onClose,
+  isRtl,
+  locale,
+  tr,
+  trAction,
+}: {
+  row: AuditRow | null;
+  onClose: () => void;
+  isRtl: boolean;
+  locale: string;
+  tr: (k: string, opts?: any) => string;
+  trAction: (a: string) => string;
+}) {
+  const open = row !== null;
+  // Metadata can be any JSON shape — usually an object for our writers, but
+  // we don't want to silently drop primitives (string/number/array) if a
+  // future caller stores one. Treat "no metadata" as null/undefined or an
+  // empty object/array; everything else gets pretty-printed via
+  // JSON.stringify so the reviewer sees the raw payload regardless of shape.
+  const rawMeta = row?.metadata;
+  const isEmptyMeta =
+    rawMeta == null ||
+    (typeof rawMeta === "object" &&
+      !Array.isArray(rawMeta) &&
+      Object.keys(rawMeta as Record<string, unknown>).length === 0) ||
+    (Array.isArray(rawMeta) && rawMeta.length === 0);
+  const prettyMeta = !isEmptyMeta ? JSON.stringify(rawMeta, null, 2) : null;
+
+  const ok = row?.statusCode != null && row.statusCode >= 200 && row.statusCode < 400;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent
+        dir={isRtl ? "rtl" : "ltr"}
+        data-testid="audit-details-dialog"
+        className="max-w-2xl max-h-[85vh] overflow-y-auto"
+      >
+        <DialogHeader className={isRtl ? "text-right sm:text-right" : undefined}>
+          <DialogTitle className="flex items-center gap-2">
+            <ScrollText className="h-5 w-5 text-primary" />
+            {tr("detailsTitle")}
+          </DialogTitle>
+          <DialogDescription>
+            {row && (
+              <span className="font-mono text-xs">
+                {new Date(row.createdAt).toLocaleString(locale, { hour12: false })}
+                {" · "}
+                {trAction(row.action)}
+                {row.module ? ` · ${row.module}` : ""}
+              </span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {row && (
+          <div className="space-y-4 text-sm">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+              <DetailField label={tr("detailsUser")}>
+                <span className="font-medium">{row.username ?? "—"}</span>
+                {row.role && (
+                  <span className="text-[10px] text-muted-foreground ms-1">({row.role})</span>
+                )}
+              </DetailField>
+              <DetailField label={tr("detailsIp")}>
+                <span className="font-mono text-xs">{row.ip ?? "—"}</span>
+              </DetailField>
+              <DetailField label={tr("detailsEntityType")}>
+                <span className="font-mono text-xs">{row.entityType ?? "—"}</span>
+              </DetailField>
+              <DetailField label={tr("detailsEntityId")}>
+                <span className="font-mono text-xs break-all">{row.entityId ?? "—"}</span>
+              </DetailField>
+              <DetailField label={tr("detailsStatusCode")}>
+                {row.statusCode != null ? (
+                  <span
+                    data-testid="audit-details-status"
+                    className={`font-mono text-xs ${ok ? "text-emerald-600" : "text-rose-600"}`}
+                  >
+                    {row.statusCode}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </DetailField>
+              <DetailField label={tr("detailsPath")}>
+                <span className="font-mono text-xs break-all">
+                  {row.method ? <span className="text-foreground/70">{row.method} </span> : null}
+                  {row.path ?? "—"}
+                </span>
+              </DetailField>
+              <DetailField label={tr("detailsUserAgent")} fullWidth>
+                <span
+                  data-testid="audit-details-user-agent"
+                  className="font-mono text-xs break-all text-muted-foreground"
+                >
+                  {row.userAgent ?? "—"}
+                </span>
+              </DetailField>
+            </dl>
+
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">
+                {tr("detailsMetadata")}
+              </div>
+              {prettyMeta ? (
+                <pre
+                  dir="ltr"
+                  data-testid="audit-details-metadata"
+                  className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-80 overflow-y-auto"
+                >
+                  {prettyMeta}
+                </pre>
+              ) : (
+                <div className="text-xs text-muted-foreground italic">
+                  {tr("detailsMetadataEmpty")}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailField({
+  label,
+  children,
+  fullWidth = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  fullWidth?: boolean;
+}) {
+  return (
+    <div className={fullWidth ? "sm:col-span-2" : undefined}>
+      <dt className="text-xs font-medium text-muted-foreground mb-0.5">{label}</dt>
+      <dd>{children}</dd>
     </div>
   );
 }
