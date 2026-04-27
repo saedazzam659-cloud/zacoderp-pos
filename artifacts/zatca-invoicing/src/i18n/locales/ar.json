@@ -5306,6 +5306,7 @@
     "supportedFormats": "يدعم: Excel (.xlsx, .xls) — CSV (.csv) — JSON",
     "fieldsHeader": "حقول جدول {{name}}:",
     "fileNoData": "الملف لا يحتوي على بيانات قابلة للقراءة",
+    "bundleAdapted": "تم التعرف على تصدير متعدد الجداول وتحويله تلقائياً إلى {{count}} سطر",
     "fileNotEnough": "الملف لا يحتوي على بيانات كافية",
     "readFailed": "فشلت قراءة الملف",
     "defaultColumn": "العمود {{n}}",

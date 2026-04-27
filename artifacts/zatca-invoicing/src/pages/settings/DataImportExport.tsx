@@ -28,6 +28,123 @@ function fieldLabel(f: { labelAr?: string; labelEn?: string; name: string }, isA
   return isAr ? (f.labelAr ?? f.labelEn ?? f.name) : (f.labelEn ?? f.labelAr ?? f.name);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Nested-bundle adapters
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-world Saudi/Arabic ERPs (e.g. exports labelled "exported_data") often
+// ship a single multi-table JSON bundle keyed by their internal table names
+// (AccountingEntry, AccountingEntryDetailes, Account, Currency, Branch, …)
+// instead of the flat `journalEntries: [...]` shape our importer expects.
+//
+// `adaptNestedBundle` recognises those bundles and flattens them into the
+// canonical row shape for the chosen entity. Only journalEntries is supported
+// for now; add more branches as we encounter additional real-world exports.
+//
+// Returns `null` when the bundle is not recognised → caller falls back to the
+// existing direct/loose shape detection.
+function adaptNestedBundle(json: any, entityKey: string): any[] | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+
+  if (entityKey === "journalEntries"
+      && Array.isArray(json.AccountingEntry)
+      && Array.isArray(json.AccountingEntryDetailes)) {
+    // ── Defensive: support tables may be present as non-array shapes (e.g.
+    //    a single object or null sentinel). Coerce to [] before iterating so
+    //    the adapter never throws "X is not iterable" on adversarial input.
+    const liveOf = (v: any): any[] => Array.isArray(v) ? v : [];
+
+    // Build lookup maps from the supporting tables.
+    const accountById = new Map<number, string>();
+    for (const a of liveOf(json.Account)) {
+      if (a?.IsDeleted) continue;
+      if (a?.AccountID != null && a?.code != null) {
+        accountById.set(Number(a.AccountID), String(a.code));
+      }
+    }
+    const branchById = new Map<number, string>();
+    for (const b of liveOf(json.Branch)) {
+      if (b?.IsDeleted) continue;
+      if (b?.branch_id != null && b?.code != null) {
+        branchById.set(Number(b.branch_id), String(b.code));
+      }
+    }
+    const currencyById = new Map<number, { code: string; basic: boolean }>();
+    for (const c of liveOf(json.Currency)) {
+      if (c?.IsDeleted) continue;
+      if (c?.currence_id != null) {
+        currencyById.set(Number(c.currence_id), {
+          code: String(c.code ?? ""),
+          basic: !!c.basic_currency,
+        });
+      }
+    }
+    const headerById = new Map<number, any>();
+    for (const h of json.AccountingEntry) {
+      if (h?.IsDeleted) continue;
+      if (h?.AccountingEntryID != null) {
+        headerById.set(Number(h.AccountingEntryID), h);
+      }
+    }
+
+    // ── Disambiguate docNumber: the backend importer groups lines by
+    //    docNumber alone, so two different AccountingEntryIDs that happen to
+    //    share the same SerialNumberValue would otherwise be merged into one
+    //    journal entry (silent corruption). Pre-scan serials and force the
+    //    AE-<id> form for any serial that isn't unique across live headers.
+    const serialCounts = new Map<string, number>();
+    for (const h of headerById.values()) {
+      const raw = h?.SerialNumberValue;
+      if (raw != null && String(raw).trim() !== "") {
+        const s = String(raw).trim();
+        serialCounts.set(s, (serialCounts.get(s) ?? 0) + 1);
+      }
+    }
+    const docNumberFor = (h: any): string => {
+      const raw = h?.SerialNumberValue;
+      const s = raw != null ? String(raw).trim() : "";
+      if (!s || (serialCounts.get(s) ?? 0) > 1) return `AE-${h.AccountingEntryID}`;
+      return s;
+    };
+
+    const out: any[] = [];
+    for (const ln of json.AccountingEntryDetailes) {
+      if (ln?.IsDeleted) continue;
+      if (ln?.AccountingEntryID == null) continue;
+      const h = headerById.get(Number(ln.AccountingEntryID));
+      if (!h) continue; // orphan or soft-deleted header
+      const accCode = ln.AccountID != null ? accountById.get(Number(ln.AccountID)) : undefined;
+      if (!accCode) continue; // can't post a line without a known account code
+
+      const cur = h.CurrencyID != null ? currencyById.get(Number(h.CurrencyID)) : null;
+      // The source's basic_currency row represents SAR in 99% of Saudi data
+      // dumps regardless of its `code` field (often "1"). Preserve non-basic
+      // currency codes verbatim so multi-currency entries still resolve.
+      const currency = cur ? (cur.basic ? "SAR" : (cur.code || "SAR")) : "SAR";
+      const branchCode = h.branch_id != null ? (branchById.get(Number(h.branch_id)) ?? null) : null;
+      const dateStr = h.Date ? String(h.Date).slice(0, 10) : null;
+
+      out.push({
+        docNumber: docNumberFor(h),
+        entryDate: dateStr,
+        description: h.Description ?? null,
+        currency,
+        exchangeRate: h.ExchangeRate ?? 1,
+        entryType: "general",
+        branchCode,
+        status: "draft",
+        accountCode: accCode,
+        debit: ln.DR ?? 0,
+        credit: ln.CR ?? 0,
+        lineDescription: ln.Description ?? null,
+        costCenter: null,
+      });
+    }
+    return out;
+  }
+
+  return null;
+}
+
 export default function DataImportExport() {
   const { token, user } = useAuth() as any;
   const { toast } = useToast();
@@ -208,6 +325,7 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
       const isJson = file.name.toLowerCase().endsWith(".json");
       let parsedHeaders: string[] = [];
       let parsedRows: any[] = [];
+      let bundleAdaptedCount = 0;
       if (isJson) {
         const text = await file.text();
         const json = JSON.parse(text);
@@ -215,9 +333,18 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
         if (Array.isArray(json)) arr = json;
         else if (json && Array.isArray(json[entityKey])) arr = json[entityKey];
         else if (json?.data && Array.isArray(json.data[entityKey])) arr = json.data[entityKey];
-        else if (json?.data && typeof json.data === "object") {
-          const first = Object.values(json.data).find((v) => Array.isArray(v)) as any[] | undefined;
-          arr = first ?? [];
+        // If the direct branch matched but yielded zero rows, the file may
+        // still be a multi-table bundle that *also* happens to ship an empty
+        // entityKey array. Fall through to the adapter rather than failing.
+        if (arr.length === 0) {
+          const adapted = adaptNestedBundle(json, entityKey);
+          if (adapted && adapted.length > 0) {
+            arr = adapted;
+            bundleAdaptedCount = adapted.length;
+          } else if (json?.data && typeof json.data === "object") {
+            const first = Object.values(json.data).find((v) => Array.isArray(v)) as any[] | undefined;
+            arr = first ?? [];
+          }
         }
         if (arr.length === 0) throw new Error(t("dataIO.fileNoData"));
         parsedHeaders = Array.from(arr.reduce<Set<string>>((acc, r) => { if (r && typeof r === "object") Object.keys(r).forEach((k) => acc.add(k)); return acc; }, new Set()));
@@ -244,9 +371,12 @@ function ImportWizard({ entities, loading, cid, token, toast, isAr }: {
       for (const [src, m] of Object.entries(result.mapping)) initialMap[src] = m.field;
       setMapping(initialMap);
       setStep("analyze");
+      const baseDesc = result.source === "ai" ? t("dataIO.analyzeAiDesc") : t("dataIO.analyzeFallbackDesc");
       toast({
         title: t("dataIO.analyzeSuccess", { count: parsedRows.length }),
-        description: result.source === "ai" ? t("dataIO.analyzeAiDesc") : t("dataIO.analyzeFallbackDesc"),
+        description: bundleAdaptedCount > 0
+          ? `${t("dataIO.bundleAdapted", { count: bundleAdaptedCount })} — ${baseDesc}`
+          : baseDesc,
       });
     } catch (e: any) {
       toast({ title: e?.message ?? t("dataIO.readFailed"), variant: "destructive" });

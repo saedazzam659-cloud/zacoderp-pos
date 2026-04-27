@@ -5221,6 +5221,7 @@
     "supportedFormats": "Supports: Excel (.xlsx, .xls) — CSV (.csv) — JSON",
     "fieldsHeader": "Fields of {{name}} table:",
     "fileNoData": "The file does not contain readable data",
+    "bundleAdapted": "Detected a multi-table export and auto-converted it to {{count}} rows",
     "fileNotEnough": "The file does not contain enough data",
     "readFailed": "Failed to read the file",
     "defaultColumn": "Column {{n}}",
