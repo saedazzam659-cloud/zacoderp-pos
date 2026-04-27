@@ -11,6 +11,11 @@ export const planConfigsTable = pgTable("plan_configs", {
   maxBranches: integer("max_branches").notNull().default(1),
   maxWarehouses: integer("max_warehouses").notNull().default(1),
   maxInvoices: integer("max_invoices").notNull().default(50),
+  // Number of modules the plan includes "for free" — anything selected on
+  // top of this count is added to the bill at the module's monthly price.
+  // Mirrors the legacy static PLAN_INCLUDED map (starter:2, pro:5, ent:100)
+  // but lives in the DB so SuperAdmin can tune it from PlanSettings.tsx.
+  includedModulesCount: integer("included_modules_count").notNull().default(0),
   features: text("features").notNull().default("[]"),
   isRecommended: boolean("is_recommended").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),

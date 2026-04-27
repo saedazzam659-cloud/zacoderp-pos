@@ -49,6 +49,32 @@ router.get("/", requireSuperAdmin, async (_req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/admin/modules/public — UNAUTHENTICATED, used by the public
+// Register/sign-up wizard so SuperAdmin edits in /admin/modules show up
+// immediately. Returns ONLY isActive=true rows so deactivated modules
+// disappear from the picker (without losing the row + its history).
+router.get("/public", async (_req, res) => {
+  try {
+    const rows = await db.select({
+      key:          modulesTable.key,
+      nameAr:       modulesTable.nameAr,
+      nameEn:       modulesTable.nameEn,
+      description:  modulesTable.description,
+      monthlyPrice: modulesTable.monthlyPrice,
+      icon:         modulesTable.icon,
+      iconColor:    modulesTable.iconColor,
+      category:     modulesTable.category,
+      sortOrder:    modulesTable.sortOrder,
+    }).from(modulesTable)
+      .where(eq(modulesTable.isActive, true))
+      .orderBy(asc(modulesTable.sortOrder), asc(modulesTable.id));
+    // Cache hint: Register page polls per-mount, but a CDN/edge can hold
+    // this for 30s without making admin edits feel laggy.
+    res.set("Cache-Control", "public, max-age=30");
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /api/admin/modules — create
 router.post("/", requireSuperAdmin, async (req, res) => {
   try {

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable } from "@workspace/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable, planConfigsTable, modulesTable } from "@workspace/db";
+import { and, eq, isNull, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { writeAudit } from "../middleware/permissions.js";
@@ -616,39 +616,56 @@ router.post("/register", async (req, res) => {
   // only gets logged for tamper detection. This blocks an attacker from
   // submitting a lower-than-correct price to underpay their subscription.
   //
-  // Pricing model (mirrors lib/systemModules.ts):
-  //   monthlyTotal = basePlanMonthly +
-  //                  sum(prices of selected modules)
-  //                  - sum(cheapest `included` selected modules' prices)
+  // Pricing model (mirrors lib/systemModules.ts on the client):
+  //   monthlyTotal = basePlanMonthly
+  //                 + sum(prices of selected modules)
+  //                 - sum(cheapest `includedModulesCount` modules' prices)
   // Annual cycle: monthlyTotal × 10 (preserves the static ~17% discount).
-  const MODULE_PRICES: Record<string, number> = {
-    sales: 35, purchasing: 35, inventory: 40, pos: 45,
-    cash: 30, accounting: 50, hr: 35, zatca: 25,
-  };
-  const PLAN_INCLUDED_MODULES: Record<string, number> = {
-    starter: 2, professional: 5, enterprise: 100,
-  };
-  const BASE_MONTHLY: Record<string, number> = {
-    starter: 99, professional: 299, enterprise: 899,
-  };
-
-  const computeMonthlyPrice = (planKey: string, moduleKeys: unknown): number => {
-    const base = BASE_MONTHLY[planKey] ?? BASE_MONTHLY.starter;
-    if (!Array.isArray(moduleKeys)) return base;
-    const prices = moduleKeys
-      .filter((k): k is string => typeof k === "string")
-      .map(k => MODULE_PRICES[k])
-      .filter((p): p is number => typeof p === "number")
-      .sort((a, b) => a - b);
-    const included = PLAN_INCLUDED_MODULES[planKey] ?? 0;
-    const freeCount = Math.min(included, prices.length);
-    const freeAmount = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
-    const grossTotal = prices.reduce((s, p) => s + p, 0);
-    return base + (grossTotal - freeAmount);
-  };
-
+  //
+  // SOURCE OF TRUTH: the `plan_configs` and `modules` tables — so a
+  // SuperAdmin price change in /admin/plans or /admin/modules is reflected
+  // here without a code deploy. We fall back to a sane minimum (100 SAR)
+  // only if the plan row genuinely cannot be found, which would indicate
+  // a misconfigured DB rather than a missing override.
   const planKeyForPricing = plan ?? "starter";
-  const monthlyTotal = computeMonthlyPrice(planKeyForPricing, selectedModules);
+  const [planRow] = await db.select({
+    monthlyPrice:         planConfigsTable.monthlyPrice,
+    includedModulesCount: planConfigsTable.includedModulesCount,
+  }).from(planConfigsTable).where(eq(planConfigsTable.key, planKeyForPricing));
+
+  const basePlanMonthly = Number(planRow?.monthlyPrice ?? 100);
+  const includedFreeCount = Number(planRow?.includedModulesCount ?? 0);
+
+  // Build a set of ACTIVE module keys + a price lookup. We use this set as
+  // the single authority for two things:
+  //   1. pricing math (only billed for active modules, no surprise charges)
+  //   2. permission grants (deactivated modules cannot leak permissions)
+  // Industry templates auto-add module keys via `selectedModules`, so without
+  // this filter a deactivated module would still grant access without billing.
+  let monthlyTotal = basePlanMonthly;
+  const activeKeys = new Set<string>();
+  if (Array.isArray(selectedModules) && selectedModules.length > 0) {
+    const wantedKeys = selectedModules
+      .filter((k: unknown): k is string => typeof k === "string");
+    if (wantedKeys.length > 0) {
+      const moduleRows = await db.select({
+        key:          modulesTable.key,
+        monthlyPrice: modulesTable.monthlyPrice,
+      }).from(modulesTable)
+        .where(and(eq(modulesTable.isActive, true), inArray(modulesTable.key, wantedKeys)));
+
+      for (const r of moduleRows) activeKeys.add(r.key);
+
+      const prices = moduleRows
+        .map(r => Number(r.monthlyPrice))
+        .filter(n => Number.isFinite(n) && n >= 0)
+        .sort((a, b) => a - b);
+      const freeCount   = Math.min(includedFreeCount, prices.length);
+      const freeAmount  = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
+      const grossTotal  = prices.reduce((s, p) => s + p, 0);
+      monthlyTotal      = basePlanMonthly + (grossTotal - freeAmount);
+    }
+  }
   const finalPrice: string = billingCycle === "annual"
     ? String(monthlyTotal * 10)
     : String(monthlyTotal);
@@ -709,6 +726,10 @@ router.post("/register", async (req, res) => {
     hr:         ["hr_module"],
     zatca:      ["zatca", "reports"],
   };
+  // Permissions are derived from the ACTIVE module set we computed above for
+  // pricing — this guarantees that a module deactivated in /admin/modules can
+  // never grant access (even when injected via an industry template) and can
+  // never be granted-without-being-billed.
   const buildMenuPermissionsJson = (keys: unknown): string | null => {
     if (!Array.isArray(keys)) return null;
     const out: Record<string, boolean> = {
@@ -716,6 +737,7 @@ router.post("/register", async (req, res) => {
     };
     for (const k of keys) {
       if (typeof k !== "string") continue;
+      if (!activeKeys.has(k)) continue; // deactivated modules → no permissions
       const perms = MODULE_PERMISSIONS[k];
       if (!perms) continue;
       for (const p of perms) out[p] = true;

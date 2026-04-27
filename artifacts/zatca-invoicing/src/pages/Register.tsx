@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type RegisterData } from "@/contexts/AuthContext";
@@ -16,9 +16,6 @@ import {
   getCountryByCode, getCountryPolicy,
 } from "@/lib/countries";
 import { INDUSTRIES, unionRecommendedModules } from "@/lib/industries";
-import {
-  SELECTABLE_MODULES, CATEGORIES, PLAN_INCLUDED, priceFor,
-} from "@/lib/systemModules";
 
 // ── Plan card UI shape ────────────────────────────────────────────────
 // Each plan rendered in Step 2 has a stable structural shape (id, name,
@@ -40,8 +37,25 @@ type PlanCard = {
   annual: number;
   maxUsers: number;
   maxInvoices: number;
+  // How many of the user's selected modules are included free under
+  // this plan tier — sourced from `plan_configs.included_modules_count`.
+  includedModulesCount: number;
   features: string[];
   recommended?: boolean;
+};
+
+// One module row as returned from /api/admin/modules/public — derived from
+// the `modules` table (SuperAdmin-managed in /admin/modules).
+type LiveModule = {
+  key:          string;
+  nameAr:       string;
+  nameEn:       string;
+  description:  string;
+  monthlyPrice: string;        // text in DB; parsed to Number for math
+  icon:         string;        // lucide icon name (display-only)
+  iconColor:    string;
+  category:     string;        // free-text Arabic label, used as section header
+  sortOrder:    number;
 };
 
 const STYLE_BY_KEY: Record<string, Pick<PlanCard, "icon" | "color" | "activeColor" | "badgeColor">> = {
@@ -82,14 +96,14 @@ const DEFAULT_STYLE: Pick<PlanCard, "icon" | "color" | "activeColor" | "badgeCol
 // on a transient network error.
 const FALLBACK_PLANS: PlanCard[] = [
   { id: "starter", ...STYLE_BY_KEY.starter, name: "مبتدئ", nameEn: "Starter",
-    monthly: 99, annual: 990, maxUsers: 1, maxInvoices: 50,
+    monthly: 99, annual: 990, maxUsers: 1, maxInvoices: 50, includedModulesCount: 2,
     features: ["مستخدم واحد", "50 فاتورة شهرياً", "فواتير ضريبية ومبسطة", "دعم بريد إلكتروني"] },
   { id: "professional", ...STYLE_BY_KEY.professional, name: "احترافي", nameEn: "Professional",
-    monthly: 299, annual: 2990, maxUsers: 5, maxInvoices: 500,
+    monthly: 299, annual: 2990, maxUsers: 5, maxInvoices: 500, includedModulesCount: 5,
     features: ["5 مستخدمين", "500 فاتورة شهرياً", "تقارير متقدمة", "API مفتوح", "دعم أولوية"],
     recommended: true },
   { id: "enterprise", ...STYLE_BY_KEY.enterprise, name: "مؤسسي", nameEn: "Enterprise",
-    monthly: 899, annual: 8990, maxUsers: 999, maxInvoices: 999999,
+    monthly: 899, annual: 8990, maxUsers: 999, maxInvoices: 999999, includedModulesCount: 100,
     features: ["مستخدمون غير محدودين", "فواتير غير محدودة", "تقارير مخصصة", "SLA 99.9%", "مدير حساب مخصص"] },
 ];
 
@@ -131,16 +145,16 @@ export default function Register() {
     endDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
   });
 
-  // ── Live plan catalog (sourced from SuperAdmin's plan_configs table) ──
-  // The /api/admin/plans endpoint is intentionally public-readable so the
-  // sign-up wizard can show whatever plans the SuperAdmin currently has
-  // active in PlanSettings. Inactive plans are hidden. The query is cached
-  // for 5 minutes — a SuperAdmin price tweak shows up to new visitors on
-  // their next page load (no realtime push needed for sign-up).
+  // ── Live plan + module catalogs (sourced from SuperAdmin tables) ─────
+  // /api/admin/plans and /api/admin/modules/public are both intentionally
+  // public-readable so the sign-up wizard can show exactly what's active
+  // in /admin/plans and /admin/modules. Cached for 30s — short enough that
+  // a SuperAdmin edit shows up almost immediately on the next page open,
+  // long enough that a stuck/slow user doesn't refetch on every keystroke.
   const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
   const plansQ = useQuery<PlanCard[]>({
     queryKey: ["public-plans"],
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 1000,
     queryFn: async () => {
       const r = await fetch(`${BASE}/api/admin/plans`);
       if (!r.ok) throw new Error("plans fetch failed");
@@ -148,6 +162,7 @@ export default function Register() {
         key: string; nameAr: string; nameEn: string;
         monthlyPrice: string; annualPrice: string;
         maxUsers: number; maxInvoices: number;
+        includedModulesCount?: number;
         features: string[] | string;
         isRecommended: boolean; isActive: boolean; sortOrder: number;
       }>;
@@ -169,6 +184,7 @@ export default function Register() {
             annual: Number(p.annualPrice) || 0,
             maxUsers: p.maxUsers,
             maxInvoices: p.maxInvoices,
+            includedModulesCount: Number(p.includedModulesCount ?? 0),
             features: featureList,
             recommended: p.isRecommended,
           };
@@ -184,6 +200,55 @@ export default function Register() {
     : (plansQ.data ?? []);
   const plansLoading = plansQ.isLoading;
   const plansEmpty   = !plansLoading && !plansQ.isError && PLANS.length === 0;
+
+  // Live system-module catalog (from /admin/modules). Active rows only.
+  // We keep the public endpoint sorted server-side so categories render in
+  // the same order an operator would see them in /admin/modules.
+  const modulesQ = useQuery<LiveModule[]>({
+    queryKey: ["public-modules"],
+    staleTime: 30 * 1000,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/admin/modules/public`);
+      if (!r.ok) throw new Error("modules fetch failed");
+      return r.json();
+    },
+  });
+  // On a hard fetch error fall back to an empty catalog so the picker
+  // section renders an empty/dim state — better than crashing the wizard
+  // mid-registration. plansEmpty already handles the "no plans" case.
+  const MODULES: LiveModule[] = modulesQ.data ?? [];
+  // Group modules by category in their server-supplied order. Using a Map
+  // (insertion-ordered) preserves the SuperAdmin's intended grouping
+  // without needing a separate CATEGORIES whitelist.
+  const MODULE_GROUPS: Array<{ name: string; mods: LiveModule[] }> = useMemo(() => {
+    const map = new Map<string, LiveModule[]>();
+    for (const m of MODULES) {
+      const cat = (m.category || "أخرى").trim();
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat)!.push(m);
+    }
+    return Array.from(map.entries()).map(([name, mods]) => ({ name, mods }));
+  }, [MODULES]);
+  // Quick lookup by key for the price-summary + confirm step.
+  const MODULE_BY_KEY: Record<string, LiveModule> = useMemo(
+    () => Object.fromEntries(MODULES.map(m => [m.key, m])),
+    [MODULES],
+  );
+
+  // Prune any selected module keys that are no longer in the live catalog.
+  // This handles the case where an industry template auto-added a key (via
+  // unionRecommendedModules in industries.ts) that has since been deactivated
+  // by SuperAdmin in /admin/modules. Without this prune the count "محددة X
+  // من Y" would be wrong, the price summary would silently drop the row, and
+  // the server would refuse to grant permissions for it anyway. Skip while
+  // the catalog is still loading or empty so we never wipe valid picks.
+  useEffect(() => {
+    if (!modulesQ.isSuccess || MODULES.length === 0) return;
+    setSelectedModules(curr => {
+      const filtered = curr.filter(k => k in MODULE_BY_KEY);
+      return filtered.length === curr.length ? curr : filtered;
+    });
+  }, [modulesQ.isSuccess, MODULES.length, MODULE_BY_KEY]);
 
   const set = (k: keyof RegisterData, v: string) => setForm(f => ({ ...f, [k]: v }));
 
@@ -248,14 +313,38 @@ export default function Register() {
     ?? PLANS[0]
     ?? FALLBACK_PLANS[1];
 
-  // Live price breakdown (memoized) — recomputed only when the plan,
-  // module selection, or billing cycle change. Annual uses monthly × 10
-  // (preserves the ~17% discount baked into the static PLANS.annual values).
-  const priceCalc = useMemo(() => priceFor({
-    basePlanMonthly: selectedPlan.monthly,
-    planKey:         selectedPlan.id,
-    selectedKeys:    selectedModules,
-  }), [selectedPlan.id, selectedPlan.monthly, selectedModules]);
+  // Live price breakdown (memoized) — recomputed only when the plan, the
+  // module selection, or the live module catalog change.
+  //
+  // Pricing model (mirrors api-server/src/routes/auth.ts so the client
+  // and server agree on the final price):
+  //   monthlyTotal = basePlanMonthly
+  //                + sum(prices of selected modules)
+  //                - sum(cheapest `includedModulesCount` modules' prices)
+  // Unknown / inactive keys are ignored — a module deactivated in
+  // /admin/modules between picker render and submit just falls out.
+  const priceCalc = useMemo(() => {
+    const base     = selectedPlan.monthly;
+    const included = selectedPlan.includedModulesCount;
+    const prices   = selectedModules
+      .map(k => MODULE_BY_KEY[k])
+      .filter((m): m is LiveModule => !!m)
+      .map(m => Number(m.monthlyPrice))
+      .filter(n => Number.isFinite(n) && n >= 0)
+      .sort((a, b) => a - b);
+    const freeCount     = Math.min(included, prices.length);
+    const freeAmount    = prices.slice(0, freeCount).reduce((s, p) => s + p, 0);
+    const grossTotal    = prices.reduce((s, p) => s + p, 0);
+    const extraSubtotal = grossTotal - freeAmount;
+    return {
+      base,
+      selectedCount: prices.length,
+      includedFree:  freeCount,
+      extraCount:    prices.length - freeCount,
+      extraSubtotal,
+      total:         base + extraSubtotal,
+    };
+  }, [selectedPlan.monthly, selectedPlan.includedModulesCount, selectedModules, MODULE_BY_KEY]);
 
   const selectPlan = (planId: string) => {
     const plan = PLANS.find(p => p.id === planId)!;
@@ -536,8 +625,8 @@ export default function Register() {
                     {PLANS.map(plan => {
                       const price = billingCycle === "annual" ? plan.annual : plan.monthly;
                       const isSelected = form.plan === plan.id;
-                      const included = PLAN_INCLUDED[plan.id] ?? 0;
-                      const includedLabel = included >= SELECTABLE_MODULES.length
+                      const included = plan.includedModulesCount;
+                      const includedLabel = included >= MODULES.length && MODULES.length > 0
                         ? "كل الوحدات مجاناً"
                         : `${included} وحدات مشمولة`;
                       return (
@@ -569,57 +658,75 @@ export default function Register() {
                 )}
 
                 {/* ── 4. Module catalog (grouped by category) ── */}
+                {/*
+                  Sourced live from /api/admin/modules/public. Categories
+                  and order come straight from the `modules` table — adding
+                  a module in /admin/modules makes it appear here on the
+                  next page-open without a code change.
+                */}
                 <div className="space-y-3 pt-3 border-t">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <h4 className="text-sm font-semibold flex items-center gap-2">
                       <Package className="h-4 w-4" />
                       وحدات النظام
                       <span className="text-xs font-normal text-muted-foreground">
-                        (محددة {selectedModules.length} من {SELECTABLE_MODULES.length})
+                        (محددة {selectedModules.length} من {MODULES.length})
                       </span>
                     </h4>
                   </div>
 
-                  {CATEGORIES.map(cat => {
-                    const mods = SELECTABLE_MODULES.filter(m => m.category === cat.key);
-                    if (mods.length === 0) return null;
-                    return (
-                      <div key={cat.key} className="space-y-2">
-                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                          {cat.nameAr}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {mods.map(m => {
-                            const checked = selectedModules.includes(m.key);
-                            return (
-                              <label key={m.key}
-                                data-testid={`module-${m.key}`}
-                                className={cn(
-                                  "flex items-start gap-2 p-2.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
-                                  checked ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"
-                                )}>
-                                <input type="checkbox" checked={checked}
-                                  onChange={() => toggleModule(m.key)}
-                                  className="mt-0.5 h-4 w-4 accent-primary cursor-pointer" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-medium text-sm flex items-center gap-1.5">
-                                      <span className="text-base leading-none">{m.emoji}</span>
-                                      {m.nameAr}
-                                    </span>
-                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                                      +{m.monthlyPrice} ر.س
-                                    </span>
-                                  </div>
-                                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{m.descAr}</p>
-                                </div>
-                              </label>
-                            );
-                          })}
-                        </div>
+                  {modulesQ.isLoading ? (
+                    <div className="rounded-xl border border-dashed bg-muted/20 p-6 text-center text-xs text-muted-foreground">
+                      جاري تحميل الوحدات...
+                    </div>
+                  ) : modulesQ.isError ? (
+                    <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-4 text-center text-xs text-amber-800">
+                      تعذّر تحميل قائمة الوحدات. يمكنك المتابعة بدون اختيار وحدات إضافية.
+                    </div>
+                  ) : MODULES.length === 0 ? (
+                    <div
+                      data-testid="modules-empty"
+                      className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-4 text-center text-xs text-amber-800"
+                    >
+                      لا توجد وحدات إضافية متاحة حالياً.
+                    </div>
+                  ) : MODULE_GROUPS.map(group => (
+                    <div key={group.name} className="space-y-2">
+                      <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        {group.name}
                       </div>
-                    );
-                  })}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {group.mods.map(m => {
+                          const checked = selectedModules.includes(m.key);
+                          return (
+                            <label key={m.key}
+                              data-testid={`module-${m.key}`}
+                              className={cn(
+                                "flex items-start gap-2 p-2.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+                                checked ? "border-primary bg-primary/5" : "border-border bg-card hover:border-primary/40"
+                              )}>
+                              <input type="checkbox" checked={checked}
+                                onChange={() => toggleModule(m.key)}
+                                className="mt-0.5 h-4 w-4 accent-primary cursor-pointer" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium text-sm">
+                                    {m.nameAr}
+                                  </span>
+                                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                    +{Number(m.monthlyPrice).toLocaleString("en-US")} ر.س
+                                  </span>
+                                </div>
+                                {m.description && (
+                                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{m.description}</p>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* ── 5. Live total / breakdown ── */}
@@ -747,7 +854,7 @@ export default function Register() {
                     <span className="font-medium">
                       {selectedModules.length === 0
                         ? "الأساسيات فقط"
-                        : `${selectedModules.length} وحدة (${selectedModules.map(k => SELECTABLE_MODULES.find(m => m.key === k)?.nameAr ?? k).join("، ")})`}
+                        : `${selectedModules.length} وحدة (${selectedModules.map(k => MODULE_BY_KEY[k]?.nameAr ?? k).join("، ")})`}
                     </span>
                     <span className="text-muted-foreground">تاريخ البدء:</span><span>{form.startDate}</span>
                     <span className="text-muted-foreground">تاريخ الانتهاء:</span><span>{form.endDate}</span>

@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Package, Star, Crown, RefreshCw, Save, Plus, Trash2,
   CheckCircle2, Settings2, Users, FileText, BadgeCheck,
-  Info, Zap, Sparkles,
+  Info, Zap, Sparkles, Boxes,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -324,6 +324,35 @@ function PlanCard({ plan, onSave, saving }: { plan: any; onSave: (key: string, d
                   {form.maxInvoices >= 999999 && (
                     <p className="text-xs text-primary bg-primary/5 px-2.5 py-1 rounded-lg">
                       ✓ ≥ 999999 = غير محدود
+                    </p>
+                  )}
+                </div>
+
+                {/* Included free modules — drives the Register page's
+                    "X وحدات مشمولة" pill and the cheapest-N-free pricing
+                    calc. Set high (e.g. 100) to make a tier "all-inclusive". */}
+                <div className="p-3 rounded-xl border space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-lg bg-purple-50 border border-purple-100 flex items-center justify-center">
+                        <Boxes className="h-4 w-4 text-purple-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold">الوحدات المشمولة مجاناً</p>
+                        <p className="text-xs text-muted-foreground">عدد وحدات النظام التي يحصل عليها العميل ضمن سعر الباقة</p>
+                      </div>
+                    </div>
+                    <div className="w-24">
+                      <Input
+                        type="number" min={0} value={form.includedModulesCount ?? 0}
+                        onChange={e => set("includedModulesCount", parseInt(e.target.value) || 0)}
+                        className="h-9 text-sm text-center font-mono" dir="ltr"
+                      />
+                    </div>
+                  </div>
+                  {(form.includedModulesCount ?? 0) >= 100 && (
+                    <p className="text-xs text-primary bg-primary/5 px-2.5 py-1 rounded-lg">
+                      ✓ ≥ 100 = كل الوحدات مجاناً
                     </p>
                   )}
                 </div>

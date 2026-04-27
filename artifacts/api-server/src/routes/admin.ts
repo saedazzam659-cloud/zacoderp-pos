@@ -1098,7 +1098,7 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
   const { key } = req.params;
   const {
     nameAr, nameEn, monthlyPrice, annualPrice,
-    maxUsers, maxInvoices, features,
+    maxUsers, maxInvoices, includedModulesCount, features,
     isRecommended, isActive, sortOrder,
   } = req.body;
 
@@ -1109,6 +1109,13 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
   if (annualPrice   != null) updates.annualPrice   = String(annualPrice);
   if (maxUsers      != null) updates.maxUsers      = Number(maxUsers);
   if (maxInvoices   != null) updates.maxInvoices   = Number(maxInvoices);
+  // Clamp to a non-negative integer; 0 means "no free modules" (every
+  // selected module is paid). Falsy-but-numeric inputs (e.g. 0) need the
+  // explicit != null guard so admins can lower the value to zero.
+  if (includedModulesCount != null) {
+    const n = Number(includedModulesCount);
+    updates.includedModulesCount = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  }
   if (features      != null) updates.features      = JSON.stringify(features);
   if (isRecommended != null) updates.isRecommended = isRecommended;
   if (isActive      != null) updates.isActive      = isActive;
