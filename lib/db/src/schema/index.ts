@@ -22,6 +22,7 @@ export * from "./accountingMappings";
 export * from "./autoBackups";
 export * from "./salesReps";
 export * from "./auditLog";
+export * from "./workSessions";
 export * from "./sequences";
 export * from "./systemSettings";
 export * from "./superAdminSecurity";

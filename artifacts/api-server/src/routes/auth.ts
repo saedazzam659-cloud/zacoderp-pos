@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable } from "@workspace/db";
+import { usersTable, subscriptionsTable, companiesTable, userBranchesTable, superAdminSessionsTable, currenciesTable, workSessionsTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -112,7 +112,76 @@ router.post("/login", async (req, res) => {
     updatedAt: new Date(),
   }).where(eq(usersTable.id, user.id));
 
-  // Successful login → audit row so the Security Center can list it.
+  // Open a "work session" row to underpin the Work Sessions screen + AI
+  // activity report. We:
+  //   1. Force-end any pre-existing active sessions for this user
+  //      (single-session login means a stale "active" row would otherwise
+  //      stay open forever after a token rotation / browser swap).
+  //   2. Insert one fresh "active" row for this login.
+  // Wrapped in try/catch so a session-table issue can never block login.
+  //
+  // NOTE on ordering: this block runs BEFORE the login audit row is written
+  // so the audit row's `createdAt` is strictly inside the new session window
+  // (`startedAt`, now()). If the audit row were written first, its timestamp
+  // would fall a few ms before `startedAt` and the login event would be
+  // filtered out of the work-session activity preview / AI report.
+  if (user.companyId) {
+    try {
+      // Atomic close-then-insert. Two concurrent logins for the same
+      // (userId, companyId) race past a non-transactional version and end
+      // up with multiple "active" rows; the partial unique index on
+      // status='active' guarantees the second INSERT fails, and the
+      // surrounding transaction makes the close-and-insert pair all-or-
+      // nothing so we never strand both the old and the new in 'active'.
+      const cid = user.companyId;
+      try {
+        await db.transaction(async (tx) => {
+          await tx.update(workSessionsTable).set({
+            status:    "ended",
+            endedAt:   new Date(),
+            endReason: "new_login",
+            updatedAt: new Date(),
+          }).where(and(
+            eq(workSessionsTable.userId, user.id),
+            eq(workSessionsTable.status, "active"),
+          ));
+          await tx.insert(workSessionsTable).values({
+            companyId: cid,
+            userId:    user.id,
+            username:  user.username,
+            status:    "active",
+            ip,
+            userAgent: ua,
+          });
+        });
+      } catch (txErr: any) {
+        // The partial unique index `(user_id, company_id) WHERE status='active'`
+        // can fire when two concurrent logins for the same user race past the
+        // close step. In that case the OTHER transaction has already committed
+        // both the close and a fresh active row, so we recover by adopting it
+        // (refresh ip/userAgent so the row reflects the latest login). This
+        // keeps the invariant "logged-in user always has exactly one active
+        // work_session row" true even under the narrow race window.
+        const isUniqueViolation = txErr?.code === "23505"
+          || /duplicate key|unique constraint/i.test(String(txErr?.message ?? ""));
+        if (!isUniqueViolation) throw txErr;
+        await db.update(workSessionsTable).set({
+          ip,
+          userAgent: ua,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workSessionsTable.userId, user.id),
+          eq(workSessionsTable.status, "active"),
+        ));
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[auth] failed to open work_session", e);
+    }
+  }
+
+  // Successful login → audit row so the Security Center can list it AND
+  // so it falls inside the freshly-opened work session window above.
   await writeAudit({
     userId: user.id, username: user.username, role: user.role, companyId: user.companyId,
     module: "auth", action: "login",
@@ -181,6 +250,22 @@ router.post("/logout", async (req, res) => {
         userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
         metadata: null,
       });
+      // Close any active work-session rows for this user. Defensive: a
+      // session-table failure must not block the logout response.
+      try {
+        await db.update(workSessionsTable).set({
+          status:    "ended",
+          endedAt:   new Date(),
+          endReason: "logout",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(workSessionsTable.userId, user.id),
+          eq(workSessionsTable.status, "active"),
+        ));
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[auth] failed to close work_session on logout", e);
+      }
     } else {
       // SuperAdmin multi-session: revoke this specific sa_sessions row only.
       const [sa] = await db.select({
@@ -206,6 +291,21 @@ router.post("/logout", async (req, res) => {
           userAgent: req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null,
           metadata: { saSessionId: sa.id },
         });
+        // Close any active work-session rows for this superadmin user too.
+        try {
+          await db.update(workSessionsTable).set({
+            status:    "ended",
+            endedAt:   new Date(),
+            endReason: "logout",
+            updatedAt: new Date(),
+          }).where(and(
+            eq(workSessionsTable.userId, sa.userId),
+            eq(workSessionsTable.status, "active"),
+          ));
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error("[auth] failed to close work_session on sa logout", e);
+        }
       }
     }
   }

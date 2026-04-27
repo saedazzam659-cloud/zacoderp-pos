@@ -455,6 +455,7 @@
     "vatDeclaration": "VAT Declaration",
     "posManagement": "POS Management",
     "posMonitoring": "POS Monitoring",
+    "workSessions": "Work Sessions",
     "posSettings": "POS Settings",
     "posTerminals": "POS Terminals",
     "hrEmployeesList": "Employees",
@@ -5478,5 +5479,60 @@
     "micStop": "Stop recording",
     "micUnsupported": "Voice input is not supported in this browser. Try Chrome or Edge.",
     "micError": "Voice recognition failed"
+  },
+  "workSessions": {
+    "title": "Work Sessions",
+    "subtitle": "Track each user's login window and generate AI-written summaries of what was done.",
+    "refresh": "Refresh",
+    "empty": "No sessions to show.",
+    "ongoing": "ongoing",
+    "close": "Close",
+    "stats": {
+      "active": "Active right now",
+      "today":  "Sessions today",
+      "month":  "Sessions this month"
+    },
+    "filter": {
+      "status": "Status",
+      "all":    "All"
+    },
+    "status": {
+      "active": "Active",
+      "ended":  "Ended"
+    },
+    "col": {
+      "user":     "User",
+      "started":  "Started",
+      "ended":    "Ended",
+      "duration": "Duration",
+      "actions":  "Actions",
+      "status":   "Status",
+      "tools":    "Tools"
+    },
+    "action": {
+      "view":   "View",
+      "end":    "End session",
+      "report": "AI report"
+    },
+    "dialog": {
+      "title":       "Session details",
+      "loading":     "Loading...",
+      "aiReport":    "AI session report",
+      "generate":    "Generate report",
+      "regenerate":  "Regenerate",
+      "generatedAt": "Generated at",
+      "noReportYet": "No report has been generated for this session yet. Click \"Generate report\" to build one with AI.",
+      "activity":    "Recent activity in this session",
+      "noActivity":  "No recorded activity for this session.",
+      "moreShown":   "Showing {{shown}} of {{total}} actions."
+    },
+    "toast": {
+      "endedTitle":      "Session ended",
+      "endedBody":       "The work session has been ended successfully.",
+      "reportReadyTitle":"Report ready",
+      "reportReadyBody": "Session report generated successfully.",
+      "reportTruncated": "Activity list was truncated because it exceeded the per-report limit.",
+      "errorTitle":      "Something went wrong"
+    }
   }
 }

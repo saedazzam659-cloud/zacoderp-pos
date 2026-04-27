@@ -173,6 +173,11 @@ const dashboardSubNav: NavDef[] = [
   // user.role==="admin"; per the user's request it's now nested under the
   // dashboard/control-panel group. requireAdmin keeps the same admin-only gate.
   { nameKey: "nav.auditLog",        href: "/admin/audit-log",     icon: ScrollText, requireAdmin: true },
+  // Work-sessions: visible to every company user (each sees their own
+  // sessions; admins see the whole company). No requireAdmin gate.
+  // Hidden from superadmin entirely — superadmin has no companyId so the
+  // feature does not apply to them.
+  { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
 ];
 
 const purchasingSubNav: NavDef[] = [
