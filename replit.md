@@ -1,6 +1,6 @@
 # Overview
 
-This project is a pnpm workspace monorepo providing a comprehensive Saudi ZATCA e-invoicing system. It supports multi-company operations with a bilingual (Arabic/English) RTL UI, designed to streamline financial operations, enhance reporting, and automate accounting processes in compliance with ZATCA regulations. Key capabilities include CSR generation, invoice submission (clearance and reporting), QR code generation, and detailed accounting reports. The system also integrates robust modules for inventory management, accounting, purchasing, and sales.
+This project is a pnpm workspace monorepo designed to provide a comprehensive Saudi ZATCA e-invoicing system. Its primary purpose is to streamline financial operations, automate accounting, and ensure compliance with ZATCA regulations for multi-company operations. Key capabilities include CSR generation, invoice submission (clearance and reporting), QR code generation, detailed accounting reports, and robust modules for inventory, accounting, purchasing, and sales. The system aims to enhance financial reporting and operational efficiency for businesses in Saudi Arabia.
 
 # User Preferences
 
@@ -8,66 +8,64 @@ I prefer detailed explanations and a clear, concise communication style. I value
 
 # System Architecture
 
-The system is built as a pnpm workspace monorepo, leveraging Node.js and TypeScript.
+The system is built as a pnpm workspace monorepo, utilizing Node.js and TypeScript.
 
 **UI/UX Decisions:**
-The frontend uses React with Vite and TailwindCSS, supporting a multi-company, Arabic/English RTL interface. It includes customizable invoice design templates, logo uploads, and decimal place settings per company.
+The frontend employs React with Vite and TailwindCSS to deliver a bilingual (Arabic/English) RTL interface that supports multi-company operations. It features customizable invoice design templates, logo uploads, and per-company decimal place settings.
 
 **Technical Implementations:**
-- **Monorepo:** pnpm workspaces.
-- **API:** Express.js framework with Orval for API hook and Zod schema generation from OpenAPI specifications.
-- **Database:** PostgreSQL with Drizzle ORM.
-- **Validation:** Zod and `drizzle-zod`.
-- **Authentication:** JWT-style Bearer tokens, single-session enforcement, real-time validation, bcryptjs for password hashing, and a dedicated SuperAdmin multi-layer login with advanced security features.
-- **ZATCA Integration:** CSR generation (ECDSA secp256k1), APIs for compliance, production CSID onboarding, and invoice submission. QR code generation uses TLV binary encoding. XML generation adheres to UBL 2.1 ZATCA namespace.
-- **Self-Registration:** Public registration flow creating pending companies and inactive admin users awaiting SuperAdmin approval, with country-specific compliance policies and dynamic module selection based on industry and plan.
-- **Modules:**
-    - **Inventory Management:** Tracks warehouses, items, stock, transfers, adjustments, and counts with Weighted Average costing and multi-unit support.
+- **Monorepo:** Managed with pnpm workspaces for modularity.
+- **API:** Developed with Express.js, using Orval for API hook and Zod schema generation from OpenAPI specifications.
+- **Database:** PostgreSQL with Drizzle ORM for data persistence.
+- **Validation:** Utilizes Zod and `drizzle-zod` for robust data validation.
+- **Authentication:** Implements JWT-style Bearer tokens, single-session enforcement, real-time validation, and bcryptjs for password hashing. Includes a SuperAdmin multi-layer login with advanced security.
+- **ZATCA Integration:** Handles CSR generation (ECDSA secp256k1), APIs for compliance and production CSID onboarding, and invoice submission. QR codes are generated using TLV binary encoding, and XML generation adheres to UBL 2.1 ZATCA namespace.
+- **Self-Registration:** Supports a public registration flow for new companies and inactive admin users, with SuperAdmin approval, country-specific compliance, and dynamic module selection.
+- **Core Modules:**
+    - **Inventory Management:** Comprehensive tracking of warehouses, items, stock, transfers, adjustments, and counts, including Weighted Average costing and multi-unit support.
     - **Fiscal Periods:** Manages fiscal years and periods with status tracking and overlap detection.
-    - **Sales Documents:** Includes `priceIncludesVat` flag, document-level discount implementation, and auto-application of promotions via a server-authoritative engine. Posting a cash/bank sales invoice (or sales return) writes the journal entry only — receipt/payment vouchers are NOT auto-created and must be entered manually when desired.
-    - **Quotation → Invoice Linking (forward direction):** On the new Sales Invoice form (`/sales/invoices/new`) a "بناءً على عرض سعر" (Based on quotation) search combobox lets the user pick an `accepted` quotation from the same tenant; on selection the form auto-loads customer, currency, exchange rate, `priceIncludesVat`, document discount, notes, and lines. On save, the backend (POST `/api/sales/sales-invoices`) accepts an optional `sourceQuotationId` and applies the SAME validation gates as the existing `/sales-quotations/:id/convert` endpoint (tenant scope, status='accepted', not already converted), then atomically marks the quotation as `converted` with `convertedInvoiceId = newInvoice.id` via a conditional UPDATE on `(status='accepted' AND convertedInvoiceId IS NULL)`. If the conditional UPDATE affects 0 rows (concurrent race), the just-created invoice is deleted (FK cascade nukes its lines) and the second caller receives HTTP 409 — guaranteeing the one-quotation→one-invoice invariant under concurrent submits. The PUT path does NOT accept `sourceQuotationId` (provenance is immutable; you can't retroactively re-source an existing invoice).
-    - **Account Statement Drill-down:** Each row in the Account Statement (`/accounting/reports/account-statement`) renders the JE doc number as a clickable link that navigates to the source document. Sales/purchase invoices link to their dedicated detail page (`/sales/invoices/:id`, `/purchasing/invoices/:id`); every other entry type (returns, vouchers, payroll, manual JEs, …) falls back to the journal-entry detail page (`/accounting/journals/:id`) which renders cleanly for any entry type. Backend resolves the source row id via `LEFT JOIN sales_invoices / purchase_invoices ON journal_entry_id` so the lookup is one round-trip.
-    - **Support System:** In-app ticket system.
-    - **POS Management:** Monitors cashier shifts, links sales invoices to sessions, provides live KPIs, and manages POS terminals.
-    - **Sequence Management:** Centralized, admin-only module for managing and auditing transaction document numbers with concurrent handling and per-branch counters.
-- **Role-Based Access Control (RBAC) & Audit Log:** Granular per-module permissions, middleware for handler gating, and audit recording.
-- **Work Sessions (Login Activity Tracker):** Each company-user login opens a row in `work_sessions`; logout (or a manual "End session" click) flips it to `ended`. A partial unique index on `(user_id, company_id) WHERE status='active'` enforces the single-active-session invariant atomically — concurrent logins cannot create duplicate active rows. The `/work-sessions` screen (now relabelled "سجل الجلسات" / "Session Log" in the sidebar; visible to every company user; admins see the whole company while regular users see only their own rows) lists sessions with live durations and lets the user generate an Arabic Markdown activity report. The report endpoint pulls the matching `audit_log` rows for the session window (skipping noisy `view` actions, capped at 500), redacts sensitive jsonb keys (password/token/secret/cvv/iban/…) before forwarding, and prompts Anthropic Claude haiku-4.5 (via the existing `AI_INTEGRATIONS_ANTHROPIC_*` proxy) to produce the Markdown, which is cached on the row alongside `aiReportGeneratedAt`. The client renders the cached Markdown via a small built-in renderer that escapes HTML before applying any transforms (no `react-markdown` dependency added). The screen is hidden from superadmin entirely, since superadmin has no `companyId` and the feature is inherently per-company.
-- **Manual Sessions (Admin-Managed Work Shifts):** A separate, admin-managed entity layered on top of `work_sessions` (the two coexist). Admin creates `sessions` rows (e.g. "Morning Shift", "دوام مسائي") and assigns users via the `session_users` junction table; the user's currently-selected session is persisted on `users.current_session_id` so the choice survives page reload. On login, the response embeds the user's assigned `sessions[]` + `currentSessionId`; the React `SessionPickerModal` auto-picks when assigned==1, prompts when >1 ("اختر الجلسة" / "Select a session"), and when ==0 offers "continue without a session" plus a permission-gated quick-create. The topbar `SessionIndicator` widget (briefcase icon) shows the current session and lets the user switch / clear at any time. Operations send the chosen id via the `x-session-id` HTTP header; the API middleware validates it against `users.current_session_id` and silently drops it on mismatch (so a stale localStorage value can't impersonate). Currently four high-traffic operation tables persist `session_id` on insert — `sales_invoices`, `sales_returns`, `receipt_vouchers`, `payment_vouchers` — with the remaining ~25 ops tables deferred to a follow-up. Admin CRUD + dual-list user-assignment lives at `/sessions` (route gated by the new `sessions` perm; admin/superadmin pass automatically); a separate `sessions_self_create` perm gates the picker's quick-create button for non-admins. Branch attribution still comes from the user's `branchId` — the session is purely a label/grouping for end-of-shift aggregation.
-- **Account Management:** Enforcement of leaf accounts in transactional UIs and server-side validation.
-- **Subscription Management:** Differentiated plans, lifecycle management, bulk actions, and auto-suspension for expired subscriptions.
-- **Backup Operations:** SuperAdmin screen for backup health, manual/scheduled backups, and restore functionality.
-- **Cross-Company Report Email Scheduling:** SuperAdmin Reports Hub allows weekly/monthly auto-emailing of selected cross-company CSV reports.
-- **AI-Powered Features:** Voucher suggestions, data import/export with AI mapping, system auto-discovery for analysis, and a maintenance scheduler with 11 checks.
-    - **Voice + AI Screen Actions:** A global "actionable assistant" panel lets users speak (Web Speech API, ar-SA / en-US) or type natural-language commands which the LLM converts into a sequence of `set_field` / `call_action` operations executed against the active screen. Built on a `ScreenActionsContext` registry that any form (currently `SalesDocumentForm`) can populate with its fields, actions and lookup tables; the backend `/api/ai/command` validates returned commands against the registered schema (lookup id existence, select option membership, type coercion). Includes race guards on screen navigation and graceful degradation when the AI is not configured.
-    - **Production / Manufacturing:** Multi-tenant, branch-scoped manufacturing module with production orders (status workflow: draft → approved → in_production → quality_check → completed/cancelled), order line items (raw / product / byproduct), production resources (machines/lines/stations), and a full event timeline (`production_events`). Includes an embedded **AI Production Assistant** (`/api/ai/assist`) that explains screens, suggests next actions, and surfaces warnings; uses the existing OpenAI proxy with a deterministic AR/EN fallback so the panel always renders.
-    - **Security & Monitoring (Phase 2 — AI Camera Analysis):** Security event records support image (≤5MB) and short video (≤25MB) attachments. Uploads go through a dedicated, ownership-tracked endpoint `POST /api/security-events/media/request-url` that records `(companyId, userId, objectPath, kind)` into a `security_event_media` table at presigned-URL issuance time. The vision endpoint `POST /api/ai/security/analyze-image` calls a vision model on the uploaded image and auto-fills the event type / severity / suggested title / description, but only after verifying the requested `/objects/...` path is owned by the caller's company in `security_event_media` (returns 404 otherwise to avoid leaking path existence). Write paths on `security_events` (POST/PUT) re-validate `imageUrl`/`videoClipUrl` against the same table so a foreign path can never be persisted. The events list shows 40×40 thumbnails with a click-to-lightbox preview.
-    - **Security & Monitoring (Phase 3 — Real-time Alerts + Notification Rules):** Per-company `security_notification_rules` table lets admins author rules ("when severity ≥ X AND event_type ∈ […] AND branch ∈ […] then notify users / broadcast"). The evaluator `runSecurityNotificationRules` runs fire-and-forget after every `POST /api/security-events`, fans out to the existing `notifications` table (broadcast = `userId NULL`, users-mode = one row per re-validated user id), and uses the existing 30-second-polled `NotificationBell` for delivery — no new realtime infra. If a company has zero rules when its first event fires, a default rule (severity ≥ medium, broadcast) is auto-seeded so no event ever goes silent. CRUD lives at `/api/security-events/notification-rules` (gated by the same `security_events` permission, tenant-scoped via the auth token, body `companyId` ignored), and the management UI lives at `/security/notification-rules` with a tile in the Security hub.
-    - **In-App Inbox + AI Reports:** A persistent `inbox_messages` table (id, companyId, recipientUserId NULL=broadcast, kind, subject, body HTML, attachmentUrl/Filename/Mime, notificationId cross-link, readAt) gives users a real "messages" surface beyond the transient bell. The shared delivery helper `deliverReport()` (in `lib/inboxDelivery.ts`) uploads attachments once to private object storage at `/objects/inbox/<uuid>`, then opens a single Drizzle transaction that inserts inbox + matching `notifications` rows for every recipient and cross-links them — partial failures roll back, and a best-effort GC deletes the orphaned blob. Attachments are served through `GET /api/inbox/:id/attachment`, which re-checks recipient ownership and whitelists the path shape (`/objects/inbox/<uuid-36>`) before streaming the file via `objectStorageClient` — they are NOT reachable through the generic `/api/storage/objects/*` route. Marking an inbox row read also flips the linked notification's `is_read`/`read_at` so the bell badge decrements in lockstep (`POST /api/inbox/:id/read` and `/read-all`). The admin-only AI page `POST /api/ai-reports/send` accepts a free-form Arabic/English prompt ("ابعت تقرير مبيعات آخر ٧ أيام"), calls the OpenAI proxy with a strict JSON-object response format, validates the parsed `ReportArgs` (allowed report types, date format, ≤366-day span, branchId whitelisted against the company's branches), runs one of `sales_summary` / `sales_returns_summary` / `receipts_summary` / `payments_summary` / `invoices_list`, builds an Arabic CSV (BOM-prefixed for Excel) plus an HTML summary body — every user-supplied or AI-derived value is HTML-escaped before interpolation to prevent stored XSS — and delivers the package via `deliverReport`. "Today/yesterday/last 7 days" anchors are computed in `Asia/Riyadh` so prompts work correctly during KSA evening hours. Audience can be `self` or `all_admins`, and an optional email copy is sent best-effort via the existing `sendEmail` to recipient emails. Sidebar exposes `/inbox` (every authenticated company user) and `/ai-reports` (admin only); the existing `NotificationBell` recognises `sourceKey="inbox:<id>"` and navigates to `/inbox?id=<id>` on click.
+    - **Sales Documents:** Features `priceIncludesVat` flag, document-level discount, and server-authoritative promotion application.
+    - **Quotation to Invoice Linking:** Allows direct conversion of accepted quotations into sales invoices with atomic updates to ensure data integrity.
+    - **Account Statement Drill-down:** Provides clickable links in account statements to navigate directly to source documents or journal entries.
+    - **Support System:** In-app ticket management.
+    - **POS Management:** Tools for monitoring cashier shifts, linking sales invoices to sessions, live KPIs, and terminal management.
+    - **Sequence Management:** Centralized administration and auditing of transaction document numbers with concurrent handling and per-branch counters.
+- **Role-Based Access Control (RBAC) & Audit Log:** Granular permissions per module, middleware for access control, and audit trail recording.
+- **Work Sessions (Login Activity Tracker):** Tracks user login activity, enforces single active sessions, and allows users to generate activity reports.
+- **Manual Sessions (Admin-Managed Work Shifts):** Admin-defined work shifts assignable to users, with `x-session-id` HTTP header validation.
+- **Account Management:** Enforces leaf accounts in transactional UIs and server-side validation.
+- **Subscription Management:** Manages differentiated plans, subscription lifecycles, bulk actions, and auto-suspension.
+- **Backup Operations:** SuperAdmin interface for backup health, manual/scheduled backups, and restore.
+- **Cross-Company Report Email Scheduling:** SuperAdmin functionality to auto-email selected cross-company CSV reports weekly/monthly.
+- **AI-Powered Features:** Includes voucher suggestions, data import/export with AI mapping, system auto-discovery for analysis, and a maintenance scheduler.
+    - **Voice + AI Screen Actions:** A global actionable assistant panel enabling natural-language commands (voice/text) to execute `set_field` / `call_action` operations on active screens.
+    - **AI Production Assistant:** Embedded assistant in the multi-tenant manufacturing module, providing explanations, next-action suggestions, and warnings.
+    - **AI Security Event Analysis:** Integration for analyzing uploaded images and videos from security events to auto-fill event details.
+    - **Real-time Security Alerts + Notification Rules:** Configurable rules for security events to trigger in-app notifications and broadcasts.
+    - **In-App Inbox + AI Reports:** A persistent inbox for messages and AI-generated reports (e.g., sales summaries) delivered with attachments and HTML summaries, with strict JSON validation for AI prompts.
 
 **System Design Choices:**
-- **Modular Monorepo:** Promotes code reusability and separation of concerns.
-- **Database Schema:** Designed for multi-tenancy and complex relationships.
-- **API Design:** RESTful API with distinct routes.
-- **Security:** JWTs, bcryptjs, and multi-tenant guards.
-- **AI Integration:** AI endpoints for suggestions and data mapping, with rule-based fallbacks.
+- **Modular Monorepo:** Facilitates code reuse and clear separation of concerns.
+- **Database Schema:** Designed for multi-tenancy and complex transactional relationships.
+- **API Design:** Adheres to RESTful principles with well-defined routes.
+- **Security:** Robust security mechanisms including JWTs, bcryptjs, and multi-tenant guards.
+- **AI Integration:** Strategic integration of AI for suggestions, data processing, and analysis, with rule-based fallbacks for reliability.
 
 # External Dependencies
 
 - **pnpm:** Monorepo package manager.
-- **Node.js:** Runtime environment.
-- **TypeScript:** Programming language.
-- **Express:** Web application framework.
+- **Node.js:** JavaScript runtime.
+- **TypeScript:** Superset of JavaScript.
+- **Express.js:** Web application framework.
 - **PostgreSQL:** Relational database.
 - **Drizzle ORM:** Object-Relational Mapper.
-- **Zod:** Schema declaration and validation library.
-- **drizzle-zod:** Drizzle ORM and Zod integration.
+- **Zod:** Schema declaration and validation.
+- **drizzle-zod:** Integration between Drizzle ORM and Zod.
 - **Orval:** OpenAPI client code generator.
-- **esbuild:** Bundler.
-- **React:** JavaScript library for UIs.
-- **Vite:** Frontend tooling.
-- **TailwindCSS:** CSS framework.
-- **bcryptjs:** Password hashing library.
-- **qrcode.react:** React component for QR code generation.
-- **openssl:** Used for CSR generation for ZATCA.
-- **OpenAI:** For AI-powered suggestions and validations.
-- **xlsx (SheetJS):** Excel/CSV parsing and generation for Import/Export center.
+- **React:** Frontend library.
+- **Vite:** Frontend build tool.
+- **TailwindCSS:** Utility-first CSS framework.
+- **bcryptjs:** Password hashing.
+- **openssl:** Used for CSR generation.
+- **OpenAI:** AI services for suggestions and validations.
+- **xlsx (SheetJS):** Library for Excel/CSV parsing and generation.

@@ -298,22 +298,29 @@ function HubGroupButton({
   onToggle: () => void;
   onNavigate: () => void;
 }) {
+  // Striking blue parent rows for every top-level group:
+  //   • idle    → light blue card with bold blue text
+  //   • active  → solid vivid blue with white text + soft glow
+  //   • open    → slightly deeper blue tint so the user sees which one is expanded
+  const stateClasses = isOn
+    ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md ring-1 ring-blue-500/40 dark:bg-blue-500 dark:hover:bg-blue-600"
+    : open
+      ? "bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/60 dark:text-blue-100 dark:hover:bg-blue-900"
+      : "bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-900/60";
   return (
     <div
       className={cn(
-        "flex items-center rounded-lg pe-1 transition-colors group",
-        isOn && !open
-          ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        "flex items-center rounded-lg pe-1 transition-all duration-200 group shadow-sm",
+        stateClasses,
       )}
     >
       <Link
         href={hubHref}
         onClick={() => { if (!open) onToggle(); onNavigate(); }}
-        className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 text-sm font-medium"
+        className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 text-sm font-bold"
         data-testid={`hub-group-link-${hubHref.replace(/\//g, "")}`}
       >
-        <Icon className="h-4 w-4 shrink-0" />
+        <Icon className="h-4 w-4 shrink-0" strokeWidth={2.5} />
         <span className="flex-1 text-start">{label}</span>
       </Link>
       <button
@@ -322,11 +329,16 @@ function HubGroupButton({
         aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
         data-testid={`hub-group-toggle-${hubHref.replace(/\//g, "")}`}
         data-state={open ? "open" : "closed"}
-        className="p-1.5 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition shrink-0"
+        className={cn(
+          "p-1.5 rounded-md opacity-80 hover:opacity-100 transition shrink-0",
+          isOn
+            ? "hover:bg-white/20"
+            : "hover:bg-blue-200/70 dark:hover:bg-blue-800/60",
+        )}
       >
         {open
-          ? <ChevronDown  className="h-3.5 w-3.5" />
-          : <ChevronRight className="h-3.5 w-3.5" />}
+          ? <ChevronDown  className="h-3.5 w-3.5" strokeWidth={2.5} />
+          : <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />}
       </button>
     </div>
   );
@@ -1729,21 +1741,61 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isSuperAdmin = user?.role === "superadmin";
   const menuPerms    = parseMenuPerms(user?.company?.menuPermissions);
 
-  const handleDashboardToggle  = () => setDashboardOpen(v => !v);
-  const handleInventoryToggle  = () => setInventoryOpen(v => !v);
-  const handleInvReportsToggle = () => setInvReportsOpen(v => !v);
-  const handleReportsToggle    = () => setReportsOpen(v => !v);
-  const handlePurchasingToggle = () => setPurchasingOpen(v => !v);
+  // Accordion behavior — only ONE top-level group may be expanded at a time.
+  // When the user opens a main group, every other top-level group collapses.
+  // Sub-groups (the *Reports children inside Sales/Purchasing/Cash/Inventory/
+  // Accounting) are NOT part of the accordion — they live inside their parent
+  // and their own open/closed state is independent.
+  type TopLevelGroup =
+    | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
+    | "purchasing" | "sales" | "cash" | "hr" | "production"
+    | "pos" | "security";
+  const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
+    if (keep !== "dashboard")  setDashboardOpen(false);
+    if (keep !== "zatcaGroup") setZatcaGroupOpen(false);
+    if (keep !== "inventory")  setInventoryOpen(false);
+    if (keep !== "accounting") setAccountingOpen(false);
+    if (keep !== "purchasing") setPurchasingOpen(false);
+    if (keep !== "sales")      setSalesOpen(false);
+    if (keep !== "cash")       setCashOpen(false);
+    if (keep !== "hr")         setHrOpen(false);
+    if (keep !== "production") setProductionOpen(false);
+    if (keep !== "pos")        setPosOpen(false);
+    if (keep !== "security")   setSecurityOpen(false);
+  };
+  // Each top-level toggle: flip its own state. When the row is currently
+  // CLOSED (i.e. the click is about to OPEN it), also collapse every other
+  // top-level group so the sidebar behaves as a single-pane accordion.
+  // We compare against the currently-rendered `*Open` value (captured via
+  // closure each render) so we can call `closeOtherTopLevelGroups` BEFORE
+  // `setSelf` rather than from inside the updater function — which keeps
+  // each setState call at the top level of the handler and avoids cascading
+  // setState calls inside another setState's reducer.
+  const makeAccordionToggle = (
+    keep: TopLevelGroup,
+    isOpenNow: boolean,
+    setSelf: React.Dispatch<React.SetStateAction<boolean>>,
+  ) => () => {
+    if (!isOpenNow) closeOtherTopLevelGroups(keep);
+    setSelf(v => !v);
+  };
+  const handleDashboardToggle  = makeAccordionToggle("dashboard",  dashboardOpen,  setDashboardOpen);
+  const handleZatcaGroupToggle = makeAccordionToggle("zatcaGroup", zatcaGroupOpen, setZatcaGroupOpen);
+  const handleInventoryToggle  = makeAccordionToggle("inventory",  inventoryOpen,  setInventoryOpen);
+  const handleAccountingToggle = makeAccordionToggle("accounting", accountingOpen, setAccountingOpen);
+  const handlePurchasingToggle = makeAccordionToggle("purchasing", purchasingOpen, setPurchasingOpen);
+  const handleSalesToggle      = makeAccordionToggle("sales",      salesOpen,      setSalesOpen);
+  const handleCashToggle       = makeAccordionToggle("cash",       cashOpen,       setCashOpen);
+  const handleHrToggle         = makeAccordionToggle("hr",         hrOpen,         setHrOpen);
+  const handleProductionToggle = makeAccordionToggle("production", productionOpen, setProductionOpen);
+  const handlePosToggle        = makeAccordionToggle("pos",        posOpen,        setPosOpen);
+  const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
+  // Sub-group toggles (nested reports) — independent of the accordion.
+  const handleInvReportsToggle        = () => setInvReportsOpen(v => !v);
+  const handleReportsToggle           = () => setReportsOpen(v => !v);
   const handlePurchasingReportsToggle = () => setPurchasingReportsOpen(v => !v);
-  const handleSalesToggle      = () => setSalesOpen(v => !v);
-  const handleSalesReportsToggle = () => setSalesReportsOpen(v => !v);
-  const handleCashToggle       = () => setCashOpen(v => !v);
-  const handleCashReportsToggle = () => setCashReportsOpen(v => !v);
-  const handleAccountingToggle = () => setAccountingOpen(v => !v);
-  const handleHrToggle         = () => setHrOpen(v => !v);
-  const handleProductionToggle = () => setProductionOpen(v => !v);
-  const handlePosToggle        = () => setPosOpen(v => !v);
-  const handleSecurityToggle   = () => setSecurityOpen(v => !v);
+  const handleSalesReportsToggle      = () => setSalesReportsOpen(v => !v);
+  const handleCashReportsToggle       = () => setCashReportsOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
   // ─── Auto-expand groups on direct URL navigation ───────────────────────
@@ -1753,31 +1805,49 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // (never CLOSE) here so that a manual chevron-collapse stays sticky while
   // the user remains inside the group.
   useEffect(() => {
-    if (location.startsWith("/sales") || location.startsWith("/customers")) setSalesOpen(true);
-    if (location.startsWith("/purchasing") || location.startsWith("/suppliers")) setPurchasingOpen(true);
-    if (location.startsWith("/cash")) setCashOpen(true);
-    if (
-      location === "/accounting" ||
-      location.startsWith("/accounting/accounts") ||
-      location.startsWith("/accounting/journals") ||
-      location.startsWith("/accounting/reports")
-    ) setAccountingOpen(true);
-    if (location.startsWith("/inventory")) setInventoryOpen(true);
-    if (location.startsWith("/production")) setProductionOpen(true);
-    if (location.startsWith("/hr/") || location === "/hr") setHrOpen(true);
-    if (location.startsWith("/security")) setSecurityOpen(true);
-    if (
+    // Resolve which (if any) top-level group the current URL belongs to. Only
+    // one match is possible because the prefixes are disjoint. When a match is
+    // found, open it AND collapse all other top-level groups so the accordion
+    // stays consistent with the user clicking the group themselves.
+    let target: TopLevelGroup | null = null;
+    if (location.startsWith("/sales") || location.startsWith("/customers")) target = "sales";
+    else if (location.startsWith("/purchasing") || location.startsWith("/suppliers")) target = "purchasing";
+    else if (location.startsWith("/cash")) target = "cash";
+    else if (location.startsWith("/accounting")) target = "accounting";
+    else if (location.startsWith("/inventory")) target = "inventory";
+    else if (location.startsWith("/production")) target = "production";
+    else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
+    else if (location.startsWith("/security")) target = "security";
+    else if (
       location.startsWith("/pos-monitoring") ||
       location.startsWith("/pos-terminals") ||
       location.startsWith("/pos-settings") ||
       location === "/pos-management"
-    ) setPosOpen(true);
-    if (
+    ) target = "pos";
+    else if (
       ["/org/", "/general-settings", "/settings/",
        "/vat-declaration", "/users",
        "/control-panel"].some(p => location.startsWith(p))
-    ) setDashboardOpen(true);
-    if (["/zatca", "/invoices"].some(p => location.startsWith(p))) setZatcaGroupOpen(true);
+    ) target = "dashboard";
+    else if (["/zatca", "/invoices"].some(p => location.startsWith(p))) target = "zatcaGroup";
+
+    if (target) {
+      const setterByGroup: Record<TopLevelGroup, React.Dispatch<React.SetStateAction<boolean>>> = {
+        dashboard:  setDashboardOpen,
+        zatcaGroup: setZatcaGroupOpen,
+        inventory:  setInventoryOpen,
+        accounting: setAccountingOpen,
+        purchasing: setPurchasingOpen,
+        sales:      setSalesOpen,
+        cash:       setCashOpen,
+        hr:         setHrOpen,
+        production: setProductionOpen,
+        pos:        setPosOpen,
+        security:   setSecurityOpen,
+      };
+      setterByGroup[target](true);
+      closeOtherTopLevelGroups(target);
+    }
   }, [location]);
 
   const sharedProps = {
@@ -1788,7 +1858,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     dashboardOpen,
     onDashboardToggle: handleDashboardToggle,
     zatcaGroupOpen,
-    onZatcaGroupToggle: () => setZatcaGroupOpen(v => !v),
+    onZatcaGroupToggle: handleZatcaGroupToggle,
     inventoryOpen,
     onInventoryToggle: handleInventoryToggle,
     invReportsOpen,
