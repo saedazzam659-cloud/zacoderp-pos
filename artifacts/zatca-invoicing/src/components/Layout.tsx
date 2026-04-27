@@ -27,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
+import SessionCountdown from "@/components/SessionCountdown";
 import ScreenAssistant from "@/components/ScreenAssistant";
 import { SUPPORTED_LANGUAGES, normalizeLang } from "@/i18n";
 
@@ -1511,6 +1512,7 @@ function TopBar({
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
           <NotificationBell />
+          <SessionCountdown />
           <div className="h-5 w-px bg-border mx-1" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

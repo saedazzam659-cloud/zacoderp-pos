@@ -5573,7 +5573,23 @@
       "requireBranchSelectionHint": "When on, every session must be tied to a branch. Used to group activity per branch in reports.",
       "defaultBranch": "Default branch for sessions",
       "defaultBranchHint": "Used automatically for users who don't have exactly one branch grant.",
-      "noDefaultBranch": "No default branch"
+      "noDefaultBranch": "No default branch",
+      "hoursGroup": "Working hours",
+      "hoursGroupDesc": "Set your company's working hours. A live countdown appears in the topbar and users are auto-logged-out when the day ends.",
+      "sessionStartTime": "Day start time",
+      "sessionStartTimeHint": "Shown to users for reference. 24-hour format (e.g. 08:00).",
+      "sessionEndTime": "Day end time",
+      "sessionEndTimeHint": "When this time is reached, the user is signed out automatically. Leave blank to disable.",
+      "endWarningMinutes": "Warn before end (minutes)",
+      "endWarningMinutesHint": "How many minutes before the day ends to show a warning toast. 1–120."
+    },
+    "countdown": {
+      "label": "Time left",
+      "tooltipPrefix": "Day ends at",
+      "warningTitle": "Workday is ending soon",
+      "warningBody":  "Less than {n} minutes left in the workday. You will be signed out automatically.",
+      "endedTitle":   "Workday has ended",
+      "endedBody":    "You have been signed out automatically. Thank you!"
     }
   }
 }

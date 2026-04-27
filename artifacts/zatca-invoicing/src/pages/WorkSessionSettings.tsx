@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Save, Settings, ArrowRight, Mail, Sparkles, Building2 } from "lucide-react";
+import { Loader2, Save, Settings, ArrowRight, Mail, Sparkles, Building2, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -26,6 +26,9 @@ interface SessionSettings {
   defaultBranchId: number | null;
   aiModel: string;
   idleTimeoutMinutes: number | null;
+  sessionStartTime: string | null;
+  sessionEndTime: string | null;
+  endWarningMinutes: number;
 }
 
 interface BranchOption {
@@ -65,6 +68,9 @@ export default function WorkSessionSettings() {
   const [defaultBranchId, setDefaultBranchId]           = useState<string>("none");
   const [aiModel, setAiModel]                           = useState<string>("claude-haiku-4-5");
   const [idleTimeoutMinutes, setIdleTimeoutMinutes]     = useState<number>(60);
+  const [sessionStartTime, setSessionStartTime]         = useState<string>("");
+  const [sessionEndTime, setSessionEndTime]             = useState<string>("");
+  const [endWarningMinutes, setEndWarningMinutes]       = useState<number>(15);
 
   const { data: settings, isLoading } = useQuery<SessionSettings>({
     queryKey: ["work-session-settings"],
@@ -100,6 +106,9 @@ export default function WorkSessionSettings() {
     setDefaultBranchId(settings.defaultBranchId ? String(settings.defaultBranchId) : "none");
     setAiModel(settings.aiModel || "claude-haiku-4-5");
     setIdleTimeoutMinutes(settings.idleTimeoutMinutes || 60);
+    setSessionStartTime(settings.sessionStartTime ?? "");
+    setSessionEndTime(settings.sessionEndTime ?? "");
+    setEndWarningMinutes(Number(settings.endWarningMinutes) || 15);
   }, [settings]);
 
   const saveMut = useMutation({
@@ -117,6 +126,9 @@ export default function WorkSessionSettings() {
         defaultBranchId: defaultBranchId === "none" ? null : Number(defaultBranchId),
         aiModel,
         idleTimeoutMinutes: Number(idleTimeoutMinutes) || 60,
+        sessionStartTime: sessionStartTime || null,
+        sessionEndTime:   sessionEndTime   || null,
+        endWarningMinutes: Math.max(1, Math.min(120, Number(endWarningMinutes) || 15)),
       };
       const r = await fetch(`${API}/api/work-session-settings`, {
         method: "PUT",
@@ -133,6 +145,9 @@ export default function WorkSessionSettings() {
     onSuccess: () => {
       toast({ title: tr("toast.settingsSavedTitle"), description: tr("toast.settingsSavedBody") });
       qc.invalidateQueries({ queryKey: ["work-session-settings"] });
+      // The topbar countdown reads /me/effective under a separate key — kick
+      // it now so the saving admin sees their hour change reflected instantly.
+      qc.invalidateQueries({ queryKey: ["work-session-settings", "me", "effective"] });
     },
     onError: (e: any) => toast({
       title: tr("toast.errorTitle"),
@@ -301,6 +316,57 @@ export default function WorkSessionSettings() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* WORKING HOURS — drives the topbar countdown clock + auto-logout */}
+      <Card className="border-emerald-200/40">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Clock className="h-4 w-4 text-emerald-600" />
+            {tr("settings.hoursGroup")}
+          </CardTitle>
+          <CardDescription>{tr("settings.hoursGroupDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium block mb-1">{tr("settings.sessionStartTime")}</label>
+              <p className="text-xs text-muted-foreground mb-2">{tr("settings.sessionStartTimeHint")}</p>
+              <Input
+                type="time"
+                value={sessionStartTime}
+                onChange={(e) => setSessionStartTime(e.target.value)}
+                dir="ltr"
+                data-testid="input-session-start-time"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">{tr("settings.sessionEndTime")}</label>
+              <p className="text-xs text-muted-foreground mb-2">{tr("settings.sessionEndTimeHint")}</p>
+              <Input
+                type="time"
+                value={sessionEndTime}
+                onChange={(e) => setSessionEndTime(e.target.value)}
+                dir="ltr"
+                data-testid="input-session-end-time"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">{tr("settings.endWarningMinutes")}</label>
+            <p className="text-xs text-muted-foreground mb-2">{tr("settings.endWarningMinutesHint")}</p>
+            <Input
+              type="number"
+              min={1}
+              max={120}
+              value={endWarningMinutes}
+              onChange={(e) => setEndWarningMinutes(Number(e.target.value) || 15)}
+              dir="ltr"
+              className="max-w-[160px]"
+              data-testid="input-end-warning-minutes"
+            />
           </div>
         </CardContent>
       </Card>

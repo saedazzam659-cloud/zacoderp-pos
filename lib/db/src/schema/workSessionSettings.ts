@@ -40,6 +40,15 @@ export const workSessionSettingsTable = pgTable("work_session_settings", {
   // Optional: future idle-timeout sweeper
   idleTimeoutMinutes:       integer("idle_timeout_minutes"),
 
+  // Working-hours window for the company. When sessionEndTime is set, the
+  // frontend shows a live countdown to that time and auto-logs-out the user
+  // when it hits zero. Stored as "HH:MM" (24h) strings rather than time-of-day
+  // columns so the API echo is trivially serializable to JSON and the UI can
+  // <input type="time"> it directly.
+  sessionStartTime:         text("session_start_time"),                    // "08:00"
+  sessionEndTime:           text("session_end_time"),                      // "17:00"
+  endWarningMinutes:        integer("end_warning_minutes").default(15),    // toast 15 min before end
+
   updatedByUserId:          integer("updated_by_user_id"),
   createdAt:                timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:                timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -38,6 +38,20 @@ function isAdmin(req: any): boolean {
   return role === "admin" || role === "superadmin";
 }
 
+// Validate "HH:MM" 24-hour time strings. Returns the canonical "HH:MM" form
+// or null if invalid/empty. Accepts H:M too (e.g. "8:5") and zero-pads.
+function normalizeTimeOfDay(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]); const mn = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(mn)) return null;
+  if (h < 0 || h > 23 || mn < 0 || mn > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(mn).padStart(2, "0")}`;
+}
+
 // Default snapshot returned when the company has never saved settings.
 function defaultsForCompany(companyId: number) {
   return {
@@ -50,16 +64,46 @@ function defaultsForCompany(companyId: number) {
     defaultBranchId:         null as number | null,
     aiModel:                 "claude-haiku-4-5",
     idleTimeoutMinutes:      null as number | null,
+    sessionStartTime:        null as string | null,
+    sessionEndTime:          null as string | null,
+    endWarningMinutes:       15,
     updatedAt:               null as string | null,
     isDefault:               true,
   };
 }
 
+// GET /me/effective ----------------------------------------------------------
+// Lightweight, non-admin-safe slice of the settings used by the topbar
+// countdown widget. Every authenticated user in the tenant can read this; we
+// deliberately omit anything sensitive (recipients, AI model, branch policy)
+// so the countdown can render for cashiers without leaking admin-only config.
+// Mounted *before* the admin GET / so a normal user hitting this path doesn't
+// accidentally fall through to a 403.
+router.get("/me/effective", async (req, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    const [row] = await db.select().from(workSessionSettingsTable)
+      .where(eq(workSessionSettingsTable.companyId, cid)).limit(1);
+    res.json({
+      sessionStartTime:  row?.sessionStartTime  ?? null,
+      sessionEndTime:    row?.sessionEndTime    ?? null,
+      endWarningMinutes: row?.endWarningMinutes ?? 15,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET / ----------------------------------------------------------------------
+// Full admin view of the company's session settings. Returns recipients, AI
+// model, branch policy, etc., so it must be admin-only. Non-admins should use
+// /me/effective above.
 router.get("/", async (req, res) => {
   try {
     const cid = getCid(req);
     if (!cid) { res.status(401).json({ error: "غير مصرح" }); return; }
+    if (!isAdmin(req)) { res.status(403).json({ error: "هذه الصفحة متاحة فقط لمسؤولي الشركة" }); return; }
 
     const [row] = await db.select().from(workSessionSettingsTable)
       .where(eq(workSessionSettingsTable.companyId, cid)).limit(1);
@@ -76,6 +120,9 @@ router.get("/", async (req, res) => {
       defaultBranchId:         row.defaultBranchId ?? null,
       aiModel:                 row.aiModel ?? "claude-haiku-4-5",
       idleTimeoutMinutes:      row.idleTimeoutMinutes ?? null,
+      sessionStartTime:        row.sessionStartTime ?? null,
+      sessionEndTime:          row.sessionEndTime ?? null,
+      endWarningMinutes:       row.endWarningMinutes ?? 15,
       updatedAt:               row.updatedAt?.toISOString() ?? null,
       isDefault:               false,
     });
@@ -127,6 +174,25 @@ router.put("/", async (req, res) => {
       ? null
       : Math.max(5, Math.min(1440, Number(b.idleTimeoutMinutes) || 0)) || null;
 
+    // Working-hours fields. Both times accept "HH:MM"; an empty/invalid value
+    // disables that side. The countdown widget targets *today's* end time, so
+    // an overnight shift (end ≤ start) would immediately negative-tick and
+    // auto-logout the user. Until cross-midnight rollover is supported, reject
+    // such configurations explicitly rather than silently breaking sessions.
+    const sessionStartTime = normalizeTimeOfDay(b.sessionStartTime);
+    const sessionEndTime   = normalizeTimeOfDay(b.sessionEndTime);
+    if (sessionStartTime && sessionEndTime) {
+      const [sh, sm] = sessionStartTime.split(":").map(Number);
+      const [eh, em] = sessionEndTime.split(":").map(Number);
+      if (eh * 60 + em <= sh * 60 + sm) {
+        res.status(400).json({ error: "وقت نهاية الدوام يجب أن يكون بعد وقت البداية" });
+        return;
+      }
+    }
+    const endWarningMinutes = b.endWarningMinutes === null || b.endWarningMinutes === undefined || b.endWarningMinutes === ""
+      ? 15
+      : Math.max(1, Math.min(120, Number(b.endWarningMinutes) || 15));
+
     const payload = {
       companyId:               cid,
       emailReportsEnabled:     Boolean(b.emailReportsEnabled),
@@ -137,6 +203,9 @@ router.put("/", async (req, res) => {
       defaultBranchId,
       aiModel,
       idleTimeoutMinutes,
+      sessionStartTime,
+      sessionEndTime,
+      endWarningMinutes,
       updatedByUserId:         (req as any).authUser?.id ?? null,
       updatedAt:               new Date(),
     };
@@ -192,6 +261,9 @@ router.put("/", async (req, res) => {
       defaultBranchId: saved.defaultBranchId ?? null,
       aiModel: saved.aiModel,
       idleTimeoutMinutes: saved.idleTimeoutMinutes ?? null,
+      sessionStartTime: saved.sessionStartTime ?? null,
+      sessionEndTime: saved.sessionEndTime ?? null,
+      endWarningMinutes: saved.endWarningMinutes ?? 15,
       updatedAt: saved.updatedAt?.toISOString() ?? null,
     });
   } catch (e: any) {
