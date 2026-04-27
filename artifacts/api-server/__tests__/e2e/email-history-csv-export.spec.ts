@@ -511,9 +511,18 @@ test("email-history CSV export: caps body at 1000 rows and records truncation in
   expect(csvFetch.status).toBe(200);
   expect(csvFetch.contentType.toLowerCase()).toContain("text/csv");
 
-  // Response headers — these drive the "تم الاقتطاع عند 1000 صف" toast
-  // suffix in AICompanyFix.tsx. A regression that drops or mistypes any
-  // of these would silently disable the user-visible truncation hint.
+  // Response headers — these drive the "تم الاقتطاع عند 1,000 من 1,001
+  // صف" toast suffix in AICompanyFix.tsx (emailHistoryCsvMut, after task
+  // #121 unified the copy across all five CSV-export mutations). A
+  // regression that drops or mistypes any of these would silently
+  // disable the user-visible truncation hint — and would also strip the
+  // "من N" segment that tells operators *how many* rows were left out
+  // (the whole point of task #121). The end-to-end UI toast assertion
+  // for the unified copy lives in tool-history-csv-export.spec.ts; this
+  // test stays at the header level because the same five mutations all
+  // build the toast from these three headers (see AICompanyFix.tsx —
+  // errorSummaryCsvMut, recoverySummaryCsvMut, historyCsvMut,
+  // emailHistoryCsvMut, toolHistoryCsvMut).
   expect(csvFetch.truncatedHdr).toBe("1");
   expect(csvFetch.rowCapHdr).toBe("1000");
   expect(csvFetch.totalAvailHdr).toBe("1001");

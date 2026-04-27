@@ -651,28 +651,31 @@ test("tool-history CSV export: caps body at 1000 rows, records truncation in the
 
   expect(csvCapture.contentType.toLowerCase()).toContain("text/csv");
 
-  // Response headers — these drive the "تم الاقتطاع عند 1000 صف من أصل
-  // N" toast suffix in AICompanyFix.tsx (toolHistoryCsvMut). A regression
-  // that drops or mistypes any of these would silently disable the
-  // user-visible truncation hint. Mirrors the parallel header assertions
-  // in email-history-csv-export.spec.ts and maintenance-history-csv-
-  // export.spec.ts.
+  // Response headers — these drive the "تم الاقتطاع عند 1,000 من 1,001
+  // صف" toast suffix in AICompanyFix.tsx (toolHistoryCsvMut, and the
+  // four sibling export mutations on the same page after task #121
+  // unified the copy). A regression that drops or mistypes any of these
+  // would silently disable the user-visible truncation hint. Mirrors
+  // the parallel header assertions in email-history-csv-export.spec.ts
+  // and maintenance-history-csv-export.spec.ts.
   expect(csvCapture.truncatedHdr).toBe("1");
   expect(csvCapture.rowCapHdr).toBe("1000");
   expect(csvCapture.totalAvailHdr).toBe("1001");
 
   // ─── Toast assertion — clip count + underlying total ───────────────────
-  // The whole point of task #117: when the export was clipped, the
-  // success toast must tell the operator both how many rows came back
-  // (the cap) AND how many really existed upstream. Without this,
+  // The whole point of tasks #117 and #121: when the export was clipped,
+  // the success toast must tell the operator both how many rows came
+  // back (the cap) AND how many really existed upstream. Without this,
   // SuperAdmins would only learn about the clip by combing the audit
   // log later. We assert on the toast description text so a regression
   // that drops `totalAvailable` from the header read or from the
   // template string would fail loudly. Toast lives at document scope
   // (Radix portal under <Toaster /> in App.tsx), so we query from
-  // `page` not the dialog.
+  // `page` not the dialog. Numeric formatting uses
+  // `Number.toLocaleString("en-US")` in AICompanyFix.tsx so 1000 stays
+  // as "1,000" — the comma matters for any total ≥ 4 digits.
   await expect(
-    page.getByText("تم الاقتطاع عند 1000 صف من أصل 1001"),
+    page.getByText("تم الاقتطاع عند 1,000 من 1,001 صف"),
   ).toBeVisible();
   // Also assert the success title rendered, so a future regression
   // that flipped the mutation into onError (and silently swallowed the
