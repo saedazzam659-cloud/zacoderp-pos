@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ScrollText, ShieldAlert, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Loader2, ScrollText, ShieldAlert, ChevronLeft, ChevronRight, RefreshCw, Scissors } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -194,6 +194,20 @@ export default function AuditLog() {
                     const label = trAction(r.action);
                     const tt = new Date(r.createdAt);
                     const ok = (r.statusCode ?? 0) >= 200 && (r.statusCode ?? 0) < 400;
+                    // Truncation badge — task #115. The maintenance CSV exports
+                    // (entityType maintenance_error_summary / maintenance_recent_recoveries,
+                    // task #111) record `truncated`/`rowCap`/`totalAvailable` in
+                    // metadata when the 1000-row cap clips the file. Surface that
+                    // at a glance so a reviewer doesn't have to drill into the
+                    // raw JSON to spot a clipped export. Numeric guards keep
+                    // unrelated metadata shapes (or future flag-only callers)
+                    // safe — we only render the count subtitle when both numbers
+                    // are present.
+                    const meta = (r.metadata ?? {}) as Record<string, unknown>;
+                    const isTruncated = meta.truncated === true;
+                    const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
+                    const totalAvailable =
+                      typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
                     return (
                       <tr key={r.id} className="border-b last:border-0 hover:bg-muted/20">
                         <td className="px-3 py-2 whitespace-nowrap text-xs font-mono">
@@ -204,7 +218,35 @@ export default function AuditLog() {
                           {r.role && <div className="text-[10px] text-muted-foreground">{r.role}</div>}
                         </td>
                         <td className="px-3 py-2">
-                          <Badge variant="outline" className={`${cls} font-normal`}>{label}</Badge>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant="outline" className={`${cls} font-normal`}>{label}</Badge>
+                            {isTruncated && (
+                              <Badge
+                                variant="outline"
+                                data-testid="audit-truncated-badge"
+                                title={
+                                  rowCap != null && totalAvailable != null
+                                    ? tr("truncatedTooltip", {
+                                        cap: rowCap.toLocaleString(locale),
+                                        total: totalAvailable.toLocaleString(locale),
+                                      })
+                                    : tr("truncatedLabel")
+                                }
+                                className="bg-amber-50 text-amber-800 border-amber-300 font-normal gap-1"
+                              >
+                                <Scissors className="h-3 w-3" />
+                                <span>{tr("truncatedLabel")}</span>
+                                {rowCap != null && totalAvailable != null && (
+                                  <span className="font-mono text-[10px] opacity-80">
+                                    {tr("truncatedCount", {
+                                      cap: rowCap.toLocaleString(locale),
+                                      total: totalAvailable.toLocaleString(locale),
+                                    })}
+                                  </span>
+                                )}
+                              </Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-2 text-xs font-mono">{r.module}</td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground max-w-[300px] truncate" title={`${r.method ?? ""} ${r.path ?? ""}`}>

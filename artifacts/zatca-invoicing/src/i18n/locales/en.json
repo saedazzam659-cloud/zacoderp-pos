@@ -4976,6 +4976,9 @@
       "colStatus": "Status",
       "colIp": "IP",
       "pageOf": "Page {{page}} of {{total}}",
+      "truncatedLabel": "Truncated",
+      "truncatedCount": "{{cap}} / {{total}} rows",
+      "truncatedTooltip": "Export was clipped at {{cap}} rows out of {{total}} available",
       "actions": {
         "view": "View",
         "create": "Create",

@@ -5061,6 +5061,9 @@
       "colStatus": "الحالة",
       "colIp": "IP",
       "pageOf": "صفحة {{page}} من {{total}}",
+      "truncatedLabel": "تم الاقتطاع",
+      "truncatedCount": "{{cap}} / {{total}} صف",
+      "truncatedTooltip": "تم اقتطاع التصدير عند {{cap}} صف من أصل {{total}} متاح",
       "actions": {
         "view": "عرض",
         "create": "إنشاء",
