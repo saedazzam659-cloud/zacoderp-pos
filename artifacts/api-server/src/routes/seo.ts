@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { db, seoGeneratedArticlesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -39,6 +39,37 @@ router.get("/public/articles", async (_req, res) => {
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحميل المقالات" });
+  }
+});
+
+// Single-article endpoint for the public /blog/:slug page. Returns the
+// full markdown body, meta, and timestamps so the front-end can render
+// the article and its JSON-LD Article schema. Only published articles
+// are exposed; drafts/reviewed return 404 to keep them out of the index.
+router.get("/public/articles/:slug", async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").trim();
+    if (!slug) { res.status(400).json({ error: "slug مفقود" }); return; }
+    const rows = await db.select({
+      id:              seoGeneratedArticlesTable.id,
+      title:           seoGeneratedArticlesTable.title,
+      slug:            seoGeneratedArticlesTable.slug,
+      metaDescription: seoGeneratedArticlesTable.metaDescription,
+      content:         seoGeneratedArticlesTable.content,
+      targetKeyword:   seoGeneratedArticlesTable.targetKeyword,
+      createdAt:       seoGeneratedArticlesTable.createdAt,
+      updatedAt:       seoGeneratedArticlesTable.updatedAt,
+    })
+      .from(seoGeneratedArticlesTable)
+      .where(and(
+        eq(seoGeneratedArticlesTable.slug, slug),
+        eq(seoGeneratedArticlesTable.status, "published"),
+      ))
+      .limit(1);
+    if (!rows.length) { res.status(404).json({ error: "المقالة غير موجودة" }); return; }
+    res.json(rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر تحميل المقالة" });
   }
 });
 

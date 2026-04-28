@@ -1,0 +1,272 @@
+import { useEffect, useMemo } from "react";
+import { useRoute, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { Helmet } from "react-helmet-async";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { ChevronLeft, Calendar, Tag, FileText, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public /blog/:slug page — renders a single published SEO article so the
+// links emitted by /pricing and /sitemap.xml actually resolve to readable
+// content for users and Google.
+//
+// • Fetches a single article from /api/seo/public/articles/:slug.
+// • 404s return a gentle empty state (no redirect to /login).
+// • All Helmet meta + JSON-LD Article schema are emitted from this page
+//   so each article gets its own canonical URL, OG tags, and rich result.
+// ─────────────────────────────────────────────────────────────────────────
+
+const BASE = (import.meta as any).env.BASE_URL?.replace(/\/$/, "") || "";
+
+type PublicArticle = {
+  id: number;
+  title: string;
+  slug: string;
+  metaDescription: string;
+  content: string;
+  targetKeyword: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export default function BlogArticle() {
+  const [, params] = useRoute("/blog/:slug");
+  const [, setLocation] = useLocation();
+  const slug = params?.slug || "";
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const canonical = `${origin}/blog/${encodeURIComponent(slug)}`;
+
+  const { data, isLoading, isError } = useQuery<PublicArticle>({
+    queryKey: ["public-article", slug],
+    enabled: !!slug,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/seo/public/articles/${encodeURIComponent(slug)}`);
+      if (r.status === 404) throw new Error("not_found");
+      if (!r.ok) throw new Error("fetch_failed");
+      return r.json();
+    },
+    retry: false,
+  });
+
+  // JSON-LD Article schema. React 19 + react-helmet-async@3 doesn't auto-
+  // hoist inline <script> children, so we mount the schema ourselves into
+  // <head> and clean up on unmount / re-fetch.
+  const articleSchema = useMemo(() => {
+    if (!data) return null;
+    return {
+      "@context": "https://schema.org",
+      "@type":    "Article",
+      "headline": data.title,
+      "description": data.metaDescription || undefined,
+      "url":      canonical,
+      "datePublished": data.createdAt,
+      "dateModified":  data.updatedAt,
+      "inLanguage":    "ar-SA",
+      "keywords":      data.targetKeyword || undefined,
+      "author":   { "@type": "Organization", "name": "نظام الفاتورة الإلكترونية السعودية" },
+      "publisher": {
+        "@type": "Organization",
+        "name":  "نظام الفاتورة الإلكترونية السعودية",
+        "logo":  { "@type": "ImageObject", "url": `${origin}/favicon.svg` },
+      },
+      "mainEntityOfPage": { "@type": "WebPage", "@id": canonical },
+    };
+  }, [data, canonical, origin]);
+
+  useEffect(() => {
+    const tag = "data-blog-jsonld";
+    document.head.querySelectorAll(`script[${tag}]`).forEach(el => el.remove());
+    if (!articleSchema) return;
+    const el = document.createElement("script");
+    el.type = "application/ld+json";
+    el.setAttribute(tag, "1");
+    el.text = JSON.stringify(articleSchema);
+    document.head.appendChild(el);
+    return () => { el.remove(); };
+  }, [articleSchema]);
+
+  // Helmet's <title> child doesn't always populate document.title under
+  // React 19, so we set it explicitly. Restoring the previous title on
+  // unmount keeps non-blog navigations clean.
+  useEffect(() => {
+    if (!data?.title) return;
+    const prev = document.title;
+    document.title = `${data.title} — نظام الفاتورة الإلكترونية السعودية`;
+    return () => { document.title = prev; };
+  }, [data?.title]);
+
+  // ── Loading state ──
+  if (isLoading) {
+    return (
+      <div dir="rtl" className="min-h-screen bg-muted/30">
+        <PublicHeader setLocation={setLocation} />
+        <div className="max-w-3xl mx-auto px-4 py-16">
+          <div className="h-10 w-2/3 bg-muted rounded animate-pulse mb-6" />
+          <div className="h-4 w-full bg-muted rounded animate-pulse mb-3" />
+          <div className="h-4 w-5/6 bg-muted rounded animate-pulse mb-3" />
+          <div className="h-4 w-4/6 bg-muted rounded animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  // ── 404 / error state ──
+  if (isError || !data) {
+    return (
+      <div dir="rtl" className="min-h-screen bg-muted/30">
+        <Helmet>
+          <title>المقالة غير موجودة — نظام الفاتورة الإلكترونية السعودية</title>
+          <meta name="robots" content="noindex,follow" />
+        </Helmet>
+        <PublicHeader setLocation={setLocation} />
+        <div className="max-w-2xl mx-auto px-4 py-24 text-center" data-testid="blog-not-found">
+          <FileText className="h-14 w-14 mx-auto text-muted-foreground mb-4" />
+          <h1 className="text-2xl font-bold mb-2">عذراً، لم نجد هذه المقالة</h1>
+          <p className="text-muted-foreground mb-6">
+            ربما تم نقلها أو لم يتم نشرها بعد. يمكنك تصفّح الباقات أو الرجوع للرئيسية.
+          </p>
+          <div className="flex justify-center gap-3">
+            <Button onClick={() => setLocation("/pricing")} data-testid="blog-cta-pricing">
+              عرض الباقات والأسعار
+            </Button>
+            <Button variant="outline" onClick={() => setLocation("/login")}>
+              تسجيل الدخول
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Loaded article ──
+  const updated = new Date(data.updatedAt).toLocaleDateString("ar-SA", {
+    year: "numeric", month: "long", day: "numeric",
+  });
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
+      <Helmet>
+        <html lang="ar" dir="rtl" />
+        <title>{data.title} — نظام الفاتورة الإلكترونية السعودية</title>
+        <meta name="description" content={data.metaDescription || data.title} />
+        <link rel="canonical" href={canonical} />
+        <meta property="og:type" content="article" />
+        <meta property="og:title" content={data.title} />
+        <meta property="og:description" content={data.metaDescription || data.title} />
+        <meta property="og:url" content={canonical} />
+        <meta property="og:locale" content="ar_SA" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="robots" content="index,follow,max-image-preview:large" />
+        {data.targetKeyword ? <meta name="keywords" content={data.targetKeyword} /> : null}
+        <meta property="article:published_time" content={data.createdAt} />
+        <meta property="article:modified_time"  content={data.updatedAt} />
+      </Helmet>
+
+      <PublicHeader setLocation={setLocation} />
+
+      <article className="max-w-3xl mx-auto px-4 pt-10 pb-20" data-testid="blog-article">
+        {/* breadcrumbs */}
+        <nav className="text-xs text-muted-foreground mb-4 flex items-center gap-2" aria-label="breadcrumbs">
+          <button onClick={() => setLocation("/pricing")} className="hover:underline">الرئيسية</button>
+          <ChevronLeft className="h-3 w-3" />
+          <button onClick={() => setLocation("/pricing")} className="hover:underline">المدوّنة</button>
+          <ChevronLeft className="h-3 w-3" />
+          <span className="text-foreground">{data.title}</span>
+        </nav>
+
+        <header className="mb-8 pb-6 border-b">
+          <h1 className="text-3xl md:text-4xl font-extrabold leading-tight mb-4" data-testid="blog-title">
+            {data.title}
+          </h1>
+          {data.metaDescription ? (
+            <p className="text-lg text-muted-foreground leading-relaxed">{data.metaDescription}</p>
+          ) : null}
+          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> آخر تحديث: {updated}
+            </span>
+            {data.targetKeyword ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5" /> {data.targetKeyword}
+              </span>
+            ) : null}
+          </div>
+        </header>
+
+        <div
+          className={cn(
+            "prose prose-slate max-w-none",
+            "prose-headings:font-bold prose-headings:text-foreground",
+            "prose-h2:text-2xl prose-h2:mt-10 prose-h2:mb-4",
+            "prose-h3:text-xl prose-h3:mt-8 prose-h3:mb-3",
+            "prose-p:leading-relaxed prose-p:text-base",
+            "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
+            "prose-strong:text-foreground",
+            "prose-ul:my-4 prose-ol:my-4 prose-li:my-1",
+            "prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm",
+            "prose-blockquote:border-r-4 prose-blockquote:border-l-0 prose-blockquote:border-primary",
+            "prose-blockquote:pr-4 prose-blockquote:pl-0 prose-blockquote:italic",
+            "prose-table:border prose-th:bg-muted prose-th:p-2 prose-td:p-2 prose-td:border",
+          )}
+          data-testid="blog-content"
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {data.content || ""}
+          </ReactMarkdown>
+        </div>
+
+        {/* CTA card at the end of every article — turns readers into trial users */}
+        <div className="mt-14 rounded-2xl border-2 border-primary/30 bg-primary/5 p-6 text-center">
+          <h2 className="text-xl font-bold mb-2">جاهز للبدء بنظامك المعتمد من ZATCA؟</h2>
+          <p className="text-muted-foreground text-sm mb-5">
+            استكشف الباقات الشفافة واختر ما يناسب نشاطك — تجربة فورية بدون بطاقة دفع.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <Button size="lg" onClick={() => setLocation("/pricing")} className="gap-1" data-testid="blog-cta-pricing-final">
+              عرض الباقات والأسعار <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <Button size="lg" variant="outline" onClick={() => setLocation("/register")}>
+              ابدأ التسجيل المجاني
+            </Button>
+          </div>
+        </div>
+      </article>
+
+      <footer className="text-center text-xs text-muted-foreground pb-8">
+        © 2026 نظام الفاتورة الإلكترونية السعودية — جميع الحقوق محفوظة.
+      </footer>
+    </div>
+  );
+}
+
+// Reusable thin top bar for public pages — mirrors the look of the
+// /pricing header so the site feels coherent for first-time visitors
+// arriving from a Google search result.
+function PublicHeader({ setLocation }: { setLocation: (p: string) => void }) {
+  return (
+    <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-20">
+      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <button
+          onClick={() => setLocation("/pricing")}
+          className="flex items-center gap-2 text-sm font-bold text-foreground hover:opacity-80"
+          data-testid="blog-home-link"
+        >
+          <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
+          نظام الفاتورة الإلكترونية السعودية
+        </button>
+        <nav className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} data-testid="blog-login-link">
+            تسجيل الدخول
+          </Button>
+          <Button size="sm" onClick={() => setLocation("/pricing")} data-testid="blog-pricing-link">
+            عرض الباقات
+          </Button>
+        </nav>
+      </div>
+    </header>
+  );
+}

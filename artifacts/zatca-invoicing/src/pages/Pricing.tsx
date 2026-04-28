@@ -120,6 +120,14 @@ export default function Pricing() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlightedKey, plans.length]);
 
+  // Helmet's <title> child does not reliably populate document.title under
+  // React 19, so set it explicitly. Restore the previous title on unmount.
+  useEffect(() => {
+    const prev = document.title;
+    document.title = "باقات وأسعار نظام الفاتورة الإلكترونية السعودية ZATCA — اشترك الآن";
+    return () => { document.title = prev; };
+  }, []);
+
   const goToRegister = (planKey: string) => {
     setLocation(`/register?plan=${encodeURIComponent(planKey)}&cycle=${billingCycle}`);
   };

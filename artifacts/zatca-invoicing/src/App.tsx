@@ -44,6 +44,7 @@ import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Pricing from "@/pages/Pricing";
+import BlogArticle from "@/pages/BlogArticle";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
@@ -223,7 +224,7 @@ function LoadingScreen() {
 // search engines can crawl it and unauthenticated visitors can compare
 // plans before signing up. /recover-superadmin* are also public but
 // matched separately below since they need dynamic-segment matching.
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing"];
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog"];
 
 function AppRoutes() {
   const { isAuthenticated, loading, user } = useAuth();
@@ -254,6 +255,7 @@ function AppRoutes() {
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/pricing" component={Pricing} />
+      <Route path="/blog/:slug" component={BlogArticle} />
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
       <Route path="/recover-superadmin/:token" component={RecoverSuperAdmin} />
