@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { ArrowLeftRight, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Wallet, Landmark } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -44,6 +45,8 @@ export default function CashTransfers() {
   const { data: bankAccounts = [] }         = useQuery({ queryKey: ["bank-accounts", cid],  queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
 
   const filtered = (transfers as any[]).filter((v: any) => v.code?.includes(search) || v.description?.includes(search));
+
+  const pager = usePagination(filtered);
   const totalAmount = (transfers as any[]).filter((v: any) => v.status === "posted").reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
   function openAdd()  { setEditing(null); setForm({ ...EMPTY, date: today() }); setPanel(true); }
@@ -234,7 +237,7 @@ export default function CashTransfers() {
                   <p className="text-sm">{search ? t("cashCommon.noResults") : t("cashTransfers.noTransfers")}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t("cashTransfers.newTransfer")}</Button>}
                 </td></tr>
-              ) : filtered.map((row: any) => (
+              ) : pager.pagedItems.map((row: any) => (
                 <tr key={row.id} onDoubleClick={() => row.status === "draft" ? openEdit(row) : null} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title={row.status === "draft" ? t("cashCommon.doubleClickEdit") : t("cashCommon.posted")}>
                   <td className="px-4 py-3"><p className="font-mono text-xs font-medium">{row.code}</p><p className="text-xs text-muted-foreground">{row.date}</p></td>
                   <td className="px-4 py-3"><span className="text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full">{TRANSFER_LABELS[row.transferType] || row.transferType}</span></td>
@@ -258,7 +261,17 @@ export default function CashTransfers() {
             </tbody>
           </table>
         </div>
-        {!isLoading && filtered.length > 0 && <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">{t("cashCommon.resultsCount", { count: filtered.length })}</div>}
+        {!isLoading && filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("cashTransfers.itemLabel", { defaultValue: "تحويل" })}
+          />
+        )}
       </div>
 
 

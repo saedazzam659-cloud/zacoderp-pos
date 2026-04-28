@@ -55,6 +55,16 @@
     "discount": "الخصم",
     "grandTotal": "الإجمالي"
   },
+  "pagination": {
+    "rowsPerPage": "صفوف لكل صفحة:",
+    "showingRange": "عرض {{start}}–{{end}} من {{total}} {{label}}",
+    "pageOf": "صفحة {{page}} من {{pageCount}}",
+    "first": "الصفحة الأولى",
+    "previous": "السابق",
+    "next": "التالي",
+    "last": "الصفحة الأخيرة",
+    "itemDefault": "سجل"
+  },
   "status": {
     "draft": "مسودة",
     "posted": "مرحّلة",

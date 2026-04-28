@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { FormPanel } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import {
@@ -114,6 +115,8 @@ export default function Suppliers() {
       (activeTab === "noVat"   && !s.vatNumber);
     return matchSearch && matchTab;
   });
+
+  const pager = usePagination(filtered);
 
   const withVat = suppliers.filter((s: any) => s.vatNumber).length;
 
@@ -433,7 +436,7 @@ export default function Suppliers() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((supplier: any) => (
+                pager.pagedItems.map((supplier: any) => (
                   <tr key={supplier.id}
                     className="border-b transition-colors hover:bg-muted/30 cursor-pointer group">
                     {/* Name — double-click to edit */}
@@ -513,9 +516,15 @@ export default function Suppliers() {
 
         {/* Footer */}
         {!isLoading && filtered.length > 0 && (
-          <div className="border-t bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
-            {t("pages.suppliers.resultsCount")}: <strong>{filtered.length}</strong>
-          </div>
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
+          />
         )}
       </div>
 

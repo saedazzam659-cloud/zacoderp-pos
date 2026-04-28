@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Warehouse, Search, CheckCircle2, XCircle, MapPin, BookMarked } from "lucide-react";
 import { FormPanel } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -64,6 +65,8 @@ export default function Warehouses() {
   const filtered = warehouses.filter((w: any) =>
     w.nameAr.includes(search) || w.code.includes(search) || (w.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
+
+  const pager = usePagination(filtered);
 
   return (
     <div className="space-y-6">
@@ -184,7 +187,7 @@ export default function Warehouses() {
               ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
               ? <tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground"><Warehouse className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.warehouses.table.noWarehouses")}</td></tr>
-              : filtered.map((w: any) => (
+              : pager.pagedItems.map((w: any) => (
                   <tr key={w.id} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{w.code}</td>
                     <td className="px-4 py-3">
@@ -206,7 +209,17 @@ export default function Warehouses() {
                 ))}
           </tbody>
         </table>
-        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{t("pages.warehouses.table.count", { count: filtered.length })}</div>}
+        {!isLoading && filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("pages.warehouses.itemLabel", { defaultValue: "مستودع" })}
+          />
+        )}
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Tag, Search, BookMarked } from "lucide-react";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -66,6 +67,8 @@ export default function ItemGroups() {
   const filtered = data.filter((g: any) =>
     g.nameAr.includes(search) || g.code.includes(search) || (g.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
+
+  const pager = usePagination(filtered);
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -156,7 +159,7 @@ export default function ItemGroups() {
               ? [...Array(4)].map((_, i) => <tr key={i}><td colSpan={4} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
               ? <tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground"><Tag className="h-8 w-8 mx-auto mb-2 opacity-30" />{tr("noGroups")}</td></tr>
-              : filtered.map((g: any) => (
+              : pager.pagedItems.map((g: any) => (
                   <tr key={g.id} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{g.code}</td>
                     <td className="px-4 py-3 font-medium">{pickName(g.nameAr, g.nameEn)}</td>
@@ -171,7 +174,17 @@ export default function ItemGroups() {
                 ))}
           </tbody>
         </table>
-        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{filtered.length}</div>}
+        {!isLoading && filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("inventoryMaster.itemGroups.itemLabel", { defaultValue: "مجموعة" })}
+          />
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Landmark, Plus, Pencil, Trash2, Search, CheckCircle2, XCircle, TrendingUp, CreditCard, AlertTriangle } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -69,6 +70,8 @@ export default function BankAccounts() {
     const s = search.toLowerCase();
     return b.nameAr?.includes(search) || b.nameEn?.toLowerCase().includes(s) || b.code?.toLowerCase().includes(s) || b.bankName?.includes(search) || b.bankNameEn?.toLowerCase().includes(s) || b.iban?.toLowerCase().includes(s);
   });
+
+  const pager = usePagination(filtered);
 
   function openAdd()  {
     setEditing(null);
@@ -255,7 +258,7 @@ export default function BankAccounts() {
                   <p className="text-sm">{search ? t("cashCommon.noResults") : t("bankAccounts.noAccounts")}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t("bankAccounts.add")}</Button>}
                 </td></tr>
-              ) : filtered.map((row: any) => {
+              ) : pager.pagedItems.map((row: any) => {
                 const bal = balMap[row.id] ?? 0;
                 const displayName = isRtl ? row.nameAr : (row.nameEn || row.nameAr);
                 const bankDisplay = isRtl ? row.bankName : (row.bankNameEn || row.bankName);
@@ -301,7 +304,15 @@ export default function BankAccounts() {
           </table>
         </div>
         {!isLoading && filtered.length > 0 && (
-          <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">{t("cashCommon.resultsCount", { count: filtered.length })}</div>
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("bankAccounts.itemLabel", { defaultValue: "حساب بنكي" })}
+          />
         )}
       </div>
 

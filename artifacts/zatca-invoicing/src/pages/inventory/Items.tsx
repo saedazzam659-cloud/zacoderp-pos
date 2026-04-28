@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import ExportButtons from "@/components/ExportButtons";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
@@ -337,6 +338,8 @@ export default function Items() {
     return matchText && matchType;
   });
 
+  const pager = usePagination(filtered);
+
   const ITEM_EXPORT_COLS = [
     { key: "code",          header: t("pages.items.itemCode"),       width: 16 },
     { key: "nameAr",        header: t("pages.items.nameAr"),   width: 30 },
@@ -494,7 +497,7 @@ export default function Items() {
               ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={10} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
               ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
-              : filtered.map((it: any) => (
+              : pager.pagedItems.map((it: any) => (
                   <Fragment key={it.id}>
                     <tr className="hover:bg-muted/30">
                       <td className="px-4 py-3">
@@ -608,9 +611,15 @@ export default function Items() {
           </tbody>
         </table>
         {!isLoading && (
-          <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {t("pages.items.itemsCount", { filtered: filtered.length, total: items.length })}
-          </div>
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("pages.items.itemLabel", { defaultValue: "صنف" })}
+          />
         )}
       </div>
     </div>

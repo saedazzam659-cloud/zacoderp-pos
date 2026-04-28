@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Sparkles, Loader2 } from "lucide-react";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 
@@ -78,6 +79,8 @@ export default function ReceiptVouchers() {
   const filtered = (vouchers as any[]).filter((v: any) =>
     v.code?.includes(search) || v.description?.includes(search) || v.entityName?.includes(search)
   );
+
+  const pager = usePagination(filtered);
   const totalAmount = (vouchers as any[]).filter((v: any) => v.status === "posted").reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
   const ACCT_KEY = `rv:lastAccountId:${cid}`;
@@ -379,7 +382,7 @@ export default function ReceiptVouchers() {
                   <p className="text-sm">{search ? t("cashCommon.noResults") : t(`${NS}.noVouchers`)}</p>
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t(`${NS}.newVoucher`)}</Button>}
                 </td></tr>
-              ) : filtered.map((row: any) => (
+              ) : pager.pagedItems.map((row: any) => (
                 <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title={t("cashCommon.doubleClickEdit")}>
                   <td className="px-4 py-3">
                     <p className="font-mono text-xs font-medium">{row.code}</p>
@@ -428,7 +431,15 @@ export default function ReceiptVouchers() {
           </table>
         </div>
         {!isLoading && filtered.length > 0 && (
-          <div className="border-t bg-muted/20 px-4 py-2 text-xs text-muted-foreground">{t("cashCommon.resultsCount", { count: filtered.length })}</div>
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("receiptVouchers.itemLabel", { defaultValue: "سند" })}
+          />
         )}
       </div>
 

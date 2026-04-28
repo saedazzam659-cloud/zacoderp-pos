@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Ruler, Search, Info, ArrowRight } from "lucide-react";
 
 const EMPTY = { code: "", nameAr: "", nameEn: "", conversionFactor: "1" };
@@ -66,6 +67,8 @@ export default function Units() {
   const filtered = data.filter((u: any) =>
     u.nameAr.includes(search) || u.code.includes(search) || (u.nameEn ?? "").toLowerCase().includes(search.toLowerCase())
   );
+
+  const pager = usePagination(filtered);
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -186,7 +189,7 @@ export default function Units() {
                   </td>
                 </tr>
               )
-              : filtered.map((u: any) => (
+              : pager.pagedItems.map((u: any) => (
                 <tr key={u.id} className="hover:bg-muted/30">
                   <td className="px-4 py-3 font-mono font-bold text-primary">{u.code}</td>
                   <td className="px-4 py-3 font-medium">{pickName(u.nameAr, u.nameEn)}</td>
@@ -204,10 +207,16 @@ export default function Units() {
               ))}
           </tbody>
         </table>
-        {!isLoading && (
-          <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">
-            {filtered.length}
-          </div>
+        {!isLoading && filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("inventoryMaster.units.itemLabel", { defaultValue: "وحدة" })}
+          />
         )}
       </div>
     </div>

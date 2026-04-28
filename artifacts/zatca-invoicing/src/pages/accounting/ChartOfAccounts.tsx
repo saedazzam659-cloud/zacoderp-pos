@@ -13,6 +13,7 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import ExportButtons from "@/components/ExportButtons";
 import AccountsImportPanel from "@/components/AccountsImportPanel";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { Plus, Pencil, Trash2, Copy, BookOpen, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -192,6 +193,8 @@ export default function ChartOfAccounts() {
     return matchText && matchType;
   });
 
+  const pager = usePagination(filtered);
+
   const exportRows = filtered.map((a: any) => ({
     code:        a.code,
     nameAr:      isRtl ? a.nameAr : (a.nameEn || a.nameAr),
@@ -353,7 +356,7 @@ export default function ChartOfAccounts() {
                   </td>
                 </tr>
               )
-              : filtered.map((a: any) => {
+              : pager.pagedItems.map((a: any) => {
                   const typeInfo  = TYPE_MAP[a.accountType];
                   const parentAcc = a.parentId ? accounts.find((x: any) => x.id === a.parentId) : null;
                   const displayName = isRtl ? a.nameAr : (a.nameEn || a.nameAr);
@@ -422,7 +425,17 @@ export default function ChartOfAccounts() {
                 })}
           </tbody>
         </table>
-        {!isLoading && <div className="px-4 py-2 border-t bg-muted/20 text-xs text-muted-foreground">{t("chartOfAccounts.countAccount", { count: filtered.length })}</div>}
+        {!isLoading && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("chartOfAccounts.itemLabel", { defaultValue: "حساب" })}
+          />
+        )}
       </div>
 
       <AccountsImportPanel />

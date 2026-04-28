@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ExportButtons from "@/components/ExportButtons";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -109,6 +110,8 @@ export default function Customers() {
       (activeTab === "individual" && !c.vatNumber);
     return matchSearch && matchTab;
   });
+
+  const pager = usePagination(filtered);
 
   const isRtl = i18n.language === "ar";
 
@@ -302,7 +305,7 @@ export default function Customers() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((customer: any) => (
+                pager.pagedItems.map((customer: any) => (
                   <tr
                     key={customer.id}
                     className="border-b transition-colors hover:bg-muted/30 group"
@@ -435,13 +438,15 @@ export default function Customers() {
 
         {/* Footer */}
         {!isLoading && filtered.length > 0 && (
-          <div className="border-t bg-muted/10 px-5 py-2.5 flex items-center justify-between text-xs text-muted-foreground">
-            <Trans
-              i18nKey="pages.customers.viewingCount"
-              values={{ filtered: filtered.length, total: (customers as any[]).length }}
-              components={{ strong: <strong /> }}
-            />
-          </div>
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("pages.customers.itemLabel", { defaultValue: "عميل" })}
+          />
         )}
       </div>
 

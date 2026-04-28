@@ -55,6 +55,16 @@
     "discount": "Discount",
     "grandTotal": "Total"
   },
+  "pagination": {
+    "rowsPerPage": "Rows per page:",
+    "showingRange": "Showing {{start}}–{{end}} of {{total}} {{label}}",
+    "pageOf": "Page {{page}} of {{pageCount}}",
+    "first": "First page",
+    "previous": "Previous",
+    "next": "Next",
+    "last": "Last page",
+    "itemDefault": "records"
+  },
   "status": {
     "draft": "Draft",
     "posted": "Posted",

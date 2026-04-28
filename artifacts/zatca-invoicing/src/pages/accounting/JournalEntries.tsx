@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -90,6 +91,8 @@ export default function JournalEntries() {
     e.description?.includes(search) ||
     e.entryDate?.includes(search)
   );
+
+  const pager = usePagination(filtered);
 
   const totalDebit  = entries.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
   const totalCredit = entries.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
@@ -298,7 +301,7 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {filtered.map((entry: any) => {
+                  {pager.pagedItems.map((entry: any) => {
                     const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
                     const docLabel = entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`;
                     const sourceUrl = sourceUrlFor(entry.entryType, entry.sourceId);
@@ -361,6 +364,15 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                   })}
                 </tbody>
               </table>
+              <TablePagination
+                page={pager.page}
+                pageSize={pager.pageSize}
+                pageCount={pager.pageCount}
+                total={pager.total}
+                onPageChange={pager.setPage}
+                onPageSizeChange={pager.setPageSize}
+                itemLabel={t("journalEntries.itemLabel", { defaultValue: "قيد" })}
+              />
             </div>
           )}
         </CardContent>
