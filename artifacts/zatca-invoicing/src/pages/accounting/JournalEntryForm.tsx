@@ -525,7 +525,17 @@ export default function JournalEntryForm() {
     }).join("");
     return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>قيد ${escapeHtml(docLabel)}</title>
 <style>
-@page { size: A4; margin: 12mm; }
+@page {
+  size: A4;
+  margin: 12mm 12mm 22mm 12mm;
+  @bottom-center {
+    content: "صفحة " counter(page) " من " counter(pages);
+    font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif;
+    font-size: 9pt;
+    color: #475569;
+  }
+}
+@media print { thead { display: table-header-group; } }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
 .head { text-align:center; border-bottom: 2px solid #1e3a8a; padding-bottom:10px; margin-bottom:12px; }

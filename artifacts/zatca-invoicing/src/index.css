@@ -204,3 +204,30 @@
     pointer-events: none;
   }
 }
+
+/* ----------------------------------------------------------------
+   Global print stylesheet for in-page window.print() usage.
+   Applies to any page that prints itself directly (i.e. the
+   accounting reports — Account Statement, Trial Balance, Income
+   Statement, Balance Sheet — plus VAT Declaration and End of Service).
+   Adds:
+     • Page numbering "صفحة X من Y" in the bottom-center margin box.
+     • A 22mm bottom margin so numbering never overlaps content.
+     • Repeating <thead> on multi-page tables for readability.
+   Pages that open a separate popup window (invoice prints, sales
+   receipts, journal sheets) are NOT affected by this rule because the
+   popup has its own document scope; those popups embed their own
+   @page declarations inline.
+   ---------------------------------------------------------------- */
+@media print {
+  thead { display: table-header-group; }
+}
+@page {
+  margin: 15mm 15mm 22mm 15mm;
+  @bottom-center {
+    content: "صفحة " counter(page) " من " counter(pages);
+    font-family: "Cairo", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+    font-size: 9pt;
+    color: #475569;
+  }
+}

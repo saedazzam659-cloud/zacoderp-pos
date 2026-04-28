@@ -136,7 +136,17 @@ export default function JournalEntries() {
     const align = isRtl ? "right" : "left";
     return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
-@page { size: A4 landscape; margin: 12mm; }
+@page {
+  size: A4 landscape;
+  margin: 12mm 12mm 22mm 12mm;
+  @bottom-center {
+    content: "صفحة " counter(page) " من " counter(pages);
+    font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif;
+    font-size: 9pt;
+    color: #475569;
+  }
+}
+@media print { thead { display: table-header-group; } }
 * { box-sizing: border-box; }
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; }
 .h { text-align:center; margin-bottom:8px; }
