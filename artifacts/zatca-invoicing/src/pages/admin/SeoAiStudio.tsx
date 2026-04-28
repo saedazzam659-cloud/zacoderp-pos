@@ -204,13 +204,37 @@ export default function SeoAiStudio() {
   }, [articlesQuery.data, filterCountry]);
 
   // Quick-suggest topics inspired by the SEO dashboard recommendations.
-  const SUGGESTIONS = [
+  // Default seed list used until the AI suggestion mutation replaces it.
+  const DEFAULT_SUGGESTIONS = [
     "أفضل برنامج محاسبة سعودي لعام 2026",
     "دليل شامل للفاتورة الإلكترونية المرحلة الثانية",
     "كيف تُطبّق متطلبات هيئة الزكاة والضريبة في 5 خطوات؟",
     "نظام نقاط البيع POS المتكامل مع ZATCA",
     "قائمة بأخطاء الفوترة الشائعة وكيفية تجنّبها",
   ];
+  const [suggestions, setSuggestions] = useState<string[]>(DEFAULT_SUGGESTIONS);
+
+  // Calls /api/admin/seo/ai-suggestions to refresh the chips with a fresh
+  // batch tailored by the optional keyword + currently-selected countries.
+  const refreshSuggestions = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`${API}/api/admin/seo/ai-suggestions`, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          keyword: keyword.trim() || undefined,
+          targetCountries: genCountries,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || "فشل توليد الاقتراحات");
+      return (data?.suggestions ?? []) as string[];
+    },
+    onSuccess: (list) => {
+      if (list.length) setSuggestions(list);
+      toast({ title: "تم تحديث الاقتراحات" });
+    },
+    onError: (e: any) => toast({ title: "تعذّر توليد الاقتراحات", description: e.message, variant: "destructive" }),
+  });
 
   // ── Article dialog (preview/edit/delete) ──────────────────────────────
   const [openArticle, setOpenArticle] = useState<Article | null>(null);
@@ -379,18 +403,37 @@ export default function SeoAiStudio() {
               </div>
 
               <div>
-                <p className="text-xs text-muted-foreground mb-2">اقتراحات سريعة:</p>
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <p className="text-xs text-muted-foreground">اقتراحات سريعة:</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-fuchsia-700 hover:text-fuchsia-800 hover:bg-fuchsia-50"
+                    onClick={() => refreshSuggestions.mutate()}
+                    disabled={refreshSuggestions.isPending}
+                    title="توليد اقتراحات جديدة بالذكاء الاصطناعي بناءً على الكلمة المفتاحية والدول المختارة"
+                  >
+                    {refreshSuggestions.isPending
+                      ? <Loader2 className="h-3.5 w-3.5 ms-1 animate-spin" />
+                      : <Sparkles className="h-3.5 w-3.5 ms-1" />}
+                    اقتراحات بالذكاء الاصطناعي
+                  </Button>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {SUGGESTIONS.map(sg => (
+                  {suggestions.map(sg => (
                     <button
                       key={sg}
                       type="button"
                       onClick={() => setTopic(sg)}
-                      className="text-xs rounded-full border border-dashed border-fuchsia-300 bg-fuchsia-50 px-3 py-1 text-fuchsia-700 hover:bg-fuchsia-100"
+                      className="text-xs rounded-full border border-dashed border-fuchsia-300 bg-fuchsia-50 px-3 py-1 text-fuchsia-700 hover:bg-fuchsia-100 transition-colors"
                     >
                       {sg}
                     </button>
                   ))}
+                  {suggestions.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">لا توجد اقتراحات حالياً.</p>
+                  )}
                 </div>
               </div>
 

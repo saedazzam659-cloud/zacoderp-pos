@@ -490,6 +490,140 @@ function checkGenRateLimit(userId: number): { ok: true } | { ok: false; retryInS
   return { ok: true };
 }
 
+// Per-user in-memory rate limiter for the LIGHTWEIGHT suggestion endpoint.
+// Suggestions are short (≤6 lines, no article body) so we allow more bursts
+// than the article generator: 4s cooldown, max 30 calls in any rolling
+// 10-minute window per user. Same callerKey scheme as the generator so an
+// unauthenticated edge case (no req.user) still maps to a stable bucket.
+const SUG_COOLDOWN_MS  = 4_000;
+const SUG_WINDOW_MS    = 10 * 60_000;
+const SUG_WINDOW_MAX   = 30;
+const sugHistory = new Map<number, number[]>();    // userId → timestamps (ms)
+function checkSuggestRateLimit(userId: number): { ok: true } | { ok: false; retryInSec: number; reason: string } {
+  const now = Date.now();
+  const arr = (sugHistory.get(userId) ?? []).filter(t => now - t < SUG_WINDOW_MS);
+  if (arr.length > 0 && now - arr[arr.length - 1] < SUG_COOLDOWN_MS) {
+    return { ok: false, retryInSec: Math.ceil((SUG_COOLDOWN_MS - (now - arr[arr.length - 1])) / 1000),
+             reason: "الرجاء الانتظار قليلاً قبل توليد اقتراحات جديدة" };
+  }
+  if (arr.length >= SUG_WINDOW_MAX) {
+    const retry = Math.ceil((SUG_WINDOW_MS - (now - arr[0])) / 1000);
+    return { ok: false, retryInSec: retry,
+             reason: `تم تجاوز الحد المسموح (${SUG_WINDOW_MAX} طلبات اقتراحات كل 10 دقائق)` };
+  }
+  arr.push(now);
+  sugHistory.set(userId, arr);
+  return { ok: true };
+}
+
+// POST /api/admin/seo/ai-suggestions
+//   body: { keyword?: string, targetCountries?: string[] }
+// Returns a fresh batch of short Arabic SEO topic ideas for the "اقتراحات
+// سريعة" chips on the generation form. Cheaper than /generate (no article
+// body) so it has its own looser rate limiter.
+router.post("/ai-suggestions", requireSuperAdmin, async (req: any, res): Promise<void> => {
+  try {
+    const keywordRaw = String(req.body?.keyword ?? "").trim().slice(0, 120);
+    const rawCountries = Array.isArray(req.body?.targetCountries)
+      ? (req.body.targetCountries as unknown[])
+          .map(c => String(c).trim().toUpperCase())
+          .filter(c => ALLOWED_TARGET_COUNTRIES.has(c))
+      : [];
+    const targetCountriesArr = rawCountries.length ? Array.from(new Set(rawCountries)) : ["GLOBAL"];
+    // Mirror /ai-articles/generate: GLOBAL is mutually exclusive with
+    // specific country codes (it's the catch-all sentinel). Mixing them
+    // produces ambiguous prompts, so reject the payload outright.
+    if (targetCountriesArr.includes("GLOBAL") && targetCountriesArr.length > 1) {
+      res.status(400).json({ error: "لا يمكن دمج GLOBAL مع دول محدّدة" });
+      return;
+    }
+
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة على الخادم" });
+      return;
+    }
+
+    const callerKey: number = (req as any).user?.id
+      ?? -Math.abs(((req.ip || "anon").split("").reduce((h: number, c: string) => (h * 31 + c.charCodeAt(0)) | 0, 0)));
+    const rl = checkSuggestRateLimit(callerKey);
+    if (!rl.ok) {
+      res.setHeader("Retry-After", String(rl.retryInSec));
+      res.status(429).json({ error: rl.reason, retryInSec: rl.retryInSec });
+      return;
+    }
+
+    const settings = await readAiSettings();
+    const COUNTRY_AR_LABEL: Record<string, string> = {
+      SA: "السعودية", AE: "الإمارات", KW: "الكويت", QA: "قطر",
+      BH: "البحرين", OM: "عُمان", EG: "مصر", GLOBAL: "كل الدول (محتوى عام)",
+    };
+    const countryLabels = targetCountriesArr.map(c => COUNTRY_AR_LABEL[c] ?? c).join("، ");
+
+    const prompt = [
+      `أنت خبير محتوى SEO لموقع برنامج محاسبة وفوترة إلكترونية يستهدف الشركات في الخليج العربي.`,
+      ``,
+      `سياق الموقع:`,
+      `- الكلمات المفتاحية الافتراضية: ${settings.defaultKeywords.join("، ")}`,
+      `- توجيهات الإدارة: ${settings.guidance}`,
+      `- الدول المستهدفة الآن: ${countryLabels}`,
+      keywordRaw ? `- الكلمة المفتاحية التي يفكر فيها المستخدم حالياً: ${keywordRaw}` : ``,
+      ``,
+      `اقترح 6 عناوين مقالات قصيرة وجذابة (كل عنوان من 6 إلى 12 كلمة بحد أقصى) قابلة للنقر تستخدم لرفع الترافيك العضوي. تجنّب التكرار، وراعِ تنوّع الزوايا (دليل / مقارنة / قائمة / كيف / أخطاء شائعة / 2026).`,
+      ``,
+      `أعد الناتج كـ JSON صالح فقط ضمن كتلة \`\`\`json … \`\`\` بهذا الشكل تماماً:`,
+      `{ "suggestions": ["عنوان 1", "عنوان 2", "عنوان 3", "عنوان 4", "عنوان 5", "عنوان 6"] }`,
+      ``,
+      `لا تكتب أي شيء خارج كتلة JSON.`,
+    ].filter(Boolean).join("\n");
+
+    const client = new Anthropic({
+      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+    });
+
+    const message = await client.messages.create({
+      model:      settings.model || "claude-sonnet-4-6",
+      max_tokens: 1024,
+      messages:   [{ role: "user", content: prompt }],
+    });
+
+    const rawText = message.content
+      .map(b => (b.type === "text" ? b.text : ""))
+      .join("\n")
+      .trim();
+
+    let parsed: any = null;
+    const fenced = rawText.match(/```json\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1].trim() : (rawText.match(/\{[\s\S]*\}/)?.[0] ?? "");
+    try { parsed = JSON.parse(candidate); } catch {/* fallthrough */}
+
+    const list = Array.isArray(parsed?.suggestions) ? parsed.suggestions : null;
+    if (!list || list.length === 0) {
+      res.status(502).json({ error: "تعذّر تحليل اقتراحات الذكاء الاصطناعي. حاول مرة أخرى." });
+      return;
+    }
+
+    // Normalize: trim, drop empties/duplicates, cap length, return up to 8.
+    const seen = new Set<string>();
+    const suggestions: string[] = [];
+    for (const item of list) {
+      const s = String(item ?? "").trim().replace(/^[-*•]\s*/, "").slice(0, 140);
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      suggestions.push(s);
+      if (suggestions.length >= 8) break;
+    }
+    if (suggestions.length === 0) {
+      res.status(502).json({ error: "تعذّر تحليل اقتراحات الذكاء الاصطناعي. حاول مرة أخرى." });
+      return;
+    }
+
+    res.json({ suggestions });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر توليد الاقتراحات" });
+  }
+});
+
 // POST /api/admin/seo/ai-articles/generate
 //   body: { topic: string, targetKeyword?: string, sourceTopic?: string }
 // Calls Anthropic with the saved settings, parses a JSON envelope from the
