@@ -61,12 +61,14 @@ import aiReportsRouter from "./ai-reports";
 import dataDoctorRouter from "./data-doctor";
 import contractingRouter from "./contracting";
 import contractingAiRouter from "./contracting-ai";
+import reportInvitationsRouter from "./report-invitations";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth/superadmin", superAdminAuthRouter);
+router.use("/reports-invitations", reportInvitationsRouter);
 router.use("/admin/modules", adminModulesRouter);
 router.use("/admin/data-doctor", dataDoctorRouter);
 router.use("/admin/seo", adminSeoRouter);

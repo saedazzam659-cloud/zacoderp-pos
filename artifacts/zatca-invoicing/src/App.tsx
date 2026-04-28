@@ -22,6 +22,7 @@ import SessionsAdmin from "@/pages/SessionsAdmin";
 import SecurityCenter from "@/pages/admin/SecurityCenter";
 import SuperAdminSecurity from "@/pages/admin/SuperAdminSecurity";
 import RecoverSuperAdmin from "@/pages/RecoverSuperAdmin";
+import ReportInvitationAccept from "@/pages/ReportInvitationAccept";
 import ReportsHub from "@/pages/admin/reports/ReportsHub";
 import CompanyPerformanceReport from "@/pages/admin/reports/CompanyPerformanceReport";
 import OperationalSummaryReport from "@/pages/admin/reports/OperationalSummaryReport";
@@ -272,6 +273,7 @@ function AppRoutes() {
       location === "/pending-approval" ||
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
+      location.startsWith("/reports-invitation/") ||
       location.startsWith("/blog/");
     if (!knownPublicRoute) {
       return <NotFound />;
@@ -293,6 +295,7 @@ function AppRoutes() {
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
       <Route path="/recover-superadmin/:token" component={RecoverSuperAdmin} />
+      <Route path="/reports-invitation/:token" component={ReportInvitationAccept} />
 
       {/* Protected routes */}
       <Route>

@@ -28,6 +28,7 @@ export * from "./sequences";
 export * from "./systemSettings";
 export * from "./superAdminSecurity";
 export * from "./reportEmailSchedules";
+export * from "./reportEmailInvitations";
 export * from "./maintenanceRuns";
 export * from "./offers";
 export * from "./modules";

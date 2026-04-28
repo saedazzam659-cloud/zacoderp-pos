@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable } from "@workspace/db";
+import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
 import {
@@ -21,7 +21,7 @@ import {
   clearCriticalDigestCooldown,
   severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
 } from "../lib/maintenanceScheduler.js";
-import { emailConfigured } from "../lib/email.js";
+import { emailConfigured, sendReportRecipientInvitation } from "../lib/email.js";
 import { eq, and, or, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -3492,6 +3492,169 @@ router.post("/reports/email-schedule/run-now", requireSuperAdmin, async (req, re
     res.json({ ok: outcome.status === "ok", outcome });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر إرسال التقرير";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── Report-recipient invitations (Task: invite-by-link flow) ──────────────
+// Lets the SuperAdmin send a one-click "join the recipient list" email to a
+// fresh address instead of typing it manually. The acceptance page is public
+// (token = proof of authorization), so the invitee doesn't need a login.
+const INVITE_TTL_MS = 24 * 60 * 60 * 1000;       // 24h
+const INVITE_HISTORY_LIMIT = 30;                  // shown in UI
+
+function clientIpFromReq(req: Request): string | null {
+  const xff = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim();
+  return xff || req.ip || (req.socket?.remoteAddress ?? null);
+}
+
+function serialiseInvitation(row: typeof reportEmailInvitationsTable.$inferSelect) {
+  let status: "pending" | "accepted" | "expired" | "revoked";
+  if (row.acceptedAt) status = "accepted";
+  else if (row.revokedAt) status = "revoked";
+  else if (row.expiresAt.getTime() < Date.now()) status = "expired";
+  else status = "pending";
+  return {
+    id: row.id,
+    email: row.email,
+    invitedByUsername: row.invitedByUsername,
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    acceptedAt: row.acceptedAt ? row.acceptedAt.toISOString() : null,
+    revokedAt: row.revokedAt ? row.revokedAt.toISOString() : null,
+    status,
+  };
+}
+
+// GET /api/admin/reports/email-schedule/invitations — recent invitations.
+router.get("/reports/email-schedule/invitations", requireSuperAdmin, async (_req, res) => {
+  try {
+    const rows = await db.select().from(reportEmailInvitationsTable)
+      .orderBy(desc(reportEmailInvitationsTable.createdAt))
+      .limit(INVITE_HISTORY_LIMIT);
+    res.json({ invitations: rows.map(serialiseInvitation) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر جلب الدعوات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/reports/email-schedule/invitations — issue a new invite.
+router.post("/reports/email-schedule/invitations", requireSuperAdmin, async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const rawEmail = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!rawEmail) { res.status(400).json({ error: "البريد مطلوب" }); return; }
+    if (!EMAIL_RE.test(rawEmail)) { res.status(400).json({ error: "بريد غير صالح" }); return; }
+
+    const cfg = await ensureScheduleRow();
+    const currentRecipients = Array.isArray(cfg.recipients) ? cfg.recipients : [];
+    if (currentRecipients.includes(rawEmail)) {
+      res.status(409).json({ error: "هذا البريد موجود بالفعل في قائمة المستلمين" });
+      return;
+    }
+
+    // Suppress duplicates of an already-pending invite for the same address.
+    const existingPending = await db.select().from(reportEmailInvitationsTable)
+      .where(and(
+        eq(reportEmailInvitationsTable.email, rawEmail),
+        isNull(reportEmailInvitationsTable.acceptedAt),
+        isNull(reportEmailInvitationsTable.revokedAt),
+        gte(reportEmailInvitationsTable.expiresAt, new Date()),
+      ))
+      .limit(1);
+    if (existingPending.length > 0) {
+      res.status(409).json({ error: "توجد دعوة معلقة لهذا البريد بالفعل" });
+      return;
+    }
+
+    if (!emailConfigured()) {
+      res.status(400).json({ error: "إرسال البريد غير مهيأ — يلزم ضبط SMTP أو ربط حساب Outlook قبل إرسال الدعوة" });
+      return;
+    }
+
+    const token = randomBytes(32).toString("base64url");
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + INVITE_TTL_MS);
+    const ip = clientIpFromReq(req);
+
+    const [inserted] = await db.insert(reportEmailInvitationsTable).values({
+      token,
+      email: rawEmail,
+      invitedByUserId:   req.adminUser?.id ?? null,
+      invitedByUsername: req.adminUser?.username ?? null,
+      invitedFromIp:     ip,
+      expiresAt,
+    }).returning();
+
+    const base = publicBaseUrlFromReq(req).replace(/\/$/, "");
+    const link = `${base}/reports-invitation/${encodeURIComponent(token)}`;
+
+    const sendResult = await sendReportRecipientInvitation({
+      to: rawEmail,
+      inviterName: req.adminUser?.username ?? null,
+      link,
+      expiresAt,
+    });
+
+    if (!sendResult.ok) {
+      // Roll back the row so the SuperAdmin can retry without a stale "pending"
+      // entry blocking them.
+      await db.delete(reportEmailInvitationsTable)
+        .where(eq(reportEmailInvitationsTable.id, inserted.id));
+      res.status(502).json({ error: `تعذر إرسال البريد: ${sendResult.reason ?? "غير معروف"}` });
+      return;
+    }
+
+    await writeAudit({
+      userId:    req.adminUser?.id ?? null,
+      username:  req.adminUser?.username ?? null,
+      role:      "superadmin",
+      companyId: null,
+      module: "reports", action: "create",
+      entityType: "report_email_invitation",
+      entityId:   String(inserted.id),
+      metadata: { email: rawEmail, expiresAt: expiresAt.toISOString() },
+    });
+
+    res.json({ ok: true, invitation: serialiseInvitation(inserted) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إرسال الدعوة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// DELETE /api/admin/reports/email-schedule/invitations/:id — revoke a pending
+// invite so the link no longer works. Accepted/revoked invites are no-ops.
+router.delete("/reports/email-schedule/invitations/:id", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "معرف غير صالح" }); return; }
+    const [row] = await db.select().from(reportEmailInvitationsTable)
+      .where(eq(reportEmailInvitationsTable.id, id)).limit(1);
+    if (!row) { res.status(404).json({ error: "الدعوة غير موجودة" }); return; }
+    if (row.acceptedAt || row.revokedAt) {
+      res.json({ ok: true, invitation: serialiseInvitation(row) });
+      return;
+    }
+    const [updated] = await db.update(reportEmailInvitationsTable).set({
+      revokedAt: new Date(),
+      revokedByUserId: req.adminUser?.id ?? null,
+    }).where(eq(reportEmailInvitationsTable.id, id)).returning();
+
+    await writeAudit({
+      userId:    req.adminUser?.id ?? null,
+      username:  req.adminUser?.username ?? null,
+      role:      "superadmin",
+      companyId: null,
+      module: "reports", action: "delete",
+      entityType: "report_email_invitation",
+      entityId:   String(id),
+      metadata: { email: row.email },
+    });
+    res.json({ ok: true, invitation: serialiseInvitation(updated) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إلغاء الدعوة";
     res.status(500).json({ error: msg });
   }
 });

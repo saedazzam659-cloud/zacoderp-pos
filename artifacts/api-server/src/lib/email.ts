@@ -237,6 +237,32 @@ export async function sendDeviceApprovalRequest(
   return sendEmail({ to, subject: "طلب اعتماد جهاز جديد", html: wrapHtml("جهاز جديد ينتظر الاعتماد", body) });
 }
 
+// Invitation to join the SuperAdmin scheduled-reports recipient list. The
+// link points at a public page that does NOT require login (the token itself
+// is the proof of authorization), so the invitee can accept from any inbox.
+export async function sendReportRecipientInvitation(opts: {
+  to: string;
+  inviterName: string | null;
+  link: string;
+  expiresAt: Date;
+}) {
+  const expiresLabel = opts.expiresAt.toLocaleString("ar-SA");
+  const inviter = opts.inviterName ? `<strong>${opts.inviterName}</strong>` : "أحد مشرفي النظام";
+  const body = `
+    <p>تمت دعوتك من قِبل ${inviter} لاستقبال <strong>التقارير الدورية</strong> الخاصة بنظام الفاتورة الإلكترونية السعودية على عنوان البريد هذا.</p>
+    <p>اضغط الزر أدناه لتأكيد الانضمام إلى قائمة المستلمين، وستبدأ التقارير في الوصول إليك تلقائيًا حسب جدولة المشرف العام (أسبوعي أو شهري).</p>
+    <p style="margin:18px 0;">
+      <a href="${opts.link}" style="display:inline-block; background:#10b981; color:#fff; text-decoration:none; padding:12px 22px; border-radius:8px; font-weight:600;">قبول الانضمام</a>
+    </p>
+    <p style="font-size:12px; color:#94a3b8;">صالح حتى ${expiresLabel}. إذا لم تكن تتوقع هذه الدعوة فيمكنك تجاهل الرسالة وستنتهي صلاحيتها تلقائيًا.</p>
+    <p style="font-size:12px; color:#94a3b8;">أو انسخ الرابط التالي:<br/><span dir="ltr" style="word-break:break-all;">${opts.link}</span></p>`;
+  return sendEmail({
+    to: opts.to,
+    subject: "دعوة لاستقبال التقارير الدورية",
+    html: wrapHtml("دعوة لاستقبال التقارير الدورية", body),
+  });
+}
+
 export async function sendReportsDigest(opts: {
   to: string[];
   frequency: "weekly" | "monthly";

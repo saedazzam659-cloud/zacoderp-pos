@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Loader2, Mail, Plus, Save, Send, X, AlertCircle, CheckCircle2, History } from "lucide-react";
+import { CalendarClock, Loader2, Mail, Plus, Save, Send, X, AlertCircle, CheckCircle2, History, MailPlus, Trash2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,6 +37,24 @@ interface ScheduleResp {
   smtpConfigured: boolean;
   history: RunRow[];
 }
+interface InvitationRow {
+  id: number;
+  email: string;
+  invitedByUsername: string | null;
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  status: "pending" | "accepted" | "expired" | "revoked";
+}
+interface InvitationsResp { invitations: InvitationRow[] }
+
+const INVITE_STATUS_LABELS: Record<InvitationRow["status"], { ar: string; tone: string }> = {
+  pending:  { ar: "بانتظار القبول", tone: "bg-amber-100 text-amber-900 border-amber-200" },
+  accepted: { ar: "تم القبول",     tone: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  expired:  { ar: "منتهية",        tone: "bg-slate-100 text-slate-700 border-slate-200" },
+  revoked:  { ar: "ملغاة",         tone: "bg-rose-100 text-rose-800 border-rose-200" },
+};
 
 const STATUS_LABELS: Record<RunRow["status"], { ar: string; tone: string }> = {
   ok:        { ar: "تم الإرسال",      tone: "bg-emerald-100 text-emerald-800 border-emerald-200" },
@@ -112,6 +131,73 @@ export default function EmailScheduleSection() {
       toast({ title: "تعذر الحفظ", description: e.message, variant: "destructive" });
     },
   });
+
+  // ── Invitation flow ─────────────────────────────────────────────────────
+  const invitesQuery = useQuery<InvitationsResp>({
+    queryKey: ["report-email-invitations"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/reports/email-schedule/invitations", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "تعذر تحميل الدعوات");
+      return r.json();
+    },
+    refetchOnWindowFocus: false,
+  });
+
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteDraft, setInviteDraft] = useState("");
+
+  const inviteMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const r = await fetch("/api/admin/reports/email-schedule/invitations", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error ?? "تعذر إرسال الدعوة");
+      return body;
+    },
+    onSuccess: () => {
+      toast({ title: "تم إرسال الدعوة", description: "وصلت رسالة الانضمام إلى البريد المحدد." });
+      setInviteOpen(false);
+      setInviteDraft("");
+      qc.invalidateQueries({ queryKey: ["report-email-invitations"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "تعذر إرسال الدعوة", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`/api/admin/reports/email-schedule/invitations/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error ?? "تعذر الإلغاء");
+      return body;
+    },
+    onSuccess: () => {
+      toast({ title: "تم إلغاء الدعوة" });
+      qc.invalidateQueries({ queryKey: ["report-email-invitations"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "تعذر الإلغاء", description: e.message, variant: "destructive" });
+    },
+  });
+
+  function submitInvite() {
+    const v = inviteDraft.trim().toLowerCase();
+    if (!v) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      toast({ title: "بريد غير صالح", description: v, variant: "destructive" });
+      return;
+    }
+    inviteMutation.mutate(v);
+  }
 
   const runNowMutation = useMutation({
     mutationFn: async () => {
@@ -266,7 +352,7 @@ export default function EmailScheduleSection() {
             <Mail className="h-4 w-4" /> المستلمون
             <span className="text-xs font-normal text-muted-foreground">({recipients.length})</span>
           </label>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Input
               type="email"
               dir="ltr"
@@ -274,12 +360,26 @@ export default function EmailScheduleSection() {
               value={emailDraft}
               onChange={(e) => setEmailDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmail(); } }}
+              className="flex-1 min-w-[220px]"
               data-testid="recipient-input"
             />
             <Button type="button" variant="outline" onClick={addEmail} data-testid="recipient-add">
-              <Plus className="h-4 w-4 ml-1" /> إضافة
+              <Plus className="h-4 w-4 ml-1" /> إضافة مباشرة
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => { setInviteDraft(""); setInviteOpen(true); }}
+              disabled={!data.smtpConfigured}
+              data-testid="recipient-invite-open"
+              title={!data.smtpConfigured ? "يلزم ضبط البريد قبل الإرسال" : "إرسال رابط دعوة بالبريد"}
+            >
+              <MailPlus className="h-4 w-4 ml-1" /> إرسال دعوة بالبريد
             </Button>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            "إضافة مباشرة" تضيف البريد الآن (يحتاج حفظ). "إرسال دعوة" يُرسل رسالة فيها رابط، ويُضاف البريد تلقائيًا عند قبوله.
+          </p>
           {recipients.length > 0 ? (
             <div className="flex flex-wrap gap-2 pt-1" data-testid="recipient-chips">
               {recipients.map(e => (
@@ -299,8 +399,89 @@ export default function EmailScheduleSection() {
           ) : (
             <p className="text-xs text-muted-foreground">لم يُضف أي مستلم بعد.</p>
           )}
+
+          {/* Pending / recent invitations */}
+          {(() => {
+            const all = invitesQuery.data?.invitations ?? [];
+            const pending = all.filter(i => i.status === "pending");
+            const others  = all.filter(i => i.status !== "pending").slice(0, 5);
+            const visible = [...pending, ...others];
+            if (visible.length === 0) return null;
+            return (
+              <div className="border rounded-lg mt-3" data-testid="invitations-list">
+                <div className="px-3 py-2 border-b bg-muted/30 text-xs font-semibold flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" /> الدعوات
+                  <span className="font-normal text-muted-foreground">({pending.length} بانتظار القبول)</span>
+                </div>
+                <div className="divide-y text-sm">
+                  {visible.map(inv => {
+                    const meta = INVITE_STATUS_LABELS[inv.status];
+                    return (
+                      <div key={inv.id} className="flex items-center gap-2 px-3 py-2">
+                        <span dir="ltr" className="font-mono text-xs flex-1 truncate">{inv.email}</span>
+                        <span className={`px-2 py-0.5 rounded border text-[11px] ${meta.tone}`}>{meta.ar}</span>
+                        <span className="text-[11px] text-muted-foreground hidden md:inline">
+                          {inv.status === "pending" ? `حتى ${fmtDateTime(inv.expiresAt)}` : fmtDateTime(inv.acceptedAt ?? inv.revokedAt ?? inv.createdAt)}
+                        </span>
+                        {inv.status === "pending" && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-rose-700 hover:text-rose-800 hover:bg-rose-50"
+                            onClick={() => revokeMutation.mutate(inv.id)}
+                            disabled={revokeMutation.isPending}
+                            data-testid={`invite-revoke-${inv.id}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
+
+      {/* Send-invite dialog */}
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent className="max-w-md" data-testid="invite-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MailPlus className="h-5 w-5 text-primary" /> إرسال دعوة بالبريد
+            </DialogTitle>
+            <DialogDescription>
+              سنُرسل رسالة إلى البريد المحدد فيها رابط للانضمام إلى قائمة مستلمي التقارير. عند الضغط على الرابط، يُضاف البريد تلقائيًا. الرابط صالح لمدة 24 ساعة.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-semibold">بريد المدعو</label>
+            <Input
+              type="email"
+              dir="ltr"
+              placeholder="example@domain.com"
+              value={inviteDraft}
+              onChange={(e) => setInviteDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitInvite(); } }}
+              data-testid="invite-email-input"
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setInviteOpen(false)} disabled={inviteMutation.isPending}>
+              إلغاء
+            </Button>
+            <Button type="button" onClick={submitInvite} disabled={inviteMutation.isPending} data-testid="invite-submit">
+              {inviteMutation.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin ml-1" /> جاري الإرسال…</>
+                : <><Send className="h-4 w-4 ml-1" /> إرسال الدعوة</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Actions + status */}
       <div className="p-4 border-t bg-muted/20 flex items-center justify-between flex-wrap gap-3">
