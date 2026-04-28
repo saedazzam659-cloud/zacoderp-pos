@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FormPanel } from "@/components/FormPanel";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -128,6 +129,8 @@ export default function SalesReps() {
       r.region?.includes(search)
     );
   });
+
+  const pager = usePagination(filtered);
 
   function openNew() {
     setEditing(null);
@@ -444,7 +447,7 @@ export default function SalesReps() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {pager.pagedItems.map((r) => (
                 <tr key={r.id} className="border-t hover:bg-muted/30" data-testid={`row-rep-${r.id}`}>
                   <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
                   <td className="px-3 py-2 font-medium">
@@ -520,6 +523,17 @@ export default function SalesReps() {
               ))}
             </tbody>
           </table>
+          {filtered.length > 0 && (
+            <TablePagination
+              page={pager.page}
+              pageSize={pager.pageSize}
+              pageCount={pager.pageCount}
+              total={pager.total}
+              onPageChange={pager.setPage}
+              onPageSizeChange={pager.setPageSize}
+              itemLabel="مندوب"
+            />
+          )}
         </div>
       )}
 

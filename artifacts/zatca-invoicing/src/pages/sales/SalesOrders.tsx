@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -118,6 +119,8 @@ export default function SalesOrders() {
     return matchText && matchStatus;
   });
 
+  const pager = usePagination(filtered);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -197,7 +200,7 @@ export default function SalesOrders() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(o => {
+                {pager.pagedItems.map(o => {
                   const st = STATUS_CLS[o.status] ?? STATUS_CLS.draft;
                   const isTerminal = o.status === "converted" || o.status === "cancelled";
                   return (
@@ -266,6 +269,17 @@ export default function SalesOrders() {
               </tbody>
             </table>
           </div>
+        )}
+        {filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("salesOrders.itemLabel", { defaultValue: "أمر بيع" })}
+          />
         )}
       </div>
 

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -97,6 +98,8 @@ export default function SalesInvoices() {
     return matchText && matchStatus;
   });
 
+  const pager = usePagination(filtered);
+
   const totalPosted = invoices.filter(i => i.status === "posted").reduce((s, i) => s + Number(i.totalAmount || 0), 0);
 
   const headerCells: string[] = [
@@ -174,7 +177,7 @@ export default function SalesInvoices() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(inv => {
+                {pager.pagedItems.map(inv => {
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   const payLabel = inv.paymentType === "cash"
                     ? t("salesInvoices.paymentCash")
@@ -254,6 +257,17 @@ export default function SalesInvoices() {
               </tbody>
             </table>
           </div>
+        )}
+        {filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("salesInvoices.itemLabel", { defaultValue: "فاتورة" })}
+          />
         )}
       </div>
       <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />

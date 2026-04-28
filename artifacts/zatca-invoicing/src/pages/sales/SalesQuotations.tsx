@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Plus, Search, FileSignature, Eye, Trash2, FileText, ArrowRightLeft, CheckCircle, XCircle, Send, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -106,6 +107,8 @@ export default function SalesQuotations() {
     return matchText && matchStatus;
   });
 
+  const pager = usePagination(filtered);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -185,7 +188,7 @@ export default function SalesQuotations() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(q => {
+                {pager.pagedItems.map(q => {
                   const st = STATUS_CLS[q.status] ?? STATUS_CLS.draft;
                   return (
                     <tr key={q.id} className="border-b hover:bg-muted/30 transition-colors">
@@ -249,6 +252,17 @@ export default function SalesQuotations() {
               </tbody>
             </table>
           </div>
+        )}
+        {filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("salesQuotations.itemLabel", { defaultValue: "عرض سعر" })}
+          />
         )}
       </div>
       <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />

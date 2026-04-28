@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Plus, Search, ShoppingCart, Eye, Trash2, CheckCircle, FileText, RotateCcw, Printer, Undo2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PurchasePrintModal from "./PurchasePrintModal";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -105,6 +106,8 @@ export default function PurchaseInvoices() {
     return matchText && matchStatus;
   });
 
+  const pager = usePagination(filtered);
+
   const totalPosted = invoices.filter(i => i.status === "posted").reduce((s, i) => s + Number(i.totalAmount || 0), 0);
 
   const cols = [
@@ -196,7 +199,7 @@ export default function PurchaseInvoices() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(inv => {
+                {pager.pagedItems.map(inv => {
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   return (
                     <tr key={inv.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
@@ -282,6 +285,17 @@ export default function PurchaseInvoices() {
               </tbody>
             </table>
           </div>
+        )}
+        {filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("purchaseInvoices.itemLabel", { defaultValue: "فاتورة" })}
+          />
         )}
       </div>
 

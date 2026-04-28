@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileText, FileCheck2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TablePagination, usePagination } from "@/components/TablePagination";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -101,6 +102,8 @@ export default function PurchaseOrders() {
     const matchStatus = filterStatus === "all" || ord.status === filterStatus;
     return matchText && matchStatus;
   });
+
+  const pager = usePagination(filtered);
 
   const totalConfirmed = orders.filter(o => o.status === "confirmed").reduce((s, o) => s + Number(o.totalAmount || 0), 0);
 
@@ -194,7 +197,7 @@ export default function PurchaseOrders() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(ord => {
+                {pager.pagedItems.map(ord => {
                   const st = STATUS[ord.status] ?? STATUS.draft;
                   return (
                     <tr key={ord.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
@@ -276,6 +279,17 @@ export default function PurchaseOrders() {
               </tbody>
             </table>
           </div>
+        )}
+        {filtered.length > 0 && (
+          <TablePagination
+            page={pager.page}
+            pageSize={pager.pageSize}
+            pageCount={pager.pageCount}
+            total={pager.total}
+            onPageChange={pager.setPage}
+            onPageSizeChange={pager.setPageSize}
+            itemLabel={t("purchaseOrders.itemLabel", { defaultValue: "أمر شراء" })}
+          />
         )}
       </div>
     </div>
