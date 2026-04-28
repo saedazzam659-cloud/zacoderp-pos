@@ -95,3 +95,9 @@ id = "Hw0N7TR1P38qvHjulqCiA"
 uri = "file://exports/zatca-source-20260428.tar.gz"
 type = "unspecified"
 title = "السورس كود الكامل - 28 إبريل 2026 (مضغوط tar.gz)"
+
+[[outputs]]
+id = "8MTyEEM2gmyFB33ekL5yy"
+uri = "file://exports/zatca-source-code-only.tar.gz"
+type = "unspecified"
+title = "سورس كود فقط - 17 ميغا"
