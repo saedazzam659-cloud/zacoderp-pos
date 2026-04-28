@@ -101,6 +101,28 @@ export default function AccountStatement() {
     balance:     fmt(r.balance),
   }));
 
+  // Grand-totals row mirrored into the printed/exported tfoot so the
+  // standard "الإجمالي" line appears at the bottom of the table.
+  const exportTotalsRow = (!isLoading && rows.length > 0)
+    ? {
+        entryDate:   "",
+        docNumber:   "",
+        description: t("accountingReports.total"),
+        debit:       fmt(totalDebit),
+        credit:      fmt(totalCredit),
+        balance:     `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`,
+      }
+    : null;
+
+  // Summary footer cards under the printed table (debit / credit / closing).
+  const exportSummaryFooter = (!isLoading && rows.length > 0)
+    ? [
+        { label: t("accountingReports.debit"),   value: fmt(totalDebit),  tone: "debit"   as const },
+        { label: t("accountingReports.credit"),  value: fmt(totalCredit), tone: "credit"  as const },
+        { label: t("accountStatement.closingBalance"), value: `${fmt(Math.abs(finalBalance))} ${finalBalance >= 0 ? t("accountingReports.debit") : t("accountingReports.credit")}`, tone: "primary" as const },
+      ]
+    : null;
+
   function handleSearch() {
     if (!accountId) { toast({ title: t("accountStatement.selectAccountFirst"), variant: "destructive" }); return; }
     setSearched(true);
@@ -126,6 +148,8 @@ export default function AccountStatement() {
                 columns={EXPORT_COLS}
                 filename={`${t("accountStatement.filename_prefix")}-${selectedAccount?.code ?? ""}-${fromDate}`}
                 title={t("accountStatement.title_with", { name: accountDisplayName, from: fromDate, to: toDate })}
+                totalsRow={exportTotalsRow}
+                summaryFooter={exportSummaryFooter}
               />
               <Button variant="outline" size="sm" className="gap-2 print:hidden" onClick={() => window.print()}>
                 <Printer className="h-4 w-4" />{t("accountingReports.print")}

@@ -156,6 +156,30 @@ export default function CustomerStatementDetailed() {
 
   const customerLabel = customer ? pickName(customer.nameAr, customer.nameEn) : "";
 
+  // Grand-totals row mirrored into the printed/exported tfoot so the
+  // standard "الإجمالي" line appears at the bottom of the table.
+  const exportTotalsRow = (applied.customerId && !isLoading && augmented.length > 0)
+    ? {
+        date:        "",
+        type:        "",
+        docNumber:   "",
+        description: tr("totalLabel"),
+        debit:       fmt(totals.debit),
+        credit:      fmt(totals.credit),
+        balance:     fmt(closing),
+      }
+    : null;
+
+  // Summary footer cards (opening / debit / credit / closing) for the printed view.
+  const exportSummaryFooter = (applied.customerId && !isLoading)
+    ? [
+        { label: tr("opening"),     value: fmt(data?.opening ?? 0), tone: "default" as const },
+        { label: tr("totalDebit"),  value: fmt(totals.debit),       tone: "debit"   as const },
+        { label: tr("totalCredit"), value: fmt(totals.credit),      tone: "credit"  as const },
+        { label: tr("closing"),     value: fmt(closing),            tone: "primary" as const },
+      ]
+    : null;
+
   const renderInvoiceLines = (row: CustomerStatementDetailedRow) => {
     const lines = row.lines ?? [];
     const lineVatTotal = lines.reduce((s, ln) => s + (ln.vatAmount || 0), 0);
@@ -252,6 +276,8 @@ export default function CustomerStatementDetailed() {
           filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
           title={tr("exportTitle")}
           subtitle={customer ? `${customerLabel}  |  ${applied.from} → ${applied.to}` : tr("exportSubtitlePick")}
+          totalsRow={exportTotalsRow}
+          summaryFooter={exportSummaryFooter}
         />
       </div>
 

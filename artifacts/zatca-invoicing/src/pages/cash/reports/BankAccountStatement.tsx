@@ -100,6 +100,30 @@ export default function BankAccountStatement() {
     })),
   ];
 
+  // Grand-totals row mirrored into the printed/exported tfoot so the
+  // standard "الإجمالي" line appears at the bottom of the table.
+  const exportTotalsRow = (applied.bankAccountId && !isLoading && augmented.length > 0)
+    ? {
+        date:        "",
+        type:        "",
+        docNumber:   "",
+        description: trc("totalRow"),
+        debit:       fmt(totals.debit),
+        credit:      fmt(totals.credit),
+        balance:     fmt(closing),
+      }
+    : null;
+
+  // Summary footer cards (opening / income / outcome / closing) for the printed view.
+  const exportSummaryFooter = (applied.bankAccountId && !isLoading)
+    ? [
+        { label: trc("openingBalance"), value: fmt(data?.opening ?? 0), tone: "default" as const },
+        { label: trc("totalIn"),        value: fmt(totals.debit),       tone: "credit"  as const },
+        { label: trc("totalOut"),       value: fmt(totals.credit),      tone: "debit"   as const },
+        { label: trc("closingBalance"), value: fmt(closing),            tone: "primary" as const },
+      ]
+    : null;
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -113,6 +137,8 @@ export default function BankAccountStatement() {
           filename={`${tr("filename")}-${pickName(bank) || ""}-${applied.from}-${applied.to}`}
           title={tr("exportTitle")}
           subtitle={bank ? `${pickName(bank)}  |  ${applied.from} → ${applied.to}` : tr("selectBankPh")}
+          totalsRow={exportTotalsRow}
+          summaryFooter={exportSummaryFooter}
         />
       </div>
 
