@@ -255,6 +255,30 @@ export default function AuditLog() {
     return `${origin}${pathname}?entry=${id}`;
   }, []);
 
+  // Per-row tooltip / aria-label for the share-link copy button (task #154).
+  // Surfaces the audited entity so a reviewer hovering the icon sees
+  // exactly what they're about to share — e.g. "Copy link to invoice #45"
+  // / "نسخ رابط فاتورة #45" — matching the friendly entity reference the
+  // bulk Markdown copy already renders (task #148). Falls back to the
+  // generic "Copy link to this entry" label when the row has no
+  // `entityType` so we never show an awkward "Copy link to" with a
+  // missing noun. The translation registry behind `entityTypes.*` is the
+  // same one used by the Markdown variant, so adding a new entity type
+  // there automatically improves both surfaces.
+  const shareLinkLabelForRow = useCallback(
+    (row: AuditRow) => {
+      if (!row.entityType) return tr("copyShareLink");
+      const entityLabel = tr(`entityTypes.${row.entityType}`, {
+        defaultValue: row.entityType,
+      });
+      const entity = row.entityId
+        ? `${entityLabel} #${row.entityId}`
+        : entityLabel;
+      return tr("copyShareLinkWithEntity", { entity });
+    },
+    [tr],
+  );
+
   // ── Bulk-select share links (task #143, Markdown variant task #145) ──
   // Reviewers triaging long audit lists frequently want to drop a batch
   // of permalinks into a chat or ticket. Per-row checkboxes plus toolbar
@@ -857,6 +881,16 @@ export default function AuditLog() {
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
+                          {/* Hover/focus preview from task #144 wraps the
+                              row's existing share-link copy button so a
+                              reviewer can spot-check id / action / module /
+                              timestamp / link before pasting. The inner
+                              CopyIconButton keeps the entity-aware tooltip /
+                              aria-label from task #154 so the button itself
+                              still announces what entity is being shared
+                              (e.g. "Copy link to invoice #45") for screen
+                              readers and the post-copy toast — the rich
+                              hover preview is purely additive. */}
                           <Tooltip>
                             <TooltipTrigger asChild>
                               {/* The span is the focus/hover target for
@@ -867,7 +901,7 @@ export default function AuditLog() {
                               <span className="inline-flex">
                                 <CopyIconButton
                                   value={shareLink}
-                                  label={tr("copyShareLink")}
+                                  label={shareLinkLabelForRow(r)}
                                   tr={tr}
                                   testId={`audit-row-copy-share-link-${r.id}`}
                                   icon={Link2}

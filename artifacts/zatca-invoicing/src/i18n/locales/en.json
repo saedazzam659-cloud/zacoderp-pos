@@ -5046,6 +5046,7 @@
       "copyUserAgent": "Copy user agent",
       "copyPath": "Copy request path",
       "copyShareLink": "Copy link to this entry",
+      "copyShareLinkWithEntity": "Copy link to {{entity}}",
       "copySelectedLinks": "Copy {{count}} links",
       "copySelectedLinksToast": "Copied {{formattedCount}} share links to the clipboard.",
       "copySelectedLinksMarkdown": "Copy as Markdown",

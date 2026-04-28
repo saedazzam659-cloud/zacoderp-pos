@@ -5122,6 +5122,7 @@
       "copyUserAgent": "نسخ متصفح المستخدم",
       "copyPath": "نسخ مسار الطلب",
       "copyShareLink": "نسخ رابط هذا السجل",
+      "copyShareLinkWithEntity": "نسخ رابط {{entity}}",
       "copySelectedLinks": "نسخ {{count}} رابط",
       "copySelectedLinksToast": "تم نسخ {{formattedCount}} رابط مشاركة إلى الحافظة.",
       "copySelectedLinksMarkdown": "نسخ بصيغة Markdown",
