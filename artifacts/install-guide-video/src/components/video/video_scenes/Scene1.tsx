@@ -20,7 +20,17 @@ export function Scene1() {
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
 
-  const titleChars = "محاسبة سهلة. ذكاء اصطناعي مدمج.".split('');
+  // ─── Title rendering ─────────────────────────────────────────────
+  // We tokenize by WORD (not by character) and render each word as a
+  // single inline-block. Splitting Arabic by character with .split('')
+  // breaks the Unicode shaping pipeline — every glyph becomes its own
+  // text node and the browser can no longer join the letters into a
+  // word, so the title rendered as disconnected isolated forms (the
+  // "محاسبة" → "م ح ا س ب ة" bug screenshot from the user). Per-word
+  // splitting keeps each word's letters in the same text run so the
+  // joining/cursive forms survive, while still letting us stagger the
+  // reveal animation.
+  const titleSegments = "محاسبة سهلة. ذكاء اصطناعي مدمج.".split(' ');
 
   return (
     <motion.div
@@ -37,28 +47,26 @@ export function Scene1() {
         />
 
         <h1
-          className="text-[5vw] font-black leading-tight text-center flex flex-wrap justify-center dir-rtl mb-6 text-shadow-glow"
+          className="text-[5vw] font-black leading-tight text-center flex flex-wrap justify-center gap-x-[0.35em] mb-6"
           style={{ direction: 'rtl' }}
         >
-          {titleChars.map((char, i) => (
+          {titleSegments.map((word, i) => (
             <motion.span
               key={i}
-              className="inline-block mx-[0.05em]"
-              initial={{ opacity: 0, y: 50, rotateX: -90 }}
+              className="inline-block whitespace-nowrap"
+              initial={{ opacity: 0, y: 40 }}
               animate={{
                 opacity: phase >= 2 ? 1 : 0,
-                y: phase >= 2 ? 0 : 50,
-                rotateX: phase >= 2 ? 0 : -90,
+                y: phase >= 2 ? 0 : 40,
               }}
               transition={{
                 type: 'spring',
-                stiffness: 300,
-                damping: 20,
-                delay: phase >= 2 ? i * 0.04 : 0,
+                stiffness: 320,
+                damping: 24,
+                delay: phase >= 2 ? i * 0.12 : 0,
               }}
-              style={{ transformOrigin: 'bottom' }}
             >
-              {char === ' ' ? '\u00A0' : char}
+              {word}
             </motion.span>
           ))}
         </h1>
