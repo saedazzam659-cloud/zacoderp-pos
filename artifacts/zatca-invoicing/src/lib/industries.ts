@@ -16,18 +16,26 @@ export interface Industry {
   recommendedModules: string[]; // module keys from systemModules.ts
 }
 
+// NOTE: "core" module (dashboard + invoices) is alwaysOn and granted automatically,
+// so it does NOT need to appear in recommendedModules. The wizard already shows
+// its permissions as enabled by default for every company.
+//
+// Industry tiers (per product spec):
+//   commercial  → inventory, sales, purchasing, accounting, hr
+//   industrial  → commercial + production
+//   contracting → industrial  + contracting management
 export const INDUSTRIES: Industry[] = [
   {
     code: "commercial", nameAr: "تجاري", nameEn: "Commercial", emoji: "🛒",
-    recommendedModules: ["sales", "purchasing", "inventory", "cash", "accounting", "pos", "zatca"],
+    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr"],
   },
   {
     code: "industrial", nameAr: "صناعي", nameEn: "Industrial", emoji: "🏭",
-    recommendedModules: ["sales", "purchasing", "inventory", "accounting", "hr", "zatca"],
+    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr", "production"],
   },
   {
     code: "contracting", nameAr: "مقاولات", nameEn: "Contracting", emoji: "🏗️",
-    recommendedModules: ["sales", "purchasing", "cash", "accounting", "hr", "zatca"],
+    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr", "production", "contracting"],
   },
   {
     code: "medical", nameAr: "طبي", nameEn: "Medical", emoji: "🩺",
