@@ -193,6 +193,16 @@ async function bootstrap() {
     logger.error({ err }, "Failed to ensure schema is up to date — server will continue but auth may fail");
   }
 
+  // Eagerly read DB-stored SMTP config so `emailConfigured()` (sync) reflects
+  // it from the very first request. Failures are swallowed; env-only path
+  // still works.
+  try {
+    const { warmEmailConfig } = await import("./lib/email");
+    await warmEmailConfig();
+  } catch (err) {
+    logger.warn({ err }, "warmEmailConfig failed at startup");
+  }
+
   app.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");

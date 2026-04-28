@@ -7,6 +7,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import EmailScheduleSection from "./EmailScheduleSection";
 import SenderEmailSection from "./SenderEmailSection";
+import SmtpConfigSection from "./SmtpConfigSection";
 
 interface SummaryResp {
   period: { from: string; to: string };
@@ -143,6 +144,8 @@ export default function ReportsHub() {
           </Link>
         ))}
       </div>
+
+      <SmtpConfigSection />
 
       <SenderEmailSection />
 

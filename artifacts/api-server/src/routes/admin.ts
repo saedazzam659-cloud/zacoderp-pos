@@ -26,7 +26,12 @@ import {
   sendReportRecipientInvitation,
   resolveActiveSender,
   invalidateSenderCache,
+  invalidateSmtpCache,
+  warmEmailConfig,
+  encryptSecret,
+  sendEmail,
   REPORT_SENDER_KEY,
+  SMTP_KEYS,
 } from "../lib/email.js";
 import { eq, and, or, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -3729,6 +3734,270 @@ router.put("/reports/sender-email", requireSuperAdmin, async (req, res) => {
     res.json(after);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر حفظ الإعداد";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── SMTP transport config (DB-backed override of SMTP_* env vars) ───────────
+// SuperAdmins can set host/port/user/pass/from from the admin UI without
+// touching deployment secrets. Anything stored here takes precedence over the
+// SMTP_* env vars in `lib/email.ts`. Password is encrypted at rest with
+// AES-256-GCM keyed off SESSION_SECRET so a DB dump alone can't reveal it.
+//
+// GET returns the current config WITHOUT the password (only `hasPassword`)
+// so the UI can show field placeholders without echoing the secret. Source
+// indicates whether the active transport comes from DB rows, env vars, or
+// neither.
+interface SmtpConfigResponse {
+  source: "db" | "env" | "none";
+  host: string | null;
+  port: number | null;
+  user: string | null;
+  hasPassword: boolean;
+  from: string | null;
+  envHost: string | null;
+  envPort: string | null;
+  envUser: string | null;
+  envHasPassword: boolean;
+  envFrom: string | null;
+}
+
+async function readDbSmtpRows(): Promise<Record<string, string>> {
+  const rows = await db.select().from(systemSettingsTable)
+    .where(inArray(systemSettingsTable.key, [
+      SMTP_KEYS.host, SMTP_KEYS.port, SMTP_KEYS.user, SMTP_KEYS.pass, SMTP_KEYS.from,
+    ]));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    const v = (r.value ?? "").trim();
+    if (v) out[r.key] = v;
+  }
+  return out;
+}
+
+async function buildSmtpConfigResponse(): Promise<SmtpConfigResponse> {
+  const dbRows = await readDbSmtpRows();
+  const dbHost = dbRows[SMTP_KEYS.host] ?? null;
+  const dbUser = dbRows[SMTP_KEYS.user] ?? null;
+  const dbPassEnc = dbRows[SMTP_KEYS.pass] ?? null;
+  const dbFrom = dbRows[SMTP_KEYS.from] ?? null;
+  const dbPortStr = dbRows[SMTP_KEYS.port] ?? null;
+  const dbPort = dbPortStr ? Number(dbPortStr) || null : null;
+  const dbConfigured = !!(dbHost && dbUser && dbPassEnc);
+
+  const envHost = process.env.SMTP_HOST ?? null;
+  const envPort = process.env.SMTP_PORT ?? null;
+  const envUser = process.env.SMTP_USER ?? null;
+  const envPass = process.env.SMTP_PASS ?? null;
+  const envFrom = process.env.SMTP_FROM ?? null;
+  const envConfigured = !!(envHost && envUser && envPass);
+
+  let source: SmtpConfigResponse["source"] = "none";
+  if (dbConfigured) source = "db";
+  else if (envConfigured) source = "env";
+
+  return {
+    source,
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    hasPassword: !!dbPassEnc,
+    from: dbFrom,
+    envHost,
+    envPort,
+    envUser,
+    envHasPassword: !!envPass,
+    envFrom,
+  };
+}
+
+async function upsertSetting(key: string, value: string): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES (${key}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value, updated_at = NOW()
+  `);
+}
+
+async function deleteSettings(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await db.delete(systemSettingsTable)
+    .where(inArray(systemSettingsTable.key, keys));
+}
+
+router.get("/reports/smtp-config", requireSuperAdmin, async (_req, res) => {
+  try {
+    const cfg = await buildSmtpConfigResponse();
+    res.json(cfg);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر قراءة إعدادات البريد";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// PUT /api/admin/reports/smtp-config — replace the DB-stored SMTP config.
+//   body: {
+//     host: string,        // required, non-empty
+//     port: number,        // required, 1..65535
+//     user: string,        // required, non-empty
+//     password: string|null|"", // null/empty means "keep existing password"
+//     from: string|null,   // optional From header override
+//   }
+// Pass `clear: true` (no other fields) to wipe the DB config and revert to
+// env vars.
+router.put("/reports/smtp-config", requireSuperAdmin, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    if (body.clear === true) {
+      await deleteSettings([
+        SMTP_KEYS.host, SMTP_KEYS.port, SMTP_KEYS.user, SMTP_KEYS.pass, SMTP_KEYS.from,
+      ]);
+      invalidateSmtpCache();
+      await warmEmailConfig();
+      await writeAudit({
+        userId:   req.adminUser?.id ?? null,
+        username: req.adminUser?.username ?? null,
+        role:     "superadmin",
+        companyId: null,
+        module: "reports",
+        action: "delete",
+        entityType: "smtp_config",
+        entityId: "smtp_config",
+        metadata: { cleared: true },
+      });
+      const after = await buildSmtpConfigResponse();
+      res.json(after);
+      return;
+    }
+
+    const host = typeof body.host === "string" ? body.host.trim() : "";
+    const portRaw = body.port;
+    const user = typeof body.user === "string" ? body.user.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const fromRaw = typeof body.from === "string" ? body.from.trim() : "";
+
+    if (!host) {
+      res.status(400).json({ error: "خادم SMTP (host) مطلوب" });
+      return;
+    }
+    if (!user) {
+      res.status(400).json({ error: "اسم المستخدم (user) مطلوب" });
+      return;
+    }
+    const port = Number(portRaw);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      res.status(400).json({ error: "المنفذ (port) غير صحيح" });
+      return;
+    }
+    if (fromRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromRaw)) {
+      res.status(400).json({ error: "صيغة عنوان المُرسِل غير صحيحة" });
+      return;
+    }
+
+    // Password handling: empty string = "keep existing" (don't overwrite).
+    // The UI uses this so SuperAdmins can edit other fields without retyping
+    // the password every time. If no existing password row is present and
+    // none was provided, refuse — we'd otherwise create a half-configured
+    // row that breaks the transporter.
+    const existing = await readDbSmtpRows();
+    const hadPass = !!existing[SMTP_KEYS.pass];
+    if (!password && !hadPass) {
+      res.status(400).json({ error: "كلمة مرور SMTP مطلوبة في أول إعداد" });
+      return;
+    }
+
+    await upsertSetting(SMTP_KEYS.host, host);
+    await upsertSetting(SMTP_KEYS.port, String(port));
+    await upsertSetting(SMTP_KEYS.user, user);
+    if (password) {
+      await upsertSetting(SMTP_KEYS.pass, encryptSecret(password));
+    }
+    if (fromRaw) {
+      await upsertSetting(SMTP_KEYS.from, fromRaw);
+    } else {
+      await deleteSettings([SMTP_KEYS.from]);
+    }
+
+    invalidateSmtpCache();
+    await warmEmailConfig();
+
+    await writeAudit({
+      userId:   req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role:     "superadmin",
+      companyId: null,
+      module: "reports",
+      action: "update",
+      entityType: "smtp_config",
+      entityId: "smtp_config",
+      metadata: {
+        host, port, user, from: fromRaw || null,
+        passwordChanged: !!password,
+      },
+    });
+
+    const after = await buildSmtpConfigResponse();
+    res.json(after);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حفظ إعدادات البريد";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/admin/reports/smtp-config/test — send a one-off test message.
+//   body: { to: string }
+// Uses whatever transport is currently active (DB SMTP > env SMTP > Outlook).
+// If the active transport comes from DB rows, the response includes the
+// underlying nodemailer error so SuperAdmins can debug AUTH/CONN issues.
+router.post("/reports/smtp-config/test", requireSuperAdmin, async (req, res) => {
+  try {
+    const to = typeof req.body?.to === "string" ? req.body.to.trim() : "";
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      res.status(400).json({ error: "عنوان بريد المستلم غير صحيح" });
+      return;
+    }
+    if (!emailConfigured()) {
+      res.status(400).json({ error: "لا يوجد إعداد بريد فعّال — اضبط SMTP أولًا" });
+      return;
+    }
+    const senderInfo = await resolveActiveSender();
+    const result = await sendEmail({
+      to,
+      subject: "اختبار إرسال — نظام الفاتورة الإلكترونية السعودية",
+      html: `
+<div dir="rtl" lang="ar" style="font-family: 'Tahoma', Arial, sans-serif; background:#f4f6f8; padding:32px;">
+  <div style="max-width:520px; margin:auto; background:#fff; border-radius:12px; padding:28px; box-shadow:0 2px 6px rgba(0,0,0,.06);">
+    <h2 style="margin:0 0 12px; color:#0f172a; font-size:20px;">رسالة اختبار</h2>
+    <p style="color:#334155; line-height:1.7; font-size:14px;">
+      هذه رسالة اختبار من إعدادات البريد في لوحة المشرف العام.<br/>
+      وصول هذه الرسالة يعني أن إعدادات SMTP سليمة وأن الإرسال يعمل.
+    </p>
+    <p style="color:#64748b; font-size:13px;">
+      الوقت: ${new Date().toLocaleString("ar-SA")}<br/>
+      المُرسِل الفعلي: <strong>${senderInfo.willActuallySendFrom}</strong>
+    </p>
+  </div>
+</div>`,
+    });
+    if (!result.ok) {
+      res.status(502).json({ error: "فشل الإرسال", reason: result.reason ?? "unknown" });
+      return;
+    }
+    await writeAudit({
+      userId:   req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role:     "superadmin",
+      companyId: null,
+      module: "reports",
+      action: "update",
+      entityType: "smtp_config",
+      entityId: "smtp_test",
+      metadata: { to, sender: senderInfo.willActuallySendFrom },
+    });
+    res.json({ ok: true, sentTo: to, from: senderInfo.willActuallySendFrom });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر إرسال رسالة الاختبار";
     res.status(500).json({ error: msg });
   }
 });

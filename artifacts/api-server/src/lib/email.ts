@@ -1,11 +1,132 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { db, systemSettingsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypto";
+
+// ─── SMTP config: SuperAdmin can store host/port/user/pass/from in DB ─────
+// Stored under these `system_settings.key` rows. The password row carries an
+// AES-256-GCM-encrypted blob keyed off SESSION_SECRET so a DB dump alone
+// cannot reveal the credential. Anything in DB takes precedence over the
+// SMTP_* environment variables, so SuperAdmins can configure email entirely
+// from the admin UI without touching deployment secrets.
+export const SMTP_KEYS = {
+  host: "smtp_host",
+  port: "smtp_port",
+  user: "smtp_user",
+  pass: "smtp_pass_enc",
+  from: "smtp_from",
+} as const;
+
+interface DbSmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string | null;
+}
+
+function getEncKey(): Buffer {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET is required for SMTP password encryption");
+  return createHash("sha256").update(secret).digest();
+}
+
+export function encryptSecret(plain: string): string {
+  const key = getEncKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptSecret(stored: string): string | null {
+  if (!stored.startsWith("enc:v1:")) return stored; // legacy plaintext
+  try {
+    const parts = stored.split(":");
+    if (parts.length !== 5) return null;
+    const [, , ivB64, tagB64, ctB64] = parts;
+    const key = getEncKey();
+    const iv = Buffer.from(ivB64, "base64");
+    const tag = Buffer.from(tagB64, "base64");
+    const ct = Buffer.from(ctB64, "base64");
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+const SMTP_CACHE_TTL_MS = 30_000;
+let cachedDbSmtp: { value: DbSmtpConfig | null; expiresAt: number } | null = null;
+// Sync-readable mirror of "is a usable SMTP config in DB?". Refreshed every
+// time we read the DB and on explicit invalidate. Lets `emailConfigured()`
+// stay synchronous (it's called on hot paths with no easy place to await).
+let _dbSmtpReady = false;
+
+async function readSmtpFromDb(): Promise<DbSmtpConfig | null> {
+  const rows = await db.select().from(systemSettingsTable)
+    .where(inArray(systemSettingsTable.key, [
+      SMTP_KEYS.host, SMTP_KEYS.port, SMTP_KEYS.user, SMTP_KEYS.pass, SMTP_KEYS.from,
+    ]));
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    const v = (r.value ?? "").trim();
+    if (v) map.set(r.key, v);
+  }
+  const host = map.get(SMTP_KEYS.host);
+  const user = map.get(SMTP_KEYS.user);
+  const passEnc = map.get(SMTP_KEYS.pass);
+  if (!host || !user || !passEnc) return null;
+  const pass = decryptSecret(passEnc);
+  if (!pass) return null;
+  const portRaw = map.get(SMTP_KEYS.port);
+  const port = Number(portRaw ?? "587") || 587;
+  return { host, port, user, pass, from: map.get(SMTP_KEYS.from) ?? null };
+}
+
+async function getDbSmtp(): Promise<DbSmtpConfig | null> {
+  if (cachedDbSmtp && cachedDbSmtp.expiresAt > Date.now()) return cachedDbSmtp.value;
+  try {
+    const v = await readSmtpFromDb();
+    cachedDbSmtp = { value: v, expiresAt: Date.now() + SMTP_CACHE_TTL_MS };
+    _dbSmtpReady = !!v;
+    return v;
+  } catch (err: any) {
+    console.warn("[email] could not read DB SMTP config; falling back to env", err?.message ?? err);
+    return null;
+  }
+}
+
+export function invalidateSmtpCache(): void {
+  cachedDbSmtp = null;
+  cached = null; // also drop the memoised transporter so next send rebuilds it
+}
+
+// Eagerly populate `_dbSmtpReady` on server startup so `emailConfigured()`
+// can answer correctly before the first sendEmail call. Safe to call any
+// time; failures are swallowed (the env-only path still works).
+export async function warmEmailConfig(): Promise<void> {
+  try { await getDbSmtp(); } catch { /* swallowed */ }
+}
 
 let cached: Transporter | null = null;
 
-function getTransporter(): Transporter | null {
+async function getTransporter(): Promise<Transporter | null> {
   if (cached) return cached;
+  // DB-stored SMTP config takes precedence over env vars so SuperAdmins can
+  // change SMTP from the admin UI without redeploying.
+  const dbCfg = await getDbSmtp();
+  if (dbCfg) {
+    cached = nodemailer.createTransport({
+      host: dbCfg.host,
+      port: dbCfg.port,
+      secure: dbCfg.port === 465,
+      auth: { user: dbCfg.user, pass: dbCfg.pass },
+    });
+    return cached;
+  }
   const host = process.env.SMTP_HOST;
   const portRaw = process.env.SMTP_PORT;
   const user = process.env.SMTP_USER;
@@ -62,7 +183,10 @@ function getEnvFrom(): string {
 
 async function getFrom(): Promise<string> {
   const override = await getSenderOverride();
-  return override ?? getEnvFrom();
+  if (override) return override;
+  const dbCfg = await getDbSmtp();
+  if (dbCfg?.from) return dbCfg.from;
+  return getEnvFrom();
 }
 
 // Inspect what address WILL be used and from which source. Surfaced via the
@@ -70,8 +194,10 @@ async function getFrom(): Promise<string> {
 // address with a clear provenance badge.
 export interface ActiveSenderInfo {
   active: string;
-  source: "override" | "smtp_from_env" | "smtp_user_env" | "outlook_account" | "fallback";
+  source: "override" | "smtp_from_db" | "smtp_user_db" | "smtp_from_env" | "smtp_user_env" | "outlook_account" | "fallback";
   override: string | null;
+  smtpFromDb: string | null;
+  smtpUserDb: string | null;
   smtpFromEnv: string | null;
   smtpUserEnv: string | null;
   outlookEnabled: boolean;
@@ -82,6 +208,9 @@ export interface ActiveSenderInfo {
 
 export async function resolveActiveSender(): Promise<ActiveSenderInfo> {
   const override = await getSenderOverride();
+  const dbCfg = await getDbSmtp();
+  const smtpFromDb = dbCfg?.from ?? null;
+  const smtpUserDb = dbCfg?.user ?? null;
   const smtpFromEnv = process.env.SMTP_FROM ?? null;
   const smtpUserEnv = process.env.SMTP_USER ?? null;
   const outlookOn = outlookEnabled();
@@ -90,6 +219,8 @@ export async function resolveActiveSender(): Promise<ActiveSenderInfo> {
   let active: string;
   let source: ActiveSenderInfo["source"];
   if (override) { active = override; source = "override"; }
+  else if (smtpFromDb) { active = smtpFromDb; source = "smtp_from_db"; }
+  else if (smtpUserDb) { active = smtpUserDb; source = "smtp_user_db"; }
   else if (smtpFromEnv) { active = smtpFromEnv; source = "smtp_from_env"; }
   else if (smtpUserEnv) { active = smtpUserEnv; source = "smtp_user_env"; }
   else if (outlookAddress) { active = outlookAddress; source = "outlook_account"; }
@@ -103,7 +234,7 @@ export async function resolveActiveSender(): Promise<ActiveSenderInfo> {
   //    set. Reflect that honestly in the UI so the SuperAdmin doesn't think
   //    their override silently took effect.
   const transporterAvailable = Boolean(
-    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
+    dbCfg ?? (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
   );
   const willActuallySendFrom = transporterAvailable
     ? active
@@ -120,6 +251,8 @@ export async function resolveActiveSender(): Promise<ActiveSenderInfo> {
     active,
     source,
     override,
+    smtpFromDb,
+    smtpUserDb,
     smtpFromEnv,
     smtpUserEnv,
     outlookEnabled: outlookOn,
@@ -237,7 +370,9 @@ async function sendViaOutlook(opts: SendOpts): Promise<{ ok: boolean; reason?: s
 
 export function emailConfigured(): boolean {
   return Boolean(
-    (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) || outlookEnabled(),
+    _dbSmtpReady ||
+    (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) ||
+    outlookEnabled(),
   );
 }
 
@@ -256,7 +391,7 @@ export interface SendOpts {
 }
 
 export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?: string }> {
-  const transporter = getTransporter();
+  const transporter = await getTransporter();
   let smtpReason: string | null = null;
   if (transporter) {
     try {
