@@ -233,6 +233,19 @@ export default function AuditLog() {
 
   const selectedRow = inListEntry ?? standaloneEntry ?? null;
 
+  // Row-level permalink builder (task #131). Mirrors the dialog's
+  // `buildShareLink` so the inline copy icon on each row produces the same
+  // URL a reviewer would copy from the open details dialog. Origin and
+  // pathname are taken from the live `window.location` so the link reflects
+  // whatever domain the reviewer is currently on (development vs deployed).
+  // Renders to an empty string in non-browser contexts so SSR doesn't crash;
+  // the click handler treats an empty value as a copy failure.
+  const buildShareLinkForId = useCallback((id: number) => {
+    if (typeof window === "undefined") return "";
+    const { origin, pathname } = window.location;
+    return `${origin}${pathname}?entry=${id}`;
+  }, []);
+
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
       <Card>
@@ -319,6 +332,12 @@ export default function AuditLog() {
                     <th className="px-3 py-2 font-medium">{tr("colPath")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colStatus")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colIp")}</th>
+                    {/* Row-level share-link column (task #131) — header text
+                        is screen-reader only since the icon column is
+                        intentionally compact. */}
+                    <th className="px-3 py-2 font-medium w-10">
+                      <span className="sr-only">{tr("copyShareLink")}</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -405,6 +424,27 @@ export default function AuditLog() {
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{r.ip ?? "—"}</td>
+                        {/* Inline share-link copy (task #131). The wrapping
+                            cell stops click/key events from bubbling so the
+                            row's own onClick / onKeyDown — which open the
+                            details dialog — don't fire when the reviewer
+                            just wants the permalink. The button itself
+                            reuses the existing CopyIconButton so the toast,
+                            check-mark feedback, and clipboard fallback are
+                            identical to the in-dialog share button. */}
+                        <td
+                          className="px-3 py-2 w-10"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <CopyIconButton
+                            value={buildShareLinkForId(r.id)}
+                            label={tr("copyShareLink")}
+                            tr={tr}
+                            testId={`audit-row-copy-share-link-${r.id}`}
+                            icon={Link2}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
@@ -882,27 +922,37 @@ function DetailField({
 }
 
 // Small reusable copy-to-clipboard button used inside the audit details
-// dialog (metadata JSON, entityId, userAgent, request path). It briefly
-// swaps the icon to a check after a successful copy and surfaces a toast
-// either way so the reviewer always gets confirmation.
+// dialog (metadata JSON, entityId, userAgent, request path) and on each
+// audit row (share-link icon, task #131). It briefly swaps the icon to a
+// check after a successful copy and surfaces a toast either way so the
+// reviewer always gets confirmation.
 //
 // `showText` renders a textual "Copy" label next to the icon (used on the
 // metadata panel header where there's room); the inline buttons next to
-// long fields stay icon-only to keep the layout compact. The component
-// uses logical sizing/flex so it aligns correctly in both LTR and RTL —
-// the parent container's `dir` attribute already mirrors the row.
+// long fields stay icon-only to keep the layout compact.
+//
+// `icon` overrides the default copy glyph (e.g. the row-level share-link
+// button uses Link2 to match the task's "link/share icon" wording). The
+// success-state `Check` is intentionally always the same so the visual
+// confirmation is consistent regardless of which icon initiated the copy.
+//
+// The component uses logical sizing/flex so it aligns correctly in both
+// LTR and RTL — the parent container's `dir` attribute already mirrors
+// the row.
 function CopyIconButton({
   value,
   label,
   tr,
   testId,
   showText = false,
+  icon: Icon = Copy,
 }: {
   value: string;
   label: string;
   tr: (k: string, opts?: any) => string;
   testId?: string;
   showText?: boolean;
+  icon?: React.ComponentType<{ className?: string }>;
 }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
