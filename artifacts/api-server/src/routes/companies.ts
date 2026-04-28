@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
+import { seedDefaultChartOfAccounts } from "../lib/seedDefaultChartOfAccounts.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -51,6 +53,17 @@ router.post("/", async (req, res) => {
     zatcaCsid: data.zatcaCsid,
     zatcaPcsid: data.zatcaPcsid,
   }).returning();
+
+  // Auto-seed the standard commercial chart of accounts so the new tenant
+  // can post journal entries immediately without a manual import step.
+  // Failures are logged but do not block company creation — the user can
+  // re-seed later from the chart-of-accounts screen.
+  try {
+    await seedDefaultChartOfAccounts(company.id);
+  } catch (err) {
+    logger.error({ err, companyId: company.id }, "default-coa.seed-failed");
+  }
+
   res.status(201).json(company);
 });
 
