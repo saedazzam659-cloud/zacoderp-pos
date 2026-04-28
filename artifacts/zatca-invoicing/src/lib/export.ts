@@ -96,7 +96,13 @@ export function exportToPDF(
     )
     .join("");
 
-  const tfootRow = totalsRow
+  // Totals row is rendered as the LAST row of <tbody> instead of inside
+  // <tfoot>. Browsers repeat <tfoot> on every printed page by default,
+  // which would put "الإجمالي" on every page — but for multi-page
+  // statements the totals must only appear at the very end (after all
+  // data). A trailing <tbody> row naturally flows to the last page
+  // where the data ends, satisfying that requirement.
+  const totalsTbodyRow = totalsRow
     ? `<tr class="totals">${columns
         .map(c => `<td>${escape(totalsRow[c.key])}</td>`)
         .join("")}</tr>`
@@ -163,12 +169,18 @@ export function exportToPDF(
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
     tbody tr:hover { background: #f0fdf4; }
-    tfoot tr.totals {
+    /* Grand-totals row sits inside <tbody> so it doesn't repeat per
+       printed page (which is what a <tfoot> would do). It's pinned to
+       the bottom of the data via document order, so it always appears
+       on the LAST printed page. */
+    tbody tr.totals {
       background: #dcfce7;
       font-weight: 700;
       color: #14532d;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
-    tfoot tr.totals td {
+    tbody tr.totals td {
       border-top: 2px solid #166534;
       padding: 9px 8px;
       font-size: 10pt;
@@ -221,8 +233,28 @@ export function exportToPDF(
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       thead tr { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      tbody tr.totals { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      /* Repeat the column headers on every printed page so multi-page
+         tables stay readable without scrolling back to page 1. */
+      thead { display: table-header-group; }
     }
-    @page { margin: 15mm; size: A4 landscape; }
+    /* Page numbering ("صفحة X من Y") via CSS Paged Media. Modern Chrome,
+       Firefox and Safari all render @page margin boxes in print, so the
+       footer renders on every printed page. Browsers without support
+       silently degrade — the user can still enable the browser's
+       built-in "Headers and footers" toggle in print preview. The
+       generous bottom margin (22mm) reserves room for the page number
+       so it never overlaps the table. */
+    @page {
+      margin: 15mm 15mm 22mm 15mm;
+      size: A4 landscape;
+      @bottom-center {
+        content: "صفحة " counter(page) " من " counter(pages);
+        font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+        font-size: 9pt;
+        color: #475569;
+      }
+    }
   </style>
 </head>
 <body>
@@ -238,8 +270,8 @@ export function exportToPDF(
       <thead><tr>${theadCells}</tr></thead>
       <tbody>
         ${tbodyRows || `<tr><td colspan="${columns.length}" class="empty">لا توجد بيانات للتصدير</td></tr>`}
+        ${totalsTbodyRow}
       </tbody>
-      ${tfootRow ? `<tfoot>${tfootRow}</tfoot>` : ""}
     </table>
     ${summaryFooter && summaryFooter.length > 0
       ? `<div class="summary-footer">${summaryFooter
@@ -393,7 +425,16 @@ export function printSectionsAsPDF(
         print-color-adjust: exact;
       }
     }
-    @page { margin: 15mm; size: A4 portrait; }
+    @page {
+      margin: 15mm 15mm 22mm 15mm;
+      size: A4 portrait;
+      @bottom-center {
+        content: "صفحة " counter(page) " من " counter(pages);
+        font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+        font-size: 9pt;
+        color: #475569;
+      }
+    }
   </style>
 </head>
 <body>

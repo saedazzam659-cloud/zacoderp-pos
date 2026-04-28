@@ -155,6 +155,31 @@ export default function SupplierStatementDetailed() {
     }),
   ];
 
+  // Grand-totals row mirrored into the printed/exported table so the
+  // standard "الإجمالي" line appears at the bottom of the statement.
+  // Uses the supplier sign convention (closing = opening + credit − debit).
+  const exportTotalsRow = (applied.supplierId && !isLoading && augmented.length > 0)
+    ? {
+        date:        "",
+        type:        "",
+        docNumber:   "",
+        description: tr("totalLabel"),
+        debit:       fmt(totals.debit),
+        credit:      fmt(totals.credit),
+        balance:     fmt(closing),
+      }
+    : null;
+
+  // Summary footer cards (opening / debit / credit / closing) for the printed view.
+  const exportSummaryFooter = (applied.supplierId && !isLoading)
+    ? [
+        { label: tr("openingBalance"), value: fmt(data?.opening ?? 0), tone: "default" as const },
+        { label: tr("totalDebit"),     value: fmt(totals.debit),       tone: "debit"   as const },
+        { label: tr("totalCredit"),    value: fmt(totals.credit),      tone: "credit"  as const },
+        { label: tr("closing"),        value: fmt(closing),            tone: "primary" as const },
+      ]
+    : null;
+
   const renderInvoiceLines = (row: SupplierStatementDetailedRow) => {
     const lines = row.lines ?? [];
     const lineVatTotal = lines.reduce((s, ln) => s + (ln.vatAmount || 0), 0);
@@ -251,6 +276,8 @@ export default function SupplierStatementDetailed() {
           filename={`${tr("filename")}-${supplierLabel || "supplier"}-${applied.from}-${applied.to}`}
           title={tr("exportTitle")}
           subtitle={supplier ? `${supplierLabel}  |  ${applied.from} → ${applied.to}` : tr("selectSupplier")}
+          totalsRow={exportTotalsRow}
+          summaryFooter={exportSummaryFooter}
         />
       </div>
 
