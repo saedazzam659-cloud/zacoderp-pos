@@ -1120,6 +1120,7 @@ export default function AuditLog() {
         locale={locale}
         tr={tr}
         trAction={trAction}
+        shareLinkLabelForRow={shareLinkLabelForRow}
       />
     </div>
   );
@@ -1136,6 +1137,7 @@ function AuditDetailsDialog({
   locale,
   tr,
   trAction,
+  shareLinkLabelForRow,
 }: {
   open: boolean;
   row: AuditRow | null;
@@ -1147,6 +1149,7 @@ function AuditDetailsDialog({
   locale: string;
   tr: (k: string, opts?: any) => string;
   trAction: (a: string) => string;
+  shareLinkLabelForRow: (row: AuditRow) => string;
 }) {
   // Metadata can be any JSON shape — usually an object for our writers, but
   // we don't want to silently drop primitives (string/number/array) if a
@@ -1412,7 +1415,7 @@ function AuditDetailsDialog({
                     <span className="inline-flex">
                       <CopyIconButton
                         value={shareLink}
-                        label={tr("copyShareLink")}
+                        label={shareLinkLabelForRow(row)}
                         tr={tr}
                         testId="audit-details-copy-share-link"
                         showText

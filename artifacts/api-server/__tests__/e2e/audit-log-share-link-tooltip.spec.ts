@@ -1,6 +1,7 @@
 // E2E test for the entity-aware share-link tooltip / aria-label on the
 // per-row copy button on /admin/audit-log (task #154 — coverage added by
-// task #157).
+// task #157, extended by task #162 to also cover the audit-details
+// dialog's share-link button).
 //
 // Why this test exists:
 //   Task #131 added a per-row share-link copy button to the audit-log
@@ -13,28 +14,41 @@
 //   registry the bulk Markdown copy in task #148 uses), and falls back
 //   to the generic key when the row carries no `entityType`.
 //
-//   There was no automated coverage for that label, so a future refactor
-//   of `shareLinkLabelForRow` or the `entityTypes` registry could
-//   silently regress the tooltip until a reviewer happened to hover one
-//   in production. This spec locks down both the entity-aware and the
-//   fallback shapes, in both Arabic (default) and English locales, and
+//   Task #162 then made the IDENTICAL button inside the audit-details
+//   dialog (testId `audit-details-copy-share-link`) use the same
+//   `shareLinkLabelForRow` helper so the two surfaces stay consistent —
+//   previously the dialog button always rendered the generic
+//   "Copy link to this entry" regardless of entityType, which was
+//   confusing for a reviewer hovering the dialog icon.
+//
+//   There was no automated coverage for either label, so a future
+//   refactor of `shareLinkLabelForRow` or the `entityTypes` registry
+//   could silently regress the tooltip until a reviewer happened to
+//   hover one in production. This spec locks down both the entity-aware
+//   and the fallback shapes, in both Arabic (default) and English
+//   locales, on BOTH the per-row button and the dialog button, and
 //   re-asserts that the per-row click still copies the bare share URL
 //   so the cosmetic change didn't break the underlying behavior.
 //
 // What this verifies:
 //   1. Arabic (default locale)
-//      • Row with entityType="invoice", entityId="45" — the share-link
-//        button's `aria-label` AND `title` read "نسخ رابط فاتورة #45"
-//        (via `entityTypes.invoice` → "فاتورة" + the
-//        `copyShareLinkWithEntity` template).
-//      • Row with no entityType — the button falls back to the generic
-//        "نسخ رابط هذا السجل" (via `copyShareLink`).
+//      • Row with entityType="invoice", entityId="45" — the per-row
+//        share-link button's `aria-label` AND `title` read
+//        "نسخ رابط فاتورة #45" (via `entityTypes.invoice` → "فاتورة" +
+//        the `copyShareLinkWithEntity` template).
+//      • Row with no entityType — the per-row button falls back to the
+//        generic "نسخ رابط هذا السجل" (via `copyShareLink`).
 //      • Clicking the entity row's button still places the bare share
 //        URL (`{origin}/admin/audit-log?entry=N`) on the clipboard, so
 //        the cosmetic label change didn't alter the copied payload.
+//      • Opening each row's details dialog and inspecting its
+//        `audit-details-copy-share-link` button yields the SAME
+//        entity-aware / generic labels — i.e. the dialog button now
+//        mirrors the per-row button (task #162).
 //   2. English (forced via `app:lang=en`)
 //      • Same row pair, English copies: "Copy link to invoice #45" and
-//        "Copy link to this entry".
+//        "Copy link to this entry", asserted on both the per-row button
+//        and the dialog button.
 //
 // Determinism story:
 //   - Both seeded audit rows share a per-run TEST_TAG so the page's
@@ -303,6 +317,37 @@ test("audit-log share-link tooltip (AR): entity row announces 'نسخ رابط �
   await entityCopyBtn.click();
   const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
   expect(clipboardText).toBe(`${baseURL}/admin/audit-log?entry=${entityRowId}`);
+
+  // ── Dialog share-link button mirrors the per-row label (task #162) ─
+  // Open the entity row's details dialog by clicking the row itself
+  // (the row has role="button" and an onClick that sets selectedId).
+  // The dialog's `audit-details-copy-share-link` button must now use
+  // the same entity-aware label as the per-row button instead of the
+  // generic "Copy link to this entry" it used before task #162.
+  const entityRow = page
+    .getByTestId("audit-row")
+    .filter({ has: page.getByTestId(`audit-row-copy-share-link-${entityRowId}`) });
+  await entityRow.click();
+  const dialog = page.getByTestId("audit-details-dialog");
+  await expect(dialog).toBeVisible();
+  const dialogCopyBtn = dialog.getByTestId("audit-details-copy-share-link");
+  await expect(dialogCopyBtn).toBeVisible();
+  await expect(dialogCopyBtn).toHaveAttribute("aria-label", EXPECTED_LABEL_ENTITY_AR);
+  await expect(dialogCopyBtn).toHaveAttribute("title",      EXPECTED_LABEL_ENTITY_AR);
+  // Close so the next assertion isn't intercepted by the open dialog.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  // Now verify the entity-less row's dialog button falls back to the
+  // generic label, matching the per-row fallback above.
+  const noEntityRow = page
+    .getByTestId("audit-row")
+    .filter({ has: page.getByTestId(`audit-row-copy-share-link-${noEntityRowId}`) });
+  await noEntityRow.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialogCopyBtn).toBeVisible();
+  await expect(dialogCopyBtn).toHaveAttribute("aria-label", EXPECTED_LABEL_NO_ENTITY_AR);
+  await expect(dialogCopyBtn).toHaveAttribute("title",      EXPECTED_LABEL_NO_ENTITY_AR);
 });
 
 test("audit-log share-link tooltip (EN): entity row announces 'Copy link to invoice #45', entity-less row falls back to 'Copy link to this entry'", async ({
@@ -328,4 +373,30 @@ test("audit-log share-link tooltip (EN): entity row announces 'Copy link to invo
   await expect(noEntityCopyBtn).toBeVisible();
   await expect(noEntityCopyBtn).toHaveAttribute("aria-label", EXPECTED_LABEL_NO_ENTITY_EN);
   await expect(noEntityCopyBtn).toHaveAttribute("title",      EXPECTED_LABEL_NO_ENTITY_EN);
+
+  // ── Dialog share-link button mirrors the per-row label (task #162) ─
+  // English variant of the same dialog assertions added above for
+  // Arabic. The dialog button must echo the per-row entity-aware label
+  // (entity row) and the generic fallback (entity-less row).
+  const entityRow = page
+    .getByTestId("audit-row")
+    .filter({ has: page.getByTestId(`audit-row-copy-share-link-${entityRowId}`) });
+  await entityRow.click();
+  const dialog = page.getByTestId("audit-details-dialog");
+  await expect(dialog).toBeVisible();
+  const dialogCopyBtn = dialog.getByTestId("audit-details-copy-share-link");
+  await expect(dialogCopyBtn).toBeVisible();
+  await expect(dialogCopyBtn).toHaveAttribute("aria-label", EXPECTED_LABEL_ENTITY_EN);
+  await expect(dialogCopyBtn).toHaveAttribute("title",      EXPECTED_LABEL_ENTITY_EN);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  const noEntityRow = page
+    .getByTestId("audit-row")
+    .filter({ has: page.getByTestId(`audit-row-copy-share-link-${noEntityRowId}`) });
+  await noEntityRow.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialogCopyBtn).toBeVisible();
+  await expect(dialogCopyBtn).toHaveAttribute("aria-label", EXPECTED_LABEL_NO_ENTITY_EN);
+  await expect(dialogCopyBtn).toHaveAttribute("title",      EXPECTED_LABEL_NO_ENTITY_EN);
 });
