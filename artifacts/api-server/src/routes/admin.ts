@@ -1090,6 +1090,16 @@ router.get("/plans", async (_req, res) => {
   res.json(plans.map(p => ({
     ...p,
     features: JSON.parse(p.features || "[]"),
+    // SEO link fields are stored as text (slug) and JSON-text (id array).
+    // Decode the array eagerly here so the public consumer (the new
+    // /pricing page + Register page + sitemap builder) doesn't have to
+    // know about the storage format.
+    seoArticleIds: (() => {
+      try {
+        const arr = JSON.parse(p.seoArticleIds || "[]");
+        return Array.isArray(arr) ? arr.filter((x: unknown) => Number.isFinite(Number(x))).map(Number) : [];
+      } catch { return []; }
+    })(),
   })));
 });
 
@@ -1100,6 +1110,7 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
     nameAr, nameEn, monthlyPrice, annualPrice,
     maxUsers, maxInvoices, includedModulesCount, features,
     isRecommended, isActive, sortOrder,
+    seoLandingSlug, seoArticleIds,
   } = req.body;
 
   const updates: Record<string, any> = { updatedAt: new Date() };
@@ -1120,6 +1131,21 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
   if (isRecommended != null) updates.isRecommended = isRecommended;
   if (isActive      != null) updates.isActive      = isActive;
   if (sortOrder     != null) updates.sortOrder      = Number(sortOrder);
+  // SEO links — slug is a free-form string (slugified Arabic/Latin), and
+  // the article id list is normalized to a JSON-encoded numeric array so
+  // the GET endpoint can decode it without knowing how it was stored.
+  // Empty string / empty array are persisted as NULL / "[]" so admins can
+  // *unlink* a plan from SEO content and have the change actually stick.
+  if (seoLandingSlug !== undefined) {
+    const v = String(seoLandingSlug || "").trim();
+    updates.seoLandingSlug = v.length > 0 ? v.slice(0, 200) : null;
+  }
+  if (seoArticleIds !== undefined) {
+    const arr = Array.isArray(seoArticleIds) ? seoArticleIds : [];
+    const ids = arr.map((x: unknown) => Number(x))
+                   .filter((n: number) => Number.isFinite(n) && n > 0);
+    updates.seoArticleIds = JSON.stringify(Array.from(new Set(ids)));
+  }
 
   const [updated] = await db.update(planConfigsTable)
     .set(updates)
@@ -1127,7 +1153,19 @@ router.put("/plans/:key", requireSuperAdmin, async (req, res) => {
     .returning();
 
   if (!updated) { res.status(404).json({ error: "الباقة غير موجودة" }); return; }
-  res.json({ ok: true, plan: { ...updated, features: JSON.parse(updated.features || "[]") } });
+  res.json({
+    ok: true,
+    plan: {
+      ...updated,
+      features: JSON.parse(updated.features || "[]"),
+      seoArticleIds: (() => {
+        try {
+          const a = JSON.parse(updated.seoArticleIds || "[]");
+          return Array.isArray(a) ? a : [];
+        } catch { return []; }
+      })(),
+    },
+  });
 });
 
 // ─── Orphan stock movements cleanup ───────────────────────────────────────────

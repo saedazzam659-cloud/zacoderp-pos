@@ -43,6 +43,7 @@ import Suppliers from "@/pages/Suppliers";
 import SupplierNew from "@/pages/SupplierNew";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import Pricing from "@/pages/Pricing";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
@@ -218,7 +219,11 @@ function LoadingScreen() {
   );
 }
 
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval"];
+// /pricing is the new top-of-funnel landing page — kept fully public so
+// search engines can crawl it and unauthenticated visitors can compare
+// plans before signing up. /recover-superadmin* are also public but
+// matched separately below since they need dynamic-segment matching.
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing"];
 
 function AppRoutes() {
   const { isAuthenticated, loading, user } = useAuth();
@@ -228,7 +233,10 @@ function AppRoutes() {
 
   const isPublic = PUBLIC_PATHS.some(p => location === p || location.startsWith(p));
 
-  // Redirect logged-in users away from auth pages
+  // Redirect logged-in users away from auth pages. /pricing is left out
+  // of this list intentionally — it's a marketing page and should remain
+  // viewable even when signed in, so admins can sanity-check the public
+  // funnel without logging out.
   if (isAuthenticated && (location === "/login" || location === "/register")) {
     return <Redirect to="/" />;
   }
@@ -245,6 +253,7 @@ function AppRoutes() {
       {/* Public routes */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/pricing" component={Pricing} />
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />
       <Route path="/recover-superadmin/:token" component={RecoverSuperAdmin} />

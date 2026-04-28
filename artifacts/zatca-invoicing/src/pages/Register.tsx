@@ -118,11 +118,27 @@ export default function Register() {
   const [, setLocation] = useLocation();
   const { register } = useAuth();
   const { toast } = useToast();
+  // Pre-selected plan + billing cycle from the public /pricing page CTA.
+  // The /pricing → /register hand-off uses ?plan=KEY&cycle=monthly|annual
+  // so users land directly inside the wizard with their choice already
+  // applied. Read once at mount to avoid re-running on every URL change.
+  const initialQuery = useMemo(() => {
+    if (typeof window === "undefined") return { plan: null as string | null, cycle: null as "monthly" | "annual" | null };
+    const sp = new URLSearchParams(window.location.search);
+    const p = sp.get("plan");
+    const c = sp.get("cycle");
+    return {
+      plan:  p && p.length < 50 ? p : null,
+      cycle: c === "annual" ? "annual" as const : c === "monthly" ? "monthly" as const : null,
+    };
+  }, []);
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">("monthly");
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">(
+    initialQuery.cycle ?? "monthly",
+  );
   // Country/policy acceptance gate. Defaults to Saudi Arabia, the default
   // country for the platform. The acceptance flag blocks the final submit
   // in Step 3 — it is reset to false whenever the country changes so users
@@ -138,12 +154,21 @@ export default function Register() {
   // catalog (sourced from the SuperAdmin-managed `modules` table).
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
 
-  const [form, setForm] = useState<Partial<RegisterData>>({
-    country: DEFAULT_COUNTRY_CODE,
-    currency: getCountryByCode(DEFAULT_COUNTRY_CODE).currency.code,
-    invoiceType: "both", plan: "professional", billingCycle: "monthly",
-    startDate: new Date().toISOString().split("T")[0],
-    endDate: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+  const [form, setForm] = useState<Partial<RegisterData>>(() => {
+    const cycle = initialQuery.cycle ?? "monthly";
+    const days  = cycle === "annual" ? 365 : 30;
+    return {
+      country: DEFAULT_COUNTRY_CODE,
+      currency: getCountryByCode(DEFAULT_COUNTRY_CODE).currency.code,
+      invoiceType: "both",
+      // If /pricing pre-selected a plan, honour it; otherwise fall back
+      // to the legacy default so the wizard keeps working when entered
+      // directly without query string.
+      plan: initialQuery.plan ?? "professional",
+      billingCycle: cycle,
+      startDate: new Date().toISOString().split("T")[0],
+      endDate: new Date(Date.now() + days * 86400000).toISOString().split("T")[0],
+    };
   });
 
   // ── Live plan + module catalogs (sourced from SuperAdmin tables) ─────

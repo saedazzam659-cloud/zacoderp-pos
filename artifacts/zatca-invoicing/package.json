@@ -83,6 +83,7 @@
     "jspdf-autotable": "^5.0.7",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
+    "react-helmet-async": "^3.0.0",
     "react-i18next": "^17.0.4",
     "xlsx": "^0.18.5"
   }

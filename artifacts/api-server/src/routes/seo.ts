@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { eq, desc } from "drizzle-orm";
+import { db, seoGeneratedArticlesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { buildSeoPayload } from "./admin-seo.js";
@@ -13,6 +15,32 @@ import { buildSeoPayload } from "./admin-seo.js";
 // surfaces serve the same deterministic mock generator. The mock is seeded
 // with the company id here so each tenant sees stable-but-different numbers.
 const router = Router();
+
+// ─── Public, unauthenticated subroutes ───────────────────────────────────
+// These MUST be declared before the auth middleware below so the public
+// /pricing page (and Google's crawler hitting the sitemap) can read them
+// without a session. The route paths are namespaced under /public/* to
+// keep them clearly separated from the per-tenant authenticated surface.
+router.get("/public/articles", async (_req, res) => {
+  try {
+    const rows = await db.select({
+      id:              seoGeneratedArticlesTable.id,
+      title:           seoGeneratedArticlesTable.title,
+      slug:            seoGeneratedArticlesTable.slug,
+      metaDescription: seoGeneratedArticlesTable.metaDescription,
+      updatedAt:       seoGeneratedArticlesTable.updatedAt,
+    })
+      .from(seoGeneratedArticlesTable)
+      .where(eq(seoGeneratedArticlesTable.status, "published"))
+      .orderBy(desc(seoGeneratedArticlesTable.updatedAt))
+      .limit(500);
+    // The /pricing page renders this list as "اقرأ أيضاً" cards next to a
+    // selected plan. The sitemap builder consumes the same shape too.
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر تحميل المقالات" });
+  }
+});
 
 router.use(extractAuth);
 router.use((req, res, next) => {

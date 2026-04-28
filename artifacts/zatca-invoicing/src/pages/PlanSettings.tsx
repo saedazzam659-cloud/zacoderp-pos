@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Package, Star, Crown, RefreshCw, Save, Plus, Trash2,
   CheckCircle2, Settings2, Users, FileText, BadgeCheck,
-  Info, Zap, Sparkles, Boxes,
+  Info, Zap, Sparkles, Boxes, Search, ExternalLink,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -91,10 +91,33 @@ function FeatureList({ features, onChange }: { features: string[]; onChange: (f:
   );
 }
 
-function PlanCard({ plan, onSave, saving }: { plan: any; onSave: (key: string, data: any) => void; saving: boolean }) {
-  const [form, setForm]   = useState({ ...plan, features: [...(plan.features ?? [])] });
+// Shape of a published SEO article — kept minimal because the SEO tab
+// only needs id/title/slug to render a multi-select chip picker.
+type SeoArticleLite = { id: number; title: string; slug: string; status: string };
+
+function PlanCard({
+  plan, onSave, saving, articles,
+}: {
+  plan: any;
+  onSave: (key: string, data: any) => void;
+  saving: boolean;
+  // Published articles fetched once at the page level so every card
+  // shares the same dataset without N parallel requests.
+  articles: SeoArticleLite[];
+}) {
+  const [form, setForm]   = useState({
+    ...plan,
+    features: [...(plan.features ?? [])],
+    // Defensive: backend now returns a number[] but old payloads from a
+    // stale cache might still be the JSON-string form.
+    seoLandingSlug: plan.seoLandingSlug ?? "",
+    seoArticleIds:  Array.isArray(plan.seoArticleIds)
+      ? [...plan.seoArticleIds]
+      : (() => { try { const a = JSON.parse(plan.seoArticleIds || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } })(),
+  });
   const [dirty, setDirty] = useState(false);
-  const [tab, setTab]     = useState<"pricing" | "limits" | "features">("pricing");
+  const [tab, setTab]     = useState<"pricing" | "limits" | "features" | "seo">("pricing");
+  const [seoArticleSearch, setSeoArticleSearch] = useState("");
 
   const set = (k: string, v: any) => { setForm((f: any) => ({ ...f, [k]: v })); setDirty(true); };
 
@@ -190,6 +213,7 @@ function PlanCard({ plan, onSave, saving }: { plan: any; onSave: (key: string, d
             { key: "pricing",  label: "الأسعار",  icon: BadgeCheck },
             { key: "limits",   label: "الحدود",   icon: Settings2 },
             { key: "features", label: "المميزات", icon: Sparkles },
+            { key: "seo",      label: "SEO",      icon: Search },
           ].map(t => {
             const TIcon = t.icon;
             return (
@@ -367,6 +391,111 @@ function PlanCard({ plan, onSave, saving }: { plan: any; onSave: (key: string, d
               onChange={v => set("features", v)}
             />
           )}
+
+          {/* TAB: SEO link — connects this plan to the SEO Studio output
+              so the public /pricing page can deep-link from each plan into
+              the matching long-form articles, and so the dynamic sitemap
+              advertises the relationship to Google. */}
+          {tab === "seo" && (
+            <div className="space-y-4">
+              {/* Landing slug — the single canonical article that promotes
+                  this plan. Renders as "دليل باقة X" on the public card. */}
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <ExternalLink className="h-3 w-3" />
+                  Slug صفحة الهبوط (اختياري)
+                </Label>
+                <Input
+                  value={form.seoLandingSlug ?? ""}
+                  onChange={e => set("seoLandingSlug", e.target.value)}
+                  placeholder="مثال: zatca-pro-plan-guide"
+                  className="h-9 text-sm" dir="ltr"
+                  data-testid={`plan-${plan.key}-seo-slug`}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  الـ slug لمقالة منشورة في استوديو SEO. يظهر للزوار في صفحة
+                  الباقات كـ "دليل باقة {form.nameAr}" ويُضاف لخريطة الموقع.
+                </p>
+              </div>
+
+              {/* Article multi-select — sourced from /api/admin/seo/ai-articles
+                  filtered to status=published. Renders as toggleable chips. */}
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <FileText className="h-3 w-3" />
+                  مقالات مرتبطة (تظهر كـ "اقرأ المزيد")
+                </Label>
+                {articles.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic px-2 py-3 rounded-lg bg-muted/30 border">
+                    لا توجد مقالات منشورة بعد. أنشئ مقالات من
+                    <a href="/admin/seo/ai" className="text-primary mx-1 hover:underline">استوديو SEO</a>
+                    ثم انشرها لتظهر هنا.
+                  </p>
+                ) : (
+                  <>
+                    {articles.length > 8 && (
+                      <Input
+                        value={seoArticleSearch}
+                        onChange={e => setSeoArticleSearch(e.target.value)}
+                        placeholder="ابحث عن مقالة بالعنوان..."
+                        className="h-8 text-sm mb-1.5"
+                      />
+                    )}
+                    <div className="max-h-44 overflow-y-auto border rounded-lg p-2 space-y-1 bg-card">
+                      {articles
+                        .filter(a => !seoArticleSearch || a.title.toLowerCase().includes(seoArticleSearch.toLowerCase()))
+                        .map(a => {
+                          const checked = form.seoArticleIds.includes(a.id);
+                          return (
+                            <label
+                              key={a.id}
+                              className={cn(
+                                "flex items-start gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs transition-colors",
+                                checked ? "bg-primary/10 text-primary" : "hover:bg-muted/50",
+                              )}
+                              data-testid={`plan-${plan.key}-article-${a.id}`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 accent-primary"
+                                checked={checked}
+                                onChange={() => {
+                                  const next = checked
+                                    ? form.seoArticleIds.filter((x: number) => x !== a.id)
+                                    : [...form.seoArticleIds, a.id];
+                                  set("seoArticleIds", next);
+                                }}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium line-clamp-1">{a.title}</div>
+                                <div className="text-[10px] text-muted-foreground line-clamp-1" dir="ltr">/{a.slug}</div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      {articles.filter(a => !seoArticleSearch || a.title.toLowerCase().includes(seoArticleSearch.toLowerCase())).length === 0 && (
+                        <p className="text-xs text-muted-foreground italic text-center py-3">
+                          لا توجد نتائج
+                        </p>
+                      )}
+                    </div>
+                    {form.seoArticleIds.length > 0 && (
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                        <span>{form.seoArticleIds.length} مقالة مختارة</span>
+                        <button
+                          type="button"
+                          onClick={() => set("seoArticleIds", [])}
+                          className="text-destructive hover:underline"
+                        >
+                          مسح الكل
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Save button */}
@@ -404,6 +533,20 @@ export default function PlanSettings() {
       return res.json();
     },
   });
+
+  // Pull every SEO article authored from /admin/seo/ai and keep only the
+  // ones the SuperAdmin has flipped to "published". Drives the chip
+  // picker inside each plan card's SEO tab.
+  const { data: allArticles = [] } = useQuery<SeoArticleLite[]>({
+    queryKey: ["seo-ai-articles", "for-plan-link"],
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/admin/seo/ai-articles`, { headers });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const publishedArticles = allArticles.filter(a => a.status === "published");
 
   const saveMutation = useMutation({
     mutationFn: async ({ key, data }: { key: string; data: any }) => {
@@ -472,6 +615,7 @@ export default function PlanSettings() {
               plan={plan}
               saving={savingKey === plan.key}
               onSave={(key, data) => saveMutation.mutate({ key, data })}
+              articles={publishedArticles}
             />
           ))}
         </div>

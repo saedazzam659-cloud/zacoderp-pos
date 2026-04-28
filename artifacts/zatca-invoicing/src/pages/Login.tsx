@@ -772,12 +772,27 @@ export default function Login() {
 
           {/* Footer (hide for blocked) */}
           {step === "creds" && !isSuperAdminFlow && (
-            <div className="text-center text-sm text-muted-foreground border-t pt-4">
-              {t("auth.noAccount")}{" "}
-              <a href="/register" onClick={e => { e.preventDefault(); setLocation("/register"); }}
-                className="text-primary font-medium hover:underline">
-                {t("auth.createAccount")}
-              </a>
+            <div className="text-center text-sm text-muted-foreground border-t pt-4 space-y-2">
+              <div>
+                {t("auth.noAccount")}{" "}
+                <a href="/register" onClick={e => { e.preventDefault(); setLocation("/register"); }}
+                  className="text-primary font-medium hover:underline">
+                  {t("auth.createAccount")}
+                </a>
+              </div>
+              {/* Public pricing link — surfaces the new top-of-funnel landing
+                  page so visitors who hit /login first can still browse plans
+                  without committing to an account creation. */}
+              <div>
+                <a
+                  href="/pricing"
+                  onClick={e => { e.preventDefault(); setLocation("/pricing"); }}
+                  data-testid="login-view-pricing"
+                  className="inline-flex items-center gap-1 text-primary font-medium hover:underline"
+                >
+                  عرض الباقات والأسعار
+                </a>
+              </div>
             </div>
           )}
         </div>

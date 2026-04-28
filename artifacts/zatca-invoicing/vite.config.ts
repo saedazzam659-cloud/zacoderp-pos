@@ -66,6 +66,18 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    proxy: {
+      "/sitemap.xml": {
+        target: process.env.API_URL || "http://localhost:8080",
+        changeOrigin: true,
+        rewrite: () => "/api/sitemap.xml",
+      },
+      "/robots.txt": {
+        target: process.env.API_URL || "http://localhost:8080",
+        changeOrigin: true,
+        rewrite: () => "/api/robots.txt",
+      },
+    },
   },
   preview: {
     port,

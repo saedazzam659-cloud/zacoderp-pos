@@ -20,6 +20,16 @@ export const planConfigsTable = pgTable("plan_configs", {
   isRecommended: boolean("is_recommended").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  // Optional slug of a SEO landing article (lives in seo_generated_articles
+  // and is auto-published) that promotes this plan. The public /pricing page
+  // links to /blog/<slug> so Google can discover plan-specific content from
+  // the pricing entry. Nullable — admins fill it manually from PlanSettings.
+  seoLandingSlug: text("seo_landing_slug"),
+  // JSON-encoded array of seo_generated_articles.id values. Surfaced in the
+  // public /pricing page as "اقرأ أيضاً" so a user landing from search can
+  // dive into related guides; also fed into the dynamic sitemap so Google
+  // indexes the plan↔content relationship.
+  seoArticleIds: text("seo_article_ids"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 

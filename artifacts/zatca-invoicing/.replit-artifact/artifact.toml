@@ -22,6 +22,20 @@ build = [ "pnpm", "--filter", "@workspace/zatca-invoicing", "run", "build" ]
 publicDir = "artifacts/zatca-invoicing/dist/public"
 serve = "static"
 
+# SEO entry points — Google insists on /robots.txt and /sitemap.xml living
+# at the domain root, but those files are dynamic (they reflect the live
+# plan_configs + published seo_generated_articles tables). The static
+# server therefore forwards them to the api-server, which generates them
+# in artifacts/api-server/src/app.ts. These rewrites MUST come before the
+# SPA catch-all below or they would be swallowed by /index.html.
+[[services.production.rewrites]]
+from = "/sitemap.xml"
+to = "/api/sitemap.xml"
+
+[[services.production.rewrites]]
+from = "/robots.txt"
+to = "/api/robots.txt"
+
 [[services.production.rewrites]]
 from = "/*"
 to = "/index.html"
