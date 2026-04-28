@@ -4242,6 +4242,8 @@
       "exportTitle": "Daily Sales Report",
       "exportSubtitle": "Date {{date}} — Total {{value}}",
       "footerLabel": "Day total",
+      "totalLabel": "Total",
+      "totalInvoicesShort": "{{n}} invoice(s)",
       "kpi": {
         "invoices": "Invoices",
         "customersCount": "{{n}} unique customers",

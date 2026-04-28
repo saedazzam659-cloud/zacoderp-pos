@@ -4318,6 +4318,8 @@
       "exportTitle": "تقرير المبيعات اليومي",
       "exportSubtitle": "تاريخ {{date}} — الإجمالي {{value}}",
       "footerLabel": "إجمالي اليوم",
+      "totalLabel": "الإجمالي",
+      "totalInvoicesShort": "{{n}} فاتورة",
       "kpi": {
         "invoices": "الفواتير",
         "customersCount": "{{n}} عميل مختلف",

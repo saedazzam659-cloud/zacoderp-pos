@@ -13,6 +13,13 @@ export function exportToExcel(
   columns: ExportColumn[],
   filename: string,
   sheetName = "Sheet1",
+  // Optional grand-totals row appended at the bottom of the sheet. Keys
+  // map to the same column.key as data rows; missing keys render blank.
+  // We deliberately do NOT compute sums automatically — the caller knows
+  // which columns make sense to total (currency, qty…) versus columns
+  // that don't (status, payment type…). For the label cell, set the
+  // totalsRow value of the first applicable column to e.g. "الإجمالي".
+  totalsRow?: Record<string, unknown> | null,
 ) {
   const headers = columns.map(c => c.header);
   const data    = rows.map(row =>
@@ -22,16 +29,30 @@ export function exportToExcel(
     })
   );
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+  const aoa: (string)[][] = [headers, ...data];
+  if (totalsRow) {
+    aoa.push(columns.map(c => {
+      const val = totalsRow[c.key];
+      return val === null || val === undefined ? "" : String(val);
+    }));
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
 
   const colWidths = columns.map((c, i) => ({
     wch: c.width ?? Math.max(
       c.header.length + 2,
       ...data.map(row => String(row[i] ?? "").length + 2),
+      totalsRow ? String(totalsRow[c.key] ?? "").length + 2 : 0,
     ),
   }));
   ws["!cols"] = colWidths;
 
+  // Bold the totals row so it stands out in Excel. We can't add styling
+  // to plain `aoa_to_sheet` cells without `xlsx-style`, but writing the
+  // cell with the `s` style hint is a no-op when xlsx ignores it — the
+  // safer path is to just leave the value bold-aware and let users see
+  // it's clearly a separate row by content.
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   XLSX.writeFile(wb, `${filename}.xlsx`);
@@ -47,6 +68,9 @@ export function exportToPDF(
   title: string,
   subtitle?: string,
   autoPrint: boolean = true,
+  // Optional grand-totals row rendered as a bold <tfoot> tr beneath the
+  // table body. Same shape as data rows (keys map to column.key).
+  totalsRow?: Record<string, unknown> | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -66,6 +90,12 @@ export function exportToPDF(
           .join("")}</tr>`,
     )
     .join("");
+
+  const tfootRow = totalsRow
+    ? `<tr class="totals">${columns
+        .map(c => `<td>${escape(totalsRow[c.key])}</td>`)
+        .join("")}</tr>`
+    : "";
 
   const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
     year: "numeric",
@@ -128,6 +158,16 @@ export function exportToPDF(
     tr.even { background: #f8fafb; }
     tr.odd  { background: #ffffff; }
     tbody tr:hover { background: #f0fdf4; }
+    tfoot tr.totals {
+      background: #dcfce7;
+      font-weight: 700;
+      color: #14532d;
+    }
+    tfoot tr.totals td {
+      border-top: 2px solid #166534;
+      padding: 9px 8px;
+      font-size: 10pt;
+    }
     .footer {
       margin-top: 14px;
       font-size: 8pt;
@@ -159,6 +199,7 @@ export function exportToPDF(
       <tbody>
         ${tbodyRows || `<tr><td colspan="${columns.length}" class="empty">لا توجد بيانات للتصدير</td></tr>`}
       </tbody>
+      ${tfootRow ? `<tfoot>${tfootRow}</tfoot>` : ""}
     </table>
     <div class="footer">
       نظام الفاتورة الإلكترونية السعودية &nbsp;|&nbsp; ${escape(filename)} &nbsp;|&nbsp; ${today}

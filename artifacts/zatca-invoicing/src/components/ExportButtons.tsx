@@ -16,10 +16,15 @@ interface ExportButtonsProps {
   subtitle?: string;
   disabled?: boolean;
   size?: "sm" | "default";
+  // Optional grand-totals row appended to BOTH the Excel sheet and the
+  // PDF/print view. Same shape as data rows (keys map to column.key).
+  // The first cell typically carries an "الإجمالي" label and the rest
+  // hold pre-formatted currency / count values.
+  totalsRow?: Record<string, unknown> | null;
 }
 
 export default function ExportButtons({
-  rows, columns, filename, title, subtitle, disabled, size = "sm",
+  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
 
@@ -27,13 +32,13 @@ export default function ExportButtons({
     setBusy(true);
     try {
       if (type === "excel") {
-        exportToExcel(rows, columns, filename);
+        exportToExcel(rows, columns, filename, "Sheet1", totalsRow);
       } else if (type === "pdf") {
         // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
-        exportToPDF(rows, columns, filename, title, subtitle, false);
+        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        exportToPDF(rows, columns, filename, title, subtitle, true);
+        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow);
       }
     } finally {
       setBusy(false);

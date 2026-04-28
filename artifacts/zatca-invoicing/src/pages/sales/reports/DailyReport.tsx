@@ -90,6 +90,30 @@ export default function DailyReport() {
     status:      tr(`status.${i.status}`),
   }));
 
+  // ─────────── Grand-totals row appended to the export.
+  // Mirrors the on-screen <tfoot> in the invoices table (subtotal,
+  // VAT, discount, total + invoice count + total line count) so the
+  // printed/exported file isn't missing the bottom-line numbers when
+  // a manager takes it out of the SPA. We pull from `summary` (the
+  // server-aggregated totals) rather than re-summing client-side so
+  // the totals always match the KPI tiles regardless of pagination.
+  const exportTotalsRow: Record<string, unknown> | null = (!isLoading && summary && invoices.length > 0)
+    ? {
+        docNumber:   tr("totalLabel"),
+        time:        "",
+        customer:    tr("totalInvoicesShort", { n: summary.invoiceCount ?? invoices.length }),
+        rep:         "",
+        branch:      "",
+        lineCount:   summary.lineCount ?? "",
+        subtotal:    fmt(summary.subtotal ?? 0),
+        discount:    fmt(summary.discount ?? 0),
+        vatAmount:   fmt(summary.vatAmount ?? 0),
+        totalAmount: fmt(summary.totalAmount ?? 0),
+        paymentType: "",
+        status:      "",
+      }
+    : null;
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       {/* ───── Header */}
@@ -107,6 +131,7 @@ export default function DailyReport() {
           filename={`${tr("exportFilename")}-${date}`}
           title={tr("exportTitle")}
           subtitle={tr("exportSubtitle", { date, value: fmt(summary?.totalAmount ?? 0) })}
+          totalsRow={exportTotalsRow}
         />
       </div>
 
