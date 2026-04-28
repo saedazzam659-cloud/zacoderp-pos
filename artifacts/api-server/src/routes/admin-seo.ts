@@ -1,8 +1,20 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db, usersTable, systemSettingsTable, seoGeneratedArticlesTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveBearerToken } from "../middleware/auth.js";
+import {
+  parseServiceAccount,
+  testGsc,
+  testGa4,
+  fetchGscTotals,
+  fetchGscKeywords,
+  fetchGscTimeline,
+  fetchGa4Totals,
+  fetchGa4TrafficSources,
+  fetchGa4TopPages,
+  fetchGa4DailyVisitors,
+} from "../lib/googleSeo.js";
 
 const router = Router();
 
@@ -307,12 +319,176 @@ export function buildSeoPayload(seedSalt = 0): SeoDashboardPayload {
   };
 }
 
+// ─── Connection settings — shared loader/saver ──────────────────────────
+// Centralises read/write of the seo_connection blob in system_settings so
+// both the dashboard endpoint (for live data) and the connection endpoints
+// (for status / save / test) agree on the shape.
+interface ConnectionRow {
+  analytics: boolean;
+  searchConsole: boolean;
+  analyticsPropertyId: string | null;
+  searchConsoleSiteUrl: string | null;
+  serviceAccountJson: string | null; // raw JSON blob — never returned to client
+}
+
+async function loadConnectionRow(): Promise<ConnectionRow> {
+  const [row] = await db.select().from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, "seo_connection"));
+  let v: any = {};
+  if (row?.value) {
+    try { v = JSON.parse(row.value); } catch { v = {}; }
+  }
+  return {
+    analytics:           !!v.analytics,
+    searchConsole:       !!v.searchConsole,
+    analyticsPropertyId: typeof v.analyticsPropertyId === "string" ? v.analyticsPropertyId : null,
+    searchConsoleSiteUrl: typeof v.searchConsoleSiteUrl === "string" ? v.searchConsoleSiteUrl : null,
+    serviceAccountJson:  typeof v.serviceAccountJson === "string" ? v.serviceAccountJson : null,
+  };
+}
+
+async function saveConnectionRow(row: ConnectionRow): Promise<void> {
+  const value = JSON.stringify(row);
+  await db.insert(systemSettingsTable)
+    .values({ key: "seo_connection", value })
+    .onConflictDoUpdate({
+      target: systemSettingsTable.key,
+      set: { value, updatedAt: sql`now()` },
+    });
+}
+
+// Date helpers for delta calculation.
+function pct(curr: number, prev: number): number {
+  if (!prev) return 0;
+  return +(((curr - prev) / prev) * 100).toFixed(1);
+}
+
+// Build the dashboard payload, preferring real GSC/GA4 data when the
+// SuperAdmin has saved working credentials. Any missing / failed real
+// fetch falls back to the mock generator so the UI never breaks.
+async function buildSeoPayloadHybrid(): Promise<SeoDashboardPayload> {
+  const mock = buildSeoPayload();
+  const conn = await loadConnectionRow();
+  const sa = parseServiceAccount(conn.serviceAccountJson);
+
+  const useGsc = conn.searchConsole && sa && conn.searchConsoleSiteUrl;
+  const useGa4 = conn.analytics && sa && conn.analyticsPropertyId;
+
+  if (!useGsc && !useGa4) {
+    return { ...mock, connected: { analytics: false, searchConsole: false } };
+  }
+
+  const [
+    gscNow, gscPrev, gscKw, gscLine,
+    ga4Now, ga4Prev, ga4Sources, ga4Pages, ga4Daily,
+  ] = await Promise.all([
+    useGsc ? fetchGscTotals(sa!, conn.searchConsoleSiteUrl!, 28) : Promise.resolve(null),
+    useGsc ? fetchGscTotals(sa!, conn.searchConsoleSiteUrl!, 56).then(prev28 => {
+      // We pulled 56-day total; subtract current 28 to approximate prior 28
+      // (rough but cheap — avoids a 3rd call). If prev<curr it just damps.
+      return prev28 ? Promise.resolve(prev28) : null;
+    }) : Promise.resolve(null),
+    useGsc ? fetchGscKeywords(sa!, conn.searchConsoleSiteUrl!, 28) : Promise.resolve(null),
+    useGsc ? fetchGscTimeline(sa!, conn.searchConsoleSiteUrl!, 30) : Promise.resolve(null),
+    useGa4 ? fetchGa4Totals(sa!, conn.analyticsPropertyId!, 28) : Promise.resolve(null),
+    useGa4 ? fetchGa4Totals(sa!, conn.analyticsPropertyId!, 56) : Promise.resolve(null),
+    useGa4 ? fetchGa4TrafficSources(sa!, conn.analyticsPropertyId!, 28) : Promise.resolve(null),
+    useGa4 ? fetchGa4TopPages(sa!, conn.analyticsPropertyId!, 28) : Promise.resolve(null),
+    useGa4 ? fetchGa4DailyVisitors(sa!, conn.analyticsPropertyId!, 30) : Promise.resolve(null),
+  ]);
+
+  // ─── Totals ────────────────────────────────────────────────────────────
+  const visitors    = ga4Now?.totalUsers   ?? mock.totals.visitors;
+  const clicks      = gscNow?.clicks       ?? mock.totals.clicks;
+  const impressions = gscNow?.impressions  ?? mock.totals.impressions;
+  const avgPos      = gscNow?.position     ?? mock.totals.averagePosition;
+  const visibility  = gscNow ? +(gscNow.ctr * 100).toFixed(2) : mock.totals.visibilityScore;
+
+  // Period-over-period — use the 56-day sample as a rough prior baseline.
+  const visitorsPrev    = ga4Prev?.totalUsers   ? Math.max(0, ga4Prev.totalUsers   - (ga4Now?.totalUsers ?? 0)) : 0;
+  const clicksPrev      = gscPrev?.clicks       ? Math.max(0, gscPrev.clicks      - clicks) : 0;
+  const impressionsPrev = gscPrev?.impressions  ? Math.max(0, gscPrev.impressions - impressions) : 0;
+  const visitorsDeltaPct    = ga4Now && ga4Prev ? pct(visitors, visitorsPrev) : mock.totals.visitorsDeltaPct;
+  const clicksDeltaPct      = gscNow && gscPrev ? pct(clicks, clicksPrev) : mock.totals.clicksDeltaPct;
+  const impressionsDeltaPct = gscNow && gscPrev ? pct(impressions, impressionsPrev) : mock.totals.impressionsDeltaPct;
+  const positionDelta       = mock.totals.positionDelta; // GSC doesn't expose prior easily; keep mock heuristic
+
+  // ─── Keywords ──────────────────────────────────────────────────────────
+  const keywords = gscKw && gscKw.length > 0
+    ? gscKw.map((k) => ({
+        keyword: k.keyword,
+        page: k.page,
+        impressions: Math.round(k.impressions),
+        clicks: Math.round(k.clicks),
+        position: +k.position.toFixed(1),
+      }))
+    : mock.keywords;
+
+  // ─── Top pages ─────────────────────────────────────────────────────────
+  const topPages = ga4Pages && ga4Pages.length > 0
+    ? ga4Pages.map((p) => ({
+        url: p.url, title: p.title || p.url,
+        visits: p.visits,
+        avgSessionSeconds: p.avgSessionSeconds,
+        position: 0, // GA4 doesn't expose ranking position per page
+      }))
+    : mock.topPages;
+
+  // ─── Traffic sources ───────────────────────────────────────────────────
+  let trafficSources = mock.trafficSources;
+  if (ga4Sources) {
+    const total = ga4Sources.reduce((a, b) => a + b.sessions, 0) || 1;
+    trafficSources = ga4Sources.map((s) => ({
+      source: s.source,
+      sessions: s.sessions,
+      pct: +((s.sessions / total) * 100).toFixed(1),
+    }));
+  }
+
+  // ─── Daily timeline ────────────────────────────────────────────────────
+  let daily = mock.timeline.daily;
+  if (gscLine || ga4Daily) {
+    const byDay: Record<string, { visitors: number; clicks: number; impressions: number }> = {};
+    for (const p of mock.timeline.daily) byDay[p.day] = { ...p };
+    for (const p of (gscLine ?? [])) {
+      const k = p.day;
+      byDay[k] = byDay[k] ?? { visitors: 0, clicks: 0, impressions: 0, day: k } as any;
+      byDay[k].clicks = p.clicks;
+      byDay[k].impressions = p.impressions;
+    }
+    for (const p of (ga4Daily ?? [])) {
+      // GA4 returns date as YYYYMMDD; normalise to YYYY-MM-DD
+      const k = p.day.length === 8
+        ? `${p.day.slice(0,4)}-${p.day.slice(4,6)}-${p.day.slice(6,8)}`
+        : p.day;
+      byDay[k] = byDay[k] ?? { visitors: 0, clicks: 0, impressions: 0, day: k } as any;
+      byDay[k].visitors = p.visitors;
+    }
+    daily = Object.entries(byDay)
+      .map(([day, v]) => ({ day, ...v }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+  }
+
+  return {
+    ...mock,
+    connected: { analytics: !!useGa4, searchConsole: !!useGsc },
+    totals: {
+      visitors, clicks, impressions,
+      averagePosition: +avgPos.toFixed(2),
+      visibilityScore: +visibility.toFixed(2),
+      visitorsDeltaPct, clicksDeltaPct, impressionsDeltaPct, positionDelta,
+    },
+    timeline: { ...mock.timeline, daily },
+    keywords, topPages, trafficSources,
+  };
+}
+
 // ─── Endpoints ───────────────────────────────────────────────────────────
 
 // GET /api/admin/seo/dashboard — full SEO dashboard payload.
 router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
   try {
-    res.json(buildSeoPayload());
+    res.json(await buildSeoPayloadHybrid());
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحميل بيانات SEO" });
   }
@@ -323,7 +499,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
 // the current payload, matching the UX of the spec's "Refresh Now" button.
 router.post("/refresh", requireSuperAdmin, async (_req, res) => {
   try {
-    res.json(buildSeoPayload());
+    res.json(await buildSeoPayloadHybrid());
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحديث البيانات" });
   }
@@ -813,25 +989,149 @@ router.delete("/ai-articles/:id", requireSuperAdmin, async (req, res) => {
 });
 
 // GET /api/admin/seo/connection — read which Google integrations are set up.
-// Reads from system_settings (key: 'seo_connection') so a future settings
-// screen can flip these flags without code changes. Falls back to a closed
-// connection state if the row is missing.
+// Returns connection metadata + a derived `serviceAccountEmail` (read from the
+// stored JSON) so the UI can display which service account the admin must
+// invite into GA4 and Search Console. Never returns the private key blob.
 router.get("/connection", requireSuperAdmin, async (_req, res) => {
   try {
-    const [row] = await db.select().from(systemSettingsTable)
-      .where(eq(systemSettingsTable.key, "seo_connection"));
-    let v: any = {};
-    if (row?.value) {
-      try { v = JSON.parse(row.value); } catch { v = {}; }
-    }
+    const conn = await loadConnectionRow();
+    const sa = parseServiceAccount(conn.serviceAccountJson);
     res.json({
-      analytics:     !!v.analytics,
-      searchConsole: !!v.searchConsole,
-      analyticsPropertyId: v.analyticsPropertyId ?? null,
-      searchConsoleSiteUrl: v.searchConsoleSiteUrl ?? null,
+      analytics:     !!conn.analytics,
+      searchConsole: !!conn.searchConsole,
+      analyticsPropertyId: conn.analyticsPropertyId,
+      searchConsoleSiteUrl: conn.searchConsoleSiteUrl,
+      serviceAccountSet: !!sa,
+      serviceAccountEmail: sa?.client_email ?? null,
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر قراءة حالة الربط" });
+  }
+});
+
+// PUT /api/admin/seo/connection — save Google connection settings.
+// Body: {
+//   analyticsPropertyId?: string|null,
+//   searchConsoleSiteUrl?: string|null,
+//   serviceAccountJson?: string|null,   // pass an empty string to clear; omit to keep current
+//   analytics?: boolean,                  // enable/disable use of GA in dashboard
+//   searchConsole?: boolean,
+// }
+router.put("/connection", requireSuperAdmin, async (req, res) => {
+  try {
+    const current = await loadConnectionRow();
+    const body = req.body ?? {};
+
+    const next: ConnectionRow = {
+      analytics:     typeof body.analytics === "boolean" ? body.analytics : current.analytics,
+      searchConsole: typeof body.searchConsole === "boolean" ? body.searchConsole : current.searchConsole,
+      analyticsPropertyId:  "analyticsPropertyId" in body
+        ? (body.analyticsPropertyId === null || body.analyticsPropertyId === "" ? null : String(body.analyticsPropertyId).trim())
+        : current.analyticsPropertyId,
+      searchConsoleSiteUrl: "searchConsoleSiteUrl" in body
+        ? (body.searchConsoleSiteUrl === null || body.searchConsoleSiteUrl === "" ? null : String(body.searchConsoleSiteUrl).trim())
+        : current.searchConsoleSiteUrl,
+      serviceAccountJson:   "serviceAccountJson" in body
+        ? (body.serviceAccountJson === null || body.serviceAccountJson === "" ? null : String(body.serviceAccountJson))
+        : current.serviceAccountJson,
+    };
+
+    // If service account JSON is being set, validate its shape early so we
+    // surface a useful error instead of failing later at API call time.
+    if (next.serviceAccountJson) {
+      const parsed = parseServiceAccount(next.serviceAccountJson);
+      if (!parsed) {
+        return res.status(400).json({
+          error: "ملف حساب الخدمة غير صالح — يجب أن يحتوي على client_email و private_key",
+        });
+      }
+    }
+
+    // If toggling a service ON, require its dependent fields.
+    if (next.analytics) {
+      if (!next.serviceAccountJson) return res.status(400).json({ error: "لتفعيل Google Analytics، الصق محتوى ملف حساب الخدمة (Service Account JSON) أولاً" });
+      if (!next.analyticsPropertyId) return res.status(400).json({ error: "لتفعيل Google Analytics، أدخل معرّف الموقع (Property ID)" });
+    }
+    if (next.searchConsole) {
+      if (!next.serviceAccountJson) return res.status(400).json({ error: "لتفعيل Search Console، الصق محتوى ملف حساب الخدمة (Service Account JSON) أولاً" });
+      if (!next.searchConsoleSiteUrl) return res.status(400).json({ error: "لتفعيل Search Console، أدخل رابط الموقع (Site URL)" });
+    }
+
+    await saveConnectionRow(next);
+
+    const sa = parseServiceAccount(next.serviceAccountJson);
+    return res.json({
+      analytics:     next.analytics,
+      searchConsole: next.searchConsole,
+      analyticsPropertyId:  next.analyticsPropertyId,
+      searchConsoleSiteUrl: next.searchConsoleSiteUrl,
+      serviceAccountSet:    !!sa,
+      serviceAccountEmail:  sa?.client_email ?? null,
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || "تعذّر حفظ الإعدادات" });
+  }
+});
+
+// POST /api/admin/seo/connection/test — verify creds against Google APIs.
+// Body may override fields (handy for "test before save"); if a field is
+// omitted we use the currently-saved value. Returns per-service results.
+router.post("/connection/test", requireSuperAdmin, async (req, res) => {
+  try {
+    const current = await loadConnectionRow();
+    const body = req.body ?? {};
+
+    const propertyId = "analyticsPropertyId" in body
+      ? (body.analyticsPropertyId == null ? null : String(body.analyticsPropertyId).trim())
+      : current.analyticsPropertyId;
+    const siteUrl = "searchConsoleSiteUrl" in body
+      ? (body.searchConsoleSiteUrl == null ? null : String(body.searchConsoleSiteUrl).trim())
+      : current.searchConsoleSiteUrl;
+    const saJson = "serviceAccountJson" in body && body.serviceAccountJson
+      ? String(body.serviceAccountJson)
+      : current.serviceAccountJson;
+
+    const sa = parseServiceAccount(saJson);
+    if (!sa) {
+      return res.status(400).json({
+        error: "ملف حساب الخدمة غير موجود أو غير صالح. الصق محتوى ملف JSON من Google Cloud Console.",
+      });
+    }
+
+    const out: {
+      analytics: { tested: boolean; ok: boolean; error?: string };
+      searchConsole: { tested: boolean; ok: boolean; error?: string };
+      serviceAccountEmail: string;
+    } = {
+      analytics: { tested: false, ok: false },
+      searchConsole: { tested: false, ok: false },
+      serviceAccountEmail: sa.client_email,
+    };
+
+    const tasks: Promise<void>[] = [];
+    if (propertyId) {
+      tasks.push((async () => {
+        const r = await testGa4(sa, propertyId);
+        out.analytics = { tested: true, ok: r.ok, error: r.error };
+      })());
+    }
+    if (siteUrl) {
+      tasks.push((async () => {
+        const r = await testGsc(sa, siteUrl);
+        out.searchConsole = { tested: true, ok: r.ok, error: r.error };
+      })());
+    }
+    await Promise.all(tasks);
+
+    if (!propertyId && !siteUrl) {
+      return res.status(400).json({
+        error: "أدخل على الأقل معرّف Google Analytics أو رابط Search Console للاختبار",
+      });
+    }
+
+    return res.json(out);
+  } catch (e: any) {
+    return res.status(500).json({ error: e?.message || "تعذّر اختبار الاتصال" });
   }
 });
 

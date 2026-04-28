@@ -1,0 +1,355 @@
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, XCircle, Plug, Loader2, ExternalLink, Copy, Check } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+
+const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+interface ConnectionState {
+  analytics: boolean;
+  searchConsole: boolean;
+  analyticsPropertyId: string | null;
+  searchConsoleSiteUrl: string | null;
+  serviceAccountSet: boolean;
+  serviceAccountEmail: string | null;
+}
+
+interface TestResult {
+  analytics: { tested: boolean; ok: boolean; error?: string };
+  searchConsole: { tested: boolean; ok: boolean; error?: string };
+  serviceAccountEmail: string;
+}
+
+interface Props {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}
+
+export function SeoConnectionDialog({ open, onOpenChange }: Props) {
+  const { token } = useAuth();
+  const qc = useQueryClient();
+
+  const headers = (): HeadersInit => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  });
+
+  // Pull current state
+  const { data: state, isLoading } = useQuery<ConnectionState>({
+    queryKey: ["seo-connection"],
+    enabled: open,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/admin/seo/connection`, { headers: headers() });
+      if (!r.ok) throw new Error("تعذّر تحميل حالة الربط");
+      return r.json();
+    },
+  });
+
+  // ─── Local form state ─────────────────────────────────────────────────
+  const [propertyId, setPropertyId] = useState("");
+  const [siteUrl, setSiteUrl] = useState("");
+  const [saJson, setSaJson] = useState("");        // empty = "keep current"
+  const [analyticsOn, setAnalyticsOn] = useState(false);
+  const [searchConsoleOn, setSearchConsoleOn] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Reset form whenever the dialog opens or remote state arrives.
+  useEffect(() => {
+    if (open && state) {
+      setPropertyId(state.analyticsPropertyId ?? "");
+      setSiteUrl(state.searchConsoleSiteUrl ?? "");
+      setSaJson(""); // never prefill — server doesn't return it
+      setAnalyticsOn(state.analytics);
+      setSearchConsoleOn(state.searchConsole);
+      setTestResult(null);
+      setSavedNotice(null);
+    }
+  }, [open, state]);
+
+  const testMut = useMutation({
+    mutationFn: async (): Promise<TestResult> => {
+      setSavedNotice(null);
+      const body: Record<string, unknown> = {
+        analyticsPropertyId: propertyId || null,
+        searchConsoleSiteUrl: siteUrl || null,
+      };
+      // Only send saJson if the user pasted something new — otherwise use saved.
+      if (saJson.trim()) body.serviceAccountJson = saJson;
+      const r = await fetch(`${API}/api/admin/seo/connection/test`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(body),
+      });
+      const json = await r.json();
+      if (!r.ok) throw new Error(json?.error || "فشل الاختبار");
+      return json;
+    },
+    onSuccess: (r) => setTestResult(r),
+  });
+
+  const saveMut = useMutation({
+    mutationFn: async (): Promise<ConnectionState> => {
+      const body: Record<string, unknown> = {
+        analyticsPropertyId: propertyId || null,
+        searchConsoleSiteUrl: siteUrl || null,
+        analytics: analyticsOn,
+        searchConsole: searchConsoleOn,
+      };
+      if (saJson.trim()) body.serviceAccountJson = saJson;
+      const r = await fetch(`${API}/api/admin/seo/connection`, {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify(body),
+      });
+      const json = await r.json();
+      if (!r.ok) throw new Error(json?.error || "فشل الحفظ");
+      return json;
+    },
+    onSuccess: () => {
+      setSavedNotice("تم حفظ إعدادات الربط بنجاح");
+      setSaJson(""); // clear textarea after save
+      qc.invalidateQueries({ queryKey: ["seo-connection"] });
+      qc.invalidateQueries({ queryKey: ["seo-dashboard"] });
+    },
+  });
+
+  const copyEmail = async () => {
+    const email = state?.serviceAccountEmail;
+    if (!email) return;
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  const isBusy = testMut.isPending || saveMut.isPending;
+  const hasSavedSa = !!state?.serviceAccountSet;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="seo-connection-dialog">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Plug className="h-5 w-5 text-primary" />
+            ربط Google Analytics و Search Console
+          </DialogTitle>
+          <DialogDescription>
+            استخدم حساب خدمة (Service Account) من Google Cloud لجلب البيانات الحقيقية تلقائياً.
+            بعد لصق ملف الحساب، أضف بريد الحساب كمستخدم في GA4 و Search Console.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin inline-block ml-2" />
+            جاري التحميل...
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Status summary */}
+            <div className="grid grid-cols-2 gap-3">
+              <StatusCard label="Google Analytics" connected={!!state?.analytics} />
+              <StatusCard label="Search Console" connected={!!state?.searchConsole} />
+            </div>
+
+            {/* Service account JSON */}
+            <div className="space-y-1.5">
+              <Label htmlFor="sa-json" className="flex items-center justify-between">
+                <span>ملف حساب الخدمة (Service Account JSON)</span>
+                {hasSavedSa && (
+                  <Badge variant="secondary" className="font-normal">
+                    <CheckCircle2 className="h-3 w-3 ml-1 text-green-600" />
+                    محفوظ
+                  </Badge>
+                )}
+              </Label>
+              <Textarea
+                id="sa-json"
+                placeholder={hasSavedSa
+                  ? "اترك فارغاً للإبقاء على الملف المحفوظ، أو الصق ملف جديد لاستبداله"
+                  : "الصق محتوى ملف JSON الكامل من Google Cloud Console (Service Account Key)"
+                }
+                rows={6}
+                value={saJson}
+                onChange={(e) => setSaJson(e.target.value)}
+                className="font-mono text-xs"
+                data-testid="seo-sa-json"
+              />
+              {state?.serviceAccountEmail && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">بريد حساب الخدمة:</span>
+                  <code className="bg-muted px-2 py-0.5 rounded">{state.serviceAccountEmail}</code>
+                  <button
+                    type="button"
+                    onClick={copyEmail}
+                    className="text-primary hover:underline inline-flex items-center gap-1"
+                    data-testid="seo-copy-sa-email"
+                  >
+                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    {copied ? "نُسخ" : "نسخ"}
+                  </button>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                أضف هذا البريد كمستخدم بصلاحية «Viewer» في GA4 و Search Console قبل الربط.
+              </p>
+            </div>
+
+            {/* GA4 */}
+            <div className="space-y-2 border rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="ga-prop" className="font-semibold">Google Analytics 4 (GA4)</Label>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className={analyticsOn ? "text-green-700" : "text-muted-foreground"}>
+                    {analyticsOn ? "مفعّل" : "متوقف"}
+                  </span>
+                  <Switch
+                    checked={analyticsOn}
+                    onCheckedChange={setAnalyticsOn}
+                    data-testid="seo-toggle-ga"
+                  />
+                </div>
+              </div>
+              <Input
+                id="ga-prop"
+                placeholder="معرّف الموقع — مثال: 123456789"
+                value={propertyId}
+                onChange={(e) => setPropertyId(e.target.value)}
+                data-testid="seo-ga-property"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                موقعه: GA4 Admin → Property Settings → Property ID (أرقام فقط).
+              </p>
+              {testResult?.analytics?.tested && (
+                <TestRow ok={testResult.analytics.ok} error={testResult.analytics.error} />
+              )}
+            </div>
+
+            {/* GSC */}
+            <div className="space-y-2 border rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="gsc-url" className="font-semibold">Search Console</Label>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className={searchConsoleOn ? "text-green-700" : "text-muted-foreground"}>
+                    {searchConsoleOn ? "مفعّل" : "متوقف"}
+                  </span>
+                  <Switch
+                    checked={searchConsoleOn}
+                    onCheckedChange={setSearchConsoleOn}
+                    data-testid="seo-toggle-gsc"
+                  />
+                </div>
+              </div>
+              <Input
+                id="gsc-url"
+                placeholder="رابط الموقع — مثال: https://example.com/  أو  sc-domain:example.com"
+                value={siteUrl}
+                onChange={(e) => setSiteUrl(e.target.value)}
+                dir="ltr"
+                data-testid="seo-gsc-site"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                استخدم نفس الصيغة المعرّفة في حسابك على Search Console (الرابط الكامل أو sc-domain:).
+              </p>
+              {testResult?.searchConsole?.tested && (
+                <TestRow ok={testResult.searchConsole.ok} error={testResult.searchConsole.error} />
+              )}
+            </div>
+
+            {/* Errors / notices */}
+            {testMut.isError && (
+              <Alert variant="destructive">
+                <AlertDescription>{(testMut.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
+            {saveMut.isError && (
+              <Alert variant="destructive">
+                <AlertDescription>{(saveMut.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
+            {savedNotice && (
+              <Alert className="border-green-300 bg-green-50/50">
+                <AlertDescription className="text-green-800">{savedNotice}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Help link */}
+            <Alert>
+              <AlertDescription className="text-xs leading-relaxed">
+                <strong>كيفية إنشاء حساب خدمة:</strong> افتح Google Cloud Console → IAM & Admin → Service Accounts →
+                إنشاء حساب جديد → Keys → Add Key (JSON) → الصق المحتوى هنا.
+                <a
+                  href="https://cloud.google.com/iam/docs/service-accounts-create"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1 mr-1"
+                >
+                  دليل Google
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button
+            variant="outline"
+            onClick={() => testMut.mutate()}
+            disabled={isBusy || (!propertyId && !siteUrl) || (!saJson.trim() && !hasSavedSa)}
+            data-testid="seo-test-connection"
+          >
+            {testMut.isPending && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
+            اختبار الاتصال
+          </Button>
+          <Button
+            onClick={() => saveMut.mutate()}
+            disabled={isBusy}
+            data-testid="seo-save-connection"
+          >
+            {saveMut.isPending && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
+            حفظ
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StatusCard({ label, connected }: { label: string; connected: boolean }) {
+  return (
+    <div className={`rounded-lg border p-3 flex items-center gap-2 ${connected ? "bg-green-50 border-green-300" : "bg-amber-50/40 border-amber-200"}`}>
+      {connected ? (
+        <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
+      ) : (
+        <XCircle className="h-5 w-5 text-amber-600 shrink-0" />
+      )}
+      <div>
+        <p className="text-sm font-semibold">{label}</p>
+        <p className={`text-[11px] ${connected ? "text-green-700" : "text-amber-700"}`}>
+          {connected ? "متصل" : "غير متصل"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TestRow({ ok, error }: { ok: boolean; error?: string }) {
+  return (
+    <div className={`text-xs p-2 rounded flex items-start gap-2 ${ok ? "bg-green-50 text-green-800" : "bg-rose-50 text-rose-800"}`}>
+      {ok ? <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" /> : <XCircle className="h-4 w-4 shrink-0 mt-0.5" />}
+      <span>{ok ? "نجح الاتصال — البيانات متاحة" : (error || "فشل الاتصال")}</span>
+    </div>
+  );
+}

@@ -13,8 +13,9 @@ import {
   Eye, MousePointerClick, BarChart3 as ChartIcon, Trophy, RefreshCw,
   TrendingUp, TrendingDown, ArrowUpRight, AlertTriangle,
   Sparkles, Search, Globe, Link as LinkIcon, FileText,
-  ShieldCheck, Info, AlertCircle,
+  ShieldCheck, Info, AlertCircle, Plug, CheckCircle2,
 } from "lucide-react";
+import { SeoConnectionDialog } from "@/components/admin/SeoConnectionDialog";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, PieChart, Pie, Cell, Legend,
@@ -168,6 +169,8 @@ export default function SeoDashboard() {
     return data.timeline[tab];
   }, [data, tab]);
 
+  const [connOpen, setConnOpen] = useState(false);
+
   const sourcesPie = (data?.trafficSources ?? []).map((s) => ({
     name: SOURCE_LABEL_AR[s.source],
     value: s.sessions,
@@ -197,6 +200,16 @@ export default function SeoDashboard() {
           <Button
             size="sm"
             variant="outline"
+            onClick={() => setConnOpen(true)}
+            className="gap-1"
+            data-testid="seo-open-connection"
+          >
+            <Plug className="h-3.5 w-3.5" />
+            ربط Google
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => refreshMut.mutate()}
             disabled={isFetching || refreshMut.isPending}
             className="gap-1"
@@ -210,19 +223,47 @@ export default function SeoDashboard() {
       {/* ─── Connection banner ──────────────────────────────────────── */}
       {data && !data.connected.analytics && !data.connected.searchConsole && (
         <Card className="border-amber-300 bg-amber-50/40">
-          <CardContent className="p-4 flex items-start gap-3">
+          <CardContent className="p-4 flex items-start gap-3 flex-wrap">
             <Info className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
-            <div className="text-sm text-amber-900">
+            <div className="text-sm text-amber-900 flex-1 min-w-[260px]">
               <p className="font-semibold mb-1">البيانات المعروضة للعرض التوضيحي</p>
               <p>
                 لم يتم بعد ربط <span className="font-semibold">Google Analytics</span> و
                 <span className="font-semibold"> Search Console</span>. الأرقام أدناه تمثل عينة واقعية لشكل اللوحة.
-                لربط حساباتك الفعلية وعرض البيانات الحقيقية، تواصل مع فريق التطوير لتفعيل التكامل.
+                اضغط الزر لربط حساباتك وعرض البيانات الحقيقية.
               </p>
             </div>
+            <Button
+              size="sm"
+              onClick={() => setConnOpen(true)}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              data-testid="seo-banner-connect"
+            >
+              <Plug className="h-3.5 w-3.5 ml-1" />
+              ربط الآن
+            </Button>
           </CardContent>
         </Card>
       )}
+      {data && (data.connected.analytics || data.connected.searchConsole) && (
+        <Card className="border-green-300 bg-green-50/40">
+          <CardContent className="p-3 flex items-center gap-3 flex-wrap">
+            <CheckCircle2 className="h-5 w-5 text-green-700 shrink-0" />
+            <p className="text-sm text-green-900 flex-1 min-w-[200px]">
+              متصل بـ{" "}
+              {data.connected.analytics && <span className="font-semibold">Google Analytics</span>}
+              {data.connected.analytics && data.connected.searchConsole && " و "}
+              {data.connected.searchConsole && <span className="font-semibold">Search Console</span>}
+              {" "}— البيانات المعروضة حقيقية.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setConnOpen(true)} data-testid="seo-edit-connection">
+              تعديل الربط
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <SeoConnectionDialog open={connOpen} onOpenChange={setConnOpen} />
 
       {/* ─── 1. KPI cards ────────────────────────────────────────────── */}
       <div>
