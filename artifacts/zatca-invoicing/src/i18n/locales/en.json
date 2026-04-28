@@ -501,6 +501,7 @@
     "customers": "Customers",
     "salesReps": "Sales Representatives",
     "quotations": "Quotations",
+    "salesOrders": "Sales Orders",
     "salesInvoices": "Sales Invoices",
     "salesReturns": "Sales Returns",
     "customerSettlements": "Customer Collections",
