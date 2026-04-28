@@ -78,10 +78,21 @@ export function useVisitorCountry(): [string, (next: string) => void, boolean] {
       .then(j => {
         if (cancelled || !j) return;
         const next = String(j.country || "").toUpperCase();
-        if (j.resolved && VALID.test(next) && next !== country) {
-          setCountryState(next);
-          setExplicit(true);
-        }
+        if (!VALID.test(next) || next === country) return;
+        // Adopt whatever the API returned, including the GLOBAL
+        // sentinel (which is what we get for unsupported / unknown
+        // origins). The previous render started on DEFAULT_COUNTRY_CODE
+        // (Saudi-by-default) so we MUST switch off it for foreign
+        // visitors even when the server says `resolved:false`,
+        // otherwise unsupported visitors would keep seeing Saudi copy.
+        setCountryState(next);
+        // Only mark `explicit` when the server actually identified the
+        // country (CF-IPCountry hit + supported). For the GLOBAL
+        // fallback we keep `explicit=false` so callers that key off
+        // an explicit signal (e.g. articles fetch) still treat the
+        // visitor as "untargeted" and let the server's GLOBAL fallback
+        // chain decide what to surface.
+        if (j.resolved) setExplicit(true);
       })
       .catch(() => { /* ignore — we already have a sensible default */ });
     return () => { cancelled = true; };
