@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Helmet } from "react-helmet-async";
 import {
-  ShieldCheck, Sparkles, ArrowLeft, Check, Play, ChevronDown,
+  ShieldCheck, Sparkles, ArrowLeft, Check, ChevronDown,
   Smartphone, Wifi, Receipt, BarChart3, Package, CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,8 @@ import { cn } from "@/lib/utils";
 // ─────────────────────────────────────────────────────────────────────────
 // Public /pos-system landing page — addresses the SEO AI medium-impact
 // recommendation: this page should rank for "نظام نقاط بيع سعودي" and lift
-// dwell time. Layout adds:
-//   • An embedded explainer video (the install-guide-video artifact).
-//   • A FAQ section (with FAQPage JSON-LD) targeting common Saudi POS
-//     questions, lifting dwell time and rich-result coverage.
+// dwell time via a FAQ section (with FAQPage JSON-LD) targeting common
+// Saudi POS questions, lifting dwell time and rich-result coverage.
 // Path note: the bare `/pos` is owned by the standalone POS artifact in
 // this monorepo, so this public landing lives at `/pos-system` instead.
 // ─────────────────────────────────────────────────────────────────────────
@@ -24,7 +22,6 @@ export default function PosLanding() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const canonical = `${origin}/pos-system`;
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [videoStarted, setVideoStarted] = useState(false);
 
   const faqs = useMemo(() => [
     {
@@ -161,42 +158,7 @@ export default function PosLanding() {
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> بدون بطاقة دفع</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> دعم عربي</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> Offline mode</span>
-          <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> فيديو تعليمي 3 دقائق</span>
         </div>
-      </section>
-
-      {/* Video — embedded explainer */}
-      <section className="max-w-5xl mx-auto px-4 py-8">
-        <div className="rounded-3xl overflow-hidden border-2 border-primary/20 shadow-2xl bg-black aspect-video relative" data-testid="pos-video-frame">
-          {!videoStarted ? (
-            <button
-              type="button"
-              onClick={() => setVideoStarted(true)}
-              className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/90 to-primary/70 text-primary-foreground hover:from-primary hover:to-primary/80 transition-all"
-              data-testid="pos-video-play"
-              aria-label="تشغيل الفيديو التعريفي"
-            >
-              <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-white text-primary shadow-2xl">
-                <Play className="h-9 w-9 mr-1" fill="currentColor" />
-              </span>
-              <div className="text-center px-6">
-                <div className="text-xl md:text-2xl font-bold mb-1">شاهد كيف يعمل النظام في 3 دقائق</div>
-                <div className="text-sm opacity-90">دليل تركيب وتشغيل نقاط البيع — من الصفر إلى أول فاتورة</div>
-              </div>
-            </button>
-          ) : (
-            <iframe
-              src="/install-guide-video/"
-              title="دليل تركيب نظام نقاط البيع السعودي"
-              className="w-full h-full border-0"
-              allow="autoplay; fullscreen"
-              data-testid="pos-video-iframe"
-            />
-          )}
-        </div>
-        <p className="text-xs text-center text-muted-foreground mt-3">
-          الفيديو التعليمي يستعرض شاشات النظام وسير العمل الفعلي للكاشير، التركيب على جهازك، وإصدار أول فاتورة معتمدة.
-        </p>
       </section>
 
       {/* Features grid */}
