@@ -87,8 +87,17 @@ export default function AuditLog() {
   // The currently-open details dialog is encoded as `?entry=N` in the URL
   // so any audit row can be linked to directly. The URL is the single
   // source of truth for which row is selected:
-  //   • Clicking a row pushes `?entry=N` (replace, no history pollution).
-  //   • Closing the dialog drops the param.
+  //   • Clicking a row from a closed dialog pushes `?entry=N` so the
+  //     browser back button closes the dialog (task #132 — matches the
+  //     web convention for modal overlays opened via URL state).
+  //   • Switching from one open row to another replaces the current
+  //     history entry so a session of clicks doesn't pollute history.
+  //   • Closing the dialog via the UI pops the pushed entry (if any) so
+  //     forward/back stays sane; if the dialog was opened directly via
+  //     a permalink (no entry of ours to pop) we just drop the param.
+  //   • Pressing the browser back button while the dialog is open lets
+  //     popstate flow naturally — the URL changes, `entryId` recomputes
+  //     to null, and the Dialog closes itself.
   //   • Loading the page with `?entry=N` already present opens the dialog
   //     immediately — even if that entry isn't on the current filter page.
   // When the entry isn't in the loaded rows we fall back to a single-entry
@@ -105,15 +114,56 @@ export default function AuditLog() {
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [search$]);
 
+  // Tracks whether the currently-open dialog corresponds to a history
+  // entry *we* pushed (vs. a permalink the user landed on directly). On
+  // UI close we pop our entry when this is true so back/forward stays
+  // intuitive; when the user closes via the browser back button this
+  // gets reset by the effect below so a subsequent open re-pushes
+  // correctly.
+  const pushedDialogEntryRef = useRef(false);
+  useEffect(() => {
+    if (entryId == null) pushedDialogEntryRef.current = false;
+  }, [entryId]);
+
   const setSelectedId = useCallback(
     (id: number | null) => {
+      if (id == null) {
+        // Closing via the UI. If we own a pushed history entry, pop it
+        // so back/forward behaves like the user expects (one back from
+        // the listing leaves the page). The popstate will clear `entry`
+        // from the URL and the dialog will close via the URL-derived
+        // `entryId`.
+        if (pushedDialogEntryRef.current && typeof window !== "undefined") {
+          pushedDialogEntryRef.current = false;
+          window.history.back();
+          return;
+        }
+        // No pushed entry to pop (permalink landing): just drop the
+        // `entry` param in place.
+        const params = new URLSearchParams(search$);
+        params.delete("entry");
+        const qs = params.toString();
+        setLocation(qs ? `/admin/audit-log?${qs}` : "/admin/audit-log", { replace: true });
+        return;
+      }
+
       const params = new URLSearchParams(search$);
-      if (id == null) params.delete("entry");
-      else params.set("entry", String(id));
+      params.set("entry", String(id));
       const qs = params.toString();
-      setLocation(qs ? `/admin/audit-log?${qs}` : "/admin/audit-log", { replace: true });
+      const url = qs ? `/admin/audit-log?${qs}` : "/admin/audit-log";
+
+      if (entryId == null) {
+        // Opening the dialog from a closed state — push so the browser
+        // back button closes it instead of leaving the page.
+        pushedDialogEntryRef.current = true;
+        setLocation(url);
+      } else {
+        // Switching between rows while the dialog is already open —
+        // replace so consecutive clicks don't grow history.
+        setLocation(url, { replace: true });
+      }
     },
-    [search$, setLocation],
+    [search$, setLocation, entryId],
   );
 
   const params = useMemo(() => {
