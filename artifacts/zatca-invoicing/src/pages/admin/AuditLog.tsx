@@ -1037,6 +1037,9 @@ function AuditDetailsDialog({
     const { origin, pathname } = window.location;
     return `${origin}${pathname}?entry=${entryId}`;
   };
+  // Computed once per render so the visible URL, the clipboard payload,
+  // and the hover-preview row all show the exact same string.
+  const shareLink = buildShareLink();
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -1208,7 +1211,10 @@ function AuditDetailsDialog({
                 inline copy button that puts the same string on the
                 clipboard. The whole row is selectable text too, so a
                 manual copy is always possible if the clipboard API is
-                blocked. */}
+                blocked. The copy button gets the same hover/focus preview
+                tooltip as the row-level share-link button (task #155) so
+                reviewers who opened the dialog from a permalink can also
+                hover-confirm the entry before pasting. */}
             <div data-testid="audit-details-share">
               <div className="text-xs font-medium text-muted-foreground mb-1">
                 {tr("detailsShareLink")}
@@ -1220,15 +1226,54 @@ function AuditDetailsDialog({
                   data-testid="audit-details-share-link"
                   className="font-mono text-xs break-all flex-1 select-all"
                 >
-                  {buildShareLink()}
+                  {shareLink}
                 </span>
-                <CopyIconButton
-                  value={buildShareLink()}
-                  label={tr("copyShareLink")}
-                  tr={tr}
-                  testId="audit-details-copy-share-link"
-                  showText
-                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* Span is the focus/hover target for Radix; the
+                        inner button keeps its own click-to-copy behavior
+                        untouched. `inline-flex` keeps the trigger box
+                        collapsed around the icon button. */}
+                    <span className="inline-flex">
+                      <CopyIconButton
+                        value={shareLink}
+                        label={tr("copyShareLink")}
+                        tr={tr}
+                        testId="audit-details-copy-share-link"
+                        showText
+                      />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align={isRtl ? "end" : "start"}
+                    className="max-w-xs bg-background text-foreground border shadow-md p-2"
+                    data-testid="audit-details-share-link-preview"
+                  >
+                    <div
+                      dir={isRtl ? "rtl" : "ltr"}
+                      className={`space-y-1 text-xs ${isRtl ? "text-right" : "text-left"}`}
+                    >
+                      <div className="font-medium text-foreground/90">
+                        {tr("sharePreviewTitle")}
+                      </div>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+                        <dt className="text-muted-foreground">{tr("sharePreviewId")}</dt>
+                        <dd className="font-mono">{row.id}</dd>
+                        <dt className="text-muted-foreground">{tr("sharePreviewAction")}</dt>
+                        <dd>{trAction(row.action)}</dd>
+                        <dt className="text-muted-foreground">{tr("sharePreviewModule")}</dt>
+                        <dd className="font-mono break-all">{row.module}</dd>
+                        <dt className="text-muted-foreground">{tr("sharePreviewTime")}</dt>
+                        <dd className="font-mono">
+                          {new Date(row.createdAt).toLocaleString(locale, { hour12: false })}
+                        </dd>
+                        <dt className="text-muted-foreground">{tr("sharePreviewLink")}</dt>
+                        <dd className="font-mono break-all">{shareLink}</dd>
+                      </dl>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           </div>
