@@ -13,6 +13,7 @@ import CompanyDataDoctor from "@/pages/admin/CompanyDataDoctor";
 import SupportInbox from "@/pages/admin/SupportInbox";
 import SupportSettings from "@/pages/admin/SupportSettings";
 import SeoDashboard from "@/pages/admin/SeoDashboard";
+import SeoAiStudio from "@/pages/admin/SeoAiStudio";
 import AuditLog from "@/pages/admin/AuditLog";
 import WorkSessions from "@/pages/WorkSessions";
 import WorkSessionSettings from "@/pages/WorkSessionSettings";
@@ -276,6 +277,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/data-doctor" component={CompanyDataDoctor} />}
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
+            {isSuperAdmin && <Route path="/admin/seo/ai" component={SeoAiStudio} />}
             {isSuperAdmin && <Route path="/admin/seo" component={SeoDashboard} />}
             {!isSuperAdmin && <PermRoute path="/seo" module="seo_dashboard" component={SeoDashboard} />}
             {(isSuperAdmin || user?.role === "admin") && <Route path="/admin/audit-log" component={AuditLog} />}

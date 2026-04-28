@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, usersTable, systemSettingsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, usersTable, systemSettingsTable, seoGeneratedArticlesTable } from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import Anthropic from "@anthropic-ai/sdk";
 import { resolveBearerToken } from "../middleware/auth.js";
 
 const router = Router();
@@ -24,6 +25,9 @@ async function requireSuperAdmin(req: Request, res: Response, next: NextFunction
   if (!user || !user.isActive || user.role !== "superadmin") {
     res.status(403).json({ error: "هذه الصفحة للمشرف العام فقط" }); return;
   }
+  // Expose the authenticated SuperAdmin so downstream handlers can attribute
+  // writes (createdByUserId) and apply per-user rate limits.
+  (req as any).user = user;
   next();
 }
 
@@ -322,6 +326,299 @@ router.post("/refresh", requireSuperAdmin, async (_req, res) => {
     res.json(buildSeoPayload());
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحديث البيانات" });
+  }
+});
+
+// ─── AI Studio ───────────────────────────────────────────────────────────
+// Default settings used when no row exists in system_settings yet. These
+// describe how the AI generator should write articles aimed at boosting
+// the site's organic traffic.
+const DEFAULT_AI_SETTINGS = {
+  model:         "claude-sonnet-4-6",
+  tone:          "professional",   // professional|friendly|marketing|educational
+  length:        "medium",         // short(~500) | medium(~1000) | long(~1800)
+  language:      "ar",             // ar | en | both
+  defaultKeywords: ["فاتورة إلكترونية", "ZATCA", "محاسبة سعودية", "ضريبة القيمة المضافة"],
+  // Free-form publishing notes the SuperAdmin wants the AI to honor (brand
+  // voice, target audience, internal linking conventions, etc.).
+  guidance:      "اكتب مقالاً تسويقياً موجهاً للشركات السعودية الصغيرة والمتوسطة، مع التركيز على الالتزام بمتطلبات هيئة الزكاة والضريبة والجمارك.",
+} as const;
+
+type SeoAiSettings = typeof DEFAULT_AI_SETTINGS & { defaultKeywords: string[]; guidance: string };
+
+async function readAiSettings(): Promise<SeoAiSettings> {
+  const [row] = await db.select().from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, "seo_ai_settings"));
+  if (!row?.value) return { ...DEFAULT_AI_SETTINGS };
+  try {
+    const parsed = JSON.parse(row.value);
+    return {
+      ...DEFAULT_AI_SETTINGS,
+      ...parsed,
+      defaultKeywords: Array.isArray(parsed?.defaultKeywords)
+        ? parsed.defaultKeywords.filter((s: any) => typeof s === "string")
+        : [...DEFAULT_AI_SETTINGS.defaultKeywords],
+    };
+  } catch {
+    return { ...DEFAULT_AI_SETTINGS };
+  }
+}
+
+// GET /api/admin/seo/ai-settings — current generator config.
+router.get("/ai-settings", requireSuperAdmin, async (_req, res) => {
+  try {
+    const settings = await readAiSettings();
+    res.json(settings);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر قراءة الإعدادات" });
+  }
+});
+
+// PUT /api/admin/seo/ai-settings — save generator config.
+router.put("/ai-settings", requireSuperAdmin, async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const next: SeoAiSettings = {
+      model:    typeof body.model === "string" ? body.model : DEFAULT_AI_SETTINGS.model,
+      tone:     typeof body.tone === "string" ? body.tone : DEFAULT_AI_SETTINGS.tone,
+      length:   typeof body.length === "string" ? body.length : DEFAULT_AI_SETTINGS.length,
+      language: typeof body.language === "string" ? body.language : DEFAULT_AI_SETTINGS.language,
+      defaultKeywords: Array.isArray(body.defaultKeywords)
+        ? body.defaultKeywords.filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim())
+        : [...DEFAULT_AI_SETTINGS.defaultKeywords],
+      guidance: typeof body.guidance === "string" ? body.guidance : DEFAULT_AI_SETTINGS.guidance,
+    };
+    const value = JSON.stringify(next);
+    await db
+      .insert(systemSettingsTable)
+      .values({ key: "seo_ai_settings", value })
+      .onConflictDoUpdate({
+        target: systemSettingsTable.key,
+        set:    { value, updatedAt: new Date() },
+      });
+    res.json(next);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر حفظ الإعدادات" });
+  }
+});
+
+// GET /api/admin/seo/ai-articles — list generated articles, newest first.
+router.get("/ai-articles", requireSuperAdmin, async (_req, res) => {
+  try {
+    const rows = await db.select().from(seoGeneratedArticlesTable)
+      .orderBy(desc(seoGeneratedArticlesTable.createdAt))
+      .limit(200);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر تحميل المقالات" });
+  }
+});
+
+// Word target by length preset — used in the AI prompt and for the generator
+// preview card. These are loose targets; we ask the model to produce a long-
+// form Arabic article and trust it to land near the target.
+const LENGTH_TARGETS: Record<string, number> = { short: 500, medium: 1000, long: 1800 };
+const TONE_LABEL_AR: Record<string, string> = {
+  professional: "احترافي",
+  friendly:     "ودي وقريب",
+  marketing:    "تسويقي مقنع",
+  educational:  "تعليمي تثقيفي",
+};
+
+function slugify(input: string): string {
+  // Keep Arabic letters AND latin/digits; collapse runs of separators to "-".
+  // Browsers and most CMSes handle Arabic slugs fine via percent-encoding.
+  return input
+    .trim()
+    .replace(/[\s\u00A0]+/g, "-")
+    .replace(/[^\p{L}\p{N}-]+/gu, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || `article-${Date.now()}`;
+}
+
+// Returns a slug guaranteed not to collide with any existing row in
+// seo_generated_articles. Tries the base slug first, then appends -2, -3 …
+// until it finds a free one. Without a DB UNIQUE constraint this isn't
+// race-proof, but for a single SuperAdmin operator it's effectively safe
+// and cheaper than a migration.
+async function uniqueArticleSlug(base: string): Promise<string> {
+  let candidate = base;
+  for (let n = 2; n < 1000; n++) {
+    const [hit] = await db.select({ id: seoGeneratedArticlesTable.id })
+      .from(seoGeneratedArticlesTable)
+      .where(eq(seoGeneratedArticlesTable.slug, candidate))
+      .limit(1);
+    if (!hit) return candidate;
+    candidate = `${base}-${n}`.slice(0, 90);
+  }
+  // Astronomically unlikely; fall back to a timestamp suffix.
+  return `${base}-${Date.now()}`.slice(0, 90);
+}
+
+// Per-user in-memory rate limiter for the AI generator. The endpoint is
+// expensive (network + tokens), and even though it's SuperAdmin-only, an
+// open browser tab or runaway script could rack up cost quickly.
+//   - cooldown: 20s between consecutive calls per user
+//   - burst window: max 8 calls in any rolling 10-minute window per user
+const GEN_COOLDOWN_MS    = 20_000;
+const GEN_WINDOW_MS      = 10 * 60_000;
+const GEN_WINDOW_MAX     = 8;
+const genHistory = new Map<number, number[]>();    // userId → timestamps (ms)
+function checkGenRateLimit(userId: number): { ok: true } | { ok: false; retryInSec: number; reason: string } {
+  const now = Date.now();
+  const arr = (genHistory.get(userId) ?? []).filter(t => now - t < GEN_WINDOW_MS);
+  if (arr.length > 0 && now - arr[arr.length - 1] < GEN_COOLDOWN_MS) {
+    return { ok: false, retryInSec: Math.ceil((GEN_COOLDOWN_MS - (now - arr[arr.length - 1])) / 1000),
+             reason: "الرجاء الانتظار قبل توليد مقال آخر" };
+  }
+  if (arr.length >= GEN_WINDOW_MAX) {
+    const retry = Math.ceil((GEN_WINDOW_MS - (now - arr[0])) / 1000);
+    return { ok: false, retryInSec: retry,
+             reason: `تم تجاوز الحد المسموح (${GEN_WINDOW_MAX} مقالات كل 10 دقائق)` };
+  }
+  arr.push(now);
+  genHistory.set(userId, arr);
+  return { ok: true };
+}
+
+// POST /api/admin/seo/ai-articles/generate
+//   body: { topic: string, targetKeyword?: string, sourceTopic?: string }
+// Calls Anthropic with the saved settings, parses a JSON envelope from the
+// model, persists the draft, and returns it.
+router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) => {
+  try {
+    const topicRaw = String(req.body?.topic ?? "").trim();
+    const targetKeywordRaw = String(req.body?.targetKeyword ?? "").trim();
+    const sourceTopic = String(req.body?.sourceTopic ?? topicRaw).trim();
+    if (!topicRaw || topicRaw.length < 4) {
+      return res.status(400).json({ error: "الرجاء إدخال موضوع لا يقل عن 4 أحرف" });
+    }
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة على الخادم" });
+    }
+
+    // Per-user generator rate limit (cost guard). Falls back to remote IP
+    // when no user is attached so the limit is never silently bypassed.
+    const callerKey: number = (req as any).user?.id
+      ?? -Math.abs(((req.ip || "anon").split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)));
+    const rl = checkGenRateLimit(callerKey);
+    if (!rl.ok) {
+      res.setHeader("Retry-After", String(rl.retryInSec));
+      return res.status(429).json({ error: rl.reason, retryInSec: rl.retryInSec });
+    }
+
+    const settings = await readAiSettings();
+    const targetWords = LENGTH_TARGETS[settings.length] ?? 1000;
+    const toneLabel = TONE_LABEL_AR[settings.tone] ?? "احترافي";
+    const langInstruction =
+      settings.language === "en"   ? "Write the article in English."
+      : settings.language === "both" ? "اكتب المقال بالعربية مع عناوين فرعية بالإنجليزية بين قوسين عند الحاجة."
+      : "اكتب المقال بالعربية الفصحى المبسّطة.";
+
+    const prompt = [
+      `أنت كاتب محتوى محترف لتحسين محركات البحث (SEO) لموقع برنامج محاسبة وفوترة إلكترونية سعودي.`,
+      ``,
+      `إعدادات التوليد:`,
+      `- النبرة: ${toneLabel}`,
+      `- الطول المستهدف: حوالي ${targetWords} كلمة`,
+      `- اللغة: ${langInstruction}`,
+      `- الكلمات المفتاحية الافتراضية للموقع: ${settings.defaultKeywords.join("، ")}`,
+      `- توجيهات الإدارة: ${settings.guidance}`,
+      ``,
+      `الموضوع المطلوب: ${topicRaw}`,
+      targetKeywordRaw ? `الكلمة المفتاحية الرئيسية المستهدفة: ${targetKeywordRaw}` : ``,
+      ``,
+      `أعد الناتج كـ JSON صالح ضمن كتلة \`\`\`json … \`\`\` بهذا الشكل تماماً:`,
+      `{`,
+      `  "title": "عنوان جذاب يحوي الكلمة المفتاحية، أقل من 60 حرفاً",`,
+      `  "metaDescription": "وصف ميتا تسويقي بين 140 و160 حرفاً",`,
+      `  "targetKeyword": "الكلمة أو العبارة المفتاحية الرئيسية",`,
+      `  "slug": "slug-عربي-أو-لاتيني-قصير",`,
+      `  "content": "نص المقال بصيغة Markdown يبدأ بمقدمة قوية، يتضمن عناوين فرعية ## و###، نقاط، وفقرة خاتمة. تجنّب الحشو."`,
+      `}`,
+      ``,
+      `لا تكتب أي شيء خارج كتلة JSON.`,
+    ].filter(Boolean).join("\n");
+
+    const client = new Anthropic({
+      apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+    });
+
+    const message = await client.messages.create({
+      model:      settings.model || "claude-sonnet-4-6",
+      max_tokens: 8192,
+      messages:   [{ role: "user", content: prompt }],
+    });
+
+    // Concatenate all text blocks; the model occasionally splits into more
+    // than one block when reasoning is enabled.
+    const rawText = message.content
+      .map(b => (b.type === "text" ? b.text : ""))
+      .join("\n")
+      .trim();
+
+    // Extract the fenced JSON block; fall back to the largest {…} substring.
+    let parsed: any = null;
+    const fenced = rawText.match(/```json\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1].trim() : (rawText.match(/\{[\s\S]*\}/)?.[0] ?? "");
+    try { parsed = JSON.parse(candidate); } catch {/* fallthrough */}
+    if (!parsed || typeof parsed !== "object" || !parsed.title || !parsed.content) {
+      return res.status(502).json({ error: "تعذّر تحليل ناتج الذكاء الاصطناعي. حاول مرة أخرى." });
+    }
+
+    const title = String(parsed.title).trim();
+    const slug  = await uniqueArticleSlug(slugify(String(parsed.slug || title)));
+    const metaDescription = String(parsed.metaDescription ?? "").trim();
+    const targetKeyword   = String(parsed.targetKeyword ?? targetKeywordRaw ?? "").trim();
+    const content         = String(parsed.content).trim();
+
+    const [row] = await db.insert(seoGeneratedArticlesTable).values({
+      title, slug, metaDescription, content, targetKeyword,
+      sourceTopic,
+      aiModel:         settings.model || "claude-sonnet-4-6",
+      status:          "draft",
+      createdByUserId: req.user?.id ?? null,
+    }).returning();
+
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر توليد المقال" });
+  }
+});
+
+// PATCH /api/admin/seo/ai-articles/:id — update editable fields/status.
+router.patch("/ai-articles/:id", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّف غير صالح" });
+    const patch: any = { updatedAt: new Date() };
+    if (typeof req.body?.title === "string")           patch.title = req.body.title.trim();
+    if (typeof req.body?.metaDescription === "string") patch.metaDescription = req.body.metaDescription.trim();
+    if (typeof req.body?.content === "string")         patch.content = req.body.content;
+    if (typeof req.body?.targetKeyword === "string")   patch.targetKeyword = req.body.targetKeyword.trim();
+    if (typeof req.body?.status === "string"
+      && ["draft","reviewed","published"].includes(req.body.status)) patch.status = req.body.status;
+    if (typeof req.body?.slug === "string")            patch.slug = slugify(req.body.slug);
+    const [row] = await db.update(seoGeneratedArticlesTable)
+      .set(patch).where(eq(seoGeneratedArticlesTable.id, id)).returning();
+    if (!row) return res.status(404).json({ error: "المقال غير موجود" });
+    res.json(row);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر تحديث المقال" });
+  }
+});
+
+// DELETE /api/admin/seo/ai-articles/:id
+router.delete("/ai-articles/:id", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرّف غير صالح" });
+    await db.delete(seoGeneratedArticlesTable).where(eq(seoGeneratedArticlesTable.id, id));
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر حذف المقال" });
   }
 });
 

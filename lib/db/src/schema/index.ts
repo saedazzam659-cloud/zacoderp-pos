@@ -38,5 +38,6 @@ export * from "./securityNotificationRules";
 export * from "./voiceAssistant";
 export * from "./sessions";
 export * from "./inboxMessages";
+export * from "./seoAi";
 export * from "./deletedRecords";
 export * from "./contracting";
