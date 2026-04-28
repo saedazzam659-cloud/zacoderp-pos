@@ -104,3 +104,16 @@ All new POST/PUT routes validate every cross-table FK reference
 cross-tenant data leakage. The frontend project detail page (`ContractingProjectDetail.tsx`)
 exposes two new tabs (`عقد المالك`, `عقود الباطن`) and the bills tab now
 splits into outgoing/incoming sub-tabs with totals header.
+
+## SEO connection AI suggestion
+
+`POST /api/admin/seo/connection/suggest` (in `artifacts/api-server/src/routes/admin-seo.ts`) is a super-admin-only helper that turns any free-text hint (a website URL, a Google Analytics dashboard URL, a Search Console URL, etc.) into a concrete `analyticsPropertyId` + `searchConsoleSiteUrl` suggestion.
+
+Pipeline: regex pass → website fetch → AI pass → factual notes.
+
+The website-fetch step uses an SSRF-hardened `safeFetchHtml` helper:
+- single combined DNS+validation step (`urlSafeIp`) that pins the public IP we then connect to via Node's `http.request`/`https.request` `lookup` callback, defeating DNS rebinding.
+- `expandIpv6()` normalizes any IPv6 form (compressed, dotted, hex) before checking against private/loopback/CGNAT/benchmark/NAT64/unique-local/link-local/multicast/docs ranges.
+- end-to-end timeout that covers BOTH headers and body streaming, plus a 500 KB body cap, plus manual redirect handling that re-validates each hop.
+
+Extracted signals (`G-XXXXXXXXXX` measurement IDs, `GTM-XXXXXX` containers, legacy `UA-…`) are returned as `analyticsMeasurementId` / `gtmContainerId` / `legacyUaId` and surfaced read-only in `SeoConnectionDialog` via `InfoRow`. They are NOT auto-applied to the Property ID field because the Measurement ID is not the numeric Property ID — that limitation is documented in the Arabic note returned to the admin.

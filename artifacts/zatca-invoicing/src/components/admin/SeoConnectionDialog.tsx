@@ -69,6 +69,10 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
   const [aiResult, setAiResult] = useState<{
     analyticsPropertyId: string | null;
     searchConsoleSiteUrl: string | null;
+    analyticsMeasurementId?: string | null;
+    gtmContainerId?: string | null;
+    legacyUaId?: string | null;
+    fetchedFrom?: string | null;
     notes: string;
     source: "ai" | "regex";
   } | null>(null);
@@ -146,6 +150,10 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
     mutationFn: async (): Promise<{
       analyticsPropertyId: string | null;
       searchConsoleSiteUrl: string | null;
+      analyticsMeasurementId?: string | null;
+      gtmContainerId?: string | null;
+      legacyUaId?: string | null;
+      fetchedFrom?: string | null;
       notes: string;
       source: "ai" | "regex";
     }> => {
@@ -299,8 +307,50 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
                         onApply={() => applyAi("siteUrl")}
                         applied={aiFilled.siteUrl}
                       />
+
+                      {/* Site-fetch signals — read-only because the
+                          Measurement ID is NOT the Property ID, and the
+                          GTM/UA values are purely informational. */}
+                      {(aiResult.fetchedFrom || aiResult.analyticsMeasurementId
+                        || aiResult.gtmContainerId || aiResult.legacyUaId) && (
+                        <div className="border-t pt-1.5 mt-1.5 space-y-1">
+                          <div className="text-[10px] text-muted-foreground">
+                            ما وجدناه عند فحص صفحة موقعك:
+                          </div>
+                          {aiResult.analyticsMeasurementId && (
+                            <InfoRow
+                              label="معرّف قياس GA4"
+                              value={aiResult.analyticsMeasurementId}
+                              tone="info"
+                            />
+                          )}
+                          {aiResult.gtmContainerId && (
+                            <InfoRow
+                              label="حاوية Tag Manager"
+                              value={aiResult.gtmContainerId}
+                              tone="info"
+                            />
+                          )}
+                          {aiResult.legacyUaId && (
+                            <InfoRow
+                              label="معرّف Universal Analytics قديم"
+                              value={aiResult.legacyUaId}
+                              tone="warn"
+                            />
+                          )}
+                          {aiResult.fetchedFrom
+                            && !aiResult.analyticsMeasurementId
+                            && !aiResult.gtmContainerId
+                            && !aiResult.legacyUaId && (
+                            <p className="text-[11px] text-amber-700">
+                              لم نجد شيفرة Google Analytics في صفحة موقعك.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {aiResult.notes && (
-                        <p className="text-[11px] text-muted-foreground border-t pt-1.5 mt-1.5">
+                        <p className="text-[11px] text-muted-foreground border-t pt-1.5 mt-1.5 leading-relaxed">
                           {aiResult.notes}
                         </p>
                       )}
@@ -523,6 +573,27 @@ function SuggestionRow({
           </Button>
         )
       )}
+    </div>
+  );
+}
+
+function InfoRow({
+  label, value, tone,
+}: { label: string; value: string; tone: "info" | "warn" }) {
+  // Read-only counterpart to SuggestionRow. Used for site-fetch hits
+  // that the admin should SEE but cannot directly apply to a form
+  // field (e.g. GA4 Measurement ID, GTM container ID).
+  const codeColor = tone === "warn"
+    ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+    : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200";
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <span className="text-muted-foreground">{label}: </span>
+        <code className={`px-1.5 py-0.5 rounded text-[11px] break-all ${codeColor}`} dir="ltr">
+          {value}
+        </code>
+      </div>
     </div>
   );
 }

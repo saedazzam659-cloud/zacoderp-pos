@@ -2,6 +2,10 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, usersTable, systemSettingsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
+import dns from "node:dns/promises";
+import net from "node:net";
+import http from "node:http";
+import https from "node:https";
 import { resolveBearerToken } from "../middleware/auth.js";
 import {
   parseServiceAccount,
@@ -1135,11 +1139,354 @@ router.post("/connection/test", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// ─── Site-fetch helpers for AI suggestion ───────────────────────────────
+// When the admin pastes their website URL, we can usually scrape the
+// homepage HTML for `gtag('config', 'G-XXXXXXXXXX')` to give the AI
+// concrete signals about which Analytics property is in use. The
+// network call is wrapped in SSRF guards because the endpoint is
+// behind requireSuperAdmin but we still don't want a typo to let the
+// API server hit private addresses.
+
+const SITE_FETCH_TIMEOUT_MS = 5_000;
+const SITE_FETCH_MAX_BYTES = 500 * 1024; // half a megabyte of HTML is plenty
+const SITE_FETCH_MAX_REDIRECTS = 3;
+const SITE_FETCH_USER_AGENT = "ZatcaInvoiceBot/1.0 (+seo-suggest)";
+
+function isPrivateOrLoopbackIp(ip: string): boolean {
+  if (!ip) return true;
+  const v = net.isIP(ip);
+  if (v === 4) return isPrivateOrLoopbackIpv4(ip);
+  if (v === 6) return isPrivateOrLoopbackIpv6(ip);
+  return true; // not a valid IP literal
+}
+
+function isPrivateOrLoopbackIpv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0)   return true;                          // 0.0.0.0/8
+  if (a === 10)  return true;                          // 10.0.0.0/8
+  if (a === 127) return true;                          // loopback
+  if (a === 169 && b === 254)                 return true; // link-local
+  if (a === 172 && b >= 16 && b <= 31)        return true; // 172.16.0.0/12
+  if (a === 192 && b === 168)                 return true; // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127)       return true; // 100.64.0.0/10 (CGNAT)
+  if (a === 198 && (b === 18 || b === 19))    return true; // 198.18.0.0/15 (benchmarking)
+  if (a === 192 && b === 0)                   return true; // 192.0.0.0/24 (IETF)
+  if (a >= 224)                               return true; // multicast / reserved
+  return false;
+}
+
+/**
+ * Expand an IPv6 literal into its 8 16-bit groups so we can reason
+ * about IPv4-mapped addresses regardless of how the user wrote them
+ * (e.g. ::ffff:127.0.0.1 vs ::ffff:7f00:1 are the same address).
+ */
+function expandIpv6(ip: string): number[] | null {
+  let s = ip.toLowerCase();
+  // Strip a trailing dotted-IPv4 tail (`::ffff:127.0.0.1`) and turn
+  // it into two hextets so the rest of the parser is uniform.
+  const dotted = s.match(/^(.*:)((?:\d{1,3}\.){3}\d{1,3})$/);
+  if (dotted) {
+    const [, head, v4] = dotted;
+    const o = v4.split(".").map((n) => Number(n));
+    if (o.length !== 4 || o.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return null;
+    s = head + ((o[0] << 8) | o[1]).toString(16) + ":" + ((o[2] << 8) | o[3]).toString(16);
+  }
+  const dblColonParts = s.split("::");
+  if (dblColonParts.length > 2) return null;
+  const left  = dblColonParts[0] ? dblColonParts[0].split(":") : [];
+  const right = dblColonParts.length === 2 && dblColonParts[1] ? dblColonParts[1].split(":") : [];
+  const fillerLen = 8 - (left.length + right.length);
+  if (fillerLen < 0) return null;
+  if (dblColonParts.length === 1 && (left.length + right.length) !== 8) return null;
+  const groups = [
+    ...left,
+    ...new Array<string>(Math.max(0, fillerLen)).fill("0"),
+    ...right,
+  ];
+  if (groups.length !== 8) return null;
+  const nums: number[] = [];
+  for (const g of groups) {
+    if (g.length === 0 || g.length > 4) return null;
+    if (!/^[0-9a-f]+$/.test(g)) return null;
+    nums.push(parseInt(g, 16));
+  }
+  return nums;
+}
+
+function isPrivateOrLoopbackIpv6(ip: string): boolean {
+  const g = expandIpv6(ip);
+  if (!g) return true;
+  // Unspecified ::, loopback ::1
+  if (g.every((n, i) => i < 7 ? n === 0 : true) && (g[7] === 0 || g[7] === 1)) return true;
+  // IPv4-mapped ::ffff:0:0/96 — reduce to the embedded v4 and re-check.
+  // Catches both ::ffff:127.0.0.1 AND ::ffff:7f00:1 etc.
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff) {
+    const v4 = `${(g[6] >> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >> 8) & 0xff}.${g[7] & 0xff}`;
+    return isPrivateOrLoopbackIpv4(v4);
+  }
+  // IPv4-compatible ::a.b.c.d (deprecated but still routes locally).
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0
+      && (g[6] !== 0 || g[7] !== 0)) {
+    const v4 = `${(g[6] >> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >> 8) & 0xff}.${g[7] & 0xff}`;
+    return isPrivateOrLoopbackIpv4(v4);
+  }
+  // fc00::/7 — unique local
+  if ((g[0] & 0xfe00) === 0xfc00) return true;
+  // fe80::/10 — link-local
+  if ((g[0] & 0xffc0) === 0xfe80) return true;
+  // ff00::/8 — multicast
+  if ((g[0] & 0xff00) === 0xff00) return true;
+  // 64:ff9b::/96 — well-known NAT64 (could route to private v4)
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
+    const v4 = `${(g[6] >> 8) & 0xff}.${g[6] & 0xff}.${(g[7] >> 8) & 0xff}.${g[7] & 0xff}`;
+    return isPrivateOrLoopbackIpv4(v4);
+  }
+  // 2001:db8::/32 — documentation block, never a real host
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return true;
+  return false;
+}
+
+/**
+ * Validate the URL AND, in one DNS step, pick the safe IP we will pin
+ * for the actual TCP connect. Returns `null` if anything looks unsafe.
+ * Combining validation + resolution removes the previous double-DNS
+ * lookup so there is no second window for rebinding to slip in.
+ */
+async function urlSafeIp(target: URL): Promise<{ address: string; family: 4 | 6 } | null> {
+  if (target.protocol !== "http:" && target.protocol !== "https:") return null;
+  if (!target.hostname) return null;
+  // Block URL-credential injection like https://user:pass@evil.tld
+  if (target.username || target.password) return null;
+
+  const literal = net.isIP(target.hostname);
+  if (literal) {
+    if (isPrivateOrLoopbackIp(target.hostname)) return null;
+    return { address: target.hostname, family: literal as 4 | 6 };
+  }
+  try {
+    const addrs = await dns.lookup(target.hostname, { all: true });
+    if (addrs.length === 0) return null;
+    // ALL resolved addresses must be public — even one private IP in
+    // the round-robin set means the host might be partially internal.
+    if (addrs.some((a) => isPrivateOrLoopbackIp(a.address))) return null;
+    const safe = addrs[0];
+    return { address: safe.address, family: safe.family as 4 | 6 };
+  } catch {
+    return null;
+  }
+}
+
+type SingleHopResult =
+  | { kind: "redirect"; location: string }
+  | { kind: "body"; html: string }
+  | { kind: "abort" };
+
+/**
+ * Issue a single HTTP(S) request with DNS pinned to `safeIp` to defeat
+ * DNS rebinding, with a hard end-to-end timeout (covers headers AND
+ * body), and with a hard body-size cap. Returns either a redirect
+ * location, the HTML body, or an abort signal on any failure.
+ */
+function singleSafeRequest(target: URL, safeIp: { address: string; family: 4 | 6 }): Promise<SingleHopResult> {
+  return new Promise((resolve) => {
+    const isHttps = target.protocol === "https:";
+    const lib = isHttps ? https : http;
+    const port = target.port
+      ? Number(target.port)
+      : (isHttps ? 443 : 80);
+
+    let settled = false;
+    const finish = (r: SingleHopResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
+
+    // End-to-end timer covers headers + body. We resolve as "abort"
+    // and destroy the socket so nothing leaks.
+    const overallTimer = setTimeout(() => {
+      try { req.destroy(new Error("safe-fetch overall timeout")); } catch { /* ignore */ }
+      finish({ kind: "abort" });
+    }, SITE_FETCH_TIMEOUT_MS);
+
+    const req = lib.request({
+      hostname: target.hostname,
+      port,
+      path: (target.pathname || "/") + (target.search || ""),
+      method: "GET",
+      headers: {
+        "Host":            target.host,
+        "User-Agent":      SITE_FETCH_USER_AGENT,
+        "Accept":          "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        "Accept-Language": "ar,en;q=0.7",
+        "Connection":      "close",
+      },
+      // CRITICAL: pin the IP we already vetted. The lookup callback
+      // is invoked at TCP-connect time, so even if the attacker rebinds
+      // the public DNS record between our SSRF check and the connect,
+      // we still hit the safe IP we already approved.
+      lookup: ((_h: string, _opts: any, cb: any) => {
+        cb(null, safeIp.address, safeIp.family);
+      }) as any,
+      // For HTTPS we keep the original hostname for SNI / cert
+      // validation — Node's https.request uses `hostname` for SNI by
+      // default when `servername` is not given.
+      ...(isHttps ? { servername: target.hostname } : {}),
+    }, (res) => {
+      const status = res.statusCode || 0;
+
+      // Redirect — drain quickly and resolve with location so the
+      // caller can re-validate the next hop.
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const loc = res.headers["location"];
+        res.resume(); // discard body
+        clearTimeout(overallTimer);
+        if (typeof loc === "string" && loc.length > 0) {
+          finish({ kind: "redirect", location: loc });
+        } else {
+          finish({ kind: "abort" });
+        }
+        return;
+      }
+
+      if (status < 200 || status >= 300) {
+        res.resume();
+        clearTimeout(overallTimer);
+        finish({ kind: "abort" });
+        return;
+      }
+
+      // Skip obvious binary content types. Missing header → assume HTML.
+      const ct = String(res.headers["content-type"] ?? "").toLowerCase();
+      if (ct && !ct.includes("text/") && !ct.includes("html") && !ct.includes("xml") && !ct.includes("javascript")) {
+        res.resume();
+        clearTimeout(overallTimer);
+        finish({ kind: "abort" });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let total = 0;
+      res.on("data", (chunk: Buffer) => {
+        total += chunk.length;
+        if (total > SITE_FETCH_MAX_BYTES) {
+          // Stop reading and treat what we have as enough — typical
+          // gtag/GTM signals appear in <head>, well within 500 KB.
+          chunks.push(chunk);
+          try { res.destroy(); } catch { /* ignore */ }
+          clearTimeout(overallTimer);
+          finish({ kind: "body", html: Buffer.concat(chunks).toString("utf8") });
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on("end", () => {
+        clearTimeout(overallTimer);
+        finish({ kind: "body", html: Buffer.concat(chunks).toString("utf8") });
+      });
+      res.on("error", () => {
+        clearTimeout(overallTimer);
+        finish({ kind: "abort" });
+      });
+    });
+
+    req.on("error", () => {
+      clearTimeout(overallTimer);
+      finish({ kind: "abort" });
+    });
+    // Belt-and-braces: socket inactivity timeout (in case the server
+    // accepts the TCP connection but stalls).
+    req.setTimeout(SITE_FETCH_TIMEOUT_MS, () => {
+      try { req.destroy(new Error("safe-fetch socket timeout")); } catch { /* ignore */ }
+      clearTimeout(overallTimer);
+      finish({ kind: "abort" });
+    });
+    req.end();
+  });
+}
+
+/**
+ * Fetch a remote URL as HTML text with strict guardrails:
+ *   - SSRF check resolves DNS, picks a public IP, and pins it at
+ *     connect-time via Node's `lookup` callback (defeats rebinding).
+ *   - End-to-end timeout covers BOTH headers and body streaming.
+ *   - Body size capped at SITE_FETCH_MAX_BYTES.
+ *   - Manual redirect handling re-validates each hop.
+ * Returns `null` on any failure so the suggest route can silently
+ * fall back to its other heuristics.
+ */
+async function safeFetchHtml(initialUrl: string): Promise<{ url: string; html: string } | null> {
+  let target: URL;
+  try { target = new URL(initialUrl); } catch { return null; }
+
+  for (let hop = 0; hop <= SITE_FETCH_MAX_REDIRECTS; hop++) {
+    // Single combined check — also returns the IP we will pin for the
+    // connect, so there's no second DNS window for rebinding to slip in.
+    const safeIp = await urlSafeIp(target);
+    if (!safeIp) return null;
+
+    const result = await singleSafeRequest(target, safeIp);
+    if (result.kind === "abort") return null;
+    if (result.kind === "body") return { url: target.toString(), html: result.html };
+
+    // Redirect — re-validate the next hop in the next iteration.
+    try { target = new URL(result.location, target); } catch { return null; }
+  }
+  return null;
+}
+
+/**
+ * Pull common Google Tag/Analytics signals out of an HTML page. The
+ * measurement ID `G-XXXXXXXXXX` is the public ID that ships in the
+ * page's gtag snippet — it is NOT the numeric GA4 Property ID needed
+ * by the Data API, but it gives the AI a strong hint and lets us tell
+ * the admin where to look.
+ */
+function extractGtagSignals(html: string): {
+  measurementIds: string[];
+  gtmIds: string[];
+  uaIds: string[];
+} {
+  const measurementIds = new Set<string>();
+  const gtmIds = new Set<string>();
+  const uaIds = new Set<string>();
+
+  // GA4 measurement ID — appears in:
+  //   googletagmanager.com/gtag/js?id=G-XXXXXXXXXX
+  //   gtag('config', 'G-XXXXXXXXXX')
+  //   <meta name="google-analytics" content="G-XXXXXXXXXX">
+  for (const m of html.matchAll(/\bG-[A-Z0-9]{6,12}\b/g)) {
+    measurementIds.add(m[0].toUpperCase());
+  }
+  // GTM container ID.
+  for (const m of html.matchAll(/\bGTM-[A-Z0-9]{4,10}\b/g)) {
+    gtmIds.add(m[0].toUpperCase());
+  }
+  // Legacy Universal Analytics UA-XXXXXX-N — kept just so we can tell
+  // the user "you're still on UA, you need to upgrade to GA4".
+  for (const m of html.matchAll(/\bUA-\d{4,10}-\d{1,3}\b/g)) {
+    uaIds.add(m[0].toUpperCase());
+  }
+  return {
+    measurementIds: [...measurementIds],
+    gtmIds:         [...gtmIds],
+    uaIds:          [...uaIds],
+  };
+}
+
 // POST /api/admin/seo/connection/suggest — AI helper that extracts a
 // GA4 Property ID and a Search Console site URL from any free-text hint
 // the admin pastes (a GA dashboard URL, a Search Console URL, the company
 // website, an email signature, etc.). Falls back to a deterministic regex
 // pass when AI is not configured so the helper never silently fails.
+//
+// When the hint contains a website URL we additionally fetch the page
+// (SSRF-guarded) and extract its `G-XXXXXXXXXX` measurement ID. The
+// public Measurement ID is not the numeric Property ID needed by the
+// Data API, but it strongly hints which property is in use and lets
+// us point the admin at the right place to look up the Property ID.
 router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Promise<void> => {
   try {
     const hint = String(req.body?.hint ?? "").trim().slice(0, 2000);
@@ -1162,19 +1509,48 @@ router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Pro
     // Search Console: pull a clean origin from any URL in the hint, or
     // recognise an explicit sc-domain:example.com / *.example.com form.
     let searchConsoleSiteUrl: string | null = null;
+    let websiteOrigin: string | null = null; // best fetchable URL we found
     const scDomainMatch = hint.match(/sc-domain:([a-z0-9.-]+\.[a-z]{2,})/i);
     if (scDomainMatch) {
       searchConsoleSiteUrl = `sc-domain:${scDomainMatch[1].toLowerCase()}`;
+      websiteOrigin = `https://${scDomainMatch[1].toLowerCase()}/`;
     } else {
       const urlMatch = hint.match(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(\/[^\s"'<>]*)?/i);
       if (urlMatch) {
         const host = urlMatch[1].toLowerCase().replace(/^www\./, "");
-        searchConsoleSiteUrl = `https://${host}/`;
+        // Skip URLs that are clearly internal Google admin URLs — we
+        // don't want to fetch analytics.google.com just because the
+        // user pasted their dashboard link.
+        if (!/^(analytics|search|tagmanager|console)\.google\.com$/i.test(host)) {
+          searchConsoleSiteUrl = `https://${host}/`;
+          websiteOrigin = `https://${host}/`;
+        }
       } else {
         const bareHost = hint.match(/\b([a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?)\b/i);
         if (bareHost) {
-          searchConsoleSiteUrl = `https://${bareHost[1].toLowerCase().replace(/^www\./, "")}/`;
+          const host = bareHost[1].toLowerCase().replace(/^www\./, "");
+          searchConsoleSiteUrl = `https://${host}/`;
+          websiteOrigin = `https://${host}/`;
         }
+      }
+    }
+
+    // ── Fetch the website and look for gtag/GTM signals ────────────────
+    // This is the core improvement: the AI cannot guess the real
+    // measurement ID, but it's almost always sitting in plain text in
+    // the homepage's <script> tags.
+    let analyticsMeasurementId: string | null = null;
+    let gtmContainerId: string | null = null;
+    let legacyUaId: string | null = null;
+    let fetchedFrom: string | null = null;
+    if (websiteOrigin) {
+      const page = await safeFetchHtml(websiteOrigin);
+      if (page) {
+        fetchedFrom = page.url;
+        const sig = extractGtagSignals(page.html);
+        if (sig.measurementIds.length > 0) analyticsMeasurementId = sig.measurementIds[0];
+        if (sig.gtmIds.length > 0)         gtmContainerId         = sig.gtmIds[0];
+        if (sig.uaIds.length > 0)          legacyUaId             = sig.uaIds[0];
       }
     }
 
@@ -1195,12 +1571,32 @@ router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Pro
       }
 
       const settings = await readAiSettings();
+      // Build a "what we found on the page" section only when we
+      // actually fetched something — keeps the prompt short otherwise.
+      const siteSignals: string[] = [];
+      if (fetchedFrom) {
+        siteSignals.push(`تم جلب الصفحة الرئيسية لموقع المستخدم: ${fetchedFrom}`);
+        if (analyticsMeasurementId) {
+          siteSignals.push(`- وُجد في الصفحة معرّف قياس GA4 (Measurement ID): ${analyticsMeasurementId}`);
+          siteSignals.push(`  ⚠️ هذا ليس Property ID الرقمي. لا تضعه في analyticsPropertyId. استخدمه فقط كدليل على أن الموقع يستعمل GA4، واطلب من المستخدم في notes فتح Google Analytics → Admin → Property Settings لنسخ Property ID الرقمي.`);
+        }
+        if (gtmContainerId) siteSignals.push(`- وُجد Google Tag Manager: ${gtmContainerId}`);
+        if (legacyUaId)     siteSignals.push(`- وُجد معرّف Universal Analytics قديم: ${legacyUaId} (ملاحظة: UA متوقّف منذ 2023، أبلغ المستخدم).`);
+        if (!analyticsMeasurementId && !gtmContainerId && !legacyUaId) {
+          siteSignals.push(`- لم نجد أي شيفرة gtag أو GTM في الصفحة. ربما لم يثبّت المستخدم Google Analytics بعد.`);
+        }
+      } else if (websiteOrigin) {
+        siteSignals.push(`حاولنا جلب صفحة الموقع ${websiteOrigin} لكن الطلب فشل (الموقع قد يكون خلف Cloudflare أو غير متاح).`);
+      }
+
       const prompt = [
         `أنت مساعد إعداد لربط Google Analytics 4 و Google Search Console.`,
         `سيعطيك المستخدم أي نص (رابط لوحة Analytics، رابط Search Console، اسم نطاق، ملاحظات بالعربية…)`,
         `ومهمتك استخراج إعدادين فقط:`,
         `1) analyticsPropertyId — معرّف GA4 الرقمي فقط (بدون G- أو p)، عادةً من 9 إلى 12 رقم.`,
-        `   إن لم تجد رقم Property واضح، أعد null.`,
+        `   هذا الحقل يأتي من Google Analytics → Admin → Property Settings → Property ID.`,
+        `   لا يمكن استنتاجه من شيفرة gtag في صفحة الموقع (G-XXXX هو معرّف قياس مختلف).`,
+        `   إن لم تجد رقم Property واضح في النص، أعد null.`,
         `2) searchConsoleSiteUrl — رابط الموقع كما هو محفوظ في Search Console.`,
         `   • إن كانت الخاصية من نوع URL prefix أعدها بصيغة "https://example.com/" مع شرطة مائلة في النهاية.`,
         `   • إن كانت الخاصية من نوع Domain property أعدها بصيغة "sc-domain:example.com" بدون https.`,
@@ -1210,11 +1606,16 @@ router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Pro
         `اقتراحات أوّلية مبنية على Regex (قد تكون خاطئة، صحّحها أو أكّدها):`,
         `- analyticsPropertyId المقترح: ${analyticsPropertyId ?? "null"}`,
         `- searchConsoleSiteUrl المقترح: ${searchConsoleSiteUrl ?? "null"}`,
+        ...(siteSignals.length ? ["", `إشارات مستخرَجة فعلياً من الموقع:`, ...siteSignals] : []),
         ``,
         `النص الذي قدّمه المستخدم (بين علامتين):`,
         `«${hint}»`,
         ``,
-        `أضف حقل notes بالعربية في 1-2 جملة قصيرة جداً تشرح مصدر الاستخراج، أو تنبّه المستخدم إن كان عليه التأكد يدوياً.`,
+        `إرشادات لحقل notes (مهم جداً):`,
+        `• اجعله بالعربية في 1-3 جمل قصيرة.`,
+        `• إن وجدت Measurement ID في الموقع لكن المستخدم لم يعطِ Property ID، أبلغه أن GA4 مثبَّت لكن عليه أيضاً نسخ Property ID الرقمي من Admin → Property Settings.`,
+        `• إن لم نجد أي شيفرة Analytics في الموقع، نبّه المستخدم بلطف.`,
+        `• إن وجد UA-… فقط، اطلب من المستخدم الترقية إلى GA4.`,
         ``,
         `أعد JSON صالح فقط داخل كتلة \`\`\`json … \`\`\` بهذا الشكل:`,
         `{ "analyticsPropertyId": "123456789" أو null,`,
@@ -1264,9 +1665,45 @@ router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Pro
       notes = "خدمة الذكاء الاصطناعي غير مهيأة على الخادم — تم الاعتماد على الاستخراج التلقائي فقط.";
     }
 
+    // ── Deterministic notes for the site-fetch step ───────────────────
+    // Even when the AI is configured we want to make absolutely sure
+    // the admin sees the site-fetch result in the notes — the AI
+    // sometimes drops these details when it's confident about the
+    // numeric Property ID.
+    const factualLines: string[] = [];
+    if (analyticsMeasurementId) {
+      factualLines.push(
+        `وُجد في صفحة موقعك معرّف قياس GA4 (${analyticsMeasurementId}). هذا ليس Property ID؛ افتح Google Analytics → الإدارة → إعدادات الخاصية وانسخ الرقم الذي يظهر تحت "معرّف الموقع" (9-12 رقم).`
+      );
+    } else if (legacyUaId) {
+      factualLines.push(
+        `موقعك ما زال يستعمل Universal Analytics (${legacyUaId}) المتوقّف منذ يوليو 2023. أنشئ خاصية GA4 جديدة وانسخ Property ID الخاص بها.`
+      );
+    } else if (gtmContainerId && !analyticsMeasurementId) {
+      factualLines.push(
+        `وُجد Google Tag Manager (${gtmContainerId}) في موقعك لكن لم نجد شيفرة GA4 مباشرة. تأكد من وجود وسم GA4 مفعَّل داخل حاوية Tag Manager.`
+      );
+    } else if (fetchedFrom) {
+      factualLines.push(
+        `جلبنا صفحة موقعك (${fetchedFrom}) ولم نجد فيها أي شيفرة Google Analytics. تأكد من تثبيت GA4 على الموقع أولاً.`
+      );
+    } else if (websiteOrigin) {
+      factualLines.push(
+        `تعذّر جلب صفحة موقعك (${websiteOrigin}) — قد يكون خلف Cloudflare أو يحجب البوتات. أدخل Property ID يدوياً من Google Analytics.`
+      );
+    }
+    // Compose final notes: factual first, then whatever the AI added.
+    if (factualLines.length) {
+      notes = [...factualLines, notes].filter(Boolean).join(" ").trim().slice(0, 500);
+    }
+
     res.json({
       analyticsPropertyId,
       searchConsoleSiteUrl,
+      analyticsMeasurementId,
+      gtmContainerId,
+      legacyUaId,
+      fetchedFrom,
       notes,
       source,
     });
