@@ -22,6 +22,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Loader2,
   ScrollText,
   ShieldAlert,
@@ -754,6 +759,10 @@ export default function AuditLog() {
                     const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
                     const totalAvailable =
                       typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
+                    // Computed once so both the copy button and the hover
+                    // preview tooltip (task #144) display the exact same
+                    // permalink — keeps "what you see is what you copy".
+                    const shareLink = buildShareLinkForId(r.id);
                     return (
                       <tr
                         key={r.id}
@@ -843,19 +852,61 @@ export default function AuditLog() {
                             just wants the permalink. The button itself
                             reuses the existing CopyIconButton so the toast,
                             check-mark feedback, and clipboard fallback are
-                            identical to the in-dialog share button. */}
+                            identical to the in-dialog share button.
+                            Hover/focus surfaces a quick preview of the
+                            entry (id / action / module / timestamp / link)
+                            so reviewers can spot-check before pasting
+                            without opening the dialog (task #144). */}
                         <td
                           className="px-3 py-2 w-10"
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
-                          <CopyIconButton
-                            value={buildShareLinkForId(r.id)}
-                            label={tr("copyShareLink")}
-                            tr={tr}
-                            testId={`audit-row-copy-share-link-${r.id}`}
-                            icon={Link2}
-                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              {/* The span is the focus/hover target for
+                                  Radix; the inner button keeps its own
+                                  click-to-copy behavior untouched.
+                                  `inline-flex` keeps the trigger box
+                                  collapsed around the icon button. */}
+                              <span className="inline-flex">
+                                <CopyIconButton
+                                  value={shareLink}
+                                  label={tr("copyShareLink")}
+                                  tr={tr}
+                                  testId={`audit-row-copy-share-link-${r.id}`}
+                                  icon={Link2}
+                                />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="top"
+                              align={isRtl ? "end" : "start"}
+                              className="max-w-xs bg-background text-foreground border shadow-md p-2"
+                              data-testid={`audit-row-share-link-preview-${r.id}`}
+                            >
+                              <div
+                                dir={isRtl ? "rtl" : "ltr"}
+                                className={`space-y-1 text-xs ${isRtl ? "text-right" : "text-left"}`}
+                              >
+                                <div className="font-medium text-foreground/90">
+                                  {tr("sharePreviewTitle")}
+                                </div>
+                                <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+                                  <dt className="text-muted-foreground">{tr("sharePreviewId")}</dt>
+                                  <dd className="font-mono">{r.id}</dd>
+                                  <dt className="text-muted-foreground">{tr("sharePreviewAction")}</dt>
+                                  <dd>{label}</dd>
+                                  <dt className="text-muted-foreground">{tr("sharePreviewModule")}</dt>
+                                  <dd className="font-mono break-all">{r.module}</dd>
+                                  <dt className="text-muted-foreground">{tr("sharePreviewTime")}</dt>
+                                  <dd className="font-mono">{tt.toLocaleString(locale, { hour12: false })}</dd>
+                                  <dt className="text-muted-foreground">{tr("sharePreviewLink")}</dt>
+                                  <dd className="font-mono break-all">{shareLink}</dd>
+                                </dl>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
                         </td>
                       </tr>
                     );
