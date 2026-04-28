@@ -57,17 +57,41 @@ router.get("/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Generate the next default cost-center code in the form CC-#### by counting
+// existing rows for the company. Used only when the user did not type a code
+// — explicit user codes are kept verbatim.
+async function nextDefaultCode(cid: number): Promise<string> {
+  const existing = await db.select({ id: costCentersTable.id })
+    .from(costCentersTable).where(eq(costCentersTable.companyId, cid));
+  // Probe up to 50 times in case of code collisions caused by manually-typed
+  // codes that happen to hit the auto-pattern; bumps the counter each round.
+  for (let i = 1; i <= 50; i++) {
+    const candidate = `CC-${String(existing.length + i).padStart(4, "0")}`;
+    const [dup] = await db.select({ id: costCentersTable.id }).from(costCentersTable)
+      .where(and(eq(costCentersTable.companyId, cid), eq(costCentersTable.code, candidate)));
+    if (!dup) return candidate;
+  }
+  return `CC-${Date.now()}`;
+}
+
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
     const cid = guard(req, res); if (!cid) return;
     const { code, nameAr, nameEn, parentId, level, isPosting, isActive, notes } = req.body;
-    if (!code || !nameAr) {
-      res.status(400).json({ error: "كود مركز التكلفة والاسم مطلوبان" }); return;
+    if (!nameAr || !String(nameAr).trim()) {
+      res.status(400).json({ error: "اسم مركز التكلفة مطلوب" }); return;
     }
+
+    // Auto-generate the code if the user left it blank; explicit codes still
+    // pass through verbatim so semantic naming (e.g. "ADMIN") keeps working.
+    const finalCode = (code && String(code).trim())
+      ? String(code).trim()
+      : await nextDefaultCode(cid);
+
     // Uniqueness check (code per company)
     const [dup] = await db.select().from(costCentersTable)
-      .where(and(eq(costCentersTable.companyId, cid), eq(costCentersTable.code, String(code).trim())));
+      .where(and(eq(costCentersTable.companyId, cid), eq(costCentersTable.code, finalCode)));
     if (dup) { res.status(400).json({ error: "كود مركز التكلفة مستخدم بالفعل" }); return; }
 
     const pid = parentId ? Number(parentId) : null;
@@ -76,7 +100,7 @@ router.post("/", async (req, res) => {
 
     const [row] = await db.insert(costCentersTable).values({
       companyId: cid,
-      code: String(code).trim(),
+      code: finalCode,
       nameAr, nameEn: nameEn || null,
       parentId: pid,
       level: level ?? (pid ? 2 : 1),

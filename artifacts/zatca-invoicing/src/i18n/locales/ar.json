@@ -2158,7 +2158,8 @@
     "addChild": "إضافة فرعي",
     "edit": "تعديل",
     "childOf": "تابع لـ:",
-    "placeholderCode": "مثال: CC001",
+    "placeholderCode": "تلقائي عند الترك فارغاً (CC-0001)",
+    "codeAutoHint": "يُولَّد تلقائياً عند الترك فارغاً",
     "filename": "cost-centers",
     "export_title": "مراكز التكلفة"
   },

@@ -2156,7 +2156,8 @@
     "addChild": "Add child",
     "edit": "Edit",
     "childOf": "Child of:",
-    "placeholderCode": "Example: CC001",
+    "placeholderCode": "Auto when left blank (CC-0001)",
+    "codeAutoHint": "Auto-generated when left blank",
     "filename": "cost-centers",
     "export_title": "Cost Centers"
   },

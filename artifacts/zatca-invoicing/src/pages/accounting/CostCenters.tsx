@@ -240,11 +240,14 @@ export default function CostCenters() {
           onClose={reset}
           onSave={() => saveMut.mutate(form)}
           saving={saveMut.isPending}
-          saveDisabled={!form.code.trim() || !form.nameAr.trim()}
+          saveDisabled={!form.nameAr.trim()}
           saveLabel={t("costCenters.saveAction")}
         >
           <FormGrid>
-            <Field label={t("costCenters.code")} required>
+            <Field
+              label={t("costCenters.code")}
+              hint={<span className="text-muted-foreground text-xs">{t("costCenters.codeAutoHint")}</span>}
+            >
               <Input
                 placeholder={t("costCenters.placeholderCode")}
                 value={form.code}
