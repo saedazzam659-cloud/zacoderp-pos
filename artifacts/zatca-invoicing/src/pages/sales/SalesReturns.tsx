@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { useFormatters } from "@/lib/format";
+import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -79,9 +80,11 @@ export default function SalesReturns() {
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
+  // Sticky toggle — see SalesDocumentForm for behavior contract.
+  const stickyPriceIncl = useStickyPriceIncludesVat();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm]         = useState<any>(EMPTY);
+  const [form, setForm]         = useState<any>({ ...EMPTY, priceIncludesVat: stickyPriceIncl.initial });
   const [lines, setLines]       = useState<ReturnLine[]>([newLine()]);
   const [printData, setPrintData] = useState<any>(null);
 
@@ -319,7 +322,7 @@ export default function SalesReturns() {
   }, [form.salesAccountId, form.cogsAccountId, form.inventoryAccountId, form.taxAccountId, form.discountAccountId]);
 
   function reset() {
-    setForm({ ...EMPTY, ...loadAcctDefaults() });
+    setForm({ ...EMPTY, ...loadAcctDefaults(), priceIncludesVat: stickyPriceIncl.read() });
     setLines([newLine()]);
     setShowForm(false);
     setEditingId(null);
@@ -890,7 +893,10 @@ export default function SalesReturns() {
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
                   checked={priceIncludesVat}
-                  onChange={e => setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }))}
+                  onChange={e => {
+                    setForm((p: any) => ({ ...p, priceIncludesVat: e.target.checked }));
+                    stickyPriceIncl.persist(e.target.checked);
+                  }}
                 />
                 <div className="space-y-0.5">
                   <p className="text-xs font-semibold">{t("salesReturns.priceInclusiveTitle")}</p>

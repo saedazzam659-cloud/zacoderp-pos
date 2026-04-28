@@ -24,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useToast } from "@/hooks/use-toast";
+import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,7 +123,9 @@ export default function PurchaseOrderForm() {
   const [exchangeRate, setExchangeRate] = useState("1");
   const [notes,        setNotes]        = useState("");
   const [docDiscount,  setDocDiscount]  = useState("0");
-  const [priceIncludesVat, setPriceIncludesVat] = useState(false);
+  // Sticky toggle — see SalesDocumentForm for behavior contract.
+  const stickyPriceIncl = useStickyPriceIncludesVat();
+  const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
   const [orderStatus,  setOrderStatus]  = useState<string>("draft");
   const [convertedInvoiceId, setConvertedInvoiceId] = useState<number | null>(null);
   const [lines,        setLines]        = useState<OrderLine[]>([newLine()]);
@@ -757,7 +760,10 @@ export default function PurchaseOrderForm() {
                     type="checkbox"
                     className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
                     checked={priceIncludesVat}
-                    onChange={e => setPriceIncludesVat(e.target.checked)}
+                    onChange={e => {
+                      setPriceIncludesVat(e.target.checked);
+                      stickyPriceIncl.persist(e.target.checked);
+                    }}
                   />
                   <div className="space-y-0.5">
                     <p className="text-xs font-semibold">{tr("priceIncludesVat")}</p>

@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters } from "@/lib/format";
+import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber, type SequenceTxType } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
@@ -154,7 +155,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const [exchangeRate,setExchangeRate]  = useState("1");
   const [notes,     setNotes]           = useState("");
   const [salesRepId, setSalesRepId]     = useState("");
-  const [priceIncludesVat, setPriceIncludesVat] = useState(false);
+  // The "السعر شامل الضريبة" toggle is sticky: it remembers the user's last
+  // choice in localStorage so a new invoice opens with the same setting.
+  // Loading an existing invoice / quotation prefill / "based on" path will
+  // override the value but is NOT persisted as the new default — only the
+  // user manually clicking the checkbox updates the persisted preference.
+  const stickyPriceIncl = useStickyPriceIncludesVat();
+  const [priceIncludesVat, setPriceIncludesVat] = useState(stickyPriceIncl.initial);
   const [docDiscount, setDocDiscount]   = useState("0");
   // Document-level promotion that the engine applied (drives docDiscount when
   // non-null). Cleared automatically when the cart no longer qualifies. Saved
@@ -1116,7 +1123,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                     type="checkbox"
                     className="mt-0.5 h-4 w-4 accent-primary cursor-pointer"
                     checked={priceIncludesVat}
-                    onChange={e => setPriceIncludesVat(e.target.checked)}
+                    onChange={e => {
+                      setPriceIncludesVat(e.target.checked);
+                      stickyPriceIncl.persist(e.target.checked);
+                    }}
                   />
                   <div className="space-y-0.5">
                     <p className="text-xs font-semibold">{t("salesDocForm.priceInclusiveTitle")}</p>
