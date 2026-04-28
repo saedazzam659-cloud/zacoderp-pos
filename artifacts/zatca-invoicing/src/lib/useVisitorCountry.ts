@@ -62,6 +62,33 @@ export function useVisitorCountry(): [string, (next: string) => void, boolean] {
   const [country, setCountryState] = useState<string>(initial.code);
   const [explicit, setExplicit]    = useState<boolean>(initial.explicit);
 
+  // First-paint geo bootstrap: when we don't have any explicit signal
+  // (no cookie, no ?country query), ask the API what country it
+  // resolved from CF-IPCountry. This is the bridge that surfaces the
+  // server-side detection into the SPA so foreign visitors don't see
+  // Saudi-default copy until they manually pick a country. The server
+  // also writes the visitor_country cookie as a side effect of this
+  // request (see middleware), so subsequent renders short-circuit
+  // through readCookie() on the next mount.
+  useEffect(() => {
+    if (explicit) return;
+    let cancelled = false;
+    fetch(`${import.meta.env.BASE_URL}api/visitor-country`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (cancelled || !j) return;
+        const next = String(j.country || "").toUpperCase();
+        if (j.resolved && VALID.test(next) && next !== country) {
+          setCountryState(next);
+          setExplicit(true);
+        }
+      })
+      .catch(() => { /* ignore — we already have a sensible default */ });
+    return () => { cancelled = true; };
+    // We deliberately run this exactly once per mount when not explicit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keep multiple hook instances on the same page in sync when one of
   // them flips the country (e.g. Login + Home both rendered in a layout).
   useEffect(() => {

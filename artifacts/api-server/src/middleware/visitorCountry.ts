@@ -79,6 +79,17 @@ export function visitorCountryMiddleware(
   const fromHeader = normalize(Array.isArray(headerVal) ? headerVal[0] : headerVal);
   if (fromHeader) {
     req.visitorCountry = fromHeader;
+    // Persist the geo-IP detection into the visitor_country cookie so
+    // the SPA can read it client-side on subsequent renders without
+    // having to round-trip through the API every time. Without this,
+    // first-time visitors from outside SA would see Saudi-default copy
+    // until they manually picked a country from the selector.
+    res.cookie(COOKIE_NAME, fromHeader, {
+      maxAge:   COOKIE_MAX_AGE_MS,
+      httpOnly: false,
+      sameSite: "lax",
+      path:     "/",
+    });
     next();
     return;
   }
@@ -86,4 +97,17 @@ export function visitorCountryMiddleware(
   // 4) catch-all
   req.visitorCountry = "GLOBAL";
   next();
+}
+
+// Tiny endpoint handler the SPA can poll on mount to learn the
+// server-resolved country when the cookie is missing. Returns the
+// already-populated `req.visitorCountry` (set by the middleware above)
+// alongside whether the resolution came from a real signal vs the
+// "GLOBAL" fallback so the SPA can decide whether to trust it.
+export function visitorCountryHandler(req: Request, res: Response) {
+  const country = req.visitorCountry || "GLOBAL";
+  res.json({
+    country,
+    resolved: country !== "GLOBAL",
+  });
 }

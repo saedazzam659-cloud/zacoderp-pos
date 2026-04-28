@@ -6,7 +6,7 @@ import { eq, asc, desc } from "drizzle-orm";
 import { db, planConfigsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import { visitorCountryMiddleware } from "./middleware/visitorCountry.js";
+import { visitorCountryMiddleware, visitorCountryHandler } from "./middleware/visitorCountry.js";
 
 // ─── Marketing/SEO discovery surface ────────────────────────────────────
 // Builds the dynamic sitemap.xml + robots.txt so Google can discover the
@@ -184,6 +184,12 @@ app.get("/sitemap.xml", sitemapHandler);
 app.get("/robots.txt", robotsHandler);
 app.get("/api/sitemap.xml", sitemapHandler);
 app.get("/api/robots.txt", robotsHandler);
+
+// Public endpoint the SPA hits on mount (when it has no cookie/query
+// override) to learn the geo-IP-resolved country. Returning {country,
+// resolved} lets the SPA decide whether to trust the value or stick
+// with its UI default.
+app.get("/api/visitor-country", visitorCountryHandler);
 
 app.use("/api", router);
 
