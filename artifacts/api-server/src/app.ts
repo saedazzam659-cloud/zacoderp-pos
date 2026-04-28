@@ -15,9 +15,13 @@ import { logger } from "./lib/logger";
 async function buildSitemapXml(origin: string): Promise<string> {
   const lastmodNow = new Date().toISOString();
   const urls: Array<{ loc: string; lastmod: string; changefreq: string; priority: string }> = [
-    { loc: `${origin}/pricing`, lastmod: lastmodNow, changefreq: "daily",  priority: "1.0" },
-    { loc: `${origin}/register`, lastmod: lastmodNow, changefreq: "weekly", priority: "0.9" },
-    { loc: `${origin}/login`,    lastmod: lastmodNow, changefreq: "monthly", priority: "0.5" },
+    // Homepage gets priority 1.0 — it's the canonical entry for the
+    // primary keyword "نظام محاسبة سعودي".
+    { loc: `${origin}/`,         lastmod: lastmodNow, changefreq: "daily",  priority: "1.0" },
+    { loc: `${origin}/pricing`,  lastmod: lastmodNow, changefreq: "daily",  priority: "0.9" },
+    { loc: `${origin}/pos-system`, lastmod: lastmodNow, changefreq: "weekly", priority: "0.9" },
+    { loc: `${origin}/register`, lastmod: lastmodNow, changefreq: "weekly", priority: "0.7" },
+    { loc: `${origin}/login`,    lastmod: lastmodNow, changefreq: "monthly", priority: "0.3" },
   ];
   // Add per-plan SEO landing slugs and per-plan deep links (the /pricing
   // page accepts ?plan=KEY so each plan gets its own canonical URL).
@@ -84,11 +88,26 @@ async function sitemapHandler(req: express.Request, res: express.Response): Prom
 
 function robotsHandler(req: express.Request, res: express.Response): void {
   const origin = originFromReq(req);
+  // Explicit Allow rules for the public marketing surface ensure no
+  // crawler interprets a parent Disallow as covering them. Disallow
+  // covers private app routes, the API, and the internal admin surface
+  // so crawlers don't waste crawl budget on auth-walled pages.
   const body = [
     "User-agent: *",
-    "Allow: /",
-    "Disallow: /admin/",
+    "Allow: /$",
+    "Allow: /pricing",
+    "Allow: /pos-system",
+    "Allow: /blog/",
+    "Allow: /register",
+    "Allow: /login",
     "Disallow: /api/",
+    "Disallow: /admin/",
+    "Disallow: /accounting/",
+    "Disallow: /settings/",
+    "Disallow: /pos-app/",
+    "Disallow: /super/",
+    "Disallow: /pending-approval",
+    "Disallow: /recover-superadmin",
     "",
     `Sitemap: ${origin}/sitemap.xml`,
     "",

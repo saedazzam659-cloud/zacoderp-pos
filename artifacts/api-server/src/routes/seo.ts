@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, ne } from "drizzle-orm";
 import { db, seoGeneratedArticlesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { buildSeoPayload } from "./admin-seo.js";
+import { logger } from "../lib/logger.js";
 
 // ─── Company-facing SEO endpoints ────────────────────────────────────────
 // These are the per-tenant counterparts of /api/admin/seo/*. The superadmin
@@ -70,6 +71,54 @@ router.get("/public/articles/:slug", async (req, res) => {
     res.json(rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحميل المقالة" });
+  }
+});
+
+// Returns up to 3 OTHER published articles, used by the /blog/:slug page
+// to render an "اقرأ أيضاً" section. Internal links between articles and
+// product pages were the explicit SEO AI low-impact recommendation —
+// they boost crawl-depth and per-page session length.
+router.get("/public/related/:slug", async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").trim();
+    if (!slug) { res.status(400).json({ error: "slug مفقود" }); return; }
+    const rows = await db.select({
+      id:              seoGeneratedArticlesTable.id,
+      title:           seoGeneratedArticlesTable.title,
+      slug:            seoGeneratedArticlesTable.slug,
+      metaDescription: seoGeneratedArticlesTable.metaDescription,
+      updatedAt:       seoGeneratedArticlesTable.updatedAt,
+    })
+      .from(seoGeneratedArticlesTable)
+      .where(and(
+        eq(seoGeneratedArticlesTable.status, "published"),
+        ne(seoGeneratedArticlesTable.slug, slug),
+      ))
+      .orderBy(desc(seoGeneratedArticlesTable.updatedAt))
+      .limit(3);
+    res.json(rows);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر تحميل المقالات ذات الصلة" });
+  }
+});
+
+// Lightweight 404 logger: the SPA's NotFound page POSTs here so admins
+// can audit broken inbound links weekly via server logs (no DB table —
+// pino logs are already centralised). We never block the user on this
+// call, and we don't echo back the path to avoid amplifying probe noise.
+router.post("/log-404", (req, res) => {
+  try {
+    const path     = String(req.body?.path || "").slice(0, 512);
+    const referrer = String(req.body?.referrer || "").slice(0, 512);
+    const ua       = String(req.headers["user-agent"] || "").slice(0, 256);
+    if (path) {
+      logger.warn({ event: "public_404", path, referrer, ua, ip: req.ip }, "public_404");
+    }
+    res.json({ ok: true });
+  } catch {
+    // The logger should never throw, but in case it does we still ack so
+    // the SPA doesn't surface a broken-tracking error to the user.
+    res.json({ ok: true });
   }
 });
 

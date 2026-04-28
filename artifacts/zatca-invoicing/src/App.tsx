@@ -46,6 +46,7 @@ import Register from "@/pages/Register";
 import Pricing from "@/pages/Pricing";
 import BlogArticle from "@/pages/BlogArticle";
 import Home from "@/pages/Home";
+import PosLanding from "@/pages/PosLanding";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
@@ -228,7 +229,11 @@ function LoadingScreen() {
 // "/" is also public for unauthenticated visitors — they see the new Home
 // landing page (targeting "نظام محاسبة سعودي"). Authenticated users still
 // get their dashboard at "/" via the route table below.
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog", "/"];
+// "/pos-system" is the public POS marketing landing (with embedded video
+// + FAQ), added per the SEO AI medium-impact recommendation. Note we use
+// "/pos-system" rather than "/pos" because "/pos" is owned by the
+// standalone POS artifact at the path-router level.
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog", "/pos-system", "/"];
 
 function AppRoutes() {
   const { isAuthenticated, loading, user } = useAuth();
@@ -252,25 +257,38 @@ function AppRoutes() {
     return <Redirect to="/" />;
   }
 
-  // Redirect unauthenticated users to login
-  if (!isAuthenticated && !isPublic) {
-    return <Redirect to="/login" />;
-  }
-
-  // Guest landing on "/" — render the public Home page directly (no need
-  // to fall through to the dashboard route table).
-  if (!isAuthenticated && location === "/") {
-    return <Home />;
+  // Unauthenticated visitors: serve guest landings directly, render the
+  // public Switch for known public auth/marketing routes, and serve the
+  // custom 404 (NOT a /login redirect) for any other unknown path. This
+  // is what lets Google index 404 responses with proper noindex headers
+  // and lets crawlers reach the marketing pages without auth.
+  if (!isAuthenticated) {
+    if (location === "/") return <Home />;
+    if (location === "/pos-system") return <PosLanding />;
+    const knownPublicRoute =
+      location === "/login" ||
+      location === "/register" ||
+      location === "/pricing" ||
+      location === "/pending-approval" ||
+      location === "/recover-superadmin" ||
+      location.startsWith("/recover-superadmin/") ||
+      location.startsWith("/blog/");
+    if (!knownPublicRoute) {
+      return <NotFound />;
+    }
   }
 
   const isSuperAdmin = user?.role === "superadmin";
 
   return (
     <Switch>
-      {/* Public routes */}
+      {/* Public routes — also reachable by authenticated users so the
+          public marketing pages (and the in-app links to them) keep
+          working after login. */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/pricing" component={Pricing} />
+      <Route path="/pos-system" component={PosLanding} />
       <Route path="/blog/:slug" component={BlogArticle} />
       <Route path="/pending-approval" component={PendingApproval} />
       <Route path="/recover-superadmin" component={RecoverSuperAdmin} />

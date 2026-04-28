@@ -1,12 +1,19 @@
 import { useEffect, useMemo } from "react";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronLeft, Calendar, Tag, FileText, ArrowLeft } from "lucide-react";
+import { ChevronLeft, Calendar, Tag, FileText, ArrowLeft, Package, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+type RelatedArticle = {
+  id: number;
+  title: string;
+  slug: string;
+  metaDescription: string;
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public /blog/:slug page — renders a single published SEO article so the
@@ -50,6 +57,22 @@ export default function BlogArticle() {
       return r.json();
     },
     retry: false,
+  });
+
+  // Fetch up to 3 OTHER published articles to render at the bottom of
+  // every article. Networking errors degrade silently to an empty list
+  // so the article body still renders.
+  const { data: related = [] } = useQuery<RelatedArticle[]>({
+    queryKey: ["public-related", slug],
+    enabled: !!slug && !!data,
+    queryFn: async () => {
+      try {
+        const r = await fetch(`${BASE}/api/seo/public/related/${encodeURIComponent(slug)}`);
+        if (!r.ok) return [];
+        return await r.json();
+      } catch { return []; }
+    },
+    staleTime: 5 * 60 * 1000,
   });
 
   // JSON-LD Article schema. React 19 + react-helmet-async@3 doesn't auto-
@@ -219,8 +242,69 @@ export default function BlogArticle() {
           </ReactMarkdown>
         </div>
 
+        {/* Internal-link strip → POS landing + Pricing. Lifts revenue-page
+            rank and dwell time per the SEO AI low-impact recommendation.
+            Rendered as real <a href> via wouter Link so crawlers can follow
+            the internal graph and pass link equity. */}
+        <aside className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="blog-product-links">
+          <Link
+            href="/pos-system"
+            className="text-right rounded-xl border bg-white p-4 hover:border-primary/40 hover:shadow-md transition-all flex items-center gap-3 no-underline text-foreground"
+            data-testid="blog-product-link-pos"
+          >
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
+              <Package className="h-5 w-5" />
+            </span>
+            <span className="flex-1">
+              <span className="block font-semibold text-sm">نظام نقاط البيع المعتمد</span>
+              <span className="block text-xs text-muted-foreground">شاهد الفيديو واطّلع على الميزات.</span>
+            </span>
+            <ArrowLeft className="h-4 w-4 text-muted-foreground" />
+          </Link>
+          <Link
+            href="/pricing"
+            className="text-right rounded-xl border bg-white p-4 hover:border-primary/40 hover:shadow-md transition-all flex items-center gap-3 no-underline text-foreground"
+            data-testid="blog-product-link-pricing"
+          >
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
+              <CreditCard className="h-5 w-5" />
+            </span>
+            <span className="flex-1">
+              <span className="block font-semibold text-sm">الباقات والأسعار</span>
+              <span className="block text-xs text-muted-foreground">قارن الخطط واختر المناسب لنشاطك.</span>
+            </span>
+            <ArrowLeft className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        </aside>
+
+        {/* "اقرأ أيضاً" — real <a href> internal links to other articles
+            so Google's crawl graph picks them up. */}
+        {related.length > 0 && (
+          <section className="mt-10" data-testid="blog-related-section">
+            <h2 className="text-xl font-bold mb-4 inline-flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" /> اقرأ أيضاً
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {related.map(r => (
+                <Link
+                  key={r.id}
+                  href={`/blog/${r.slug}`}
+                  className="text-right rounded-xl border bg-white p-4 hover:border-primary/40 hover:shadow-md transition-all block no-underline text-foreground"
+                  data-testid={`blog-related-${r.id}`}
+                >
+                  <div className="font-semibold text-sm mb-1.5 line-clamp-2 leading-snug">{r.title}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">{r.metaDescription}</div>
+                  <div className="mt-2 text-xs text-primary font-semibold inline-flex items-center gap-1">
+                    اقرأ المقالة <ArrowLeft className="h-3 w-3" />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* CTA card at the end of every article — turns readers into trial users */}
-        <div className="mt-14 rounded-2xl border-2 border-primary/30 bg-primary/5 p-6 text-center">
+        <div className="mt-12 rounded-2xl border-2 border-primary/30 bg-primary/5 p-6 text-center">
           <h2 className="text-xl font-bold mb-2">جاهز للبدء بنظامك المعتمد من ZATCA؟</h2>
           <p className="text-muted-foreground text-sm mb-5">
             استكشف الباقات الشفافة واختر ما يناسب نشاطك — تجربة فورية بدون بطاقة دفع.
