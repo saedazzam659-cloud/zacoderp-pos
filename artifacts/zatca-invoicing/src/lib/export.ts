@@ -71,6 +71,11 @@ export function exportToPDF(
   // Optional grand-totals row rendered as a bold <tfoot> tr beneath the
   // table body. Same shape as data rows (keys map to column.key).
   totalsRow?: Record<string, unknown> | null,
+  // Optional summary footer rendered as a row of label/value cards
+  // beneath the table — used by reports like Customer Statement to
+  // surface "previous balance / movement / closing balance" classic
+  // Arabic accounting summaries that don't fit a single table row.
+  summaryFooter?: Array<{ label: string; value: string; tone?: "default" | "debit" | "credit" | "primary" }> | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
@@ -177,6 +182,41 @@ export function exportToPDF(
       padding-top: 8px;
     }
     .empty { text-align: center; padding: 30px; color: #94a3b8; font-size: 11pt; }
+    .summary-footer {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: stretch;
+    }
+    .summary-card {
+      flex: 1 1 0;
+      min-width: 140px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 10px 14px;
+      text-align: center;
+      background: #f8fafc;
+    }
+    .summary-card .label {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+    .summary-card .value {
+      font-size: 13pt;
+      font-weight: 700;
+      color: #0f172a;
+      direction: ltr;
+      unicode-bidi: embed;
+    }
+    .summary-card.debit   { background: #eff6ff; border-color: #bfdbfe; }
+    .summary-card.debit   .value { color: #1d4ed8; }
+    .summary-card.credit  { background: #ecfdf5; border-color: #a7f3d0; }
+    .summary-card.credit  .value { color: #047857; }
+    .summary-card.primary { background: #f0fdf4; border-color: #86efac; }
+    .summary-card.primary .value { color: #14532d; }
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -201,6 +241,11 @@ export function exportToPDF(
       </tbody>
       ${tfootRow ? `<tfoot>${tfootRow}</tfoot>` : ""}
     </table>
+    ${summaryFooter && summaryFooter.length > 0
+      ? `<div class="summary-footer">${summaryFooter
+          .map(c => `<div class="summary-card ${c.tone ?? "default"}"><div class="label">${escape(c.label)}</div><div class="value">${escape(c.value)}</div></div>`)
+          .join("")}</div>`
+      : ""}
     <div class="footer">
       نظام الفاتورة الإلكترونية السعودية &nbsp;|&nbsp; ${escape(filename)} &nbsp;|&nbsp; ${today}
     </div>

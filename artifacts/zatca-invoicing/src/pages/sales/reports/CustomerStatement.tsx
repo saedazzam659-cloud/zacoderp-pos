@@ -98,6 +98,35 @@ export default function CustomerStatement() {
 
   const customerLabel = customer ? pickName(customer.nameAr, customer.nameEn) : "";
 
+  // ─── Grand-totals row (printed at the bottom of the table tfoot)
+  // Mirrors the on-screen tfoot so the printed/exported file shows
+  // the standard "الإجمالي" line right under the last entry.
+  const exportTotalsRow = (applied.customerId && !isLoading && augmented.length > 0)
+    ? {
+        date:        "",
+        type:        "",
+        docNumber:   "",
+        description: tr("totalLabel"),
+        debit:       fmt(totals.debit),
+        credit:      fmt(totals.credit),
+        balance:     fmt(closing),
+      }
+    : null;
+
+  // ─── Summary footer cards under the table for the printed view.
+  // Classic Arabic accounting footer: previous balance | movement
+  // (debit/credit) | closing balance — same numbers as the on-screen
+  // KPI cards but rendered inline with the table so they sit on the
+  // same printed page as the data they summarize.
+  const exportSummaryFooter = (applied.customerId && !isLoading)
+    ? [
+        { label: tr("opening"),     value: fmt(data?.opening ?? 0), tone: "default" as const },
+        { label: tr("totalDebit"),  value: fmt(totals.debit),       tone: "debit"   as const },
+        { label: tr("totalCredit"), value: fmt(totals.credit),      tone: "credit"  as const },
+        { label: tr("closing"),     value: fmt(closing),            tone: "primary" as const },
+      ]
+    : null;
+
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -111,6 +140,8 @@ export default function CustomerStatement() {
           filename={`${tr("exportFilename")}-${customerLabel || "customer"}-${applied.from}-${applied.to}`}
           title={tr("exportTitle")}
           subtitle={customer ? `${customerLabel}  |  ${applied.from} → ${applied.to}` : tr("exportSubtitlePick")}
+          totalsRow={exportTotalsRow}
+          summaryFooter={exportSummaryFooter}
         />
       </div>
 
@@ -225,6 +256,33 @@ export default function CustomerStatement() {
               )}
             </table>
           </div>
+
+          {/* Account summary footer — classic Arabic accounting bar:
+              previous balance | debit movement | credit movement | closing.
+              Mirrors what gets printed at the bottom of the PDF/Print view
+              so the user sees the same recap on screen and on paper. */}
+          {!isLoading && (
+            <div className="border-t bg-gradient-to-r from-slate-50 to-slate-100/60 px-4 py-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                <div className="rounded-lg border bg-white px-3 py-2.5 text-center">
+                  <div className="text-[10px] text-muted-foreground mb-1 font-medium">{tr("opening")}</div>
+                  <div className="text-base font-bold tabular-nums text-slate-800" dir="ltr">{fmt(data?.opening ?? 0)}</div>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-center">
+                  <div className="text-[10px] text-blue-700 mb-1 font-medium">{tr("totalDebit")}</div>
+                  <div className="text-base font-bold tabular-nums text-blue-700" dir="ltr">{fmt(totals.debit)}</div>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-center">
+                  <div className="text-[10px] text-emerald-700 mb-1 font-medium">{tr("totalCredit")}</div>
+                  <div className="text-base font-bold tabular-nums text-emerald-700" dir="ltr">{fmt(totals.credit)}</div>
+                </div>
+                <div className="rounded-lg border border-green-300 bg-green-50 px-3 py-2.5 text-center">
+                  <div className="text-[10px] text-green-800 mb-1 font-medium">{tr("closing")}</div>
+                  <div className="text-base font-bold tabular-nums text-green-800" dir="ltr">{fmt(closing)}</div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border bg-card p-12 text-center text-muted-foreground">

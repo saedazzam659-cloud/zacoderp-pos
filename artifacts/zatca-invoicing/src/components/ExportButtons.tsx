@@ -21,10 +21,14 @@ interface ExportButtonsProps {
   // The first cell typically carries an "الإجمالي" label and the rest
   // hold pre-formatted currency / count values.
   totalsRow?: Record<string, unknown> | null;
+  // Optional summary footer (PDF/print only) — used by reports such as
+  // Customer Statement to render the classic "previous balance /
+  // movement / closing balance" cards beneath the table.
+  summaryFooter?: Array<{ label: string; value: string; tone?: "default" | "debit" | "credit" | "primary" }> | null;
 }
 
 export default function ExportButtons({
-  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow,
+  rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
 
@@ -32,13 +36,16 @@ export default function ExportButtons({
     setBusy(true);
     try {
       if (type === "excel") {
-        exportToExcel(rows, columns, filename, "Sheet1", totalsRow);
+        // Excel can't render the summary cards — instead append the
+        // same numbers as extra rows so they're not lost from the file.
+        const extra = (summaryFooter ?? []).map(c => ({ [columns[0]?.key ?? "label"]: c.label, [columns[columns.length - 1]?.key ?? "value"]: c.value }));
+        exportToExcel([...rows, ...extra], columns, filename, "Sheet1", totalsRow);
       } else if (type === "pdf") {
         // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
-        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow);
+        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow);
+        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter);
       }
     } finally {
       setBusy(false);
