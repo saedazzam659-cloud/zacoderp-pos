@@ -267,11 +267,15 @@ export default function AuditLog() {
   //     entry via `?entry=N`)
   //   • refetching (the rows array reference changes but IDs persist)
   //
-  // Beyond bare IDs we also stash a small per-row summary (`createdAt`
-  // and `action`) at selection time so the Markdown copy variant
-  // (task #145) can render a meaningful link label —
-  // `Audit #123 — view at 2026-04-28 10:15:42` — without needing to
-  // re-fetch rows that have since paged out of view. Plain-text copy
+  // Beyond bare IDs we also stash a small per-row summary (`createdAt`,
+  // `action`, and the audited `entityType` / `entityId`) at selection
+  // time so the Markdown copy variant (task #145) can render a
+  // meaningful link label —
+  // `Audit #123 — view invoice #45 at 2026-04-28 10:15:42` — without
+  // needing to re-fetch rows that have since paged out of view. The
+  // entity reference (task #148) is what tells a reviewer scanning a
+  // pasted list which record each row is about (invoice, customer,
+  // payment, etc.) without clicking into every link. Plain-text copy
   // ignores the summary entirely, so an entry whose summary somehow
   // went missing still copies as a working link.
   //
@@ -280,7 +284,12 @@ export default function AuditLog() {
   // table UIs); clearing the entire selection is offered explicitly via
   // the toolbar so a reviewer never gets stuck with stale picks from
   // pages they've moved away from.
-  type SelectedRowMeta = { createdAt: string; action: string };
+  type SelectedRowMeta = {
+    createdAt: string;
+    action: string;
+    entityType: string | null;
+    entityId: string | null;
+  };
   const [selectedRows, setSelectedRows] = useState<Map<number, SelectedRowMeta>>(new Map());
   const selectedCount = selectedRows.size;
 
@@ -288,7 +297,12 @@ export default function AuditLog() {
     setSelectedRows(prev => {
       const next = new Map(prev);
       if (checked) {
-        next.set(row.id, { createdAt: row.createdAt, action: row.action });
+        next.set(row.id, {
+          createdAt:  row.createdAt,
+          action:     row.action,
+          entityType: row.entityType,
+          entityId:   row.entityId,
+        });
       } else {
         next.delete(row.id);
       }
@@ -323,7 +337,14 @@ export default function AuditLog() {
       setSelectedRows(prev => {
         const next = new Map(prev);
         if (shouldSelect) {
-          for (const r of rows) next.set(r.id, { createdAt: r.createdAt, action: r.action });
+          for (const r of rows) {
+            next.set(r.id, {
+              createdAt:  r.createdAt,
+              action:     r.action,
+              entityType: r.entityType,
+              entityId:   r.entityId,
+            });
+          }
         } else {
           for (const r of rows) next.delete(r.id);
         }
@@ -430,18 +451,45 @@ export default function AuditLog() {
         if (!url) return null;
         if (format === "plain") return url;
         const meta = selectedRows.get(id);
-        // Build a "Audit #N — action at timestamp" label so the link
-        // is meaningful before being clicked. Falls back to just
-        // "Audit #N" if we somehow lost the per-row summary (e.g. the
-        // selection was hydrated from a future external source); the
-        // URL itself is always present so the link still resolves.
-        const labelText = meta
-          ? tr("copyMarkdownLinkLabel", {
+        // Build an "Audit #N — action [entity] at timestamp" label so
+        // the link is meaningful before being clicked. When the row has
+        // an `entityType` (and optionally `entityId`) we splice in a
+        // friendly reference such as "invoice #45" / "فاتورة #45" so a
+        // reviewer scanning a pasted list can tell at a glance which
+        // record each row is about (task #148). Falls back to the
+        // entity-less label when we don't have an entityType, and to
+        // just "Audit #N" if we somehow lost the per-row summary
+        // entirely (e.g. the selection was hydrated from a future
+        // external source); the URL itself is always present so the
+        // link still resolves regardless of label fidelity.
+        let labelText: string;
+        if (!meta) {
+          labelText = tr("copyMarkdownLinkLabelMinimal", { id });
+        } else {
+          const timestamp = new Date(meta.createdAt).toLocaleString(locale, { hour12: false });
+          const action    = trAction(meta.action);
+          if (meta.entityType) {
+            // Resolve the raw enum to a translated friendly label
+            // (`entityTypes.invoice` → "invoice" / "فاتورة"), falling
+            // back to the raw machine value when no localisation is
+            // registered yet — keeps the label forward-compatible with
+            // future entity types without silently dropping the info.
+            const entityLabel = tr(`entityTypes.${meta.entityType}`, {
+              defaultValue: meta.entityType,
+            });
+            const entity = meta.entityId
+              ? `${entityLabel} #${meta.entityId}`
+              : entityLabel;
+            labelText = tr("copyMarkdownLinkLabelWithEntity", {
               id,
-              action: trAction(meta.action),
-              timestamp: new Date(meta.createdAt).toLocaleString(locale, { hour12: false }),
-            })
-          : tr("copyMarkdownLinkLabelMinimal", { id });
+              action,
+              entity,
+              timestamp,
+            });
+          } else {
+            labelText = tr("copyMarkdownLinkLabel", { id, action, timestamp });
+          }
+        }
         return `- [${escapeMarkdownLinkLabel(labelText)}](${url})`;
       })
       .filter((v): v is string => v != null && v.length > 0);

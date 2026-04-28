@@ -280,6 +280,15 @@ test("audit-log bulk copy: select rows, copy N links, clear selection", async ({
     // Label must reference the entry id so a reviewer can scan the
     // pasted list without opening every link.
     expect(mdLines[i]).toContain(String(id));
+    // Task #148: label must also surface the audited entity reference
+    // (entityType + entityId) so reviewers know what each row is about
+    // without clicking. The seeded rows use entityType "bulk_copy_test"
+    // (no friendly translation registered → falls back to the raw enum)
+    // and entityId equal to their seed index. Audit ids increment in
+    // insertion order, so seededAuditIds.indexOf(id) recovers the
+    // original entityId for that row.
+    const entityIdx = seededAuditIds.indexOf(id);
+    expect(mdLines[i]).toContain(`bulk_copy_test #${entityIdx}`);
   }
 
   // Cleanup so the test ends with a quiet selection state.
