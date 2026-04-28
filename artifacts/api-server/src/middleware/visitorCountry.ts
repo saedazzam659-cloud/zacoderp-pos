@@ -11,7 +11,12 @@ import type { Request, Response, NextFunction } from "express";
 //   3. CF-IPCountry header       (set by Cloudflare's edge proxy when the
 //      site is fronted by Cloudflare; trustworthy because the request
 //      cannot bypass it).
-//   4. "GLOBAL" sentinel         (catch-all fallback so downstream code
+//   4. Geo-IP lookup             (fallback for non-Cloudflare deployments
+//      using the free ipwho.is service. Result is cached in-memory by IP
+//      to avoid hitting the upstream on every request, and persisted to
+//      the visitor_country cookie so subsequent requests short-circuit
+//      through step 2).
+//   5. "GLOBAL" sentinel         (catch-all fallback so downstream code
 //      always sees a non-empty value).
 //
 // The resolved value is exposed on `req.visitorCountry`. We never mutate
@@ -46,6 +51,97 @@ const COOKIE_NAME    = "visitor_country";
 // anyway when the secure-by-default rules kick in.
 const COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
+// ─── Geo-IP cache ─────────────────────────────────────────────────────
+// In-memory LRU-ish cache for the IP→country resolution. The cookie
+// already shields us from re-querying the upstream for repeat visitors,
+// but a brand-new visitor still triggers one lookup; this cache absorbs
+// concurrent requests from the same IP within a short window and
+// survives short bursts (e.g. SSR + asset requests) without flooding
+// the free Geo-IP service. Negative results (lookup failed or returned
+// an unsupported country) are cached too so we don't keep retrying.
+const GEO_CACHE_MAX        = 1000;
+const GEO_CACHE_TTL_MS     = 24 * 60 * 60 * 1000; // 24h
+const GEO_LOOKUP_TIMEOUT_MS = 1500;
+type GeoCacheEntry = { code: string; expiresAt: number };
+const geoCache = new Map<string, GeoCacheEntry>();
+
+function geoCacheGet(ip: string): string | null {
+  const hit = geoCache.get(ip);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    geoCache.delete(ip);
+    return null;
+  }
+  return hit.code;
+}
+function geoCacheSet(ip: string, code: string) {
+  // Naive size cap — drop the oldest insertion order entry. Map preserves
+  // insertion order so the first key is the oldest.
+  if (geoCache.size >= GEO_CACHE_MAX) {
+    const firstKey = geoCache.keys().next().value;
+    if (firstKey !== undefined) geoCache.delete(firstKey);
+  }
+  geoCache.set(ip, { code, expiresAt: Date.now() + GEO_CACHE_TTL_MS });
+}
+
+function isPrivateOrLoopback(ip: string): boolean {
+  if (!ip) return true;
+  // Strip IPv6-mapped IPv4 prefix
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (v4 === "127.0.0.1" || v4 === "::1" || v4 === "0.0.0.0") return true;
+  // Common private IPv4 ranges
+  if (/^10\./.test(v4)) return true;
+  if (/^192\.168\./.test(v4)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(v4)) return true;
+  // IPv6 unique local + link-local
+  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
+  if (/^fe80:/i.test(ip)) return true;
+  return false;
+}
+
+function clientIp(req: Request): string {
+  // Express's req.ip honours `app.set("trust proxy", 1)` which is set
+  // in app.ts, so we get the real client IP from x-forwarded-for in
+  // production. Fall back to the socket address as a last resort.
+  return (req.ip || req.socket?.remoteAddress || "").toString();
+}
+
+async function lookupCountryByIp(ip: string): Promise<string | null> {
+  if (isPrivateOrLoopback(ip)) return null;
+  const cached = geoCacheGet(ip);
+  if (cached) return cached;
+  // api.country.is is free, HTTPS, no API key required, returns a
+  // minimal `{ip, country}` payload so we don't waste bytes parsing
+  // fields we don't need. We hard-cap the round-trip to a short
+  // timeout so a slow upstream never blocks page loads. Any failure
+  // (non-200, network error, parse error, timeout) degrades silently
+  // to GLOBAL and is cached so we don't retry immediately.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEO_LOOKUP_TIMEOUT_MS);
+  try {
+    const r = await fetch(`https://api.country.is/${encodeURIComponent(ip)}`, {
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      geoCacheSet(ip, "GLOBAL");
+      return null;
+    }
+    const j: any = await r.json();
+    const raw = String(j?.country || "").trim().toUpperCase();
+    const code = VALID_OVERRIDE.test(raw)
+      ? (SUPPORTED_COUNTRIES.has(raw) ? raw : "GLOBAL")
+      : "GLOBAL";
+    geoCacheSet(ip, code);
+    return code;
+  } catch {
+    // Timeout / network error / parse error — degrade to GLOBAL silently.
+    geoCacheSet(ip, "GLOBAL");
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function normalize(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const v = raw.trim().toUpperCase();
@@ -57,57 +153,76 @@ function normalize(raw: unknown): string | null {
   return SUPPORTED_COUNTRIES.has(v) ? v : "GLOBAL";
 }
 
-export function visitorCountryMiddleware(
+function persistCookie(res: Response, value: string) {
+  res.cookie(COOKIE_NAME, value, {
+    maxAge:   COOKIE_MAX_AGE_MS,
+    httpOnly: false,    // SPA may read it client-side for UI selectors
+    sameSite: "lax",
+    path:     "/",
+  });
+}
+
+export async function visitorCountryMiddleware(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
-  // 1) explicit ?country override
-  const fromQuery = normalize((req.query as any)?.country);
-  if (fromQuery) {
-    req.visitorCountry = fromQuery;
-    // Persist the override so subsequent requests don't need it
-    res.cookie(COOKIE_NAME, fromQuery, {
-      maxAge:   COOKIE_MAX_AGE_MS,
-      httpOnly: false,    // SPA may read it client-side for UI selectors
-      sameSite: "lax",
-      path:     "/",
-    });
-    next();
-    return;
-  }
+  try {
+    // 1) explicit ?country override
+    const fromQuery = normalize((req.query as any)?.country);
+    if (fromQuery) {
+      req.visitorCountry = fromQuery;
+      // Persist the override so subsequent requests don't need it
+      persistCookie(res, fromQuery);
+      next();
+      return;
+    }
 
-  // 2) sticky cookie (parsed by cookie-parser middleware mounted earlier)
-  const fromCookie = normalize((req as any).cookies?.[COOKIE_NAME]);
-  if (fromCookie) {
-    req.visitorCountry = fromCookie;
-    next();
-    return;
-  }
+    // 2) sticky cookie (parsed by cookie-parser middleware mounted earlier)
+    const fromCookie = normalize((req as any).cookies?.[COOKIE_NAME]);
+    if (fromCookie) {
+      req.visitorCountry = fromCookie;
+      next();
+      return;
+    }
 
-  // 3) Cloudflare-supplied geolocation header
-  const headerVal = req.headers["cf-ipcountry"];
-  const fromHeader = normalize(Array.isArray(headerVal) ? headerVal[0] : headerVal);
-  if (fromHeader) {
-    req.visitorCountry = fromHeader;
-    // Persist the geo-IP detection into the visitor_country cookie so
-    // the SPA can read it client-side on subsequent renders without
-    // having to round-trip through the API every time. Without this,
-    // first-time visitors from outside SA would see Saudi-default copy
-    // until they manually picked a country from the selector.
-    res.cookie(COOKIE_NAME, fromHeader, {
-      maxAge:   COOKIE_MAX_AGE_MS,
-      httpOnly: false,
-      sameSite: "lax",
-      path:     "/",
-    });
-    next();
-    return;
-  }
+    // 3) Cloudflare-supplied geolocation header
+    const headerVal = req.headers["cf-ipcountry"];
+    const fromHeader = normalize(Array.isArray(headerVal) ? headerVal[0] : headerVal);
+    if (fromHeader) {
+      req.visitorCountry = fromHeader;
+      // Persist the geo-IP detection into the visitor_country cookie so
+      // the SPA can read it client-side on subsequent renders without
+      // having to round-trip through the API every time. Without this,
+      // first-time visitors from outside SA would see Saudi-default copy
+      // until they manually picked a country from the selector.
+      persistCookie(res, fromHeader);
+      next();
+      return;
+    }
 
-  // 4) catch-all
-  req.visitorCountry = "GLOBAL";
-  next();
+    // 4) Geo-IP lookup (non-Cloudflare deployments). Async — guarded by
+    // a short timeout and an in-memory cache so we never block more
+    // than ~1.5s on upstream failure, and repeat visitors short-circuit
+    // through the cookie set below on their next request.
+    const ip = clientIp(req);
+    const fromGeo = await lookupCountryByIp(ip);
+    if (fromGeo && fromGeo !== "GLOBAL") {
+      req.visitorCountry = fromGeo;
+      persistCookie(res, fromGeo);
+      next();
+      return;
+    }
+
+    // 5) catch-all
+    req.visitorCountry = "GLOBAL";
+    next();
+  } catch {
+    // Any unexpected error must not break the request pipeline — visitor
+    // country is a pure UI/personalization signal, never auth-critical.
+    req.visitorCountry = "GLOBAL";
+    next();
+  }
 }
 
 // Tiny endpoint handler the SPA can poll on mount to learn the

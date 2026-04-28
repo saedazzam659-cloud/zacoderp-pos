@@ -389,7 +389,14 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8">
       <div className="w-full max-w-6xl">
         <div className="flex justify-end items-center gap-2 mb-4">
-          <CountrySelector variant="compact" testId="login-country-selector" />
+          {/* Country picker is normally hidden — auto-detection (cookie →
+              CF-IPCountry → Geo-IP) handles 99% of visitors. We only
+              surface the manual override when detection fell through to
+              the GLOBAL sentinel, so the user has a way out without
+              cluttering the UI for everyone else. */}
+          {visitorCountry === "GLOBAL" && (
+            <CountrySelector variant="compact" testId="login-country-selector" />
+          )}
           <LanguageSwitcher variant="compact" />
         </div>
 
