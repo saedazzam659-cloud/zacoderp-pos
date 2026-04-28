@@ -1,182 +1,97 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 
-// A simple typewriter component for the terminal
-const Typewriter = ({ text, delay = 0, onComplete = () => {} }: { text: string, delay?: number, onComplete?: () => void }) => {
-  const [displayed, setDisplayed] = useState('');
-  
-  useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    if (delay > 0) {
-      timeout = setTimeout(() => startTyping(), delay);
-    } else {
-      startTyping();
-    }
-    
-    function startTyping() {
-      let i = 0;
-      const interval = setInterval(() => {
-        setDisplayed(text.substring(0, i + 1));
-        i++;
-        if (i >= text.length) {
-          clearInterval(interval);
-          onComplete();
-        }
-      }, 30); // ms per char
-    }
-    
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [text, delay]);
-
-  return <span>{displayed}</span>;
-};
-
 export function Scene3() {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
     const timers = [
-      setTimeout(() => setPhase(1), 500),  // Step 1 title
-      setTimeout(() => setPhase(2), 1000), // Step 1 command 1
-      setTimeout(() => setPhase(3), 3000), // Step 1 command 2
-      setTimeout(() => setPhase(4), 5000), // Step 2 title & command
-      setTimeout(() => setPhase(5), 7500), // Step 3 title & command
-      setTimeout(() => setPhase(6), 10000), // Show browser mock
+      setTimeout(() => setPhase(1), 200), // title
+      setTimeout(() => setPhase(2), 600), // devices image
+      setTimeout(() => setPhase(3), 1200), // features list
+      setTimeout(() => setPhase(4), 1800), // payments image
+      setTimeout(() => setPhase(5), 4500), // exit
     ];
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
 
   return (
     <motion.div 
-      className="absolute inset-0 flex z-10"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0, x: -100 }}
-      transition={{ duration: 0.5 }}
+      className="absolute inset-0 flex items-center justify-center z-10 w-full h-full"
+      initial={{ opacity: 0, x: 100 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -100, filter: 'blur(10px)' }}
+      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
     >
-      {/* Left side text content (RTL so it appears on the right logically, but we place it using flex) */}
-      <div className="w-[45vw] h-full flex flex-col justify-center px-[5vw] ml-auto dir-rtl text-right">
-        <motion.h2 
-          className="text-[3.5vw] font-black text-primary mb-12"
-          initial={{ opacity: 0, x: 50 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.8 }}
-        >
-          سيرفر محلي
-        </motion.h2>
-
-        <div className="space-y-10">
-          {/* Step 1 */}
+      <div className="flex flex-row items-center justify-between w-[85vw] h-[70vh] dir-rtl">
+        
+        {/* Right Side: Text & Features */}
+        <div className="w-[45%] flex flex-col justify-center gap-8">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: phase >= 1 ? 1 : 0, y: phase >= 1 ? 0 : 20 }}
+            initial={{ opacity: 0, y: 30 }}
+            animate={phase >= 1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
           >
-            <div className="flex items-center gap-4 mb-2">
-              <div className="w-8 h-8 rounded-full bg-accent text-background flex items-center justify-center font-bold text-xl">1</div>
-              <h3 className="text-[2vw] font-bold text-white">تركيب المتطلبات</h3>
-            </div>
-            <p className="text-[1.2vw] text-white/60 mr-12 font-mono">Node.js + pnpm + PostgreSQL</p>
+            <h2 className="text-[4vw] font-display font-black text-white leading-tight">
+              يعمل في كل مكان،<br/>حتى <span className="text-secondary">بدون إنترنت</span>
+            </h2>
           </motion.div>
 
-          {/* Step 2 */}
+          <div className="flex flex-col gap-6 mt-4">
+            {[
+              { title: "متعدد الأجهزة", desc: "يعمل على الأجهزة اللوحية والجوالات" },
+              { title: "دعم الأوفلاين", desc: "لا تتوقف مبيعاتك عند انقطاع الشبكة" },
+              { title: "مدفوعات متكاملة", desc: "مدى، Apple Pay، والبطاقات الائتمانية" },
+            ].map((item, i) => (
+              <motion.div 
+                key={i}
+                className="flex flex-row items-start gap-4"
+                initial={{ opacity: 0, x: 50 }}
+                animate={phase >= 3 ? { opacity: 1, x: 0 } : { opacity: 0, x: 50 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 25, delay: i * 0.15 }}
+              >
+                <div className="w-12 h-12 rounded-full bg-primary/20 border border-primary flex items-center justify-center shrink-0 mt-1">
+                  <div className="w-4 h-4 rounded-full bg-secondary" />
+                </div>
+                <div>
+                  <h3 className="text-[1.8vw] font-bold text-white mb-1">{item.title}</h3>
+                  <p className="text-[1.2vw] text-text-muted">{item.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        {/* Left Side: Images */}
+        <div className="w-[50%] h-full relative perspective-1000 flex items-center justify-center">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: phase >= 4 ? 1 : 0, y: phase >= 4 ? 0 : 20 }}
+            className="w-[40vw] h-[40vw] absolute"
+            initial={{ opacity: 0, scale: 0.8, rotateY: 20 }}
+            animate={phase >= 2 ? { opacity: 1, scale: 1, rotateY: -10 } : { opacity: 0, scale: 0.8, rotateY: 20 }}
+            transition={{ type: 'spring', stiffness: 200, damping: 20 }}
           >
-            <div className="flex items-center gap-4 mb-2">
-              <div className="w-8 h-8 rounded-full bg-accent text-background flex items-center justify-center font-bold text-xl">2</div>
-              <h3 className="text-[2vw] font-bold text-white">تركيب المشروع</h3>
-            </div>
+            <img 
+              src={`${import.meta.env.BASE_URL}images/devices.png`} 
+              className="w-full h-full object-contain drop-shadow-2xl" 
+              alt="POS Devices" 
+            />
           </motion.div>
 
-          {/* Step 3 */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: phase >= 5 ? 1 : 0, y: phase >= 5 ? 0 : 20 }}
+            className="w-[15vw] h-[15vw] absolute -bottom-10 -left-10"
+            initial={{ opacity: 0, scale: 0, y: 50 }}
+            animate={phase >= 4 ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0, y: 50 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
           >
-            <div className="flex items-center gap-4 mb-2">
-              <div className="w-8 h-8 rounded-full bg-accent text-background flex items-center justify-center font-bold text-xl">3</div>
-              <h3 className="text-[2vw] font-bold text-white">تشغيل الخادم والواجهة</h3>
-            </div>
+            <img 
+              src={`${import.meta.env.BASE_URL}images/payments.png`} 
+              className="w-full h-full object-contain drop-shadow-lg mix-blend-screen" 
+              alt="Payments" 
+            />
           </motion.div>
         </div>
+
       </div>
-
-      {/* Terminal Content Overlay (Matches the persistent terminal position) */}
-      <div className="absolute left-[5vw] top-[20vh] w-[50vw] h-[50vh] pt-12 px-6 pb-6 font-mono text-[1.2vw] leading-relaxed text-[#c9d1d9] flex flex-col z-30 pointer-events-none dir-ltr text-left">
-        {phase >= 2 && (
-          <div>
-            <span className="text-[#7ee787]">user@local</span><span className="text-white">:</span><span className="text-[#79c0ff]">~</span><span className="text-white">$</span>{' '}
-            <Typewriter text="sudo apt install nodejs postgresql" delay={0} />
-          </div>
-        )}
-        {phase >= 3 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4">
-            <span className="text-[#7ee787]">user@local</span><span className="text-white">:</span><span className="text-[#79c0ff]">~</span><span className="text-white">$</span>{' '}
-            <Typewriter text="npm i -g pnpm" delay={0} />
-          </motion.div>
-        )}
-        {phase >= 4 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4">
-            <span className="text-[#7ee787]">user@local</span><span className="text-white">:</span><span className="text-[#79c0ff]">~/zatca</span><span className="text-white">$</span>{' '}
-            <Typewriter text="pnpm install" delay={0} />
-          </motion.div>
-        )}
-        {phase >= 5 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4">
-            <span className="text-[#7ee787]">user@local</span><span className="text-white">:</span><span className="text-[#79c0ff]">~/zatca</span><span className="text-white">$</span>{' '}
-            <Typewriter text="pnpm --filter @workspace/api-server run dev" delay={0} />
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 1 }}
-              className="text-[#a5d6ff] mt-2"
-            >
-              VITE v5.0.0 ready in 320 ms<br/>
-              ➜  Local:   http://localhost:5173/
-            </motion.div>
-          </motion.div>
-        )}
-      </div>
-
-      {/* Browser Mockup */}
-      <motion.div 
-        className="absolute left-[10vw] top-[30vh] w-[40vw] h-[40vh] bg-white rounded-xl shadow-2xl border border-gray-200 z-40 overflow-hidden flex flex-col"
-        initial={{ y: 100, opacity: 0, rotate: 5, scale: 0.8 }}
-        animate={{ 
-          y: phase >= 6 ? 0 : 100, 
-          opacity: phase >= 6 ? 1 : 0,
-          rotate: phase >= 6 ? -2 : 5,
-          scale: phase >= 6 ? 1 : 0.8
-        }}
-        transition={{ type: 'spring', stiffness: 200, damping: 20 }}
-      >
-        <div className="h-8 bg-gray-100 border-b border-gray-200 flex items-center px-3 gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
-          <div className="ml-4 bg-white px-24 py-1 rounded text-[0.8vw] text-gray-500 font-mono shadow-sm">
-            localhost:5173
-          </div>
-        </div>
-        <div className="flex-1 p-6 flex flex-col dir-rtl">
-          {/* Mock UI */}
-          <div className="h-10 w-48 bg-gray-200 rounded mb-6" />
-          <div className="flex gap-4">
-            <div className="w-1/4 space-y-3">
-              <div className="h-8 w-full bg-primary/10 rounded border border-primary/20" />
-              <div className="h-8 w-full bg-gray-100 rounded" />
-              <div className="h-8 w-full bg-gray-100 rounded" />
-            </div>
-            <div className="w-3/4 bg-gray-50 rounded-lg p-4 border border-gray-100">
-              <div className="h-6 w-32 bg-gray-200 rounded mb-4" />
-              <div className="h-24 w-full bg-white rounded border border-gray-200" />
-            </div>
-          </div>
-        </div>
-      </motion.div>
     </motion.div>
   );
 }

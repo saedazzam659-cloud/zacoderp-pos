@@ -12,6 +12,42 @@ uri = "file://artifacts/install-guide-video/public/images/cloud-server.png"
 type = "image"
 title = "Cloud server rack illustration"
 
+[[generated]]
+id = "2gfunxCcDMNa5MtdFEjXX"
+uri = "file://artifacts/install-guide-video/public/images/pos-terminal.png"
+type = "image"
+title = "pos system terminal on counter"
+
+[[generated]]
+id = "ySRdBNn3Sd9-jsqh-MaIG"
+uri = "file://artifacts/install-guide-video/public/images/zatca-badge.png"
+type = "image"
+title = "zatca phase 2 badge"
+
+[[generated]]
+id = "tujBdAtCoYWvvgSNTKn4H"
+uri = "file://artifacts/install-guide-video/public/images/cafe-bg.png"
+type = "image"
+title = "cafe counter background"
+
+[[generated]]
+id = "gWkUzVNTvl7Dd9Ivi6Q8j"
+uri = "file://artifacts/install-guide-video/public/images/devices.png"
+type = "image"
+title = "pos tablet and phone mockup"
+
+[[generated]]
+id = "uic8obftqCEENW2HJ_7Gm"
+uri = "file://artifacts/install-guide-video/public/images/analytics.png"
+type = "image"
+title = "analytics dashboard 3d"
+
+[[generated]]
+id = "AZBr_jcpxs933fkyr67wP"
+uri = "file://artifacts/install-guide-video/public/images/payments.png"
+type = "image"
+title = "mada apple pay icons"
+
 [[outputs]]
 id = "ZijkzvPyt1HNWuXO3Wk_d"
 uri = "file://exports/zacoderp-source.tar.gz"

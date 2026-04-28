@@ -1,26 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --color-primary: #118C71;
-  --color-secondary: #0A3641;
-  --color-accent: #D4AF37;
+  --color-primary: #006C5B;
+  --color-secondary: #D4AF37;
+  --color-accent: #118C71;
 
   --color-bg-light: #F5F1E7;
-  --color-bg-dark: #061B22;
-  --color-bg-muted: #0A3641;
+  --color-bg-dark: #0B1C1A;
+  --color-bg-muted: #061B22;
 
   --color-text-primary: #F5F1E7;
   --color-text-secondary: #D4AF37;
   --color-text-muted: #8AA4AD;
-  --color-text-inverse: #061B22;
+  --color-text-inverse: #0B1C1A;
 
-  --color-success: #118C71;
-  --color-warning: #D4AF37;
-  --color-error: #EF4444;
-
-  --font-display: 'Cairo', sans-serif;
-  --font-body: 'Noto Kufi Arabic', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Tajawal', sans-serif;
+  --font-body: 'Cairo', sans-serif;
 }
 
 @theme inline {
@@ -36,7 +31,6 @@
   --color-text-inverse: var(--color-text-inverse);
   --font-display: var(--font-display);
   --font-body: var(--font-body);
-  --font-mono: var(--font-mono);
 }
 
 body {
@@ -46,8 +40,17 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   direction: rtl;
+  overflow: hidden;
 }
 
 .text-shadow-glow {
-  text-shadow: 0 0 20px rgba(17, 140, 113, 0.5);
+  text-shadow: 0 0 30px rgba(0, 108, 91, 0.8);
+}
+
+.clip-circle {
+  clip-path: circle(0% at 50% 50%);
+}
+
+.bg-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
