@@ -274,9 +274,20 @@ function AppRoutes() {
       location === "/recover-superadmin" ||
       location.startsWith("/recover-superadmin/") ||
       location.startsWith("/reports-invitation/") ||
-      location.startsWith("/blog/");
+      location.startsWith("/blog/") ||
+      // Face-attendance kiosk: a paired tablet at the office entrance
+      // hits this URL without a user session — it authenticates against
+      // the API with a kiosk token from localStorage. The page itself
+      // shows pairing instructions when no token is set.
+      location === "/hr/face/kiosk";
     if (!knownPublicRoute) {
       return <NotFound />;
+    }
+    // The kiosk URL bypasses the normal Switch (which requires auth) and
+    // renders the page directly so a tablet without a user session can
+    // still reach it.
+    if (location === "/hr/face/kiosk") {
+      return <LiveAttendanceKiosk />;
     }
   }
 

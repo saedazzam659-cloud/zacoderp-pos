@@ -42,3 +42,4 @@ export * from "./inboxMessages";
 export * from "./seoAi";
 export * from "./deletedRecords";
 export * from "./contracting";
+export * from "./kioskTokens";

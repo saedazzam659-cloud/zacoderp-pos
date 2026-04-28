@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { faceApi, type Camera, type RecognizeResult } from "@/lib/faceAttendanceApi";
+import { faceApi, KIOSK_TOKEN_KEY, type Camera, type RecognizeResult } from "@/lib/faceAttendanceApi";
 import { loadFaceApi } from "@/lib/faceapi/loader";
 import { evaluateFaceQuality } from "@/lib/faceapi/quality";
 import { createLivenessTracker, type LivenessTracker } from "@/lib/faceapi/liveness";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, ScanFace, CheckCircle2, XCircle, AlertTriangle, Sparkles, Clock, Users } from "lucide-react";
+import { Loader2, ScanFace, CheckCircle2, XCircle, AlertTriangle, Sparkles, Clock, Users, Smartphone, Settings, LogOut } from "lucide-react";
+import { KioskDeviceManager } from "@/components/hr/KioskDeviceManager";
 
 interface RecentMatch {
   at: number;
@@ -22,6 +25,7 @@ interface RecentMatch {
 
 export default function LiveAttendanceKiosk() {
   const { toast } = useToast();
+  const { user } = useAuth() as any;
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -39,7 +43,97 @@ export default function LiveAttendanceKiosk() {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
-  const { data: cameras = [] } = useQuery<Camera[]>({ queryKey: ["face-cameras"], queryFn: () => faceApi.cameras() });
+  // ── Kiosk pairing state ────────────────────────────────────────────────
+  // The kiosk URL is reachable both with a regular admin session (the
+  // operator previewing) AND from an unpaired tablet at the office
+  // entrance. We detect which mode we're in and gate the camera startup
+  // until either a session OR a stored kiosk token is present.
+  // Safe localStorage helpers — Safari Private Mode and some kiosk
+  // browsers throw on access. Pairing must degrade gracefully.
+  const safeGet = (key: string): string | null => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  };
+  const safeSet = (key: string, val: string): boolean => {
+    try { localStorage.setItem(key, val); return true; } catch { return false; }
+  };
+  const safeDel = (key: string): void => {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  };
+
+  const [hasKioskToken, setHasKioskToken] = useState<boolean>(() =>
+    typeof window !== "undefined" && !!safeGet(KIOSK_TOKEN_KEY)
+  );
+  const [pairProcessed, setPairProcessed] = useState(false);
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [kioskInfo, setKioskInfo] = useState<{ id: number; label: string; companyId: number } | null>(null);
+  const [showDeviceManager, setShowDeviceManager] = useState(false);
+
+  const isAdmin = !!user;
+  // For *gating UI screens* (showing the unpaired panel vs the camera UI)
+  // the mere presence of a stored kiosk token is enough — we don't want
+  // a brief "unpaired" flash while /kiosk/me validates.
+  const isAuthed = isAdmin || hasKioskToken;
+  // For *issuing API calls* (cameras query, camera startup) we wait until
+  // the token has been validated via /kiosk/me. Otherwise a stale token
+  // from a previous session would trigger 401-spamming until kiosk/me
+  // resolves and clears it.
+  const apiReady = isAdmin || !!kioskInfo;
+
+  // Step 1: handle ?pair=<token> URL → store and clean URL.
+  // We always strip `pair` from the URL (even on bad values), so a malformed
+  // token never lingers in the address bar or browser history.
+  useEffect(() => {
+    if (pairProcessed) return;
+    const url = new URL(window.location.href);
+    const pair = url.searchParams.get("pair");
+    if (pair) {
+      if (pair.length >= 16 && pair.length <= 256) {
+        if (!safeSet(KIOSK_TOKEN_KEY, pair)) {
+          setPairError("تعذّر حفظ رمز الربط — تخزين المتصفح المحلي مُعطّل (الوضع الخاص؟). يرجى استخدام الوضع العادي.");
+        } else {
+          setHasKioskToken(true);
+        }
+      } else {
+        setPairError("رمز الربط في الرابط غير صالح. اطلب من المدير رمزاً جديداً.");
+      }
+      url.searchParams.delete("pair");
+      window.history.replaceState(
+        null,
+        "",
+        url.pathname + (url.search ? url.search : "") + url.hash,
+      );
+    }
+    setPairProcessed(true);
+  }, [pairProcessed]);
+
+  // Step 2: validate the kiosk token (if any) by hitting /kiosk/me.
+  useEffect(() => {
+    if (!pairProcessed) return;
+    if (!hasKioskToken || isAdmin) return;
+    (async () => {
+      try {
+        const info = await faceApi.kioskMe();
+        setKioskInfo(info);
+      } catch {
+        // Token is invalid/revoked — clear it and force re-pairing.
+        safeDel(KIOSK_TOKEN_KEY);
+        setHasKioskToken(false);
+      }
+    })();
+  }, [pairProcessed, hasKioskToken, isAdmin]);
+
+  const unpairDevice = () => {
+    if (!confirm("هل أنت متأكد من إلغاء ربط هذا الجهاز؟ سيحتاج المدير لإصدار رمز جديد.")) return;
+    safeDel(KIOSK_TOKEN_KEY);
+    setHasKioskToken(false);
+    setKioskInfo(null);
+  };
+
+  const { data: cameras = [] } = useQuery<Camera[]>({
+    queryKey: ["face-cameras"],
+    queryFn: () => faceApi.cameras(),
+    enabled: apiReady,
+  });
 
   // clock tick
   useEffect(() => {
@@ -65,9 +159,11 @@ export default function LiveAttendanceKiosk() {
     }
   }, [cameras, cameraId]);
 
-  // start webcam + recognition loop
+  // start webcam + recognition loop — gated on auth so an unpaired
+  // tablet never opens the camera or hits /recognize.
   useEffect(() => {
     if (modelLoading) return;
+    if (!isAuthed) return;
     let cancelled = false;
     (async () => {
       try {
@@ -190,20 +286,88 @@ export default function LiveAttendanceKiosk() {
     return new Date(ts).toTimeString().slice(0, 5);
   };
 
+  // ── Unpaired-device screen ─────────────────────────────────────────────
+  // Shown on a tablet that has no user session AND no kiosk token.
+  // Tells the operator how to get a pairing link from the admin.
+  if (pairProcessed && !isAuthed) {
+    return (
+      <div className="min-h-screen p-4 flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" data-testid="page-kiosk-unpaired">
+        <Card className="max-w-lg w-full p-8 bg-slate-800/80 border-slate-700 text-center space-y-5">
+          <div className="flex justify-center">
+            <div className="h-20 w-20 rounded-full bg-emerald-500/20 flex items-center justify-center">
+              <Smartphone className="h-10 w-10 text-emerald-400" />
+            </div>
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold mb-2">جهاز الكشك غير مربوط</h1>
+            <p className="text-slate-300 text-sm leading-relaxed">
+              هذا الجهاز يحتاج إلى ربط بحساب الشركة قبل استخدامه لتسجيل الحضور بالتعرف على الوجه.
+            </p>
+          </div>
+          <div className="text-right text-sm space-y-3 bg-slate-900/60 rounded-lg p-4">
+            <div className="font-bold text-emerald-400">خطوات الربط:</div>
+            <ol className="space-y-2 list-decimal list-inside text-slate-200">
+              <li>من حساب المدير، افتح: <span className="font-mono text-emerald-300">الحضور الذكي ← أجهزة الكشك</span></li>
+              <li>اضغط <span className="font-bold">"ربط جهاز جديد"</span> وأدخل اسم الجهاز (مثل: تابلت المدخل).</li>
+              <li>انسخ <span className="font-bold">رابط الربط</span> الذي يظهر، وأرسله إلى هذا الجهاز.</li>
+              <li>افتح الرابط هنا — سيعمل الكشك تلقائياً.</li>
+            </ol>
+          </div>
+          {pairError && (
+            <div className="text-right p-3 rounded-lg bg-rose-900/30 border border-rose-700/50 text-rose-200 text-sm flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div>{pairError}</div>
+            </div>
+          )}
+          <p className="text-xs text-slate-400">
+            ملاحظة: لا تستخدم هذا الجهاز لتسجيل الدخول كمستخدم. الربط مخصّص للكشك فقط.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white" data-testid="page-live-kiosk">
       <div className="max-w-7xl mx-auto space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <ScanFace className="h-7 w-7 text-emerald-400" />
             الحضور الذكي بالتعرف على الوجه
+            {kioskInfo && (
+              <Badge className="bg-emerald-700/60 text-xs ms-2">
+                <Smartphone className="h-3 w-3 me-1" /> {kioskInfo.label}
+              </Badge>
+            )}
           </h1>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="text-3xl font-mono">{fmtTime(now)}</div>
             <div className="flex items-center gap-2">
               <Switch checked={scanning} onCheckedChange={setScanning} data-testid="switch-scanning" />
               <span className="text-sm">{scanning ? "نشط" : "متوقف"}</span>
             </div>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-slate-900/60 border-slate-700 hover:bg-slate-800"
+                onClick={() => setShowDeviceManager(true)}
+                data-testid="button-manage-devices"
+              >
+                <Settings className="h-4 w-4 me-1" /> إدارة الأجهزة
+              </Button>
+            )}
+            {!isAdmin && hasKioskToken && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-slate-900/60 border-slate-700 hover:bg-slate-800"
+                onClick={unpairDevice}
+                data-testid="button-unpair-device"
+              >
+                <LogOut className="h-4 w-4 me-1" /> إلغاء الربط
+              </Button>
+            )}
           </div>
         </div>
 
@@ -299,6 +463,11 @@ export default function LiveAttendanceKiosk() {
           </div>
         )}
       </div>
+
+      {/* Admin-only: paired-device management. */}
+      {isAdmin && (
+        <KioskDeviceManager open={showDeviceManager} onOpenChange={setShowDeviceManager} />
+      )}
     </div>
   );
 }

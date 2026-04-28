@@ -1,7 +1,8 @@
 import { db } from "@workspace/db";
-import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable } from "@workspace/db";
+import { usersTable, userBranchesTable, superAdminSessionsTable, companiesTable, kioskTokensTable } from "@workspace/db";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
+import crypto from "node:crypto";
 
 export interface AuthUser {
   id: number;
@@ -30,8 +31,55 @@ declare global {
   namespace Express {
     interface Request {
       authUser?: AuthUser;
+      // True when the request authenticated via X-Kiosk-Token (a paired
+      // device, not a real user session). Use `denyKiosk(req,res)` in
+      // routes that should never be reachable from a kiosk.
+      isKiosk?: boolean;
+      kioskTokenId?: number;
     }
   }
+}
+
+// SHA-256 hex of a kiosk token. Tokens are stored hashed; the plaintext
+// token is shown to the admin once at creation time and never again.
+export function hashKioskToken(plain: string): string {
+  return crypto.createHash("sha256").update(plain).digest("hex");
+}
+
+/**
+ * Looks up a kiosk token (by hash), checks it isn't revoked, and returns
+ * the row plus the company it grants access to. Returns null on any miss.
+ */
+async function resolveKioskToken(plain: string): Promise<{
+  id: number; companyId: number; scope: string;
+} | null> {
+  if (!plain || plain.length < 16 || plain.length > 256) return null;
+  const hash = hashKioskToken(plain);
+  const [row] = await db
+    .select({
+      id:        kioskTokensTable.id,
+      companyId: kioskTokensTable.companyId,
+      scope:     kioskTokensTable.scope,
+      revokedAt: kioskTokensTable.revokedAt,
+    })
+    .from(kioskTokensTable)
+    .where(eq(kioskTokensTable.tokenHash, hash))
+    .limit(1);
+  if (!row || row.revokedAt) return null;
+  return { id: row.id, companyId: row.companyId, scope: row.scope };
+}
+
+/**
+ * Block a route from being reached by a kiosk-authenticated request. Returns
+ * true (and writes a 403) when the request is a kiosk; false otherwise so
+ * the caller can early-return cleanly: `if (denyKiosk(req,res)) return;`
+ */
+export function denyKiosk(req: Request, res: Response): boolean {
+  if (req.isKiosk) {
+    res.status(403).json({ error: "هذه العملية غير متاحة من جهاز كشك" });
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -104,6 +152,67 @@ export async function resolveBearerToken(token: string): Promise<{
  * Recognises both regular session tokens and SuperAdmin session tokens.
  */
 export async function extractAuth(req: Request, _res: Response, next: NextFunction) {
+  // ── X-Kiosk-Token path ──────────────────────────────────────────────
+  // A paired kiosk device authenticates with this header instead of a
+  // Bearer token. We translate it into a synthetic AuthUser so all
+  // downstream `resolveCompanyId(req,…)` checks "just work", and flag
+  // `req.isKiosk` so admin-only routes can refuse via `denyKiosk()`.
+  // The kiosk identity has NO granular permissions and NO branch links —
+  // routes that the kiosk should reach must be allowlisted explicitly.
+  const kioskHeader = (req.headers["x-kiosk-token"] as string | undefined)?.trim();
+  if (kioskHeader && !req.headers.authorization) {
+    // SCOPE GUARD — a kiosk token must NEVER auth against anything outside
+    // its declared scope. The "face_attendance" scope only authorizes the
+    // `/api/hr/face/*` route tree. We compare against `req.originalUrl`
+    // (which always carries the full request path regardless of where
+    // this middleware was mounted) and ignore the header entirely for
+    // any other path. Without this, a stolen kiosk token could call
+    // `/api/hr/settings`, `/api/invoices`, etc., since extractAuth is
+    // mounted on dozens of routers.
+    const url = req.originalUrl ?? req.url ?? "";
+    const isFaceRoute = /^\/api\/hr\/face(\/|\?|$)/.test(url);
+    if (!isFaceRoute) {
+      // Pretend the header isn't there → request becomes anonymous and
+      // any downstream auth check will return 401.
+      next();
+      return;
+    }
+    const k = await resolveKioskToken(kioskHeader);
+    if (k && k.scope !== "face_attendance") {
+      // Defensive: tokens with other scopes should not unlock face routes.
+      next();
+      return;
+    }
+    if (k) {
+      req.isKiosk = true;
+      req.kioskTokenId = k.id;
+      req.authUser = {
+        id: -k.id, // negative id keeps it distinct from any real user row
+        username: `kiosk-${k.id}`,
+        role: "kiosk",
+        companyId: k.companyId,
+        permissions: null,
+        viewAllBranches: true,
+        branchIds: [],
+        companyMenuPermissions: null,
+      };
+      // Fire-and-forget last-used update; throttled by SQL since it only
+      // runs when the row hasn't been touched in the last 60 seconds.
+      const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+        ?? req.ip ?? null;
+      db.update(kioskTokensTable)
+        .set({ lastUsedAt: new Date(), lastUsedIp: ip })
+        .where(and(
+          eq(kioskTokensTable.id, k.id),
+          sql`(${kioskTokensTable.lastUsedAt} IS NULL OR ${kioskTokensTable.lastUsedAt} < now() - interval '60 seconds')`,
+        ))
+        .catch(() => { /* non-fatal */ });
+      next();
+      return;
+    }
+    // Invalid/revoked kiosk token → fall through to Bearer/anonymous.
+  }
+
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) { next(); return; }
   const token = auth.slice(7);

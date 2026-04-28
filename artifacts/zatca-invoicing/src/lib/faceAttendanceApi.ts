@@ -1,10 +1,20 @@
 const API = import.meta.env.VITE_API_URL ?? "";
 
+// LocalStorage key for the kiosk pairing token. When present, the device
+// authenticates as a kiosk (via X-Kiosk-Token) instead of a user session.
+// A user session takes priority if both happen to exist on the same browser.
+export const KIOSK_TOKEN_KEY = "zatca_kiosk_token";
+
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("zatca_token");
-  return token
-    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-    : { "Content-Type": "application/json" };
+  const session = localStorage.getItem("zatca_token");
+  if (session) {
+    return { Authorization: `Bearer ${session}`, "Content-Type": "application/json" };
+  }
+  const kiosk = localStorage.getItem(KIOSK_TOKEN_KEY);
+  if (kiosk) {
+    return { "X-Kiosk-Token": kiosk, "Content-Type": "application/json" };
+  }
+  return { "Content-Type": "application/json" };
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -138,4 +148,35 @@ export const faceApi = {
   // AI weekly summary — falls back to caller's local summary if proxy is off.
   aiSummary: (analytics: FaceAnalytics) =>
     req<{ summary: string; source: "ai" }>("POST", "/ai/summarize-face-attendance", analytics),
+
+  // ── Kiosk pairing ───────────────────────────────────────────────────
+  kioskMe: () =>
+    req<{ id: number; label: string; companyId: number }>("GET", "/hr/face/kiosk/me"),
+  listKioskTokens: () =>
+    req<KioskTokenSummary[]>("GET", "/hr/face/kiosk-tokens"),
+  createKioskToken: (label: string) =>
+    req<KioskTokenCreated>("POST", "/hr/face/kiosk-tokens", { label }),
+  revokeKioskToken: (id: number) =>
+    req<{ ok: boolean }>("DELETE", `/hr/face/kiosk-tokens/${id}`),
 };
+
+export interface KioskTokenSummary {
+  id: number;
+  label: string;
+  scope: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  revokedAt: string | null;
+  createdByUserId: number | null;
+  createdByName: string | null;
+}
+
+export interface KioskTokenCreated {
+  id: number;
+  label: string;
+  scope: string;
+  createdAt: string;
+  token: string;
+  pairUrl: string;
+}

@@ -9,9 +9,11 @@ import {
   employeeAttendanceTable,
   employeesTable,
   branchesTable,
+  kioskTokensTable,
+  usersTable,
 } from "@workspace/db";
-import { and, eq, desc, asc, sql, gte, isNotNull } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { and, eq, desc, asc, sql, gte, isNotNull, isNull } from "drizzle-orm";
+import { extractAuth, resolveCompanyId, denyKiosk, hashKioskToken } from "../middleware/auth.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -143,6 +145,7 @@ router.get("/settings", async (req, res) => {
 
 router.put("/settings", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     await getSettings(cid);
     const b = req.body ?? {};
@@ -204,6 +207,7 @@ router.get("/cameras", async (req, res) => {
 
 router.post("/cameras", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
     if (!b.name) { res.status(400).json({ error: "الاسم مطلوب" }); return; }
@@ -234,6 +238,7 @@ router.post("/cameras", async (req, res) => {
 
 router.put("/cameras/:id", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const b = req.body ?? {};
@@ -272,6 +277,7 @@ router.put("/cameras/:id", async (req, res) => {
 
 router.delete("/cameras/:id", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     await db.delete(attendanceCamerasTable)
@@ -282,6 +288,7 @@ router.delete("/cameras/:id", async (req, res) => {
 
 router.post("/cameras/:id/ping", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     const [cam] = await db.select().from(attendanceCamerasTable)
@@ -298,6 +305,7 @@ router.post("/cameras/:id/ping", async (req, res) => {
 // ─── ENROLLMENTS ────────────────────────────────────────
 router.get("/enrollments", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const employeeId = req.query.employeeId ? Number(req.query.employeeId) : null;
     const where = employeeId
@@ -327,6 +335,7 @@ router.get("/enrollments", async (req, res) => {
 
 router.post("/enrollments", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const b = req.body ?? {};
     if (!b.employeeId) { res.status(400).json({ error: "الموظف مطلوب" }); return; }
@@ -372,6 +381,7 @@ router.post("/enrollments", async (req, res) => {
 
 router.delete("/enrollments/:id", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const id = Number(req.params.id);
     await db.delete(employeeFaceEnrollmentsTable)
@@ -639,6 +649,7 @@ router.get("/recent", async (req, res) => {
 // ─── LOGS (audit) ───────────────────────────────────────
 router.get("/logs", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const limit = Math.min(500, Number(req.query.limit ?? 200));
     const status = req.query.status as string | undefined;
@@ -677,6 +688,7 @@ router.get("/logs", async (req, res) => {
 // ─── ANALYTICS / DASHBOARD ──────────────────────────────
 router.get("/analytics", async (req, res) => {
   try {
+    if (denyKiosk(req, res)) return;
     const cid = guard(req, res); if (!cid) return;
     const today = new Date();
     const todayStr = today.toISOString().slice(0, 10);
@@ -778,6 +790,141 @@ router.get("/analytics", async (req, res) => {
       topLate,
       heatmap,
     });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── KIOSK DEVICE PAIRING ────────────────────────────────────────────────
+// A "kiosk token" is a long random string that lets a tablet at the office
+// entrance call the face-attendance endpoints WITHOUT a regular user
+// session. The plaintext is shown once at creation time and never stored
+// (we keep only its sha256 in the DB). The admin pairs a device by opening
+// `/hr/face/kiosk?pair=<token>` on it; the page then stores the token
+// locally and uses it for every subsequent call.
+
+function randomKioskToken(): string {
+  // 32 bytes = 256 bits of entropy. base64url is URL-safe for the
+  // ?pair=<token> handoff so the admin can copy/paste it into the tablet.
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+// GET /api/hr/face/kiosk-tokens — list paired devices for the company.
+router.get("/kiosk-tokens", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    const rows = await db
+      .select({
+        id:              kioskTokensTable.id,
+        label:           kioskTokensTable.label,
+        scope:           kioskTokensTable.scope,
+        createdAt:       kioskTokensTable.createdAt,
+        lastUsedAt:      kioskTokensTable.lastUsedAt,
+        lastUsedIp:      kioskTokensTable.lastUsedIp,
+        revokedAt:       kioskTokensTable.revokedAt,
+        createdByUserId: kioskTokensTable.createdByUserId,
+        createdByName:   usersTable.username,
+      })
+      .from(kioskTokensTable)
+      .leftJoin(usersTable, eq(usersTable.id, kioskTokensTable.createdByUserId))
+      .where(eq(kioskTokensTable.companyId, cid))
+      .orderBy(desc(kioskTokensTable.createdAt))
+      .limit(200);
+    res.json(rows);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/hr/face/kiosk-tokens — create a new pairing token.
+// Body: { label: string }. Returns { id, label, token, pairUrl } where
+// `token` is the plaintext (shown ONCE). The pairUrl is a deep-link the
+// admin can open on the kiosk device to auto-pair it.
+router.post("/kiosk-tokens", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    const label = String(req.body?.label ?? "").trim().slice(0, 80);
+    if (!label) {
+      res.status(400).json({ error: "أدخل اسماً للجهاز (مثال: تابلت المدخل الرئيسي)" });
+      return;
+    }
+
+    // Cap on simultaneously-active kiosks per company — protects against
+    // runaway token creation. 50 is well above any realistic deployment.
+    const [{ active }] = await db
+      .select({ active: sql<number>`count(*)::int` })
+      .from(kioskTokensTable)
+      .where(and(eq(kioskTokensTable.companyId, cid), isNull(kioskTokensTable.revokedAt)));
+    if (active >= 50) {
+      res.status(400).json({ error: "تم الوصول للحد الأقصى لعدد أجهزة الكشك (50). ألغِ ربط الأجهزة غير المستخدمة أولاً." });
+      return;
+    }
+
+    const plain = randomKioskToken();
+    const tokenHash = hashKioskToken(plain);
+    const [row] = await db
+      .insert(kioskTokensTable)
+      .values({
+        companyId:       cid,
+        label,
+        tokenHash,
+        scope:           "face_attendance",
+        createdByUserId: req.authUser?.id ?? null,
+      })
+      .returning({
+        id:        kioskTokensTable.id,
+        label:     kioskTokensTable.label,
+        scope:     kioskTokensTable.scope,
+        createdAt: kioskTokensTable.createdAt,
+      });
+
+    // Pair URL — the SPA reads ?pair=<token> on /hr/face/kiosk and stores
+    // it in localStorage. We use a relative path so it works on any domain
+    // (dev preview, staging, production custom domain, etc.).
+    const pairUrl = `/hr/face/kiosk?pair=${encodeURIComponent(plain)}`;
+    res.json({ ...row, token: plain, pairUrl });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/hr/face/kiosk-tokens/:id — revoke a paired device.
+router.delete("/kiosk-tokens/:id", async (req, res) => {
+  try {
+    if (denyKiosk(req, res)) return;
+    const cid = guard(req, res); if (!cid) return;
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+    const result = await db
+      .update(kioskTokensTable)
+      .set({ revokedAt: new Date() })
+      .where(and(
+        eq(kioskTokensTable.id, id),
+        eq(kioskTokensTable.companyId, cid),
+        isNull(kioskTokensTable.revokedAt),
+      ))
+      .returning({ id: kioskTokensTable.id });
+    if (result.length === 0) { res.status(404).json({ error: "الجهاز غير موجود أو سبق إلغاؤه" }); return; }
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/hr/face/kiosk/me — used by the kiosk page on boot to confirm
+// its token is still valid and to discover its company name. Returns 401
+// when there's no valid kiosk token; otherwise minimal context.
+router.get("/kiosk/me", async (req, res) => {
+  try {
+    if (!req.isKiosk || !req.kioskTokenId) {
+      res.status(401).json({ error: "هذا الجهاز غير مرتبط" });
+      return;
+    }
+    const [row] = await db
+      .select({
+        id:        kioskTokensTable.id,
+        label:     kioskTokensTable.label,
+        companyId: kioskTokensTable.companyId,
+      })
+      .from(kioskTokensTable)
+      .where(eq(kioskTokensTable.id, req.kioskTokenId))
+      .limit(1);
+    if (!row) { res.status(401).json({ error: "غير صالح" }); return; }
+    res.json(row);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
