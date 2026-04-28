@@ -32,6 +32,7 @@ import {
   FileSearch,
   FileCode2,
   X,
+  Download,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -339,6 +340,70 @@ export default function AuditLog() {
     return s.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
   }, []);
 
+  // Downloads the selected audit rows as a CSV file. Mirrors the existing
+  // CSV-download mutations on /admin/ai-fix: fetches the body via the
+  // Authorization-bearing fetch (a plain `<a download>` can't carry the
+  // header), turns the blob into an object URL, and synthetically clicks
+  // a hidden anchor to trigger the browser's download UI. The endpoint
+  // POSTs the id list in the body so a few hundred selections never push
+  // the URL past the proxy's length limit, and the server logs the
+  // export to the audit log itself with the chosen ids in metadata so
+  // the batch is reproducible.
+  //
+  // We deliberately preserve the selection on success — reviewers
+  // sometimes want both the links AND the CSV for the same batch
+  // (different audiences receive each), so silently clearing would be
+  // hostile. The "Clear selection" button is right next to the action
+  // for the explicit case.
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
+  const downloadSelectedCsv = useCallback(async () => {
+    if (selectedRows.size === 0 || downloadingCsv) return;
+    const ids = [...selectedRows.keys()].sort((a, b) => a - b);
+    setDownloadingCsv(true);
+    try {
+      const r = await fetch(`${API}/api/audit-log/export`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || tr("downloadFailureDescription"));
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `audit-log-selection-${Date.now()}.csv`;
+      const rowCount = Number(r.headers.get("X-Csv-Row-Count") ?? ids.length) || ids.length;
+      if (typeof document !== "undefined") {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Free the blob URL after the click has had a chance to start.
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      toast({
+        title: tr("downloadSuccessTitle"),
+        description: tr("downloadSuccessToast", {
+          count: rowCount,
+          formattedCount: rowCount.toLocaleString(locale),
+        }),
+      });
+    } catch (e: any) {
+      toast({
+        title: tr("downloadFailureTitle"),
+        description: e?.message || tr("downloadFailureDescription"),
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingCsv(false);
+    }
+  }, [selectedRows, downloadingCsv, headers, tr, toast, locale]);
+
   // Copies the list of permalinks for every selected row to the
   // clipboard in either plain-text (one link per line) or Markdown
   // (`- [label](url)` list-item) format. We sort the IDs ascending so
@@ -524,6 +589,28 @@ export default function AuditLog() {
             >
               <Link2 className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
               {tr("copySelectedLinks", { count: selectedCount.toLocaleString(locale) })}
+            </Button>
+            {/* Bulk CSV download (task #146). Sits next to the copy-links
+                action because both feed off the same selection — reviewers
+                often want either the permalinks (for chat/ticket) or the
+                row contents (for spreadsheet triage), not both at once.
+                The button stays disabled while the download is in flight
+                so a fast double-click can't fire two duplicate audit
+                rows. */}
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={downloadSelectedCsv}
+              disabled={downloadingCsv}
+              data-testid="audit-bulk-download-csv"
+            >
+              {downloadingCsv ? (
+                <Loader2 className={`h-3.5 w-3.5 animate-spin ${isRtl ? "ml-1" : "mr-1"}`} />
+              ) : (
+                <Download className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+              )}
+              {tr("downloadSelectedCsv", { count: selectedCount.toLocaleString(locale) })}
             </Button>
             <Button
               type="button"

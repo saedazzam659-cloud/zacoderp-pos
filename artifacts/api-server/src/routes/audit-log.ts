@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { auditLogTable } from "@workspace/db";
-import { and, eq, gte, lte, desc, sql, like } from "drizzle-orm";
+import { and, eq, gte, lte, desc, sql, like, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requireAdminRole } from "../middleware/permissions.js";
+import { requireAdminRole, writeAudit } from "../middleware/permissions.js";
 
 // ─── Audit log viewer API ─────────────────────────────────────────────────
 //   GET /api/audit-log
@@ -74,6 +74,192 @@ router.get("/", async (req, res) => {
     res.json({ rows, total: Number(count ?? 0), limit, offset });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? "تعذر جلب سجل النشاط" });
+  }
+});
+
+// ─── Bulk CSV export of an explicit row selection ────────────────────────
+//   POST /api/audit-log/export
+//     body: { ids: number[] }
+//
+// Streams the selected audit rows as a UTF-8 BOM CSV download. The selection
+// is delivered in the request BODY (not the query string) so a few hundred
+// hand-picked ids don't blow past URL-length limits in a proxied browser
+// environment. Tenant scoping mirrors the listing handler: superadmin can
+// pull any id, every other admin is limited to their own company — rows
+// outside the caller's tenant are silently dropped from the file (and from
+// the recorded count) so this endpoint never leaks the existence of
+// cross-tenant entries.
+//
+// Caps the request at AUDIT_EXPORT_MAX_IDS (1000) to match the safety cap
+// every other CSV exporter in the system uses; over-cap requests fail with
+// 400 instead of being clipped silently so the operator always knows the
+// file matches the picked selection 1:1.
+//
+// We write a single export_csv audit row through `writeAudit` so the export
+// shows up in the audit log itself — the existing inspector body on
+// /admin/audit-log renders the metadata grid (count, format, etc.); the
+// hand-picked id list is persisted in metadata as `ids` so the batch can
+// be reproduced (or audited) later. The selection is recorded as
+// `selection: "manual"` so future readers can tell it apart from a
+// filter-driven export.
+const AUDIT_EXPORT_MAX_IDS = 1000;
+
+function csvEscape(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+function csvDate(v: unknown): string {
+  if (v == null || v === "") return "";
+  const s = String(v);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toISOString().replace("T", " ").slice(0, 19);
+}
+
+router.post("/export", async (req, res) => {
+  try {
+    const u = req.authUser!;
+    const isSuper = u.role === "superadmin";
+
+    // Accept ids from the body. Be tolerant of strings/numbers since some
+    // JSON serialisers (and our own clipboard tooling) emit ids as strings.
+    const raw = (req.body as { ids?: unknown } | undefined)?.ids;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      res.status(400).json({ error: "يجب تحديد سجل واحد على الأقل" });
+      return;
+    }
+
+    // Normalize → unique positive integers, sorted ascending so the audit
+    // metadata and the CSV row order are deterministic regardless of which
+    // order the reviewer happened to tick rows in.
+    const ids = Array.from(
+      new Set(
+        raw
+          .map((v) => (typeof v === "number" ? v : Number(v)))
+          .filter((n) => Number.isFinite(n) && n > 0 && Number.isInteger(n))
+      ),
+    ).sort((a, b) => a - b);
+
+    if (ids.length === 0) {
+      res.status(400).json({ error: "يجب تحديد سجل واحد على الأقل" });
+      return;
+    }
+    if (ids.length > AUDIT_EXPORT_MAX_IDS) {
+      res.status(400).json({
+        error: `لا يمكن تصدير أكثر من ${AUDIT_EXPORT_MAX_IDS} سجل دفعة واحدة`,
+        max: AUDIT_EXPORT_MAX_IDS,
+      });
+      return;
+    }
+
+    // Build the same tenant filter the listing/single-entry handlers use:
+    // superadmin sees everything, every other admin is pinned to their
+    // own company. An admin without an assigned companyId gets a
+    // never-matches predicate so we return an empty (but valid) CSV
+    // rather than leaking cross-tenant rows.
+    const conds: any[] = [inArray(auditLogTable.id, ids)];
+    if (!isSuper) {
+      if (u.companyId != null) {
+        conds.push(eq(auditLogTable.companyId, u.companyId));
+      } else {
+        conds.push(sql`1 = 0`);
+      }
+    }
+
+    const rows = await db
+      .select()
+      .from(auditLogTable)
+      .where(and(...conds))
+      .orderBy(desc(auditLogTable.createdAt));
+
+    // CSV columns mirror the on-screen table plus the id and the metadata
+    // JSON blob so a reviewer pasting the file into Excel sees the same
+    // information as the live listing without losing the fine-grained
+    // metadata. Header text is bilingual on purpose — the existing audit
+    // log UI uses Arabic labels, but the CSV is shared across reviewers
+    // who may not read Arabic.
+    const headers = [
+      "ID",
+      "Time",
+      "User",
+      "Role",
+      "Company ID",
+      "Module",
+      "Action",
+      "Method",
+      "Path",
+      "Entity Type",
+      "Entity ID",
+      "Status",
+      "IP",
+      "User Agent",
+      "Metadata",
+    ];
+    const csvRows = rows.map((r) => [
+      r.id,
+      csvDate(r.createdAt),
+      r.username ?? "",
+      r.role ?? "",
+      r.companyId ?? "",
+      r.module,
+      r.action,
+      r.method ?? "",
+      r.path ?? "",
+      r.entityType ?? "",
+      r.entityId ?? "",
+      r.statusCode ?? "",
+      r.ip ?? "",
+      r.userAgent ?? "",
+      r.metadata != null ? JSON.stringify(r.metadata) : "",
+    ]);
+
+    // Audit the export itself. Metadata records the manual selection so
+    // the batch is reproducible: `ids` is the canonicalized request, `count`
+    // is what actually made it into the file (may be lower than `ids.length`
+    // if some ids were missing or filtered out by tenant scoping). Format
+    // matches the existing maintenance CSV writers so the inspector body
+    // on /admin/audit-log renders the same metric grid + filters block.
+    await writeAudit({
+      userId:    u.id ?? null,
+      username:  u.username ?? null,
+      role:      u.role ?? null,
+      companyId: u.companyId ?? null,
+      module:    "audit_log",
+      action:    "export_csv",
+      method:    req.method,
+      path:      req.originalUrl,
+      entityType: "audit_log",
+      entityId:   null,
+      statusCode: 200,
+      metadata: {
+        count: rows.length,
+        requestedCount: ids.length,
+        format: "csv",
+        selection: "manual",
+        ids,
+      },
+    });
+
+    const lines = [headers.map(csvEscape).join(",")];
+    for (const r of csvRows) lines.push(r.map(csvEscape).join(","));
+    // \uFEFF = UTF-8 BOM. Excel needs this to display Arabic correctly.
+    const body = "\uFEFF" + lines.join("\r\n") + "\r\n";
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="audit-log-selection-${Date.now()}.csv"`,
+    );
+    res.setHeader("X-Csv-Row-Count", String(rows.length));
+    res.setHeader("X-Csv-Requested-Count", String(ids.length));
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Content-Disposition, X-Csv-Row-Count, X-Csv-Requested-Count",
+    );
+    res.send(body);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "تعذر تصدير السجلات المحددة" });
   }
 });
 
