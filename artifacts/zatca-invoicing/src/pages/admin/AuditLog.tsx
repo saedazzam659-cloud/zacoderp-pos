@@ -27,6 +27,8 @@ import {
   Copy,
   Check,
   Link2,
+  CheckCircle2,
+  FileSearch,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -628,35 +630,39 @@ function AuditDetailsDialog({
               </DetailField>
             </dl>
 
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {tr("detailsMetadata")}
+            {row.action === "export_csv" ? (
+              <ExportInspectorBody row={row} tr={tr} locale={locale} />
+            ) : (
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {tr("detailsMetadata")}
+                  </div>
+                  {prettyMeta && (
+                    <CopyIconButton
+                      value={prettyMeta}
+                      label={tr("copyMetadata")}
+                      tr={tr}
+                      testId="audit-details-copy-metadata"
+                      showText
+                    />
+                  )}
                 </div>
-                {prettyMeta && (
-                  <CopyIconButton
-                    value={prettyMeta}
-                    label={tr("copyMetadata")}
-                    tr={tr}
-                    testId="audit-details-copy-metadata"
-                    showText
-                  />
+                {prettyMeta ? (
+                  <pre
+                    dir="ltr"
+                    data-testid="audit-details-metadata"
+                    className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-80 overflow-y-auto"
+                  >
+                    {prettyMeta}
+                  </pre>
+                ) : (
+                  <div className="text-xs text-muted-foreground italic">
+                    {tr("detailsMetadataEmpty")}
+                  </div>
                 )}
               </div>
-              {prettyMeta ? (
-                <pre
-                  dir="ltr"
-                  data-testid="audit-details-metadata"
-                  className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-80 overflow-y-auto"
-                >
-                  {prettyMeta}
-                </pre>
-              ) : (
-                <div className="text-xs text-muted-foreground italic">
-                  {tr("detailsMetadataEmpty")}
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Permanent share link (task #126) — shows the full URL so the
                 reviewer can spot-check it visually before sharing, with an
@@ -690,6 +696,171 @@ function AuditDetailsDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Friendly inspector for `action === "export_csv"` audit rows. Mirrors the
+// maintenance-history inspector on /admin/ai-fix (task #122) so power users
+// see the same metric grid (count / total / cap), truncation pill, and
+// labelled filters list regardless of which surface they are reviewing
+// from. Anything outside the documented metadata shape is still surfaced —
+// pretty-printed in an "extras" pre block — so we never silently drop
+// fields a future writer attaches.
+function ExportInspectorBody({
+  row,
+  tr,
+  locale,
+}: {
+  row: AuditRow;
+  tr: (k: string, opts?: any) => string;
+  locale: string;
+}) {
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  const truncated = meta.truncated === true;
+  const count = typeof meta.count === "number" ? meta.count : null;
+  const totalAvailable =
+    typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
+  const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
+  const format = typeof meta.format === "string" ? meta.format : null;
+  const filters =
+    meta.filters && typeof meta.filters === "object" && !Array.isArray(meta.filters)
+      ? (meta.filters as Record<string, unknown>)
+      : null;
+
+  const wellKnown = new Set([
+    "truncated", "count", "totalAvailable", "rowCap", "format", "filters",
+  ]);
+  const extras: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) {
+    if (!wellKnown.has(k)) extras[k] = v;
+  }
+  const hasExtras = Object.keys(extras).length > 0;
+
+  const fmt = (n: number) => n.toLocaleString(locale);
+
+  // Resolve known maintenance-history action / entityType values to the
+  // friendly translated label; fall back to the raw machine value if no
+  // translation key is registered. Keeps the inspector forward-compatible
+  // — a new writer that introduces a fresh action/entityType will appear
+  // immediately, just without a localised label.
+  const resolveAction = (v: string) =>
+    tr(`historyActions.${v}`, { defaultValue: v });
+  const resolveEntityType = (v: string) =>
+    tr(`historyEntityTypes.${v}`, { defaultValue: v });
+
+  return (
+    <div className="space-y-4 text-sm" data-testid="audit-details-export-inspector">
+      <div className="flex flex-wrap items-center gap-2">
+        {truncated ? (
+          <span
+            data-testid="audit-details-export-truncated-pill"
+            className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
+          >
+            <Scissors className="h-3 w-3" />
+            <span>{tr("exportTruncatedPill")}</span>
+            {rowCap != null && totalAvailable != null && (
+              <span className="font-mono text-[10px] opacity-80">
+                {tr("exportTruncatedRows", {
+                  cap: fmt(rowCap),
+                  total: fmt(totalAvailable),
+                })}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span
+            data-testid="audit-details-export-full-pill"
+            className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800"
+          >
+            <CheckCircle2 className="h-3 w-3" />
+            <span>{tr("exportFullPill")}</span>
+          </span>
+        )}
+        {format && (
+          <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-mono uppercase text-slate-700">
+            {format}
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <FileSearch className="h-3.5 w-3.5" />
+        <span>{tr("exportInspectorTitle")}</span>
+      </div>
+
+      <dl
+        data-testid="audit-details-export-metrics"
+        className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+      >
+        <div className="border rounded p-2 bg-muted/20">
+          <dt className="text-[11px] text-muted-foreground">{tr("exportMetricCount")}</dt>
+          <dd className="font-mono text-base text-foreground">
+            {count != null ? fmt(count) : "—"}
+          </dd>
+        </div>
+        <div className="border rounded p-2 bg-muted/20">
+          <dt className="text-[11px] text-muted-foreground">{tr("exportMetricTotalAvailable")}</dt>
+          <dd className="font-mono text-base text-foreground">
+            {totalAvailable != null ? fmt(totalAvailable) : "—"}
+          </dd>
+        </div>
+        <div className="border rounded p-2 bg-muted/20">
+          <dt className="text-[11px] text-muted-foreground">{tr("exportMetricRowCap")}</dt>
+          <dd className="font-mono text-base text-foreground">
+            {rowCap != null ? fmt(rowCap) : "—"}
+          </dd>
+        </div>
+      </dl>
+
+      <div data-testid="audit-details-export-filters">
+        <div className="text-xs font-medium text-muted-foreground mb-1">
+          {tr("exportFiltersTitle")}
+        </div>
+        {!filters || Object.values(filters).every((v) => v == null) ? (
+          <p className="text-xs italic text-muted-foreground">
+            {tr("exportFiltersEmpty")}
+          </p>
+        ) : (
+          <ul className="text-xs space-y-1">
+            {Object.entries(filters).map(([k, v]) => {
+              if (v == null) return null;
+              let label = k;
+              if (k === "from") label = tr("exportFilterFrom");
+              else if (k === "to") label = tr("exportFilterTo");
+              else if (k === "action") label = tr("exportFilterAction");
+              else if (k === "entityType") label = tr("exportFilterEntityType");
+              let display = String(v);
+              if (k === "action" && typeof v === "string") {
+                display = resolveAction(v);
+              } else if (k === "entityType" && typeof v === "string") {
+                display = resolveEntityType(v);
+              }
+              return (
+                <li key={k} className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{label}:</span>
+                  <span className="font-mono">{display}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {hasExtras && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-1">
+            {tr("exportExtras")}
+          </div>
+          <pre
+            dir="ltr"
+            data-testid="audit-details-export-extras"
+            className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-60 overflow-y-auto"
+          >
+            {JSON.stringify(extras, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 }
 
