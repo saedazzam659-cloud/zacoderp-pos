@@ -15,6 +15,8 @@ import {
   TrendingDown, Scale, Calculator, ScrollText, Trash2, Boxes, BookOpen, ClipboardList,
   // Audit-log inspector (task #122).
   Scissors, FileSearch,
+  // One-click "re-run a past export with its saved filters" (task #129).
+  Repeat,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -798,6 +800,72 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
           : undefined,
       });
       // Refresh the history panel so the export entry shows up.
+      setHistoryTick((t) => t + 1);
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  // One-click "re-run a past export with its saved filters" (task #129). The
+  // audit-log inspector dialog stores the original `metadata.filters` snapshot
+  // captured by the maintenance-history CSV writer; clicking the replay
+  // button forwards exactly those filter values to a fresh
+  // /maintenance/history?format=csv call so the operator gets a regenerated
+  // file without manually re-entering the dates / action / entity into the
+  // toolbar. The server writes a new export_csv audit row for the
+  // reproduction, keeping the audit trail honest. We deliberately keep this
+  // mutation separate from `historyCsvMut` (which reads the live toolbar
+  // state) so triggering a replay doesn't disturb whatever the admin
+  // currently has staged in the filter inputs.
+  const historyCsvReplayMut = useMutation({
+    mutationFn: async (filters: {
+      from?: string | null; to?: string | null;
+      action?: string | null; entityType?: string | null;
+    }) => {
+      if (!companyId) throw new Error("اختر الشركة أولاً");
+      const parts: string[] = [];
+      if (filters.from)       parts.push(`from=${encodeURIComponent(filters.from)}`);
+      if (filters.to)         parts.push(`to=${encodeURIComponent(filters.to)}`);
+      if (filters.action)     parts.push(`action=${encodeURIComponent(filters.action)}`);
+      if (filters.entityType) parts.push(`entityType=${encodeURIComponent(filters.entityType)}`);
+      const suffix = parts.length ? `&${parts.join("&")}` : "";
+      const r = await fetch(
+        `${API}/api/admin/maintenance/history?companyId=${companyId}&format=csv&includeSystem=1${suffix}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || "فشل إعادة التصدير");
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = m?.[1] ? decodeURIComponent(m[1]) : `maintenance-history-${companyId}.csv`;
+      const truncated      = r.headers.get("X-Csv-Truncated") === "1";
+      const rowCap         = Number(r.headers.get("X-Csv-Row-Cap") ?? 0) || 0;
+      const totalAvailable = Number(r.headers.get("X-Csv-Total-Available") ?? 0) || 0;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return { truncated, rowCap, totalAvailable };
+    },
+    onSuccess: ({ truncated, rowCap, totalAvailable }) => {
+      toast({
+        title: "تم إعادة التصدير بنفس الفلاتر",
+        description: truncated && rowCap > 0
+          ? (totalAvailable > rowCap
+              ? `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} من ${totalAvailable.toLocaleString("en-US")} صف`
+              : `تم الاقتطاع عند ${rowCap.toLocaleString("en-US")} صف`)
+          : undefined,
+      });
+      // Close the inspector and refresh the history panel so the new
+      // export_csv audit row written for the reproduction surfaces at the
+      // top of the table.
+      setExportInspectorRow(null);
       setHistoryTick((t) => t + 1);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -3506,6 +3574,39 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
                       >
                         {JSON.stringify(extras, null, 2)}
                       </pre>
+                    </div>
+                  )}
+
+                  {/* Replay button (task #129). Only enabled for the
+                      maintenance-history exporter — that's the one writer
+                      whose audit metadata captures the on-screen filter
+                      snapshot we can faithfully reproduce against the same
+                      endpoint. Other export_csv writers (journal_pending,
+                      tool-history, etc.) live in different endpoints with
+                      different param shapes, so the button is hidden for
+                      those rows. */}
+                  {exportInspectorRow.entityType === "maintenance_history" && (
+                    <div className="pt-2 border-t flex items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="default"
+                        data-testid="maint-history-inspector-replay"
+                        className="gap-1"
+                        onClick={() => historyCsvReplayMut.mutate({
+                          from:       (filters?.from       as string | null) ?? null,
+                          to:         (filters?.to         as string | null) ?? null,
+                          action:     (filters?.action     as string | null) ?? null,
+                          entityType: (filters?.entityType as string | null) ?? null,
+                        })}
+                        disabled={!companyId || historyCsvReplayMut.isPending}
+                        title="إعادة تنزيل ملف CSV باستخدام نفس الفلاتر المسجّلة"
+                      >
+                        {historyCsvReplayMut.isPending
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <Repeat className="h-3 w-3" />}
+                        إعادة التصدير بنفس الفلاتر
+                      </Button>
                     </div>
                   )}
                 </div>
