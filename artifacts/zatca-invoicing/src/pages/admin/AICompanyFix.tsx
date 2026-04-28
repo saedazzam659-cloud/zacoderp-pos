@@ -7,6 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import MaintenanceTool from "@/components/admin/MaintenanceTool";
 import {
+  maintenanceHistoryActionLabel,
+  maintenanceHistoryEntityTypeLabel,
+} from "@/lib/maintenanceHistoryLabels";
+import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
@@ -113,53 +117,20 @@ function emailReasonLabelAr(reason: string | null): string {
 // Friendly Arabic labels for the `action` and `entity_type` values written to
 // `audit_log` by maintenance code paths. Used by the history filter dropdowns
 // (task #47) — the dropdown options themselves come from the live audit log,
-// these maps just decorate known values with a friendly label. Anything not
-// listed falls back to the raw machine value, which is still useful (the new
-// option appears in the dropdown the moment it is logged for the first time).
-const HISTORY_ACTION_LABELS_AR: Record<string, string> = {
-  fix:              "إصلاح",
-  export_csv:       "تصدير CSV",
-  run_now_one:      "تشغيل لشركة",
-  run_now_all:      "تشغيل للكل",
-  edit_schedule:    "تعديل الجدولة",
-  send_test_email:  "بريد تجريبي",
-  edit_retention:   "تعديل مدة الاحتفاظ",
-  // Daily auto-prune of the email-history tables (maintenance + reports).
-  // Written by the scheduler — surfaced here so the maintenance-history panel
-  // shows a friendly Arabic label instead of the raw machine value.
-  auto_prune:       "تنظيف تلقائي",
-};
-const HISTORY_ENTITY_TYPE_LABELS_AR: Record<string, string> = {
-  journal_pending:                 "قيود معلّقة",
-  broken_refs:                     "مراجع مكسورة",
-  unlinked_accounts:               "حسابات غير مربوطة",
-  sequence_gaps:                   "فجوات التسلسل",
-  dormant_users:                   "مستخدمون خاملون",
-  negative_stock:                  "رصيد سالب",
-  stock_balance_drift:             "انحراف رصيد المخزون",
-  unbalanced_entries:              "قيود غير متوازنة",
-  old_audit_logs:                  "سجلات تدقيق قديمة",
-  old_maintenance_runs:            "عمليات صيانة قديمة",
-  old_maintenance_email_runs:      "سجل بريد الصيانة القديم",
-  old_report_email_runs:           "سجل بريد التقارير القديم",
-  maintenance_history:             "سجل الصيانة",
-  maintenance_schedule:            "جدولة الصيانة",
-  maintenance_runs:                "تشغيل الصيانة",
-  maintenance_retention:           "مدة الاحتفاظ بالسجلات",
-  maintenance_tool_history:        "سجل تشغيلات الأداة",
-  // Combined entity for the daily email-history auto-prune (covers both
-  // maintenance_email_runs and report_email_schedule_runs in one summary row).
-  email_history:                   "سجل البريد",
-  // Per-table entities for the daily auto-prune of the two "old records"
-  // toolbox cards. Each writes its own summary row so the maintenance-history
-  // panel surfaces the audit-log and maintenance-runs sweeps independently.
-  audit_log:                       "سجل التدقيق",
-};
+// these helpers just decorate known values with a friendly label. Anything
+// not listed falls back to the raw machine value, which is still useful (the
+// new option appears in the dropdown the moment it is logged for the first
+// time).
+//
+// Task #136: the actual label maps live in `lib/maintenanceHistoryLabels.ts`
+// alongside their English counterparts so /admin/audit-log reads from the
+// exact same source — adding a new action/entity type once is enough for
+// both surfaces to render the friendly label.
 function historyActionLabelAr(value: string): string {
-  return HISTORY_ACTION_LABELS_AR[value] ?? value;
+  return maintenanceHistoryActionLabel(value, "ar");
 }
 function historyEntityTypeLabelAr(value: string): string {
-  return HISTORY_ENTITY_TYPE_LABELS_AR[value] ?? value;
+  return maintenanceHistoryEntityTypeLabel(value, "ar");
 }
 
 // Task #64: derive a friendly Arabic retention-period summary from a row's

@@ -4,6 +4,10 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import {
+  maintenanceHistoryActionLabel,
+  maintenanceHistoryEntityTypeLabel,
+} from "@/lib/maintenanceHistoryLabels";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1139,14 +1143,18 @@ function ExportInspectorBody({
   const fmt = (n: number) => n.toLocaleString(locale);
 
   // Resolve known maintenance-history action / entityType values to the
-  // friendly translated label; fall back to the raw machine value if no
-  // translation key is registered. Keeps the inspector forward-compatible
-  // — a new writer that introduces a fresh action/entityType will appear
+  // friendly localised label; fall back to the raw machine value if it is
+  // not registered yet. Keeps the inspector forward-compatible — a new
+  // writer that introduces a fresh action/entityType will appear
   // immediately, just without a localised label.
-  const resolveAction = (v: string) =>
-    tr(`historyActions.${v}`, { defaultValue: v });
+  //
+  // Task #136: pulls from the shared `maintenanceHistoryLabels` module so
+  // /admin/ai-fix and /admin/audit-log can never drift apart — both
+  // surfaces read from the same single source of truth.
+  const lang: "ar" | "en" = locale.startsWith("ar") ? "ar" : "en";
+  const resolveAction = (v: string) => maintenanceHistoryActionLabel(v, lang);
   const resolveEntityType = (v: string) =>
-    tr(`historyEntityTypes.${v}`, { defaultValue: v });
+    maintenanceHistoryEntityTypeLabel(v, lang);
 
   return (
     <div className="space-y-4 text-sm" data-testid="audit-details-export-inspector">
