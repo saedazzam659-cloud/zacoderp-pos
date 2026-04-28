@@ -11,7 +11,7 @@ import {
   Loader2, LayoutDashboard, FileText, Users, Truck, Link2, Search, Building2,
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
-  ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert,
+  ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +52,8 @@ const MENU_ITEMS: MenuItem[] = [
 
   { key: "security_events",    label: "الأمن والمراقبة",            icon: ShieldAlert,     section: "الأمن والمراقبة" },
 
+  { key: "seo_dashboard",      label: "إدارة SEO",                  icon: TrendingUp,      section: "تحليلات SEO" },
+
   { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     icon: Sparkles,        section: "أدوات الذكاء الاصطناعي" },
 
   { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
@@ -68,6 +70,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "نقاط البيع": { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200",    ring: "from-teal-500/10" },
   "المحاسبة":   { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200",  ring: "from-indigo-500/10" },
   "شؤون الموظفين": { bg: "bg-rose-50",   text: "text-rose-700",    border: "border-rose-200",    ring: "from-rose-500/10" },
+  "تحليلات SEO": { bg: "bg-fuchsia-50", text: "text-fuchsia-700", border: "border-fuchsia-200", ring: "from-fuchsia-500/10" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },
 };

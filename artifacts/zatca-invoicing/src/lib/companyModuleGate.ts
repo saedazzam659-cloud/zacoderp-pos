@@ -65,6 +65,8 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   contracting: "contracting",
   production: "production",
   security_events: "security_events",
+  // SEO Manager — site analytics dashboard granted per company.
+  seo_dashboard: "seo_dashboard",
   // AI Tools — covers data import/export plus the admin-only voice
   // assistant, AI reports, and sessions admin screens. Disabling the
   // ai_tools company toggle hides the entire group and 403s any

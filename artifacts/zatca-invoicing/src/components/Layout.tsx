@@ -197,6 +197,10 @@ const dashboardSubNav: NavDef[] = [
   // from non-admins regardless of permission grant (avoids 403/404 on click).
   { nameKey: "nav.sequences",       href: "/settings/sequences",  icon: ListOrdered, permKey: "sequences", requireAdmin: true },
   { nameKey: "nav.vatDeclaration",  href: "/vat-declaration",     icon: BarChart3,  permKey: "vat_declaration" },
+  // SEO Manager — gated by the per-company seo_dashboard module toggle. Hidden
+  // when the company hasn't been granted this module on the SuperAdmin →
+  // MenuPermissions screen.
+  { nameKey: "nav.seoDashboard",    href: "/seo",                 icon: TrendingUp, permKey: "seo_dashboard" },
   // Audit log was previously rendered as a standalone top-level item gated by
   // user.role==="admin"; per the user's request it's now nested under the
   // dashboard/control-panel group. requireAdmin keeps the same admin-only gate.

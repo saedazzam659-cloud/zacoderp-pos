@@ -77,6 +77,10 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   contracting: "contracting",
   production: "production",
   security_events: "security_events",
+  // SEO Manager — per-company analytics surface backed by the platform-wide
+  // /api/admin/seo router. Disabling this gate hides the entire SEO dashboard
+  // for that company AND 403s any /api/seo/* call.
+  seo_dashboard: "seo_dashboard",
   // AI Tools — keep in sync with frontend gate. Disabling the company
   // ai_tools toggle hides the entire AI Tools sidebar group AND 403s
   // any backend access to its gated modules.

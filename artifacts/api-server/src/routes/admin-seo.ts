@@ -122,9 +122,12 @@ const SAMPLE_PAGES = [
   { url: "/pricing",                   title: "الباقات والأسعار" },
 ] as const;
 
-function buildPayload(): SeoDashboardPayload {
+// `seedSalt` lets each company get a stable-but-different mock when the same
+// generator is called from the per-company /api/seo route. Pass the company
+// id (or 0 for platform-wide / superadmin view).
+export function buildSeoPayload(seedSalt = 0): SeoDashboardPayload {
   const today = new Date();
-  const seed = dayKey(today);
+  const seed = dayKey(today) + seedSalt * 1_000_003; // prime offset
   const rand = rng(seed);
 
   // Headline numbers (roughly 30-day totals).
@@ -305,7 +308,7 @@ function buildPayload(): SeoDashboardPayload {
 // GET /api/admin/seo/dashboard — full SEO dashboard payload.
 router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
   try {
-    res.json(buildPayload());
+    res.json(buildSeoPayload());
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحميل بيانات SEO" });
   }
@@ -316,7 +319,7 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
 // the current payload, matching the UX of the spec's "Refresh Now" button.
 router.post("/refresh", requireSuperAdmin, async (_req, res) => {
   try {
-    res.json(buildPayload());
+    res.json(buildSeoPayload());
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "تعذّر تحديث البيانات" });
   }

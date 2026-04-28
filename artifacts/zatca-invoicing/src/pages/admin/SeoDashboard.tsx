@@ -124,17 +124,27 @@ function SectionHeader({
 
 // ─── Page ──────────────────────────────────────────────────────────────
 export default function SeoDashboard() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const headers = { Authorization: `Bearer ${token}` };
   const [tab, setTab] = useState<"daily" | "weekly" | "monthly">("daily");
+
+  // Pick the right backend surface based on caller role:
+  //   - superadmin → platform-wide /api/admin/seo/* (mock seeded by date only)
+  //   - everyone else → per-company /api/seo/* (mock seeded by companyId)
+  // The page UI is identical; only the fetch URL changes.
+  const isSuperAdmin = user?.role === "superadmin";
+  const base = isSuperAdmin ? "/api/admin/seo" : "/api/seo";
 
   // 24-hour auto-refresh window per spec.
   const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
+  // Cross-tenant cache safety: include the user's identity (id + companyId) in
+  // the query key so a logout/login as a different company in the same browser
+  // session never serves the previous tenant's cached payload before refetch.
   const { data, isLoading, refetch, isFetching } = useQuery<SeoDashboardData>({
-    queryKey: ["admin-seo-dashboard"],
+    queryKey: ["seo-dashboard", base, user?.companyId ?? "none", user?.id ?? "anon"],
     queryFn: async () => {
-      const res = await fetch(`${API}/api/admin/seo/dashboard`, { headers });
+      const res = await fetch(`${API}${base}/dashboard`, { headers });
       if (!res.ok) throw new Error("فشل تحميل بيانات SEO");
       return res.json();
     },
@@ -145,7 +155,7 @@ export default function SeoDashboard() {
   // Manual refresh button hits the explicit /refresh hook then refetches.
   const refreshMut = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API}/api/admin/seo/refresh`, { method: "POST", headers });
+      const res = await fetch(`${API}${base}/refresh`, { method: "POST", headers });
       if (!res.ok) throw new Error("فشل التحديث");
       return res.json();
     },

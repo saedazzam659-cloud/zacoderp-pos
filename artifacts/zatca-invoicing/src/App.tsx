@@ -277,6 +277,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/support" component={SupportInbox} />}
             {isSuperAdmin && <Route path="/admin/support-settings" component={SupportSettings} />}
             {isSuperAdmin && <Route path="/admin/seo" component={SeoDashboard} />}
+            {!isSuperAdmin && <PermRoute path="/seo" module="seo_dashboard" component={SeoDashboard} />}
             {(isSuperAdmin || user?.role === "admin") && <Route path="/admin/audit-log" component={AuditLog} />}
             {/* Work sessions are inherently per-company/per-user. Superadmin
                 has no companyId so the feature doesn't apply to them. */}
