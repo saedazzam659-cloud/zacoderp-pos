@@ -21,7 +21,13 @@ import {
   clearCriticalDigestCooldown,
   severityMeetsThreshold, SEVERITY_THRESHOLDS, type AlertSeverity,
 } from "../lib/maintenanceScheduler.js";
-import { emailConfigured, sendReportRecipientInvitation } from "../lib/email.js";
+import {
+  emailConfigured,
+  sendReportRecipientInvitation,
+  resolveActiveSender,
+  invalidateSenderCache,
+  REPORT_SENDER_KEY,
+} from "../lib/email.js";
 import { eq, and, or, asc, count, inArray, notInArray, sql, desc, lt, isNull, gte, lte, type SQL } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
@@ -3655,6 +3661,74 @@ router.delete("/reports/email-schedule/invitations/:id", requireSuperAdmin, asyn
     res.json({ ok: true, invitation: serialiseInvitation(updated) });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "تعذر إلغاء الدعوة";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// ─── SuperAdmin "From" address management ──────────────────────────────────
+// SuperAdmin can pin a custom From address that all reports / invites are
+// sent from. The override lives in `system_settings` (key REPORT_SENDER_KEY).
+// When unset, the resolver falls back to SMTP_FROM env, then SMTP_USER env,
+// then the connected Outlook mailbox's address. The frontend uses these two
+// endpoints to render the "Active Sender Email" card on the reports admin
+// page and let the SuperAdmin change/clear the override in one click.
+
+// GET /api/admin/reports/sender-email — current resolved address + provenance.
+router.get("/reports/sender-email", requireSuperAdmin, async (_req, res) => {
+  try {
+    const info = await resolveActiveSender();
+    res.json(info);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر قراءة الإعدادات";
+    res.status(500).json({ error: msg });
+  }
+});
+
+// PUT /api/admin/reports/sender-email — set or clear the override.
+//   body: { email: string | null }   — null/empty clears the override.
+router.put("/reports/sender-email", requireSuperAdmin, async (req, res) => {
+  try {
+    const raw = req.body?.email;
+    const trimmed = typeof raw === "string" ? raw.trim() : null;
+    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      res.status(400).json({ error: "صيغة البريد غير صحيحة" });
+      return;
+    }
+    const before = await resolveActiveSender();
+
+    if (!trimmed) {
+      await db.delete(systemSettingsTable)
+        .where(eq(systemSettingsTable.key, REPORT_SENDER_KEY));
+    } else {
+      // upsert: if a row exists update value+updatedAt, else insert.
+      await db.execute(sql`
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES (${REPORT_SENDER_KEY}, ${trimmed}, NOW())
+        ON CONFLICT (key) DO UPDATE
+          SET value = EXCLUDED.value, updated_at = NOW()
+      `);
+    }
+    invalidateSenderCache();
+
+    await writeAudit({
+      userId:   req.adminUser?.id ?? null,
+      username: req.adminUser?.username ?? null,
+      role:     "superadmin",
+      companyId: null,
+      module: "reports",
+      action: trimmed ? "update" : "delete",
+      entityType: "report_sender_email",
+      entityId: REPORT_SENDER_KEY,
+      metadata: {
+        previous: before.override,
+        next: trimmed,
+      },
+    });
+
+    const after = await resolveActiveSender();
+    res.json(after);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "تعذر حفظ الإعداد";
     res.status(500).json({ error: msg });
   }
 });

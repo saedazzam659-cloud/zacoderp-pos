@@ -1,4 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import { db, systemSettingsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 let cached: Transporter | null = null;
 
@@ -19,8 +21,141 @@ function getTransporter(): Transporter | null {
   return cached;
 }
 
-function getFrom(): string {
+// SuperAdmin can pin a custom "From" address from the admin UI; we persist it
+// as a single row in `system_settings` (key = REPORT_SENDER_KEY). The cache
+// keeps GET hot-path cheap; setOverride() invalidates it explicitly so the
+// next send picks up the new address immediately.
+export const REPORT_SENDER_KEY = "report_sender_email";
+const SENDER_CACHE_TTL_MS = 30_000;
+let senderOverrideCache: { value: string | null; expiresAt: number } | null = null;
+
+async function readOverrideFromDb(): Promise<string | null> {
+  const [row] = await db.select().from(systemSettingsTable)
+    .where(eq(systemSettingsTable.key, REPORT_SENDER_KEY)).limit(1);
+  if (!row) return null;
+  const v = (row.value ?? "").trim();
+  return v.length ? v : null;
+}
+
+async function getSenderOverride(): Promise<string | null> {
+  if (senderOverrideCache && senderOverrideCache.expiresAt > Date.now()) {
+    return senderOverrideCache.value;
+  }
+  try {
+    const v = await readOverrideFromDb();
+    senderOverrideCache = { value: v, expiresAt: Date.now() + SENDER_CACHE_TTL_MS };
+    return v;
+  } catch (err: any) {
+    // Don't fail email sends because the override couldn't be read; just log.
+    console.warn("[email] could not read sender override; falling back to env", err?.message ?? err);
+    return null;
+  }
+}
+
+export function invalidateSenderCache(): void {
+  senderOverrideCache = null;
+}
+
+function getEnvFrom(): string {
   return process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "no-reply@localhost";
+}
+
+async function getFrom(): Promise<string> {
+  const override = await getSenderOverride();
+  return override ?? getEnvFrom();
+}
+
+// Inspect what address WILL be used and from which source. Surfaced via the
+// SuperAdmin sender-email admin endpoint so the UI can show the resolved
+// address with a clear provenance badge.
+export interface ActiveSenderInfo {
+  active: string;
+  source: "override" | "smtp_from_env" | "smtp_user_env" | "outlook_account" | "fallback";
+  override: string | null;
+  smtpFromEnv: string | null;
+  smtpUserEnv: string | null;
+  outlookEnabled: boolean;
+  outlookAddress: string | null;
+  willActuallySendFrom: string;
+  notice: string | null;
+}
+
+export async function resolveActiveSender(): Promise<ActiveSenderInfo> {
+  const override = await getSenderOverride();
+  const smtpFromEnv = process.env.SMTP_FROM ?? null;
+  const smtpUserEnv = process.env.SMTP_USER ?? null;
+  const outlookOn = outlookEnabled();
+  const outlookAddress = outlookOn ? await getOutlookAddress() : null;
+
+  let active: string;
+  let source: ActiveSenderInfo["source"];
+  if (override) { active = override; source = "override"; }
+  else if (smtpFromEnv) { active = smtpFromEnv; source = "smtp_from_env"; }
+  else if (smtpUserEnv) { active = smtpUserEnv; source = "smtp_user_env"; }
+  else if (outlookAddress) { active = outlookAddress; source = "outlook_account"; }
+  else { active = "no-reply@localhost"; source = "fallback"; }
+
+  // What ACTUALLY appears in the recipient's inbox depends on the transport:
+  //  • SMTP: the From header is whatever we put in `from:` (subject to the
+  //    SMTP server's policy on send-as).
+  //  • Outlook (Microsoft Graph /me/sendMail): the mail server replaces the
+  //    From with the authenticated mailbox's address regardless of what we
+  //    set. Reflect that honestly in the UI so the SuperAdmin doesn't think
+  //    their override silently took effect.
+  const transporterAvailable = Boolean(
+    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
+  );
+  const willActuallySendFrom = transporterAvailable
+    ? active
+    : (outlookAddress ?? active);
+
+  let notice: string | null = null;
+  if (!transporterAvailable && outlookOn) {
+    notice = "outlook_locks_sender";
+  } else if (!transporterAvailable && !outlookOn) {
+    notice = "no_transport_configured";
+  }
+
+  return {
+    active,
+    source,
+    override,
+    smtpFromEnv,
+    smtpUserEnv,
+    outlookEnabled: outlookOn,
+    outlookAddress,
+    willActuallySendFrom,
+    notice,
+  };
+}
+
+// Try to read the email address of the connected Outlook account so the UI
+// can surface "actually-sent-from" honestly. We hit Graph /me once and cache
+// the result; failures are silent because email sending must keep working.
+let cachedOutlookAddress: { value: string | null; expiresAt: number } | null = null;
+async function getOutlookAddress(): Promise<string | null> {
+  if (cachedOutlookAddress && cachedOutlookAddress.expiresAt > Date.now()) {
+    return cachedOutlookAddress.value;
+  }
+  try {
+    const connectors = await getOutlookConnector();
+    if (!connectors) return null;
+    const resp: any = await connectors.proxy("outlook", "/v1.0/me", { method: "GET" });
+    if (!resp || typeof resp.status !== "number" || resp.status < 200 || resp.status >= 300) {
+      cachedOutlookAddress = { value: null, expiresAt: Date.now() + 60_000 };
+      return null;
+    }
+    let body: any = null;
+    try { body = await resp.json(); } catch {}
+    const addr: string | null =
+      (body?.mail as string | undefined)?.trim?.() ||
+      (body?.userPrincipalName as string | undefined)?.trim?.() ||
+      null;
+    cachedOutlookAddress = { value: addr, expiresAt: Date.now() + 5 * 60_000 };
+    return addr;
+  } catch {
+    return null;
+  }
 }
 
 // Test-only seam. The maintenance test suite stubs `nodemailer.createTransport`
@@ -126,7 +261,7 @@ export async function sendEmail(opts: SendOpts): Promise<{ ok: boolean; reason?:
   if (transporter) {
     try {
       await transporter.sendMail({
-        from: getFrom(),
+        from: await getFrom(),
         to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
         subject: opts.subject,
         html: opts.html,
