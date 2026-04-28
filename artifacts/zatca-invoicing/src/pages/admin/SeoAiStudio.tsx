@@ -232,6 +232,49 @@ export default function SeoAiStudio() {
     onError: (e: any) => toast({ title: "تعذّر التحديث", description: e.message, variant: "destructive" }),
   });
 
+  // Inline mutation for editing the article's geographic targeting from
+  // within the preview dialog. We send the chosen codes as an array — the
+  // backend normalizes/validates (allowlist + GLOBAL exclusivity) and
+  // rejects mixed selections with a 400.
+  const updateCountries = useMutation({
+    mutationFn: async (input: { id: number; countries: string[] }) => {
+      const r = await fetch(`${API}/api/admin/seo/ai-articles/${input.id}`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ targetCountries: input.countries }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || "فشل تحديث الدول");
+      return data as Article;
+    },
+    onSuccess: (a) => {
+      qc.invalidateQueries({ queryKey: ["seo-ai-articles"] });
+      setOpenArticle(prev => prev && prev.id === a.id ? a : prev);
+      toast({ title: "تم تحديث الاستهداف الجغرافي" });
+    },
+    onError: (e: any) => toast({ title: "تعذّر التحديث", description: e.message, variant: "destructive" }),
+  });
+
+  // Toggle a country code on the currently-open article and immediately
+  // commit the change. Mirrors the generation form's mutual-exclusivity:
+  // GLOBAL clears all specific codes (and vice-versa).
+  function toggleArticleCountry(code: string) {
+    if (!openArticle) return;
+    const current = parseCountries(openArticle.targetCountries);
+    let next: string[];
+    if (code === "GLOBAL") {
+      next = ["GLOBAL"];
+    } else {
+      const without = current.filter(c => c !== "GLOBAL" && c !== code);
+      next = current.includes(code) ? without : [...without, code];
+      if (!next.length) next = ["GLOBAL"];
+    }
+    // Skip a no-op write if the user clicked the only-selected chip
+    // and we ended up at the same set.
+    const sameSet = next.length === current.length && next.every(c => current.includes(c));
+    if (sameSet) return;
+    updateCountries.mutate({ id: openArticle.id, countries: next });
+  }
+
   const deleteArticle = useMutation({
     mutationFn: async (id: number) => {
       const r = await fetch(`${API}/api/admin/seo/ai-articles/${id}`, { method: "DELETE", headers });
@@ -666,6 +709,42 @@ export default function SeoAiStudio() {
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">وصف ميتا</p>
                   <div className="rounded-md border bg-muted/30 p-2 text-sm">{openArticle.metaDescription || "—"}</div>
+                </div>
+
+                {/* Editable geographic targeting — clicking a chip toggles
+                    membership and immediately PATCHes the article. The
+                    GLOBAL chip is mutually-exclusive with the per-country
+                    chips, mirroring the generation form. */}
+                <div data-testid="article-country-editor">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs text-muted-foreground">الاستهداف الجغرافي</p>
+                    {updateCountries.isPending && (
+                      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {COUNTRIES.map(c => {
+                      const active = parseCountries(openArticle.targetCountries).includes(c.code);
+                      return (
+                        <button
+                          key={c.code}
+                          type="button"
+                          onClick={() => toggleArticleCountry(c.code)}
+                          disabled={updateCountries.isPending}
+                          data-testid={`article-country-chip-${c.code}`}
+                          aria-pressed={active}
+                          className={
+                            "px-2 py-1 rounded-full text-xs border transition-colors disabled:opacity-60 " +
+                            (active
+                              ? "bg-fuchsia-600 text-white border-fuchsia-600"
+                              : "bg-background hover:bg-muted border-input")
+                          }
+                        >
+                          {c.nameAr}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div>

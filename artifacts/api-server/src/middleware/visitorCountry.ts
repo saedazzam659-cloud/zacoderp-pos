@@ -32,6 +32,14 @@ declare global {
 }
 
 const VALID_OVERRIDE = /^([A-Z]{2}|GLOBAL)$/;
+// Catalog of country codes the app actually has localized copy/policy
+// for. Any other 2-letter code (e.g. "US", "FR") gets coerced to the
+// GLOBAL sentinel so unsupported visitors see neutral fallback content
+// instead of accidental Saudi-default copy. Keep this in lock-step
+// with the SPA's countries.ts catalog.
+const SUPPORTED_COUNTRIES = new Set<string>([
+  "SA", "AE", "KW", "QA", "BH", "OM", "EG", "GLOBAL",
+]);
 const COOKIE_NAME    = "visitor_country";
 // One year — country pickers are sticky and we don't want users to keep
 // re-selecting on every visit. Browsers cap effective lifetime to ~13mo
@@ -42,8 +50,11 @@ function normalize(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const v = raw.trim().toUpperCase();
   if (!v) return null;
-  if (v === "GLOBAL") return "GLOBAL";
-  return VALID_OVERRIDE.test(v) ? v : null;
+  if (!VALID_OVERRIDE.test(v)) return null;
+  // Coerce unsupported codes (e.g. CF-IPCountry returning "US" or "FR")
+  // to the GLOBAL fallback so downstream filters and UI surfaces never
+  // see a country we don't have localized copy for.
+  return SUPPORTED_COUNTRIES.has(v) ? v : "GLOBAL";
 }
 
 export function visitorCountryMiddleware(

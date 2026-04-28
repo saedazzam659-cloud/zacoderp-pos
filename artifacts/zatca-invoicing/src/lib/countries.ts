@@ -79,8 +79,10 @@ export const COUNTRIES: Country[] = [
 export const DEFAULT_COUNTRY_CODE = "SA";
 
 // Catch-all fallback used when an unknown code is passed; keeps display
-// logic total without throwing.
-const FALLBACK: Country = COUNTRIES[0];
+// logic total without throwing. We deliberately point this at the
+// GLOBAL entry (not the SA default) so an unsupported visitor country
+// does NOT silently render Saudi-specific compliance/currency copy.
+const FALLBACK: Country = COUNTRIES.find(c => c.code === "GLOBAL") ?? COUNTRIES[0];
 
 export function getCountryByCode(code?: string | null): Country {
   if (!code) return FALLBACK;

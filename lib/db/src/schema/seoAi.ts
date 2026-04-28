@@ -36,6 +36,13 @@ export const seoGeneratedArticlesTable = pgTable("seo_generated_articles", {
 }, (t) => ({
   byStatus:    index("seo_articles_status_idx").on(t.status, t.createdAt),
   byCreatedAt: index("seo_articles_created_at_idx").on(t.createdAt),
+  // Btree index on the CSV column. Note: `LIKE '%X%'` queries (used for
+  // membership tests in the CSV) cannot use a standard btree because of
+  // the leading wildcard — for that, a pg_trgm GIN index would be needed
+  // and we'll add one when article volume grows enough to make latency
+  // measurable. This index still helps the equality lookups we do for
+  // the GLOBAL-only fast path and any future exact-match query plans.
+  byTargetCountries: index("seo_articles_target_countries_idx").on(t.targetCountries),
 }));
 
 export type SeoGeneratedArticle = typeof seoGeneratedArticlesTable.$inferSelect;
