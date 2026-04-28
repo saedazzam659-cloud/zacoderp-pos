@@ -292,24 +292,24 @@ export default function PosLanding() {
 function PublicHeader({ setLocation }: { setLocation: (p: string) => void }) {
   return (
     <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-20">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
         <button
           onClick={() => setLocation("/")}
-          className="flex items-center gap-2 text-sm font-bold text-foreground hover:opacity-80"
+          className="flex items-center gap-2 text-sm font-bold text-foreground hover:opacity-80 min-w-0"
           data-testid="pos-home-link"
         >
-          <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-          نظام محاسبة سعودي معتمد من ZATCA
+          <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
+          <span className="hidden sm:inline truncate">نظام محاسبة سعودي معتمد من ZATCA</span>
         </button>
-        <nav className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/pricing")} data-testid="pos-nav-pricing">
+        <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/pricing")} className="px-2 sm:px-3" data-testid="pos-nav-pricing">
             الباقات
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} data-testid="pos-nav-login">
-            تسجيل الدخول
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} className="px-2 sm:px-3" data-testid="pos-nav-login">
+            دخول
           </Button>
-          <Button size="sm" onClick={() => setLocation("/register")} data-testid="pos-nav-register">
-            ابدأ مجاناً
+          <Button size="sm" onClick={() => setLocation("/register")} className="px-2 sm:px-3" data-testid="pos-nav-register">
+            ابدأ
           </Button>
         </nav>
       </div>

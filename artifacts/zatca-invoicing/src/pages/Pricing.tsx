@@ -200,21 +200,21 @@ export default function Pricing() {
 
       {/* Top nav strip */}
       <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <button
             onClick={() => setLocation("/login")}
-            className="flex items-center gap-2 text-sm font-bold text-foreground hover:opacity-80"
+            className="flex items-center gap-2 text-sm font-bold text-foreground hover:opacity-80 min-w-0"
             data-testid="pricing-home-link"
           >
-            <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-            <span>الفاتورة الإلكترونية السعودية</span>
+            <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
+            <span className="hidden sm:inline truncate">الفاتورة الإلكترونية السعودية</span>
           </button>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/login")}>
-              تسجيل الدخول
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} className="px-2 sm:px-3">
+              دخول
             </Button>
-            <Button size="sm" onClick={() => setLocation("/register")} className="gap-1">
-              ابدأ مجاناً <ArrowLeft className="h-4 w-4" />
+            <Button size="sm" onClick={() => setLocation("/register")} className="gap-1 px-2 sm:px-3">
+              ابدأ <ArrowLeft className="h-4 w-4 hidden sm:inline-block" />
             </Button>
           </div>
         </div>
