@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import {
   Link2,
   CheckCircle2,
   FileSearch,
+  X,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -70,6 +72,7 @@ const PAGE_SIZE = 50;
 export default function AuditLog() {
   const { token } = useAuth();
   const { t, i18n } = useTranslation();
+  const { toast } = useToast();
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`adminPages.auditLog.${k}`, opts) as string;
   const trAction = (a: string) => t(`adminPages.auditLog.actions.${a}`, { defaultValue: a }) as string;
@@ -246,6 +249,136 @@ export default function AuditLog() {
     return `${origin}${pathname}?entry=${id}`;
   }, []);
 
+  // ── Bulk-select share links (task #143) ─────────────────────────────
+  // Reviewers triaging long audit lists frequently want to drop a batch
+  // of permalinks into a chat or ticket. Per-row checkboxes plus a
+  // toolbar action let them do that in one click instead of copying
+  // each link individually. State is intentionally a Set keyed by row
+  // `id`, NOT by visible row index, so the selection survives:
+  //   • paginating to a different page (the Set keeps prior IDs)
+  //   • re-filtering the listing (we keep the IDs even if a row is no
+  //     longer visible — the eventual permalink still resolves the
+  //     entry via `?entry=N`)
+  //   • refetching (the rows array reference changes but IDs persist)
+  // We expose a header checkbox that selects/deselects only the rows
+  // currently visible on the page (the typical "select-all" pattern in
+  // table UIs); clearing the entire selection is offered explicitly via
+  // the toolbar so a reviewer never gets stuck with stale picks from
+  // pages they've moved away from.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const selectedCount = selectedIds.size;
+
+  const toggleRowSelected = useCallback((id: number, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  // Header checkbox state — based on currently-visible rows only. Empty
+  // page → unchecked & disabled; some-but-not-all selected →
+  // "indeterminate"; all selected → checked.
+  const visibleIds = useMemo(() => rows.map(r => r.id), [rows]);
+  const visibleSelectedCount = useMemo(
+    () => visibleIds.reduce((acc, id) => acc + (selectedIds.has(id) ? 1 : 0), 0),
+    [visibleIds, selectedIds],
+  );
+  const headerCheckboxState: boolean | "indeterminate" =
+    visibleIds.length > 0 && visibleSelectedCount === visibleIds.length
+      ? true
+      : visibleSelectedCount > 0
+        ? "indeterminate"
+        : false;
+
+  const togglePageSelection = useCallback(
+    (checked: boolean | "indeterminate") => {
+      // Radix may emit "indeterminate" when toggling a tri-state; treat
+      // that as "select all visible" since the user clicked to leave the
+      // mixed state, which is the common UX expectation.
+      const shouldSelect = checked !== false;
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (shouldSelect) {
+          for (const id of visibleIds) next.add(id);
+        } else {
+          for (const id of visibleIds) next.delete(id);
+        }
+        return next;
+      });
+    },
+    [visibleIds],
+  );
+
+  // Copies the newline-joined list of permalinks for every selected row
+  // to the clipboard. We sort the IDs ascending so the pasted output is
+  // deterministic regardless of the order the reviewer happened to tick
+  // them — easier to scan in a chat/ticket and matches the natural
+  // order audit IDs are issued in. Prefers the async Clipboard API,
+  // falls back to a hidden textarea + execCommand for the same reason
+  // CopyIconButton does (insecure-context dev environments).
+  const copySelectedLinks = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const ids = [...selectedIds].sort((a, b) => a - b);
+    const text = ids
+      .map(id => buildShareLinkForId(id))
+      .filter(v => v.length > 0)
+      .join("\n");
+
+    if (!text) {
+      toast({
+        title: tr("copyFailureTitle"),
+        description: tr("copyFailureDescription"),
+        variant: "destructive",
+      });
+      return;
+    }
+
+    let ok = false;
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } else if (typeof document !== "undefined") {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+    } catch {
+      ok = false;
+    }
+
+    if (ok) {
+      toast({
+        title: tr("copySuccessTitle"),
+        description: tr("copySelectedLinksToast", {
+          count: ids.length,
+          formattedCount: ids.length.toLocaleString(locale),
+        }),
+      });
+    } else {
+      toast({
+        title: tr("copyFailureTitle"),
+        description: tr("copyFailureDescription"),
+        variant: "destructive",
+      });
+    }
+  }, [selectedIds, buildShareLinkForId, toast, tr, locale]);
+
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
       <Card>
@@ -308,6 +441,45 @@ export default function AuditLog() {
         </CardContent>
       </Card>
 
+      {/* Bulk-select toolbar (task #143). Conditionally rendered so it
+          stays out of the way until the reviewer actually picks rows.
+          Lives above the table so it's visible regardless of how far
+          the listing has scrolled, and the count is always reflected
+          inside the action label so a screenshot or screen reader
+          conveys the same intent. */}
+      {selectedCount > 0 && (
+        <div
+          dir={isRtl ? "rtl" : "ltr"}
+          data-testid="audit-bulk-toolbar"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2"
+        >
+          <div className="text-xs text-foreground/80">
+            {tr("selectedCount", { count: selectedCount.toLocaleString(locale) })}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={copySelectedLinks}
+              data-testid="audit-bulk-copy-share-links"
+            >
+              <Link2 className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+              {tr("copySelectedLinks", { count: selectedCount.toLocaleString(locale) })}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={clearSelection}
+              data-testid="audit-bulk-clear-selection"
+            >
+              <X className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+              {tr("clearSelection")}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -325,6 +497,20 @@ export default function AuditLog() {
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 border-b">
                   <tr className={`${isRtl ? "text-right" : "text-left"} text-xs text-muted-foreground`}>
+                    {/* Bulk-select header column (task #143). Toggles
+                        every visible row at once and reflects the
+                        page's mixed/all/none state via the indeterminate
+                        flag. The cell stops propagation so the click
+                        never bubbles into the surrounding row click
+                        handlers (rows themselves are buttons). */}
+                    <th className="px-3 py-2 font-medium w-10">
+                      <Checkbox
+                        checked={headerCheckboxState}
+                        onCheckedChange={togglePageSelection}
+                        aria-label={tr("selectAllOnPage")}
+                        data-testid="audit-bulk-select-all"
+                      />
+                    </th>
                     <th className="px-3 py-2 font-medium">{tr("colTime")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colUser")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colAction")}</th>
@@ -364,7 +550,8 @@ export default function AuditLog() {
                       <tr
                         key={r.id}
                         data-testid="audit-row"
-                        className="border-b last:border-0 hover:bg-muted/30 cursor-pointer focus:outline-none focus:bg-muted/40"
+                        data-selected={selectedIds.has(r.id) ? "true" : undefined}
+                        className={`border-b last:border-0 hover:bg-muted/30 cursor-pointer focus:outline-none focus:bg-muted/40 ${selectedIds.has(r.id) ? "bg-primary/5" : ""}`}
                         tabIndex={0}
                         role="button"
                         aria-label={tr("openDetails")}
@@ -376,6 +563,23 @@ export default function AuditLog() {
                           }
                         }}
                       >
+                        {/* Per-row selection checkbox (task #143). The
+                            wrapping cell stops click/key events from
+                            bubbling so toggling the box never opens the
+                            details dialog (the row's own onClick /
+                            onKeyDown handlers do that). */}
+                        <td
+                          className="px-3 py-2 w-10"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <Checkbox
+                            checked={selectedIds.has(r.id)}
+                            onCheckedChange={(v) => toggleRowSelected(r.id, v === true)}
+                            aria-label={tr("selectRow")}
+                            data-testid={`audit-row-select-${r.id}`}
+                          />
+                        </td>
                         <td className="px-3 py-2 whitespace-nowrap text-xs font-mono">
                           {tt.toLocaleString(locale, { hour12: false })}
                         </td>
