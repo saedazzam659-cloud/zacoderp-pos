@@ -45,6 +45,7 @@ import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import Pricing from "@/pages/Pricing";
 import BlogArticle from "@/pages/BlogArticle";
+import Home from "@/pages/Home";
 import PendingApproval from "@/pages/PendingApproval";
 import Settings from "@/pages/Settings";
 import SubscriptionManagement from "@/pages/SubscriptionManagement";
@@ -224,7 +225,10 @@ function LoadingScreen() {
 // search engines can crawl it and unauthenticated visitors can compare
 // plans before signing up. /recover-superadmin* are also public but
 // matched separately below since they need dynamic-segment matching.
-const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog"];
+// "/" is also public for unauthenticated visitors — they see the new Home
+// landing page (targeting "نظام محاسبة سعودي"). Authenticated users still
+// get their dashboard at "/" via the route table below.
+const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog", "/"];
 
 function AppRoutes() {
   const { isAuthenticated, loading, user } = useAuth();
@@ -232,7 +236,13 @@ function AppRoutes() {
 
   if (loading) return <LoadingScreen />;
 
-  const isPublic = PUBLIC_PATHS.some(p => location === p || location.startsWith(p));
+  // For "/" we MUST distinguish authenticated (dashboard) vs guest (Home
+  // landing). Treat "/" as public only when the visitor is unauthenticated;
+  // otherwise the route table renders the dashboard normally.
+  const isPublic = PUBLIC_PATHS.some(p => {
+    if (p === "/") return location === "/" && !isAuthenticated;
+    return location === p || location.startsWith(p);
+  });
 
   // Redirect logged-in users away from auth pages. /pricing is left out
   // of this list intentionally — it's a marketing page and should remain
@@ -245,6 +255,12 @@ function AppRoutes() {
   // Redirect unauthenticated users to login
   if (!isAuthenticated && !isPublic) {
     return <Redirect to="/login" />;
+  }
+
+  // Guest landing on "/" — render the public Home page directly (no need
+  // to fall through to the dashboard route table).
+  if (!isAuthenticated && location === "/") {
+    return <Home />;
   }
 
   const isSuperAdmin = user?.role === "superadmin";
