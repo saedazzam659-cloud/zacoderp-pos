@@ -811,6 +811,14 @@ export default function AuditLog() {
                     <th className="px-3 py-2 font-medium">{tr("colUser")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colAction")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colModule")}</th>
+                    {/* Entity column (task #153). Renders the friendly
+                        translated label from the shared
+                        `adminPages.auditLog.entityTypes` dictionary the
+                        Markdown bulk-copy already uses, so reviewers
+                        scanning the table no longer see raw enums like
+                        `payment_voucher` instead of "payment voucher" /
+                        "سند صرف". */}
+                    <th className="px-3 py-2 font-medium">{tr("colEntity")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colPath")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colStatus")}</th>
                     <th className="px-3 py-2 font-medium">{tr("colIp")}</th>
@@ -919,6 +927,47 @@ export default function AuditLog() {
                           </div>
                         </td>
                         <td className="px-3 py-2 text-xs font-mono">{r.module}</td>
+                        {/* Entity cell (task #153). Resolves the raw enum
+                            to the same translated friendly label the
+                            Markdown bulk-copy uses (`entityTypes.invoice`
+                            → "invoice" / "فاتورة"), falling back to the
+                            raw machine value when no localisation is
+                            registered yet — keeps the column
+                            forward-compatible with future entity types
+                            without silently dropping info. The raw enum
+                            is kept inline as a small muted monospace
+                            hint (mirroring the user-row's "(role)"
+                            secondary label), but the hint collapses
+                            when the friendly label is identical to the
+                            raw enum (e.g. `invoice` → "invoice" in
+                            English) to avoid noisy "invoice (invoice)"
+                            output. Whole-cell `title` keeps the raw
+                            enum discoverable on hover even when the
+                            inline hint is collapsed. */}
+                        <td
+                          className="px-3 py-2 text-xs"
+                          data-testid="audit-row-entity"
+                          title={r.entityType ?? undefined}
+                        >
+                          {r.entityType ? (() => {
+                            const friendly = tr(`entityTypes.${r.entityType}`, {
+                              defaultValue: r.entityType,
+                            });
+                            const showRaw = friendly !== r.entityType;
+                            return (
+                              <>
+                                <span>{friendly}</span>
+                                {showRaw && (
+                                  <span className="font-mono text-[10px] text-muted-foreground ms-1">
+                                    ({r.entityType})
+                                  </span>
+                                )}
+                              </>
+                            );
+                          })() : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-xs font-mono text-muted-foreground max-w-[300px] truncate" title={`${r.method ?? ""} ${r.path ?? ""}`}>
                           <span className="text-foreground/70">{r.method}</span> {r.path}
                         </td>
@@ -1198,7 +1247,37 @@ function AuditDetailsDialog({
                 <span className="font-mono text-xs">{row.ip ?? "—"}</span>
               </DetailField>
               <DetailField label={tr("detailsEntityType")}>
-                <span className="font-mono text-xs">{row.entityType ?? "—"}</span>
+                {row.entityType ? (() => {
+                  // Resolve the raw enum to the same translated friendly
+                  // label the Markdown bulk-copy uses (task #148 dictionary
+                  // at `adminPages.auditLog.entityTypes`), falling back to
+                  // the raw machine value when no localisation is
+                  // registered yet — keeps the field forward-compatible
+                  // with future entity types without silently dropping
+                  // info. The raw enum is still surfaced inline (in
+                  // muted monospace, matching the role hint on the user
+                  // field above) so power users debugging a fresh
+                  // entityType can still see it. We collapse the
+                  // secondary line when the friendly label is identical
+                  // to the raw enum (e.g. `invoice` → "invoice" in
+                  // English) to avoid noisy "invoice (invoice)" output.
+                  const friendly = tr(`entityTypes.${row.entityType}`, {
+                    defaultValue: row.entityType,
+                  });
+                  const showRaw = friendly !== row.entityType;
+                  return (
+                    <>
+                      <span>{friendly}</span>
+                      {showRaw && (
+                        <span className="font-mono text-[10px] text-muted-foreground ms-1">
+                          ({row.entityType})
+                        </span>
+                      )}
+                    </>
+                  );
+                })() : (
+                  <span className="font-mono text-xs">—</span>
+                )}
               </DetailField>
               <DetailField label={tr("detailsEntityId")}>
                 <div className="flex items-start gap-1.5">

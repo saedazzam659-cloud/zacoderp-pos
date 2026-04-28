@@ -5021,6 +5021,7 @@
       "colUser": "User",
       "colAction": "Action",
       "colModule": "Module",
+      "colEntity": "Entity",
       "colPath": "Path",
       "colStatus": "Status",
       "colIp": "IP",
