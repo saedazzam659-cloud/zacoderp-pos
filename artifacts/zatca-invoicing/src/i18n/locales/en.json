@@ -499,6 +499,7 @@
     "costCenters": "Cost Centers",
     "fiscalPeriods": "Fiscal Periods",
     "journals": "Journal Entries",
+    "openingBalancesEntry": "Opening Balances",
     "reports": "Reports",
     "accountStatement": "Account Statement",
     "trialBalance": "Trial Balance",
@@ -5803,6 +5804,53 @@
     },
     "bills": {
       "autoCode": "Auto"
+    }
+  },
+  "openingBalances": {
+    "title": "Opening Balances",
+    "subtitle": "Enter the opening balance of every account at the start of the fiscal year. Everything is saved as a single balanced opening journal entry and instantly reflects in the chart of accounts and trial balance.",
+    "entryDate": "Entry Date",
+    "description": "Description",
+    "descPlaceholder": "Opening journal entry description...",
+    "defaultDesc": "Opening journal entry for fiscal year {{year}}",
+    "downloadTemplate": "Download Blank Template",
+    "exportCurrent": "Export Current",
+    "import": "Import from Excel",
+    "importDone": "Import complete",
+    "importStats": "{{matched}} accounts applied — {{unmatched}} codes not found in the chart",
+    "importFailed": "Failed to read the file",
+    "searchPlaceholder": "Search by code or name...",
+    "col": {
+      "code": "Code",
+      "nameAr": "Account Name",
+      "nameEn": "Name (EN)",
+      "type": "Type",
+      "debit": "Debit",
+      "credit": "Credit"
+    },
+    "empty": "No accounts match your filter",
+    "emptyHint": "Try changing the filter or clearing the search box",
+    "showingAccounts": "Showing {{count}} of {{total}} accounts",
+    "filledRows": "{{count}} rows entered",
+    "totalDebit": "Total Debit",
+    "totalCredit": "Total Credit",
+    "difference": "Difference",
+    "clearAll": "Clear All",
+    "confirmClear": "Clear all entered balances?",
+    "saveEntry": "Save Opening Entry",
+    "saving": "Saving...",
+    "savedTitle": "Opening entry saved",
+    "savedDesc": "Entry number: {{docNumber}}",
+    "saveFailed": "Save failed",
+    "errAtLeastTwo": "At least two lines are required",
+    "lineMemo": "Opening balance — {{code}} {{name}}",
+    "help": {
+      "title": "Opening balances template instructions",
+      "l1": "1. The 'Code' column must exactly match the account code in the chart of accounts",
+      "l2": "2. For each account: enter EITHER a debit balance OR a credit balance (not both)",
+      "l3": "3. Asset and expense accounts normally carry debit balances",
+      "l4": "4. Liability, equity and revenue accounts normally carry credit balances",
+      "l5": "5. Total debit must equal total credit before saving"
     }
   }
 }
