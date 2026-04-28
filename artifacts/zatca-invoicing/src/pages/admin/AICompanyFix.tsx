@@ -11,6 +11,11 @@ import {
   maintenanceHistoryEntityTypeLabel,
 } from "@/lib/maintenanceHistoryLabels";
 import {
+  CsvExportInspectorBody,
+  csvExportInspectorTitle,
+  parseExportInspectorMetadata,
+} from "@/components/admin/CsvExportInspectorBody";
+import {
   Sparkles, Search, AlertTriangle, AlertCircle, Info, CheckCircle2, Loader2, Send,
   Network, RefreshCw, Server, Database, LayoutGrid, MonitorSmartphone, ChevronDown, ChevronRight,
   Wrench, FileText, Link2, Unlink, ListOrdered, UserX, PackageX, History,
@@ -3407,7 +3412,7 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
             <DialogHeader className="text-right sm:text-right">
               <DialogTitle className="flex items-center gap-2 text-violet-900">
                 <FileSearch className="h-4 w-4" />
-                تفاصيل تصدير CSV
+                {csvExportInspectorTitle("ar")}
               </DialogTitle>
               <DialogDescription>
                 {exportInspectorRow && (
@@ -3423,164 +3428,46 @@ function MaintenanceSection({ companyId, onSelectCompany, companies }: {
               </DialogDescription>
             </DialogHeader>
             {exportInspectorRow && (() => {
-              const meta = (exportInspectorRow.metadata ?? {}) as Record<string, unknown>;
-              const truncated = meta.truncated === true;
-              const count = typeof meta.count === "number" ? meta.count : null;
-              const totalAvailable =
-                typeof meta.totalAvailable === "number" ? meta.totalAvailable : null;
-              const rowCap = typeof meta.rowCap === "number" ? meta.rowCap : null;
-              const format = typeof meta.format === "string" ? meta.format : null;
-              const filters =
-                meta.filters && typeof meta.filters === "object"
-                  ? (meta.filters as Record<string, unknown>)
-                  : null;
-              // Anything the writer attached beyond the documented shape.
-              const wellKnown = new Set([
-                "truncated", "count", "totalAvailable", "rowCap", "format", "filters",
-              ]);
-              const extras: Record<string, unknown> = {};
-              for (const [k, v] of Object.entries(meta)) {
-                if (!wellKnown.has(k)) extras[k] = v;
-              }
-              const hasExtras = Object.keys(extras).length > 0;
-              return (
-                <div className="space-y-4 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {truncated ? (
-                      <span
-                        data-testid="maint-history-inspector-truncated-pill"
-                        className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
-                      >
-                        <Scissors className="h-3 w-3" />
-                        <span>تم اقتطاع التصدير</span>
-                        {rowCap != null && totalAvailable != null && (
-                          <span className="font-mono text-[10px] opacity-80">
-                            {rowCap.toLocaleString("ar-SA")} / {totalAvailable.toLocaleString("ar-SA")} صف
-                          </span>
-                        )}
-                      </span>
-                    ) : (
-                      <span
-                        data-testid="maint-history-inspector-full-pill"
-                        className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800"
-                      >
-                        <CheckCircle2 className="h-3 w-3" />
-                        <span>تم تنزيل الملف بالكامل</span>
-                      </span>
-                    )}
-                    {format && (
-                      <span className="inline-flex items-center rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-mono uppercase text-slate-700">
-                        {format}
-                      </span>
-                    )}
-                  </div>
-
-                  <dl
-                    data-testid="maint-history-inspector-metrics"
-                    className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+              // Replay button (task #129). Only enabled for the
+              // maintenance-history exporter — that's the one writer
+              // whose audit metadata captures the on-screen filter
+              // snapshot we can faithfully reproduce against the same
+              // endpoint. Other export_csv writers (journal_pending,
+              // tool-history, etc.) live in different endpoints with
+              // different param shapes, so the button is hidden for
+              // those rows.
+              const { filters } = parseExportInspectorMetadata(exportInspectorRow.metadata);
+              const replaySlot =
+                exportInspectorRow.entityType === "maintenance_history" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    data-testid="maint-history-inspector-replay"
+                    className="gap-1"
+                    onClick={() => historyCsvReplayMut.mutate({
+                      from:       (filters?.from       as string | null) ?? null,
+                      to:         (filters?.to         as string | null) ?? null,
+                      action:     (filters?.action     as string | null) ?? null,
+                      entityType: (filters?.entityType as string | null) ?? null,
+                    })}
+                    disabled={!companyId || historyCsvReplayMut.isPending}
+                    title="إعادة تنزيل ملف CSV باستخدام نفس الفلاتر المسجّلة"
                   >
-                    <div className="border rounded p-2 bg-muted/20">
-                      <dt className="text-[11px] text-muted-foreground">عدد الصفوف في الملف</dt>
-                      <dd className="font-mono text-base text-foreground">
-                        {count != null ? count.toLocaleString("ar-SA") : "—"}
-                      </dd>
-                    </div>
-                    <div className="border rounded p-2 bg-muted/20">
-                      <dt className="text-[11px] text-muted-foreground">إجمالي الصفوف المتاحة</dt>
-                      <dd className="font-mono text-base text-foreground">
-                        {totalAvailable != null ? totalAvailable.toLocaleString("ar-SA") : "—"}
-                      </dd>
-                    </div>
-                    <div className="border rounded p-2 bg-muted/20">
-                      <dt className="text-[11px] text-muted-foreground">حد الاقتطاع</dt>
-                      <dd className="font-mono text-base text-foreground">
-                        {rowCap != null ? rowCap.toLocaleString("ar-SA") : "—"}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <div data-testid="maint-history-inspector-filters">
-                    <div className="text-xs font-medium text-muted-foreground mb-1">
-                      الفلاتر المُطبَّقة وقت التصدير
-                    </div>
-                    {!filters || Object.values(filters).every((v) => v == null) ? (
-                      <p className="text-xs italic text-muted-foreground">
-                        لم يتم تطبيق أي فلتر — تم تصدير كامل النطاق المتاح للأمر.
-                      </p>
-                    ) : (
-                      <ul className="text-xs space-y-1">
-                        {Object.entries(filters).map(([k, v]) => {
-                          if (v == null) return null;
-                          let label = k;
-                          if (k === "from") label = "من تاريخ";
-                          else if (k === "to") label = "إلى تاريخ";
-                          else if (k === "action") label = "الإجراء";
-                          else if (k === "entityType") label = "الفئة";
-                          let display = String(v);
-                          if (k === "action" && typeof v === "string") {
-                            display = historyActionLabelAr(v);
-                          } else if (k === "entityType" && typeof v === "string") {
-                            display = historyEntityTypeLabelAr(v);
-                          }
-                          return (
-                            <li key={k} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{label}:</span>
-                              <span className="font-mono">{display}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-
-                  {hasExtras && (
-                    <div>
-                      <div className="text-xs font-medium text-muted-foreground mb-1">
-                        بيانات إضافية
-                      </div>
-                      <pre
-                        dir="ltr"
-                        data-testid="maint-history-inspector-extras"
-                        className="text-xs font-mono bg-muted/40 border rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-60 overflow-y-auto"
-                      >
-                        {JSON.stringify(extras, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-
-                  {/* Replay button (task #129). Only enabled for the
-                      maintenance-history exporter — that's the one writer
-                      whose audit metadata captures the on-screen filter
-                      snapshot we can faithfully reproduce against the same
-                      endpoint. Other export_csv writers (journal_pending,
-                      tool-history, etc.) live in different endpoints with
-                      different param shapes, so the button is hidden for
-                      those rows. */}
-                  {exportInspectorRow.entityType === "maintenance_history" && (
-                    <div className="pt-2 border-t flex items-center justify-end gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="default"
-                        data-testid="maint-history-inspector-replay"
-                        className="gap-1"
-                        onClick={() => historyCsvReplayMut.mutate({
-                          from:       (filters?.from       as string | null) ?? null,
-                          to:         (filters?.to         as string | null) ?? null,
-                          action:     (filters?.action     as string | null) ?? null,
-                          entityType: (filters?.entityType as string | null) ?? null,
-                        })}
-                        disabled={!companyId || historyCsvReplayMut.isPending}
-                        title="إعادة تنزيل ملف CSV باستخدام نفس الفلاتر المسجّلة"
-                      >
-                        {historyCsvReplayMut.isPending
-                          ? <Loader2 className="h-3 w-3 animate-spin" />
-                          : <Repeat className="h-3 w-3" />}
-                        إعادة التصدير بنفس الفلاتر
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                    {historyCsvReplayMut.isPending
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <Repeat className="h-3 w-3" />}
+                    إعادة التصدير بنفس الفلاتر
+                  </Button>
+                ) : null;
+              return (
+                <CsvExportInspectorBody
+                  metadata={exportInspectorRow.metadata}
+                  language="ar"
+                  numberLocale="ar-SA"
+                  testIdPrefix="maint-history-inspector"
+                  footerSlot={replaySlot}
+                />
               );
             })()}
           </DialogContent>
