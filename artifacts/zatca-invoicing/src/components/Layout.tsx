@@ -124,6 +124,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.dataDoctor",           href: "/admin/data-doctor",        icon: Stethoscope },
   { nameKey: "nav.supportInbox",         href: "/admin/support",            icon: Inbox },
   { nameKey: "nav.supportSettings",      href: "/admin/support-settings",   icon: MessageSquare },
+  { nameKey: "nav.seoDashboard",         href: "/admin/seo",                icon: TrendingUp },
   { nameKey: "nav.auditLog",             href: "/admin/audit-log",          icon: ScrollText },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
