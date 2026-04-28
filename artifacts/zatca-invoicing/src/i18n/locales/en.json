@@ -5047,6 +5047,8 @@
       "copyPath": "Copy request path",
       "copyShareLink": "Copy link to this entry",
       "copyShareLinkWithEntity": "Copy link to {{entity}}",
+      "copyShareLinkMarkdownHint": "Right-click to copy as a Markdown list item",
+      "copyShareLinkMarkdownToast": "Copied this entry as a Markdown list item to the clipboard.",
       "copySelectedLinks": "Copy {{count}} links",
       "copySelectedLinksToast": "Copied {{formattedCount}} share links to the clipboard.",
       "copySelectedLinksMarkdown": "Copy as Markdown",

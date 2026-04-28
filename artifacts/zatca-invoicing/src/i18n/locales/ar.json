@@ -5123,6 +5123,8 @@
       "copyPath": "نسخ مسار الطلب",
       "copyShareLink": "نسخ رابط هذا السجل",
       "copyShareLinkWithEntity": "نسخ رابط {{entity}}",
+      "copyShareLinkMarkdownHint": "انقر بالزر الأيمن للنسخ كعنصر قائمة Markdown",
+      "copyShareLinkMarkdownToast": "تم نسخ هذا السجل كعنصر قائمة Markdown إلى الحافظة.",
       "copySelectedLinks": "نسخ {{count}} رابط",
       "copySelectedLinksToast": "تم نسخ {{formattedCount}} رابط مشاركة إلى الحافظة.",
       "copySelectedLinksMarkdown": "نسخ بصيغة Markdown",

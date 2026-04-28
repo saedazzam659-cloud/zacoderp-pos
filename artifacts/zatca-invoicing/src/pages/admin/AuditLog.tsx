@@ -453,68 +453,113 @@ export default function AuditLog() {
     }
   }, [selectedRows, downloadingCsv, headers, tr, toast, locale]);
 
+  // Shared write-to-clipboard helper used by both the bulk copy paths
+  // and the per-row Markdown secondary action (task #156). Prefers the
+  // async Clipboard API and falls back to a hidden textarea +
+  // execCommand for the same reason CopyIconButton does — insecure
+  // contexts during local development would otherwise silently fail.
+  const copyTextToClipboard = useCallback(async (text: string): Promise<boolean> => {
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } else if (typeof document !== "undefined") {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }, []);
+
+  // Shared Markdown list-item builder for a single audited row (task #156).
+  // Extracted from the bulk-copy loop so the per-row right-click action
+  // and the bulk Markdown action emit identical output for the same
+  // entry — same label, same escaping, same URL. Returns null when the
+  // permalink can't be built (non-browser context) so callers can
+  // surface the failure as a toast.
+  //
+  // Builds an "Audit #N — action [entity] at timestamp" label so the
+  // link is meaningful before being clicked. When the row has an
+  // `entityType` (and optionally `entityId`) we splice in a friendly
+  // reference such as "invoice #45" / "فاتورة #45" (task #148). Falls
+  // back to the entity-less label when we don't have an entityType,
+  // and to just "Audit #N" if we somehow lost the per-row summary
+  // entirely; the URL itself is always present so the link resolves
+  // regardless of label fidelity.
+  const buildMarkdownLineForId = useCallback(
+    (id: number, meta: SelectedRowMeta | null) => {
+      const url = buildShareLinkForId(id);
+      if (!url) return null;
+      let labelText: string;
+      if (!meta) {
+        labelText = tr("copyMarkdownLinkLabelMinimal", { id });
+      } else {
+        const timestamp = new Date(meta.createdAt).toLocaleString(locale, { hour12: false });
+        const action    = trAction(meta.action);
+        if (meta.entityType) {
+          // Resolve the raw enum to a translated friendly label
+          // (`entityTypes.invoice` → "invoice" / "فاتورة"), falling
+          // back to the raw machine value when no localisation is
+          // registered yet — keeps the label forward-compatible with
+          // future entity types without silently dropping the info.
+          const entityLabel = tr(`entityTypes.${meta.entityType}`, {
+            defaultValue: meta.entityType,
+          });
+          const entity = meta.entityId
+            ? `${entityLabel} #${meta.entityId}`
+            : entityLabel;
+          labelText = tr("copyMarkdownLinkLabelWithEntity", {
+            id,
+            action,
+            entity,
+            timestamp,
+          });
+        } else {
+          labelText = tr("copyMarkdownLinkLabel", { id, action, timestamp });
+        }
+      }
+      return `- [${escapeMarkdownLinkLabel(labelText)}](${url})`;
+    },
+    [buildShareLinkForId, tr, trAction, locale, escapeMarkdownLinkLabel],
+  );
+
   // Copies the list of permalinks for every selected row to the
   // clipboard in either plain-text (one link per line) or Markdown
   // (`- [label](url)` list-item) format. We sort the IDs ascending so
   // the pasted output is deterministic regardless of the order the
   // reviewer happened to tick them — easier to scan in a chat/ticket
-  // and matches the natural order audit IDs are issued in. Prefers the
-  // async Clipboard API, falls back to a hidden textarea + execCommand
-  // for the same reason CopyIconButton does (insecure-context dev
-  // environments).
+  // and matches the natural order audit IDs are issued in.
   //
   // Both formats share the same selection, sorting, clipboard fallback,
   // and toast feedback so the only thing that varies is the rendered
-  // body and the success toast description.
+  // body and the success toast description. The Markdown variant
+  // delegates per-line rendering to `buildMarkdownLineForId` so the
+  // single-row right-click action (task #156) emits byte-identical
+  // output.
   const copySelectedLinks = useCallback(async (format: "plain" | "markdown") => {
     if (selectedRows.size === 0) return;
     const ids = [...selectedRows.keys()].sort((a, b) => a - b);
     const lines = ids
       .map(id => {
-        const url = buildShareLinkForId(id);
-        if (!url) return null;
-        if (format === "plain") return url;
-        const meta = selectedRows.get(id);
-        // Build an "Audit #N — action [entity] at timestamp" label so
-        // the link is meaningful before being clicked. When the row has
-        // an `entityType` (and optionally `entityId`) we splice in a
-        // friendly reference such as "invoice #45" / "فاتورة #45" so a
-        // reviewer scanning a pasted list can tell at a glance which
-        // record each row is about (task #148). Falls back to the
-        // entity-less label when we don't have an entityType, and to
-        // just "Audit #N" if we somehow lost the per-row summary
-        // entirely (e.g. the selection was hydrated from a future
-        // external source); the URL itself is always present so the
-        // link still resolves regardless of label fidelity.
-        let labelText: string;
-        if (!meta) {
-          labelText = tr("copyMarkdownLinkLabelMinimal", { id });
-        } else {
-          const timestamp = new Date(meta.createdAt).toLocaleString(locale, { hour12: false });
-          const action    = trAction(meta.action);
-          if (meta.entityType) {
-            // Resolve the raw enum to a translated friendly label
-            // (`entityTypes.invoice` → "invoice" / "فاتورة"), falling
-            // back to the raw machine value when no localisation is
-            // registered yet — keeps the label forward-compatible with
-            // future entity types without silently dropping the info.
-            const entityLabel = tr(`entityTypes.${meta.entityType}`, {
-              defaultValue: meta.entityType,
-            });
-            const entity = meta.entityId
-              ? `${entityLabel} #${meta.entityId}`
-              : entityLabel;
-            labelText = tr("copyMarkdownLinkLabelWithEntity", {
-              id,
-              action,
-              entity,
-              timestamp,
-            });
-          } else {
-            labelText = tr("copyMarkdownLinkLabel", { id, action, timestamp });
-          }
+        if (format === "plain") {
+          const url = buildShareLinkForId(id);
+          return url || null;
         }
-        return `- [${escapeMarkdownLinkLabel(labelText)}](${url})`;
+        return buildMarkdownLineForId(id, selectedRows.get(id) ?? null);
       })
       .filter((v): v is string => v != null && v.length > 0);
 
@@ -529,29 +574,7 @@ export default function AuditLog() {
       return;
     }
 
-    let ok = false;
-    try {
-      if (
-        typeof navigator !== "undefined" &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText === "function"
-      ) {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } else if (typeof document !== "undefined") {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "absolute";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-    } catch {
-      ok = false;
-    }
+    const ok = await copyTextToClipboard(text);
 
     if (ok) {
       const toastKey =
@@ -570,7 +593,48 @@ export default function AuditLog() {
         variant: "destructive",
       });
     }
-  }, [selectedRows, buildShareLinkForId, toast, tr, trAction, locale, escapeMarkdownLinkLabel]);
+  }, [selectedRows, buildShareLinkForId, buildMarkdownLineForId, copyTextToClipboard, toast, tr, locale]);
+
+  // Single-row Markdown copy (task #156). Triggered as a secondary
+  // action on the per-row share-link icon (right-click context menu)
+  // so a reviewer who wants the bulk Markdown variant for one row no
+  // longer has to tick its checkbox + use the bulk action — they get
+  // the same `- [Audit #N — action entity at timestamp](url)` line
+  // straight to the clipboard from the row itself. Reuses
+  // `buildMarkdownLineForId` so the rendered output is identical to
+  // the bulk variant for the same row.
+  const copyRowAsMarkdownLink = useCallback(
+    async (row: AuditRow) => {
+      const line = buildMarkdownLineForId(row.id, {
+        createdAt:  row.createdAt,
+        action:     row.action,
+        entityType: row.entityType,
+        entityId:   row.entityId,
+      });
+      if (!line) {
+        toast({
+          title: tr("copyFailureTitle"),
+          description: tr("copyFailureDescription"),
+          variant: "destructive",
+        });
+        return;
+      }
+      const ok = await copyTextToClipboard(line);
+      if (ok) {
+        toast({
+          title: tr("copySuccessTitle"),
+          description: tr("copyShareLinkMarkdownToast"),
+        });
+      } else {
+        toast({
+          title: tr("copyFailureTitle"),
+          description: tr("copyFailureDescription"),
+          variant: "destructive",
+        });
+      }
+    },
+    [buildMarkdownLineForId, copyTextToClipboard, toast, tr],
+  );
 
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
@@ -897,8 +961,25 @@ export default function AuditLog() {
                                   Radix; the inner button keeps its own
                                   click-to-copy behavior untouched.
                                   `inline-flex` keeps the trigger box
-                                  collapsed around the icon button. */}
-                              <span className="inline-flex">
+                                  collapsed around the icon button.
+                                  Right-click triggers the secondary
+                                  Markdown copy (task #156): we suppress
+                                  the browser's native context menu and
+                                  emit the same `- [Audit #N — action
+                                  entity at timestamp](url)` line the
+                                  bulk Markdown action would produce
+                                  for this row. The primary left-click
+                                  on the inner button still copies the
+                                  bare URL, so existing flows and tests
+                                  are unchanged. */}
+                              <span
+                                className="inline-flex"
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  void copyRowAsMarkdownLink(r);
+                                }}
+                                data-testid={`audit-row-share-link-context-${r.id}`}
+                              >
                                 <CopyIconButton
                                   value={shareLink}
                                   label={shareLinkLabelForRow(r)}
@@ -933,6 +1014,21 @@ export default function AuditLog() {
                                   <dt className="text-muted-foreground">{tr("sharePreviewLink")}</dt>
                                   <dd className="font-mono break-all">{shareLink}</dd>
                                 </dl>
+                                {/* Discoverability hint for the
+                                    right-click secondary action
+                                    (task #156). Sits at the bottom of
+                                    the existing rich preview so a
+                                    reviewer hovering the share-link
+                                    icon learns about the Markdown copy
+                                    shortcut without us cluttering the
+                                    table header or adding a second
+                                    visible button. */}
+                                <div
+                                  className="mt-1 pt-1 border-t border-border/60 text-[10px] text-muted-foreground"
+                                  data-testid={`audit-row-share-link-markdown-hint-${r.id}`}
+                                >
+                                  {tr("copyShareLinkMarkdownHint")}
+                                </div>
                               </div>
                             </TooltipContent>
                           </Tooltip>
