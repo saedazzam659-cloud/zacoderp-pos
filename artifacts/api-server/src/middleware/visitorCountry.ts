@@ -1,0 +1,89 @@
+import type { Request, Response, NextFunction } from "express";
+
+// ─── Visitor country detection ────────────────────────────────────────
+// Resolves the ISO-3166-1 alpha-2 country code for the *unauthenticated*
+// visitor on every request, in this strict precedence order:
+//
+//   1. ?country=XX query string  (explicit user override — wins over
+//      everything; also written back into the visitor_country cookie so
+//      the choice persists across navigation).
+//   2. visitor_country cookie    (sticky last choice).
+//   3. CF-IPCountry header       (set by Cloudflare's edge proxy when the
+//      site is fronted by Cloudflare; trustworthy because the request
+//      cannot bypass it).
+//   4. "GLOBAL" sentinel         (catch-all fallback so downstream code
+//      always sees a non-empty value).
+//
+// The resolved value is exposed on `req.visitorCountry`. We never mutate
+// `req.authUser` here — that's session/auth state and unrelated to the
+// visitor's geographic origin.
+//
+// We deliberately accept ANY two-letter alpha code into the cookie/query
+// path: the consuming layer (countries.ts → getCountryByCode) will fall
+// back gracefully on unknown codes, so we don't reject early. Only
+// "GLOBAL" is allowed as a non-2-letter sentinel.
+
+declare global {
+  namespace Express {
+    interface Request {
+      visitorCountry?: string;
+    }
+  }
+}
+
+const VALID_OVERRIDE = /^([A-Z]{2}|GLOBAL)$/;
+const COOKIE_NAME    = "visitor_country";
+// One year — country pickers are sticky and we don't want users to keep
+// re-selecting on every visit. Browsers cap effective lifetime to ~13mo
+// anyway when the secure-by-default rules kick in.
+const COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
+function normalize(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toUpperCase();
+  if (!v) return null;
+  if (v === "GLOBAL") return "GLOBAL";
+  return VALID_OVERRIDE.test(v) ? v : null;
+}
+
+export function visitorCountryMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  // 1) explicit ?country override
+  const fromQuery = normalize((req.query as any)?.country);
+  if (fromQuery) {
+    req.visitorCountry = fromQuery;
+    // Persist the override so subsequent requests don't need it
+    res.cookie(COOKIE_NAME, fromQuery, {
+      maxAge:   COOKIE_MAX_AGE_MS,
+      httpOnly: false,    // SPA may read it client-side for UI selectors
+      sameSite: "lax",
+      path:     "/",
+    });
+    next();
+    return;
+  }
+
+  // 2) sticky cookie (parsed by cookie-parser middleware mounted earlier)
+  const fromCookie = normalize((req as any).cookies?.[COOKIE_NAME]);
+  if (fromCookie) {
+    req.visitorCountry = fromCookie;
+    next();
+    return;
+  }
+
+  // 3) Cloudflare-supplied geolocation header
+  const headerVal = req.headers["cf-ipcountry"];
+  const fromHeader = normalize(Array.isArray(headerVal) ? headerVal[0] : headerVal);
+  if (fromHeader) {
+    req.visitorCountry = fromHeader;
+    next();
+    return;
+  }
+
+  // 4) catch-all
+  req.visitorCountry = "GLOBAL";
+  next();
+}

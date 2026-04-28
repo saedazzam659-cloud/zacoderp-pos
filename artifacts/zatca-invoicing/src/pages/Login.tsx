@@ -13,6 +13,9 @@ import {
   Sparkles, TrendingUp, BarChart3, Brain, Globe2, Zap, LayoutGrid,
 } from "lucide-react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { CountrySelector } from "@/components/CountrySelector";
+import { useVisitorCountry } from "@/lib/useVisitorCountry";
+import { getCountryByCode } from "@/lib/countries";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -356,6 +359,12 @@ export default function Login() {
   // Logical grouping: financial → inventory → commercial → operations →
   // HR → industry verticals. The grid below collapses to 2 cols on mobile
   // and 3 cols on tablets+ so the list remains readable at any width.
+  // Visitor country drives the welcome line + compliance pill in the
+  // brand block. Auto-detected on first paint; user can override via the
+  // CountrySelector at the top of the page.
+  const [visitorCountry] = useVisitorCountry();
+  const countryInfo = getCountryByCode(visitorCountry);
+
   const modules = [
     { icon: Wallet,        label: t("auth.intro.modules.accounting") },
     { icon: Landmark,      label: t("auth.intro.modules.banks") },
@@ -375,23 +384,34 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4 py-8">
       <div className="w-full max-w-6xl">
-        <div className="flex justify-end mb-4">
+        <div className="flex justify-end items-center gap-2 mb-4">
+          <CountrySelector variant="compact" testId="login-country-selector" />
           <LanguageSwitcher variant="compact" />
         </div>
 
         <div className="grid lg:grid-cols-[1.05fr_minmax(360px,440px)] gap-8 lg:gap-12 items-start">
           {/* ─── INTRO COLUMN ─────────────────────────────────────────── */}
           <aside className="order-2 lg:order-1 space-y-6">
-            {/* Brand block */}
+            {/* Brand block — includes a country-aware welcome line that
+                swaps out the regulator/policy text per visitor (CF-IPCountry
+                or manual selector). For SA visitors the row keeps the
+                existing "ZATCA compliant" pill; for other countries we
+                substitute the local compliance summary from countries.ts. */}
             <div className="text-center lg:text-start">
               <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-3 shadow-lg">
                 Z
               </div>
               <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{t("auth.appName")}</h1>
               <p className="text-muted-foreground mt-1 text-sm">{t("auth.appSubtitle")}</p>
-              <div className="flex items-center gap-1 mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-3 py-1 w-fit mx-auto lg:mx-0">
+              <p className="text-xs text-muted-foreground mt-2" data-testid="login-country-welcome">
+                مرحباً بزوّارنا من {countryInfo.nameAr} — العملة الافتراضية {countryInfo.currency.nameAr} ({countryInfo.currency.symbol}).
+              </p>
+              <div
+                className="flex items-center gap-1 mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-3 py-1 w-fit mx-auto lg:mx-0"
+                data-testid="login-country-policy"
+              >
                 <ShieldCheck className="h-3 w-3" />
-                {t("auth.zatcaCompliant")}
+                {visitorCountry === "SA" ? t("auth.zatcaCompliant") : countryInfo.policyAr}
               </div>
             </div>
 

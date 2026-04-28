@@ -18,6 +18,18 @@ export const seoGeneratedArticlesTable = pgTable("seo_generated_articles", {
   sourceTopic:      text("source_topic").notNull().default(""),
   aiModel:          text("ai_model").notNull().default(""),  // model id used
   status:           text("status").notNull().default("draft"), // draft|reviewed|published
+  // CSV of ISO-3166-1 alpha-2 country codes the article targets, plus the
+  // sentinel "GLOBAL" which means "show everywhere as fallback". Stored as
+  // text (not array) so plain `LIKE '%CODE%'` filtering works without
+  // needing pg array operators in every callsite. Examples:
+  //   "GLOBAL"
+  //   "SA"
+  //   "SA,AE,KW"
+  // Filtering rule for visitor country X:
+  //   target_countries LIKE '%X%' OR target_countries LIKE '%GLOBAL%'
+  // so a country-specific article shows for matching visitors and the
+  // GLOBAL fallback always shows when no country-specific match exists.
+  targetCountries:  text("target_countries").notNull().default("GLOBAL"),
   createdByUserId:  integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt:        timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt:        timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

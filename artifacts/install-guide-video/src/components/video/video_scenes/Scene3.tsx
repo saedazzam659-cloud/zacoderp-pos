@@ -1,22 +1,26 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 
+// ─── Scene 3 — Ease of use ─────────────────────────────────────────
+// Reframes the device-grid scene around the new ease-of-use promise:
+// "ابدأ الآن — بدون تعقيد". Keeps the same two layered images so the
+// asset pipeline (devices.png + payments.png) doesn't break.
 export function Scene3() {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
     const timers = [
-      setTimeout(() => setPhase(1), 200), // title
-      setTimeout(() => setPhase(2), 600), // devices image
-      setTimeout(() => setPhase(3), 1200), // features list
-      setTimeout(() => setPhase(4), 1800), // payments image
-      setTimeout(() => setPhase(5), 4500), // exit
+      setTimeout(() => setPhase(1), 200),
+      setTimeout(() => setPhase(2), 600),
+      setTimeout(() => setPhase(3), 1200),
+      setTimeout(() => setPhase(4), 1800),
+      setTimeout(() => setPhase(5), 4500),
     ];
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
 
   return (
-    <motion.div 
+    <motion.div
       className="absolute inset-0 flex items-center justify-center z-10 w-full h-full"
       initial={{ opacity: 0, x: 100 }}
       animate={{ opacity: 1, x: 0 }}
@@ -24,8 +28,6 @@ export function Scene3() {
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
     >
       <div className="flex flex-row items-center justify-between w-[85vw] h-[70vh] dir-rtl">
-        
-        {/* Right Side: Text & Features */}
         <div className="w-[45%] flex flex-col justify-center gap-8">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -33,17 +35,17 @@ export function Scene3() {
             transition={{ duration: 0.6, ease: "easeOut" }}
           >
             <h2 className="text-[4vw] font-display font-black text-white leading-tight">
-              يعمل في كل مكان،<br/>حتى <span className="text-secondary">بدون إنترنت</span>
+              تجربة <span className="text-secondary">سهلة</span>،<br />من أول دقيقة
             </h2>
           </motion.div>
 
           <div className="flex flex-col gap-6 mt-4">
             {[
-              { title: "متعدد الأجهزة", desc: "يعمل على الأجهزة اللوحية والجوالات" },
-              { title: "دعم الأوفلاين", desc: "لا تتوقف مبيعاتك عند انقطاع الشبكة" },
-              { title: "مدفوعات متكاملة", desc: "مدى، Apple Pay، والبطاقات الائتمانية" },
+              { title: "إعداد فوري", desc: "ابدأ خلال دقيقتين بدون تركيب أو خبرة تقنية" },
+              { title: "واجهة عربية أنيقة", desc: "كل القوائم والتقارير بالعربية، RTL أصيل" },
+              { title: "يعمل في أي مكان", desc: "متصفح أو جوال أو جهاز لوحي — نفس التجربة" },
             ].map((item, i) => (
-              <motion.div 
+              <motion.div
                 key={i}
                 className="flex flex-row items-start gap-4"
                 initial={{ opacity: 0, x: 50 }}
@@ -62,7 +64,6 @@ export function Scene3() {
           </div>
         </div>
 
-        {/* Left Side: Images */}
         <div className="w-[50%] h-full relative perspective-1000 flex items-center justify-center">
           <motion.div
             className="w-[40vw] h-[40vw] absolute"
@@ -70,10 +71,10 @@ export function Scene3() {
             animate={phase >= 2 ? { opacity: 1, scale: 1, rotateY: -10 } : { opacity: 0, scale: 0.8, rotateY: 20 }}
             transition={{ type: 'spring', stiffness: 200, damping: 20 }}
           >
-            <img 
-              src={`${import.meta.env.BASE_URL}images/devices.png`} 
-              className="w-full h-full object-contain drop-shadow-2xl" 
-              alt="POS Devices" 
+            <img
+              src={`${import.meta.env.BASE_URL}images/devices.png`}
+              className="w-full h-full object-contain drop-shadow-2xl"
+              alt="أجهزة متعددة"
             />
           </motion.div>
 
@@ -83,14 +84,13 @@ export function Scene3() {
             animate={phase >= 4 ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0, y: 50 }}
             transition={{ type: 'spring', stiffness: 300, damping: 20 }}
           >
-            <img 
-              src={`${import.meta.env.BASE_URL}images/payments.png`} 
-              className="w-full h-full object-contain drop-shadow-lg mix-blend-screen" 
-              alt="Payments" 
+            <img
+              src={`${import.meta.env.BASE_URL}images/payments.png`}
+              className="w-full h-full object-contain drop-shadow-lg mix-blend-screen"
+              alt="مدفوعات"
             />
           </motion.div>
         </div>
-
       </div>
     </motion.div>
   );

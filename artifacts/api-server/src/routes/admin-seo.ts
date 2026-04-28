@@ -417,6 +417,14 @@ router.get("/ai-articles", requireSuperAdmin, async (_req, res) => {
 // Word target by length preset — used in the AI prompt and for the generator
 // preview card. These are loose targets; we ask the model to produce a long-
 // form Arabic article and trust it to land near the target.
+// Allowed values for the article's targetCountries field. Mirrors the
+// SPA's countries.ts catalog so the SuperAdmin UI and the API stay in
+// lock-step. "GLOBAL" is the catch-all fallback and is mutually
+// exclusive with specific country codes.
+const ALLOWED_TARGET_COUNTRIES = new Set<string>([
+  "SA", "AE", "KW", "QA", "BH", "OM", "EG", "GLOBAL",
+]);
+
 const LENGTH_TARGETS: Record<string, number> = { short: 500, medium: 1000, long: 1800 };
 const TONE_LABEL_AR: Record<string, string> = {
   professional: "احترافي",
@@ -491,6 +499,22 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
     const topicRaw = String(req.body?.topic ?? "").trim();
     const targetKeywordRaw = String(req.body?.targetKeyword ?? "").trim();
     const sourceTopic = String(req.body?.sourceTopic ?? topicRaw).trim();
+    // Optional: list of ISO country codes (e.g. ["SA","AE"]) or ["GLOBAL"].
+    // The SuperAdmin picks these in the SEO Studio UI; default to GLOBAL so
+    // existing call sites keep working unchanged. Server-side enforcement
+    // mirrors the client's allowlist (SA/AE/KW/QA/BH/OM/EG + GLOBAL) and
+    // refuses payloads that mix GLOBAL with specific codes — the two are
+    // mutually exclusive by design (GLOBAL is the catch-all fallback).
+    const rawCountries = Array.isArray(req.body?.targetCountries)
+      ? (req.body.targetCountries as unknown[])
+          .map(c => String(c).trim().toUpperCase())
+          .filter(c => ALLOWED_TARGET_COUNTRIES.has(c))
+      : [];
+    const targetCountriesArr = rawCountries.length ? Array.from(new Set(rawCountries)) : ["GLOBAL"];
+    if (targetCountriesArr.includes("GLOBAL") && targetCountriesArr.length > 1) {
+      return res.status(400).json({ error: "لا يمكن دمج GLOBAL مع دول محدّدة" });
+    }
+    const targetCountries = targetCountriesArr.join(",");
     if (!topicRaw || topicRaw.length < 4) {
       return res.status(400).json({ error: "الرجاء إدخال موضوع لا يقل عن 4 أحرف" });
     }
@@ -516,8 +540,21 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
       : settings.language === "both" ? "اكتب المقال بالعربية مع عناوين فرعية بالإنجليزية بين قوسين عند الحاجة."
       : "اكتب المقال بالعربية الفصحى المبسّطة.";
 
+    // Map ISO codes back to display labels in the prompt so the model
+    // tailors examples (currency, regulator names, market context) per
+    // country. Kept inline rather than imported from the SPA's countries.ts
+    // to keep the API package independent of any one artifact.
+    const COUNTRY_AR_LABEL: Record<string, string> = {
+      SA: "السعودية", AE: "الإمارات", KW: "الكويت", QA: "قطر",
+      BH: "البحرين", OM: "عُمان", EG: "مصر", GLOBAL: "كل الدول (محتوى عام)",
+    };
+    const countryLabels = targetCountriesArr.map(c => COUNTRY_AR_LABEL[c] ?? c).join("، ");
+    const countryGuidance = targetCountriesArr.includes("GLOBAL")
+      ? "الجمهور المستهدف عام (أكثر من دولة) — تجنّب التفاصيل المحلية المخصّصة لدولة واحدة فقط."
+      : `الجمهور المستهدف من: ${countryLabels}. اذكر الجهات التنظيمية والعملة والمتطلبات الخاصة بهذه الدولة/الدول حصراً.`;
+
     const prompt = [
-      `أنت كاتب محتوى محترف لتحسين محركات البحث (SEO) لموقع برنامج محاسبة وفوترة إلكترونية سعودي.`,
+      `أنت كاتب محتوى محترف لتحسين محركات البحث (SEO) لموقع برنامج محاسبة وفوترة إلكترونية.`,
       ``,
       `إعدادات التوليد:`,
       `- النبرة: ${toneLabel}`,
@@ -525,6 +562,8 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
       `- اللغة: ${langInstruction}`,
       `- الكلمات المفتاحية الافتراضية للموقع: ${settings.defaultKeywords.join("، ")}`,
       `- توجيهات الإدارة: ${settings.guidance}`,
+      `- الدول المستهدفة: ${countryLabels}`,
+      `- ${countryGuidance}`,
       ``,
       `الموضوع المطلوب: ${topicRaw}`,
       targetKeywordRaw ? `الكلمة المفتاحية الرئيسية المستهدفة: ${targetKeywordRaw}` : ``,
@@ -579,6 +618,7 @@ router.post("/ai-articles/generate", requireSuperAdmin, async (req: any, res) =>
       sourceTopic,
       aiModel:         settings.model || "claude-sonnet-4-6",
       status:          "draft",
+      targetCountries,
       createdByUserId: req.user?.id ?? null,
     }).returning();
 
@@ -601,6 +641,22 @@ router.patch("/ai-articles/:id", requireSuperAdmin, async (req, res) => {
     if (typeof req.body?.status === "string"
       && ["draft","reviewed","published"].includes(req.body.status)) patch.status = req.body.status;
     if (typeof req.body?.slug === "string")            patch.slug = slugify(req.body.slug);
+    // Accept targetCountries as either an array (canonical) or a CSV
+    // string. Validate, dedupe, then store as CSV. An empty input is
+    // collapsed to "GLOBAL" so the row is still discoverable somewhere.
+    if (Array.isArray(req.body?.targetCountries) || typeof req.body?.targetCountries === "string") {
+      const raw = Array.isArray(req.body.targetCountries)
+        ? req.body.targetCountries
+        : String(req.body.targetCountries).split(",");
+      const clean = raw
+        .map((c: any) => String(c).trim().toUpperCase())
+        .filter((c: string) => ALLOWED_TARGET_COUNTRIES.has(c));
+      const deduped = Array.from(new Set(clean));
+      if (deduped.includes("GLOBAL") && deduped.length > 1) {
+        return res.status(400).json({ error: "لا يمكن دمج GLOBAL مع دول محدّدة" });
+      }
+      patch.targetCountries = (deduped.length ? deduped : ["GLOBAL"]).join(",");
+    }
     const [row] = await db.update(seoGeneratedArticlesTable)
       .set(patch).where(eq(seoGeneratedArticlesTable.id, id)).returning();
     if (!row) return res.status(404).json({ error: "المقال غير موجود" });

@@ -1,13 +1,16 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Helmet } from "react-helmet-async";
 import {
   ShieldCheck, Sparkles, ArrowLeft, Check, FileText, BarChart3,
-  Users, Package, Zap, Globe2, Brain, Building2,
+  Users, Package, Zap, Globe2, Brain, Building2, Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { CountrySelector } from "@/components/CountrySelector";
+import { useVisitorCountry } from "@/lib/useVisitorCountry";
+import { getCountryByCode } from "@/lib/countries";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public "/" Home landing page — the canonical homepage Google sees.
@@ -23,7 +26,16 @@ type ArticleLite = {
   title: string;
   slug: string;
   metaDescription: string;
+  targetCountries?: string;
   updatedAt: string;
+};
+
+// English country names for schema.org "areaServed" — Google's structured
+// data parser expects them in English regardless of page language.
+const COUNTRY_AREA_EN: Record<string, string> = {
+  SA: "Saudi Arabia", AE: "United Arab Emirates", KW: "Kuwait",
+  QA: "Qatar", BH: "Bahrain", OM: "Oman", EG: "Egypt",
+  GLOBAL: "Middle East",
 };
 
 export default function Home() {
@@ -31,14 +43,40 @@ export default function Home() {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const canonical = `${origin}/`;
 
+  // Auto-detected (CF-IPCountry) or user-overridden via the country
+  // selector at the top of the page. Drives the JSON-LD areaServed, the
+  // welcome strip copy, the currency hint, and the public articles fetch
+  // (which echoes the same country in its query string so the cache key
+  // changes whenever the visitor flips countries).
+  const [visitorCountry, , countryExplicit] = useVisitorCountry();
+  const countryInfo = getCountryByCode(visitorCountry);
+
+  // Click-to-play video poster: the heavy iframe (Framer Motion + GSAP +
+  // multiple gradient layers) is only mounted after the user clicks Play
+  // so the homepage stays light on first paint and Lighthouse stays happy.
+  const [videoStarted, setVideoStarted] = useState(false);
+
   // Fetch latest published articles to feature in the "أحدث المقالات"
   // section — both for visitors and as internal links Google can follow
-  // from the homepage.
+  // from the homepage. The ?country override is forwarded so the API
+  // applies its CSV LIKE filter (visitor's country OR GLOBAL fallback).
   const { data: articles = [] } = useQuery<ArticleLite[]>({
-    queryKey: ["public-articles", "home"],
+    // When the visitor hasn't picked a country yet, the cache key folds
+    // to a single bucket ("auto") so the very first request goes out
+    // _without_ a ?country= override and the API gets to honour the
+    // CF-IPCountry header. Once the visitor explicitly picks one, the
+    // bucket flips to that country code and we start sending the param.
+    queryKey: ["public-articles", "home", countryExplicit ? visitorCountry : "auto"],
     queryFn: async () => {
       try {
-        const r = await fetch(`${BASE}/api/seo/public/articles`);
+        // Only attach ?country=… when the visitor explicitly picked one
+        // (query string or cookie). Otherwise let the server's geo-IP
+        // middleware decide so first-time non-SA visitors don't get
+        // forced into the SA default just because that's our UI fallback.
+        const url = countryExplicit
+          ? `${BASE}/api/seo/public/articles?country=${encodeURIComponent(visitorCountry)}`
+          : `${BASE}/api/seo/public/articles`;
+        const r = await fetch(url);
         if (!r.ok) return [];
         return await r.json();
       } catch {
@@ -66,6 +104,12 @@ export default function Home() {
       { q: "هل توجد فترة تجريبية مجانية؟",
         a: "نعم، يمكنك إنشاء حساب الآن والبدء فوراً بفترة تجريبية على الباقة المختارة بدون بطاقة دفع. يمكنك الترقية أو التغيير في أي وقت." },
     ];
+    // areaServed is dynamic per visitor country: an SA visitor sees
+    // "Saudi Arabia", a UAE visitor sees "United Arab Emirates", etc.
+    // For "GLOBAL" we widen the area to "Middle East" so Google still
+    // gets a legal value (an empty/unknown name throws structured-data
+    // warnings).
+    const areaName = COUNTRY_AREA_EN[visitorCountry] ?? "Middle East";
     return [
       {
         "@context": "https://schema.org",
@@ -75,7 +119,7 @@ export default function Home() {
         "url":      origin,
         "logo":     `${origin}/favicon.svg`,
         "description": "نظام محاسبة سعودي شامل ومعتمد من ZATCA: فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون.",
-        "areaServed": { "@type": "Country", "name": "Saudi Arabia" },
+        "areaServed": { "@type": "Country", "name": areaName },
       },
       {
         "@context": "https://schema.org",
@@ -97,7 +141,7 @@ export default function Home() {
         })),
       },
     ];
-  }, [origin]);
+  }, [origin, visitorCountry]);
 
   useEffect(() => {
     const tag = "data-home-jsonld";
@@ -155,6 +199,7 @@ export default function Home() {
             نظام محاسبة سعودي معتمد من ZATCA
           </div>
           <nav className="flex items-center gap-1.5">
+            <CountrySelector variant="compact" testId="home-country-selector" className="hidden sm:flex" />
             <Button variant="ghost" size="sm" onClick={() => setLocation("/pricing")} data-testid="home-nav-pricing">
               الباقات
             </Button>
@@ -169,7 +214,26 @@ export default function Home() {
       </header>
 
       {/* Hero */}
-      <section className="max-w-5xl mx-auto px-4 pt-16 pb-12 text-center">
+      <section className="max-w-5xl mx-auto px-4 pt-12 pb-12 text-center">
+        {/* Country-aware welcome strip — pulls the regulator/policy line
+            and currency from countries.ts based on the auto-detected /
+            user-selected country. The compact selector on mobile lives
+            here (the desktop one is in the top bar). */}
+        <div
+          className="mb-5 inline-flex flex-wrap items-center justify-center gap-2 rounded-2xl border bg-white/70 px-4 py-2 text-xs text-foreground shadow-sm"
+          data-testid="home-country-welcome"
+        >
+          <Globe2 className="h-3.5 w-3.5 text-primary" />
+          <span className="font-semibold">مرحباً بزوار {countryInfo.nameAr}</span>
+          <span className="text-muted-foreground">•</span>
+          <span>{countryInfo.policyAr}</span>
+          <span className="text-muted-foreground">•</span>
+          <span>العملة: {countryInfo.currency.nameAr} ({countryInfo.currency.symbol})</span>
+          <div className="block sm:hidden mt-1 w-full">
+            <CountrySelector variant="compact" testId="home-country-selector-mobile" />
+          </div>
+        </div>
+
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold mb-4">
           <ShieldCheck className="h-3.5 w-3.5" />
           معتمد ومتوافق مع ZATCA — المرحلة الثانية
@@ -195,6 +259,53 @@ export default function Home() {
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> تجربة فورية</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> دعم عربي مباشر</span>
           <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5 text-primary" /> تكامل ZATCA UBL 2.1</span>
+        </div>
+
+        {/* ── Hero video ─────────────────────────────────────────────
+            Click-to-play poster pattern (lightweight static markup
+            until clicked, then mounts the iframe pointing at the
+            standalone install-guide-video artifact). The video is a
+            ≤90s ease-of-use + AI piece — the poster surfaces both of
+            those promises with two badges and a clear Play target. */}
+        <div className="mt-10 mx-auto max-w-3xl">
+          <div
+            className="relative aspect-video rounded-2xl overflow-hidden border shadow-xl bg-gradient-to-br from-slate-900 via-primary/30 to-slate-900"
+            data-testid="home-video"
+          >
+            {videoStarted ? (
+              <iframe
+                src="/install-guide-video/"
+                title="نظام محاسبة ذكي وسهل الاستخدام"
+                className="absolute inset-0 w-full h-full"
+                allow="autoplay; fullscreen"
+                data-testid="home-video-iframe"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setVideoStarted(true)}
+                className="absolute inset-0 w-full h-full flex flex-col items-center justify-center text-white group"
+                data-testid="home-video-play"
+                aria-label="شغّل الفيديو التعريفي"
+              >
+                <span className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition-colors" />
+                <span className="relative inline-flex h-20 w-20 items-center justify-center rounded-full bg-primary shadow-2xl group-hover:scale-110 transition-transform">
+                  <Play className="h-9 w-9 ms-1 fill-white text-white" />
+                </span>
+                <span className="relative mt-5 text-lg md:text-xl font-bold">
+                  شاهد كيف يجمع نظامنا بين السهولة والذكاء الاصطناعي
+                </span>
+                <span className="relative mt-3 flex flex-wrap justify-center gap-2 text-xs">
+                  <span className="rounded-full bg-white/15 backdrop-blur px-3 py-1 inline-flex items-center gap-1">
+                    <Sparkles className="h-3 w-3" /> ذكاء اصطناعي مدمج
+                  </span>
+                  <span className="rounded-full bg-white/15 backdrop-blur px-3 py-1 inline-flex items-center gap-1">
+                    <Zap className="h-3 w-3" /> أقل من ٩٠ ثانية
+                  </span>
+                </span>
+              </button>
+            )}
+          </div>
         </div>
       </section>
 

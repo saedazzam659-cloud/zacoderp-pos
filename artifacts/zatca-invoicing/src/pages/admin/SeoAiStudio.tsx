@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { COUNTRIES } from "@/lib/countries";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,9 +46,22 @@ type Article = {
   sourceTopic: string;
   aiModel: string;
   status: "draft" | "reviewed" | "published";
+  // CSV of country codes (e.g. "SA,AE" or "GLOBAL"). May be missing on
+  // legacy rows authored before the column existed — treat as "GLOBAL".
+  targetCountries?: string;
   createdAt: string;
   updatedAt: string;
 };
+
+// Helper: parse the CSV column into an array, defaulting to ["GLOBAL"]
+// for legacy rows. Used by both the country filter and the article table.
+function parseCountries(raw: string | undefined | null): string[] {
+  const list = (raw || "GLOBAL").split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
+  return list.length ? list : ["GLOBAL"];
+}
+function countryLabelAr(code: string): string {
+  return COUNTRIES.find(c => c.code === code)?.nameAr ?? code;
+}
 
 const MODEL_OPTIONS = [
   { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5 — أسرع وأرخص" },
@@ -141,11 +155,30 @@ export default function SeoAiStudio() {
 
   const [topic, setTopic] = useState("");
   const [keyword, setKeyword] = useState("");
+  // Multi-select country chips for the generation form. Defaults to
+  // ["GLOBAL"] which produces a country-neutral article that the public
+  // /api/seo/public/articles endpoint surfaces to every visitor.
+  const [genCountries, setGenCountries] = useState<string[]>(["GLOBAL"]);
+  function toggleGenCountry(code: string) {
+    setGenCountries(prev => {
+      // Picking GLOBAL clears all other selections (and vice-versa) — the
+      // two states are mutually exclusive: GLOBAL is the "any country"
+      // sentinel, so combining it with specific codes is meaningless.
+      if (code === "GLOBAL") return ["GLOBAL"];
+      const without = prev.filter(c => c !== "GLOBAL" && c !== code);
+      const next = prev.includes(code) ? without : [...without, code];
+      return next.length ? next : ["GLOBAL"];
+    });
+  }
+
   const generate = useMutation({
     mutationFn: async () => {
       const r = await fetch(`${API}/api/admin/seo/ai-articles/generate`, {
         method: "POST", headers,
-        body: JSON.stringify({ topic, targetKeyword: keyword, sourceTopic: topic }),
+        body: JSON.stringify({
+          topic, targetKeyword: keyword, sourceTopic: topic,
+          targetCountries: genCountries,
+        }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || "فشل التوليد");
@@ -155,10 +188,20 @@ export default function SeoAiStudio() {
       qc.invalidateQueries({ queryKey: ["seo-ai-articles"] });
       setOpenArticle(a);
       setTopic(""); setKeyword("");
+      // Keep the country selection sticky so the admin can generate a
+      // batch of articles for the same target audience without re-picking.
       toast({ title: "تم توليد المقال", description: a.title });
     },
     onError: (e: any) => toast({ title: "فشل التوليد", description: e.message, variant: "destructive" }),
   });
+
+  // ── Country filter for the articles table (separate from generation) ─
+  const [filterCountry, setFilterCountry] = useState<string>("ALL");
+  const filteredArticles = useMemo(() => {
+    const all = articlesQuery.data ?? [];
+    if (filterCountry === "ALL") return all;
+    return all.filter(a => parseCountries(a.targetCountries).includes(filterCountry));
+  }, [articlesQuery.data, filterCountry]);
 
   // Quick-suggest topics inspired by the SEO dashboard recommendations.
   const SUGGESTIONS = [
@@ -308,6 +351,41 @@ export default function SeoAiStudio() {
                 </div>
               </div>
 
+              {/* Country targeting chips. The selected codes are stored on
+                  the article and used by /api/seo/public/articles to surface
+                  the right content per visitor (CF-IPCountry → cookie). */}
+              <div>
+                <Label className="block mb-2">الدول المستهدفة</Label>
+                <div className="flex flex-wrap gap-2">
+                  {COUNTRIES.map(c => {
+                    const selected = genCountries.includes(c.code);
+                    const isGlobal = c.code === "GLOBAL";
+                    return (
+                      <button
+                        key={c.code}
+                        type="button"
+                        data-testid={`country-chip-${c.code}`}
+                        onClick={() => toggleGenCountry(c.code)}
+                        className={[
+                          "text-xs rounded-full border px-3 py-1 transition-colors",
+                          selected
+                            ? (isGlobal
+                                ? "bg-amber-100 border-amber-400 text-amber-800 font-semibold"
+                                : "bg-emerald-100 border-emerald-400 text-emerald-800 font-semibold")
+                            : "bg-white border-muted text-muted-foreground hover:border-fuchsia-300 hover:text-fuchsia-700",
+                        ].join(" ")}
+                      >
+                        {c.nameAr}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  «دول أخرى» = محتوى عام يظهر لكل الزوار حين لا يوجد محتوى
+                  مخصّص لدولتهم. اختيار دولة واحدة أو أكثر يخصّص المقال لها.
+                </p>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">النموذج: {s.model}</Badge>
@@ -331,21 +409,39 @@ export default function SeoAiStudio() {
         {/* ── Articles ────────────────────────────────────────────────── */}
         <TabsContent value="articles" className="mt-4">
           <Card>
-            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between flex-wrap gap-3">
               <CardTitle className="flex items-center gap-2">
                 <FileText className="h-5 w-5 text-fuchsia-600" /> المقالات المُولَّدة
                 {articlesQuery.data && (
-                  <Badge variant="secondary" className="ms-2">{articlesQuery.data.length}</Badge>
+                  <Badge variant="secondary" className="ms-2">
+                    {filterCountry === "ALL"
+                      ? articlesQuery.data.length
+                      : `${filteredArticles.length}/${articlesQuery.data.length}`}
+                  </Badge>
                 )}
               </CardTitle>
-              <Button
-                variant="outline" size="sm"
-                onClick={() => articlesQuery.refetch()}
-                disabled={articlesQuery.isFetching}
-              >
-                <RefreshCcw className={`h-4 w-4 ms-1 ${articlesQuery.isFetching ? "animate-spin" : ""}`} />
-                تحديث
-              </Button>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground hidden md:block">فلتر بالدولة:</Label>
+                <Select value={filterCountry} onValueChange={setFilterCountry}>
+                  <SelectTrigger className="w-44 h-9" data-testid="articles-country-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">كل الدول</SelectItem>
+                    {COUNTRIES.map(c => (
+                      <SelectItem key={c.code} value={c.code}>{c.nameAr}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => articlesQuery.refetch()}
+                  disabled={articlesQuery.isFetching}
+                >
+                  <RefreshCcw className={`h-4 w-4 ms-1 ${articlesQuery.isFetching ? "animate-spin" : ""}`} />
+                  تحديث
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {articlesQuery.isLoading ? (
@@ -363,6 +459,11 @@ export default function SeoAiStudio() {
                   <FileText className="mx-auto h-10 w-10 opacity-30 mb-2" />
                   لا توجد مقالات بعد. ابدأ من تبويب «التوليد».
                 </div>
+              ) : filteredArticles.length === 0 ? (
+                <div className="py-12 text-center text-muted-foreground">
+                  <FileText className="mx-auto h-10 w-10 opacity-30 mb-2" />
+                  لا توجد مقالات تطابق الفلتر الحالي.
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -370,39 +471,58 @@ export default function SeoAiStudio() {
                       <tr className="text-start text-muted-foreground border-b">
                         <th className="py-2 ps-2 text-start">العنوان</th>
                         <th className="py-2 text-start hidden md:table-cell">الكلمة المفتاحية</th>
+                        <th className="py-2 text-start">الدولة</th>
                         <th className="py-2 text-start">الحالة</th>
                         <th className="py-2 text-start hidden md:table-cell">التاريخ</th>
                         <th className="py-2 pe-2 text-end">إجراءات</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {articlesQuery.data!.map(a => (
-                        <tr key={a.id} className="border-b last:border-0 hover:bg-muted/30">
-                          <td className="py-3 ps-2">
-                            <div className="font-medium line-clamp-1">{a.title}</div>
-                            <div className="text-xs text-muted-foreground line-clamp-1">/{a.slug}</div>
-                          </td>
-                          <td className="py-3 hidden md:table-cell">
-                            {a.targetKeyword
-                              ? <Badge variant="outline">{a.targetKeyword}</Badge>
-                              : <span className="text-muted-foreground">—</span>}
-                          </td>
-                          <td className="py-3">{statusBadge(a.status)}</td>
-                          <td className="py-3 hidden md:table-cell text-muted-foreground text-xs">
-                            {new Date(a.createdAt).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}
-                          </td>
-                          <td className="py-3 pe-2">
-                            <div className="flex justify-end gap-1">
-                              <Button variant="ghost" size="sm" onClick={() => setOpenArticle(a)}>
-                                <Eye className="h-4 w-4 ms-1" /> فتح
-                              </Button>
-                              <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(a)}>
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredArticles.map(a => {
+                        const codes = parseCountries(a.targetCountries);
+                        return (
+                          <tr key={a.id} className="border-b last:border-0 hover:bg-muted/30" data-testid={`article-row-${a.id}`}>
+                            <td className="py-3 ps-2">
+                              <div className="font-medium line-clamp-1">{a.title}</div>
+                              <div className="text-xs text-muted-foreground line-clamp-1">/{a.slug}</div>
+                            </td>
+                            <td className="py-3 hidden md:table-cell">
+                              {a.targetKeyword
+                                ? <Badge variant="outline">{a.targetKeyword}</Badge>
+                                : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="py-3">
+                              <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                {codes.map(code => (
+                                  <Badge
+                                    key={code}
+                                    variant={code === "GLOBAL" ? "outline" : "secondary"}
+                                    className={code === "GLOBAL"
+                                      ? "text-[10px] border-amber-400 text-amber-800 bg-amber-50"
+                                      : "text-[10px] bg-emerald-100 text-emerald-800"}
+                                  >
+                                    {countryLabelAr(code)}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-3">{statusBadge(a.status)}</td>
+                            <td className="py-3 hidden md:table-cell text-muted-foreground text-xs">
+                              {new Date(a.createdAt).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}
+                            </td>
+                            <td className="py-3 pe-2">
+                              <div className="flex justify-end gap-1">
+                                <Button variant="ghost" size="sm" onClick={() => setOpenArticle(a)}>
+                                  <Eye className="h-4 w-4 ms-1" /> فتح
+                                </Button>
+                                <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(a)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

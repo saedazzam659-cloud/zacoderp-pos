@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, desc, and, ne } from "drizzle-orm";
+import { eq, desc, and, ne, or, like, sql } from "drizzle-orm";
 import { db, seoGeneratedArticlesTable } from "@workspace/db";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -22,17 +22,44 @@ const router = Router();
 // /pricing page (and Google's crawler hitting the sitemap) can read them
 // without a session. The route paths are namespaced under /public/* to
 // keep them clearly separated from the per-tenant authenticated surface.
-router.get("/public/articles", async (_req, res) => {
+// Build the country filter used by every public article endpoint:
+//   show rows whose target_countries CSV either contains the visitor's
+//   country code (e.g. "SA" matches "SA", "SA,AE", "AE,SA,KW") OR the
+//   "GLOBAL" sentinel (the universal fallback). The sitemap builder also
+//   uses this so per-country crawlers see the appropriate set.
+//
+// Note: we use the literal CSV match instead of pg arrays because the
+// column is text — see the schema comment for rationale.
+function countryFilter(country: string | undefined) {
+  const c = (country || "GLOBAL").trim().toUpperCase();
+  if (!c || c === "GLOBAL") {
+    // Visitor has no specific country — show only GLOBAL articles.
+    return like(seoGeneratedArticlesTable.targetCountries, "%GLOBAL%");
+  }
+  return or(
+    like(seoGeneratedArticlesTable.targetCountries, `%${c}%`),
+    like(seoGeneratedArticlesTable.targetCountries, "%GLOBAL%"),
+  );
+}
+
+router.get("/public/articles", async (req, res) => {
   try {
+    // The visitor country is auto-detected by the visitorCountry middleware
+    // (Cloudflare header / ?country override / sticky cookie / GLOBAL).
+    const country = (req as any).visitorCountry as string | undefined;
     const rows = await db.select({
       id:              seoGeneratedArticlesTable.id,
       title:           seoGeneratedArticlesTable.title,
       slug:            seoGeneratedArticlesTable.slug,
       metaDescription: seoGeneratedArticlesTable.metaDescription,
+      targetCountries: seoGeneratedArticlesTable.targetCountries,
       updatedAt:       seoGeneratedArticlesTable.updatedAt,
     })
       .from(seoGeneratedArticlesTable)
-      .where(eq(seoGeneratedArticlesTable.status, "published"))
+      .where(and(
+        eq(seoGeneratedArticlesTable.status, "published"),
+        countryFilter(country),
+      ))
       .orderBy(desc(seoGeneratedArticlesTable.updatedAt))
       .limit(500);
     // The /pricing page renders this list as "اقرأ أيضاً" cards next to a
@@ -51,6 +78,11 @@ router.get("/public/articles/:slug", async (req, res) => {
   try {
     const slug = String(req.params.slug || "").trim();
     if (!slug) { res.status(400).json({ error: "slug مفقود" }); return; }
+    // We do NOT apply the country filter for direct slug lookups: a deep
+    // link / shared URL must always resolve as long as the article is
+    // published, even if the visitor's country isn't in its target list.
+    // The country tag is still surfaced in the response so the SPA can
+    // render an "أيضاً متاح في…" hint if it wants to.
     const rows = await db.select({
       id:              seoGeneratedArticlesTable.id,
       title:           seoGeneratedArticlesTable.title,
@@ -58,6 +90,7 @@ router.get("/public/articles/:slug", async (req, res) => {
       metaDescription: seoGeneratedArticlesTable.metaDescription,
       content:         seoGeneratedArticlesTable.content,
       targetKeyword:   seoGeneratedArticlesTable.targetKeyword,
+      targetCountries: seoGeneratedArticlesTable.targetCountries,
       createdAt:       seoGeneratedArticlesTable.createdAt,
       updatedAt:       seoGeneratedArticlesTable.updatedAt,
     })
@@ -82,17 +115,20 @@ router.get("/public/related/:slug", async (req, res) => {
   try {
     const slug = String(req.params.slug || "").trim();
     if (!slug) { res.status(400).json({ error: "slug مفقود" }); return; }
+    const country = (req as any).visitorCountry as string | undefined;
     const rows = await db.select({
       id:              seoGeneratedArticlesTable.id,
       title:           seoGeneratedArticlesTable.title,
       slug:            seoGeneratedArticlesTable.slug,
       metaDescription: seoGeneratedArticlesTable.metaDescription,
+      targetCountries: seoGeneratedArticlesTable.targetCountries,
       updatedAt:       seoGeneratedArticlesTable.updatedAt,
     })
       .from(seoGeneratedArticlesTable)
       .where(and(
         eq(seoGeneratedArticlesTable.status, "published"),
         ne(seoGeneratedArticlesTable.slug, slug),
+        countryFilter(country),
       ))
       .orderBy(desc(seoGeneratedArticlesTable.updatedAt))
       .limit(3);

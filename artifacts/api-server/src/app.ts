@@ -1,10 +1,12 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import { eq, asc, desc } from "drizzle-orm";
 import { db, planConfigsTable, seoGeneratedArticlesTable } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { visitorCountryMiddleware } from "./middleware/visitorCountry.js";
 
 // ─── Marketing/SEO discovery surface ────────────────────────────────────
 // Builds the dynamic sitemap.xml + robots.txt so Google can discover the
@@ -155,6 +157,17 @@ app.use(cors());
 // can post realistic Excel/CSV payloads (5k–20k rows ≈ several MB of JSON).
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
+// Cookie parser is required by the visitor-country middleware below — it
+// reads the sticky `visitor_country` cookie set when a user explicitly
+// selects a country from the landing/login selector.
+app.use(cookieParser());
+
+// Detect visitor country (Cloudflare CF-IPCountry header / ?country
+// override / sticky cookie / GLOBAL fallback) and attach to req. Must run
+// BEFORE both the SEO routes mounted at root and the /api router so every
+// downstream handler sees a populated req.visitorCountry.
+app.use(visitorCountryMiddleware);
 
 // Prevent HTTP caching on all API responses so clients always get fresh data
 app.use((_req, res, next) => {
