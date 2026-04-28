@@ -571,3 +571,84 @@ test("email-history CSV export: caps body at 1000 rows and records truncation in
   expect(truncMeta.totalAvailable).toBe(1001);
   for (const r of truncAuditRows) seededAuditIds.push(r.id);
 });
+
+// ─── Task #128: unified truncation toast on the email-history CSV button ────
+// The page-side `emailHistoryCsvMut` reads X-Csv-Truncated / X-Csv-Row-Cap /
+// X-Csv-Total-Available from the CSV response and renders the unified
+// "تم الاقتطاع عند 1,000 من 1,001 صف" toast description (AICompanyFix.tsx
+// ~line 1049), the same wording the four sibling export mutations use after
+// task #121. The test above proves the on-the-wire response shape and the
+// audit-row contract, but it triggers the export through a page-context
+// fetch — never through the actual on-screen button — so a regression that
+// silently dropped totalAvailable from emailHistoryCsvMut's onSuccess (or
+// reworded the Arabic phrase, or flipped the mutation into onError) would
+// not trip any assertion. This sibling fills that gap.
+//
+// We mock the CSV response with deterministic headers (truncated=1,
+// rowCap=1000, totalAvailable=1001) so the toast wording is unambiguous on
+// any dev DB state. The body is irrelevant — the cap behaviour is already
+// covered above with real seeded data; here the focus is purely the
+// click → onSuccess → toast path. Mirrors the toast assertion in
+// tool-history-csv-export.spec.ts ~line 698.
+test("email-history CSV export: unified truncation toast renders after the actual CSV button click", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Mock the CSV response only — leave the JSON poll alone so the panel
+  // still renders normally. The page-side mutation builds its toast purely
+  // from the X-Csv-* headers, so the body content is irrelevant beyond
+  // satisfying the `await r.blob()` call inside `emailHistoryCsvMut`.
+  await page.route("**/api/admin/maintenance/email-history**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    // Minimal valid CSV: BOM + header row only. The mutation just needs
+    // a successful 200 + readable headers; it never inspects the body.
+    const body = "\uFEFF" + "بصمة القائمة الحرجة\r\n";
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "Content-Type":          "text/csv; charset=utf-8",
+        "Content-Disposition":   `attachment; filename="maintenance-email-history-${Date.now()}.csv"`,
+        // The three headers the mutation reads to drive the toast.
+        // 1000 < 1001 so the `totalAvailable > rowCap` branch fires and
+        // the description renders the "من 1,001" suffix — the exact
+        // wording task #121 unified across all five export mutations.
+        "X-Csv-Truncated":       "1",
+        "X-Csv-Row-Cap":         "1000",
+        "X-Csv-Total-Available": "1001",
+      },
+      body,
+    });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+
+  // Wait for the email-history panel to render so the export button is
+  // mounted. Anchoring on the panel header is stable regardless of how
+  // many email runs the dev DB carries.
+  await expect(panel(page)).toBeVisible();
+
+  // Three "تصدير CSV" buttons exist on /admin/ai-fix; only the
+  // email-history one carries this exact `title` attribute. Same anchor
+  // the first test in this file uses.
+  const csvButton = page.getByTitle(
+    "تنزيل سجل البريد الكامل كملف CSV (يحترم الفلاتر أدناه)",
+  );
+  await csvButton.click();
+
+  // ─── Toast assertion — the whole point of task #128 ────────────────────
+  // The unified "تم الاقتطاع عند 1,000 من 1,001 صف" copy must appear in
+  // the document scope (Toaster lives at the root via App.tsx so the
+  // toast portals out of the panel and is queried from `page`). Numeric
+  // formatting uses Number.toLocaleString("en-US") in AICompanyFix.tsx
+  // so 1000 stays as "1,000" — the comma matters for any total ≥ 4
+  // digits. Mirrors the assertion in tool-history-csv-export.spec.ts.
+  await expect(
+    page.getByText("تم الاقتطاع عند 1,000 من 1,001 صف"),
+  ).toBeVisible();
+  // Also assert the success title rendered, so a regression that flipped
+  // the mutation into onError (and silently swallowed the truncation
+  // suffix) would still trip this expectation.
+  await expect(page.getByText("تم تنزيل ملف CSV").first()).toBeVisible();
+});

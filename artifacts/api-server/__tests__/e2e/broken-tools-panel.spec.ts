@@ -525,3 +525,92 @@ test("broken-tools panel: 'تنزيل CSV' downloads the broken-tools list with 
   // accumulate test-only audit rows over time.
   for (const r of auditRows) seededAuditIds.push(r.id);
 });
+
+// ─── Task #128: unified truncation toast on the broken-tools CSV button ─────
+// The page-side `errorSummaryCsvMut` reads X-Csv-Truncated / X-Csv-Row-Cap /
+// X-Csv-Total-Available from the CSV response and renders a unified
+// "تم الاقتطاع عند 1,000 من 1,001 صف" toast description (AICompanyFix.tsx
+// ~line 1204), the same wording the four sibling export mutations use after
+// task #121. The third test above already proves the server-side cap and
+// audit-row contract on real data, but it can't assert the *exact* toast
+// string because the underlying error-summary endpoint scopes globally and
+// totalAvailable depends on however many other broken (company, tool) pairs
+// the dev DB carries — a "من <unpredictable>" total would defeat the whole
+// point of the assertion.
+//
+// This test fills that gap by mocking the CSV response with deterministic
+// headers (truncated=1, rowCap=1000, totalAvailable=1001) and a minimal
+// CSV body. The button is a real, on-screen button (the panel renders
+// because the beforeAll seed ensures at least one broken tool exists), the
+// click is a real React-driven click, and the toast assertion is on the
+// same Sonner portal the user sees — so a regression that drops or mistypes
+// the truncation copy in `errorSummaryCsvMut`'s onSuccess (e.g. forgets
+// to read totalAvailable, falls back to the cap-only branch, or rewords
+// the Arabic phrase) fails this test loudly. Mirrors the toast assertion
+// in tool-history-csv-export.spec.ts ~line 698.
+test("broken-tools panel: unified truncation toast renders after the actual CSV button click", async ({ page }) => {
+  await installSuperAdminSession(page);
+
+  // Mock the CSV response only — leave the JSON poll alone so the panel
+  // still renders against real data (the beforeAll seed guarantees the
+  // panel is visible). The page-side mutation builds its toast purely
+  // from the X-Csv-* headers, so the body content is irrelevant beyond
+  // satisfying the `await r.blob()` call inside `errorSummaryCsvMut`.
+  await page.route("**/api/admin/maintenance/error-summary**", async (route, request) => {
+    if (!request.url().includes("format=csv")) {
+      await route.continue();
+      return;
+    }
+    // Minimal valid CSV: BOM + header row only. The mutation just needs
+    // a successful 200 + readable headers; it never inspects the body.
+    const body = "\uFEFF" + "الشركة,الأداة,رسالة الخطأ,وقت آخر فشل\r\n";
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "Content-Type":          "text/csv; charset=utf-8",
+        "Content-Disposition":   `attachment; filename="maintenance-broken-tools-${Date.now()}.csv"`,
+        // The three headers the mutation reads to drive the toast.
+        // 1000 < 1001 so the `totalAvailable > rowCap` branch fires and
+        // the description renders the "من 1,001" suffix — the exact
+        // wording task #121 unified across all five export mutations.
+        "X-Csv-Truncated":       "1",
+        "X-Csv-Row-Cap":         "1000",
+        "X-Csv-Total-Available": "1001",
+      },
+      body,
+    });
+  });
+
+  await page.goto("/admin/ai-fix", { waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: PAGE_HEADING_RE })).toBeVisible();
+
+  // Wait for the amber panel to render — gated on errorSummaryQ.data.items
+  // .length > 0, which the beforeAll seed satisfies. Without this barrier
+  // we'd race the React tree and the CSV button might not yet be mounted.
+  const panel = page.locator("div", { hasText: PANEL_HEADER_PREFIX }).filter({
+    has: page.locator("table"),
+  }).first();
+  await expect(panel).toBeVisible();
+
+  // Click the export button via its data-testid (added on AICompanyFix
+  // for exactly this hook). The click flows through the real React tree
+  // and the real `errorSummaryCsvMut` mutation; only the network response
+  // is controlled.
+  await page.locator('[data-testid="error-summary-csv-button"]').click();
+
+  // ─── Toast assertion — the whole point of task #128 ────────────────────
+  // The unified "تم الاقتطاع عند 1,000 من 1,001 صف" copy must appear in
+  // the document scope (Toaster lives at the root via App.tsx ~line 563
+  // so the toast portals out of the panel and is queried from `page`).
+  // Numeric formatting uses Number.toLocaleString("en-US") in
+  // AICompanyFix.tsx so 1000 stays as "1,000" — the comma matters for
+  // any total ≥ 4 digits. Mirrors the assertion in
+  // tool-history-csv-export.spec.ts.
+  await expect(
+    page.getByText("تم الاقتطاع عند 1,000 من 1,001 صف"),
+  ).toBeVisible();
+  // Also assert the success title rendered, so a regression that flipped
+  // the mutation into onError (and silently swallowed the truncation
+  // suffix) would still trip this expectation.
+  await expect(page.getByText("تم تنزيل ملف CSV").first()).toBeVisible();
+});
