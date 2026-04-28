@@ -97,6 +97,21 @@ export default function ItemCard() {
     totalCost:     fmt(r.totalCost),
   }));
 
+  // Grand-totals row appended to Excel and printed/PDF view (renders on the
+  // last page only via the centralized exporter).
+  const exportTotalsRow = (applied.itemId && !isLoading && augmented.length > 0)
+    ? {
+        txDate:        "الإجمالي",
+        txType:        "",
+        warehouseName: "",
+        qtyIn:         fmtQty(totals.in),
+        qtyOut:        fmtQty(totals.out),
+        balance:       fmtQty(augmented[augmented.length - 1].running),
+        costPrice:     "",
+        totalCost:     "",
+      }
+    : null;
+
   return (
     <div className="space-y-6" dir="rtl">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -110,6 +125,7 @@ export default function ItemCard() {
           filename={`كارت-صنف-${item?.code ?? "all"}-${applied.from}-${applied.to}`}
           title="كارت الصنف"
           subtitle={item ? `${item.code} - ${item.nameAr}  |  ${applied.from} → ${applied.to}` : "اختر صنفاً"}
+          totalsRow={exportTotalsRow}
         />
       </div>
 
