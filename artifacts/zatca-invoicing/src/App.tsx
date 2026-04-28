@@ -58,6 +58,7 @@ import ZatcaReport from "@/pages/ZatcaReport";
 import Users from "@/pages/Users";
 import MenuPermissions from "@/pages/MenuPermissions";
 import Modules from "@/pages/admin/Modules";
+import Industries from "@/pages/admin/Industries";
 import LicenseManagement from "@/pages/LicenseManagement";
 import BackupOperations from "@/pages/BackupOperations";
 import GeneralSettings from "@/pages/GeneralSettings";
@@ -322,6 +323,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}
             {isSuperAdmin && <Route path="/admin/menu-permissions" component={MenuPermissions} />}
             {isSuperAdmin && <Route path="/admin/modules" component={Modules} />}
+            {isSuperAdmin && <Route path="/admin/industries" component={Industries} />}
             {isSuperAdmin && <Route path="/admin/licenses" component={LicenseManagement} />}
             {isSuperAdmin && <Route path="/admin/security-superadmin" component={SuperAdminSecurity} />}
             {isSuperAdmin && <Route path="/admin/security" component={SecurityCenter} />}

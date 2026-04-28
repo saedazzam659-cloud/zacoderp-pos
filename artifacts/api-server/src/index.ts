@@ -111,6 +111,27 @@ async function seedSuperAdmin() {
   }
 }
 
+async function seedIndustries() {
+  try {
+    const { industriesTable } = await import("@workspace/db");
+    const { DEFAULT_INDUSTRIES } = await import("./routes/adminIndustries.js");
+    // Idempotent insert: if two instances boot concurrently they would
+    // otherwise race past the "is empty?" check and both attempt the same
+    // insert, hitting the unique-on-code constraint. ON CONFLICT DO NOTHING
+    // makes this safe regardless of how many nodes run it in parallel and
+    // also preserves any operator edits to existing rows.
+    const result = await db.insert(industriesTable)
+      .values(DEFAULT_INDUSTRIES)
+      .onConflictDoNothing({ target: industriesTable.code })
+      .returning({ code: industriesTable.code });
+    if (result.length > 0) {
+      logger.info({ inserted: result.length }, "Default industries seeded");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to seed industries");
+  }
+}
+
 async function seedPlanConfigs() {
   try {
     const existing = await db.select().from(planConfigsTable);
@@ -212,6 +233,7 @@ async function bootstrap() {
     logger.info({ port }, "Server listening");
     seedSuperAdmin();
     seedPlanConfigs();
+    seedIndustries();
     // Start automatic-backup scheduler (checks every 15 min; creates snapshot per
     // company on its configured frequency).
     import("./routes/backup.js").then(m => m.startBackupScheduler?.()).catch(() => {});

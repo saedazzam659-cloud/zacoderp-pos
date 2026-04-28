@@ -15,7 +15,31 @@ import {
   COUNTRIES, DEFAULT_COUNTRY_CODE,
   getCountryByCode, getCountryPolicy,
 } from "@/lib/countries";
-import { INDUSTRIES, unionRecommendedModules } from "@/lib/industries";
+import { INDUSTRIES as INDUSTRIES_FALLBACK } from "@/lib/industries";
+
+// Live row from /api/admin/industries/public — derived from the
+// `industries` table (SuperAdmin-managed in /admin/industries). Falls
+// back to the bundled INDUSTRIES_FALLBACK on a hard fetch error so the
+// chip strip never renders empty mid-registration.
+type LiveIndustry = {
+  code:                  string;
+  nameAr:                string;
+  nameEn:                string;
+  emoji:                 string;
+  recommendedModuleKeys: string[];
+  sortOrder:             number;
+};
+
+// Convert the static fallback (which uses `recommendedModules`) into the
+// live shape so downstream code can treat both identically.
+const INDUSTRIES_FALLBACK_LIVE: LiveIndustry[] = INDUSTRIES_FALLBACK.map((i, idx) => ({
+  code:                  i.code,
+  nameAr:                i.nameAr,
+  nameEn:                i.nameEn,
+  emoji:                 i.emoji,
+  recommendedModuleKeys: i.recommendedModules,
+  sortOrder:             (idx + 1) * 10,
+}));
 
 // ── Plan card UI shape ────────────────────────────────────────────────
 // Each plan rendered in Step 2 has a stable structural shape (id, name,
@@ -261,9 +285,38 @@ export default function Register() {
     [MODULES],
   );
 
+  // Live industry catalog (from /admin/industries). On a hard fetch error
+  // we fall back to the bundled static list so the wizard's chip strip
+  // never renders empty. Active rows only — the public endpoint already
+  // filters out `isActive=false` rows, so a SuperAdmin can hide an
+  // activity type without deleting it.
+  const industriesQ = useQuery<LiveIndustry[]>({
+    queryKey: ["public-industries"],
+    staleTime: 30 * 1000,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/admin/industries/public`);
+      if (!r.ok) throw new Error("industries fetch failed");
+      return r.json();
+    },
+  });
+  const INDUSTRIES_LIVE: LiveIndustry[] = (industriesQ.data && industriesQ.data.length > 0)
+    ? industriesQ.data
+    : INDUSTRIES_FALLBACK_LIVE;
+
+  // Helper: resolve recommended module keys for the given industry codes
+  // against the live catalog (or fallback). Deduped via Set.
+  const unionRecommendedModulesLive = (industryCodes: string[]): string[] => {
+    const set = new Set<string>();
+    for (const code of industryCodes) {
+      const ind = INDUSTRIES_LIVE.find(i => i.code === code);
+      if (ind) for (const k of ind.recommendedModuleKeys) set.add(k);
+    }
+    return Array.from(set);
+  };
+
   // Prune any selected module keys that are no longer in the live catalog.
-  // This handles the case where an industry template auto-added a key (via
-  // unionRecommendedModules in industries.ts) that has since been deactivated
+  // This handles the case where an industry template auto-added a key
+  // (via unionRecommendedModulesLive above) that has since been deactivated
   // by SuperAdmin in /admin/modules. Without this prune the count "محددة X
   // من Y" would be wrong, the price summary would silently drop the row, and
   // the server would refuse to grant permissions for it anyway. Skip while
@@ -292,7 +345,7 @@ export default function Register() {
         // Merge in the recommendations for the newly-activated industry
         // (deduped via Set). Existing manual picks are preserved.
         setSelectedModules(curr => Array.from(
-          new Set([...curr, ...unionRecommendedModules([code])]),
+          new Set([...curr, ...unionRecommendedModulesLive([code])]),
         ));
       }
       return next;
@@ -301,10 +354,10 @@ export default function Register() {
   // "اختيار الكل" merges every industry's recommendations into the
   // current selection (additive). It never removes user picks.
   const selectAllIndustries = () => {
-    const all = INDUSTRIES.map(i => i.code);
+    const all = INDUSTRIES_LIVE.map(i => i.code);
     setSelectedIndustries(all);
     setSelectedModules(curr => Array.from(
-      new Set([...curr, ...unionRecommendedModules(all)]),
+      new Set([...curr, ...unionRecommendedModulesLive(all)]),
     ));
   };
   // "مسح" clears BOTH industries and modules. Explicit, predictable.
@@ -587,7 +640,7 @@ export default function Register() {
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {INDUSTRIES.map(ind => {
+                    {INDUSTRIES_LIVE.map(ind => {
                       const active = selectedIndustries.includes(ind.code);
                       return (
                         <button key={ind.code} type="button"
@@ -880,7 +933,7 @@ export default function Register() {
                       {selectedIndustries.length === 0
                         ? "—"
                         : selectedIndustries
-                            .map(c => INDUSTRIES.find(i => i.code === c)?.nameAr ?? c)
+                            .map(c => INDUSTRIES_LIVE.find(i => i.code === c)?.nameAr ?? c)
                             .join("، ")}
                     </span>
                     <span className="text-muted-foreground">الوحدات المختارة:</span>

@@ -32,6 +32,7 @@ export * from "./reportEmailInvitations";
 export * from "./maintenanceRuns";
 export * from "./offers";
 export * from "./modules";
+export * from "./industries";
 export * from "./production";
 export * from "./securityEvents";
 export * from "./securityEventMedia";
