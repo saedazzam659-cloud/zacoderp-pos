@@ -101,3 +101,9 @@ id = "8MTyEEM2gmyFB33ekL5yy"
 uri = "file://exports/zatca-source-code-only.tar.gz"
 type = "unspecified"
 title = "سورس كود فقط - 17 ميغا"
+
+[[outputs]]
+id = "j8GSBnyXm6Nd5qxBl5ld5"
+uri = "file://exports/zatca-database-20260428.sql.gz"
+type = "unspecified"
+title = "قاعدة البيانات الكاملة (مضغوطة - 125ك)"
