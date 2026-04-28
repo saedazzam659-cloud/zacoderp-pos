@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, Plug, Loader2, ExternalLink, Copy, Check } from "lucide-react";
+import { CheckCircle2, XCircle, Plug, Loader2, ExternalLink, Copy, Check, Sparkles, Wand2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -63,6 +63,21 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // ── AI helper state ──────────────────────────────────────────────────
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiHint, setAiHint] = useState("");
+  const [aiResult, setAiResult] = useState<{
+    analyticsPropertyId: string | null;
+    searchConsoleSiteUrl: string | null;
+    notes: string;
+    source: "ai" | "regex";
+  } | null>(null);
+  // Track which fields were last filled by AI so we can show a small badge.
+  const [aiFilled, setAiFilled] = useState<{ propertyId: boolean; siteUrl: boolean }>({
+    propertyId: false,
+    siteUrl: false,
+  });
+
   // Reset form whenever the dialog opens or remote state arrives.
   useEffect(() => {
     if (open && state) {
@@ -73,6 +88,10 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
       setSearchConsoleOn(state.searchConsole);
       setTestResult(null);
       setSavedNotice(null);
+      setAiOpen(false);
+      setAiHint("");
+      setAiResult(null);
+      setAiFilled({ propertyId: false, siteUrl: false });
     }
   }, [open, state]);
 
@@ -123,6 +142,52 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
     },
   });
 
+  const aiMut = useMutation({
+    mutationFn: async (): Promise<{
+      analyticsPropertyId: string | null;
+      searchConsoleSiteUrl: string | null;
+      notes: string;
+      source: "ai" | "regex";
+    }> => {
+      setSavedNotice(null);
+      const r = await fetch(`${API}/api/admin/seo/connection/suggest`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ hint: aiHint }),
+      });
+      const json = await r.json();
+      if (!r.ok) throw new Error(json?.error || "تعذّر توليد الاقتراحات");
+      return json;
+    },
+    onSuccess: (r) => {
+      setAiResult(r);
+      const filled = { propertyId: false, siteUrl: false };
+      // Only overwrite an empty field by default; otherwise show the
+      // suggestion in the result card and let the user click "تطبيق".
+      if (r.analyticsPropertyId && !propertyId.trim()) {
+        setPropertyId(r.analyticsPropertyId);
+        filled.propertyId = true;
+      }
+      if (r.searchConsoleSiteUrl && !siteUrl.trim()) {
+        setSiteUrl(r.searchConsoleSiteUrl);
+        filled.siteUrl = true;
+      }
+      setAiFilled(filled);
+    },
+  });
+
+  const applyAi = (field: "propertyId" | "siteUrl") => {
+    if (!aiResult) return;
+    if (field === "propertyId" && aiResult.analyticsPropertyId) {
+      setPropertyId(aiResult.analyticsPropertyId);
+      setAiFilled((s) => ({ ...s, propertyId: true }));
+    }
+    if (field === "siteUrl" && aiResult.searchConsoleSiteUrl) {
+      setSiteUrl(aiResult.searchConsoleSiteUrl);
+      setAiFilled((s) => ({ ...s, siteUrl: true }));
+    }
+  };
+
   const copyEmail = async () => {
     const email = state?.serviceAccountEmail;
     if (!email) return;
@@ -161,6 +226,88 @@ export function SeoConnectionDialog({ open, onOpenChange }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <StatusCard label="Google Analytics" connected={!!state?.analytics} />
               <StatusCard label="Search Console" connected={!!state?.searchConsole} />
+            </div>
+
+            {/* ─── AI helper ─── */}
+            <div className="border rounded-lg bg-gradient-to-l from-indigo-50/40 to-violet-50/40 dark:from-indigo-950/20 dark:to-violet-950/20">
+              <button
+                type="button"
+                onClick={() => setAiOpen((v) => !v)}
+                className="w-full p-3 flex items-center justify-between text-right"
+                data-testid="seo-ai-helper-toggle"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-violet-600" />
+                  <span className="font-semibold text-sm">توليد الإعدادات بالذكاء الاصطناعي</span>
+                  <Badge variant="secondary" className="text-[10px] font-normal">جديد</Badge>
+                </span>
+                <span className="text-xs text-muted-foreground">{aiOpen ? "إخفاء" : "اقتراح تلقائي"}</span>
+              </button>
+
+              {aiOpen && (
+                <div className="px-3 pb-3 space-y-2">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    الصق رابط لوحة Google Analytics أو رابط Search Console أو رابط موقعك،
+                    وسيستخرج الذكاء الاصطناعي معرّف GA4 ورابط Search Console بالصيغة الصحيحة.
+                  </p>
+                  <Textarea
+                    placeholder={`أمثلة:\nhttps://analytics.google.com/analytics/web/#/p123456789/reports/dashboard\nأو: example.com\nأو: sc-domain:example.com`}
+                    rows={3}
+                    value={aiHint}
+                    onChange={(e) => setAiHint(e.target.value)}
+                    className="text-xs"
+                    dir="auto"
+                    data-testid="seo-ai-hint"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => aiMut.mutate()}
+                      disabled={aiMut.isPending || !aiHint.trim()}
+                      data-testid="seo-ai-generate"
+                      className="bg-violet-600 hover:bg-violet-700 text-white"
+                    >
+                      {aiMut.isPending
+                        ? <Loader2 className="h-4 w-4 animate-spin ml-2" />
+                        : <Wand2 className="h-4 w-4 ml-2" />}
+                      اقتراح بالذكاء الاصطناعي
+                    </Button>
+                    {aiMut.isError && (
+                      <span className="text-xs text-rose-700">{(aiMut.error as Error).message}</span>
+                    )}
+                  </div>
+
+                  {aiResult && (
+                    <div className="mt-2 rounded border bg-background/60 p-2 space-y-1.5 text-xs">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <Sparkles className="h-3 w-3 text-violet-600" />
+                        <span className="font-semibold">النتيجة</span>
+                        <Badge variant="outline" className="text-[10px] font-normal">
+                          {aiResult.source === "ai" ? "ذكاء اصطناعي" : "استخراج تلقائي"}
+                        </Badge>
+                      </div>
+                      <SuggestionRow
+                        label="معرّف GA4"
+                        value={aiResult.analyticsPropertyId}
+                        onApply={() => applyAi("propertyId")}
+                        applied={aiFilled.propertyId}
+                      />
+                      <SuggestionRow
+                        label="رابط Search Console"
+                        value={aiResult.searchConsoleSiteUrl}
+                        onApply={() => applyAi("siteUrl")}
+                        applied={aiFilled.siteUrl}
+                      />
+                      {aiResult.notes && (
+                        <p className="text-[11px] text-muted-foreground border-t pt-1.5 mt-1.5">
+                          {aiResult.notes}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Service account JSON */}
@@ -341,6 +488,41 @@ function StatusCard({ label, connected }: { label: string; connected: boolean })
           {connected ? "متصل" : "غير متصل"}
         </p>
       </div>
+    </div>
+  );
+}
+
+function SuggestionRow({
+  label, value, onApply, applied,
+}: { label: string; value: string | null; onApply: () => void; applied: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <span className="text-muted-foreground">{label}: </span>
+        {value ? (
+          <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] break-all" dir="ltr">{value}</code>
+        ) : (
+          <span className="text-amber-700">لم يُستخرج — أدخله يدوياً</span>
+        )}
+      </div>
+      {value && (
+        applied ? (
+          <Badge variant="secondary" className="text-[10px] font-normal shrink-0">
+            <Check className="h-3 w-3 ml-1 text-green-600" />
+            مُطبَّق
+          </Badge>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 text-[11px] px-2 shrink-0"
+            onClick={onApply}
+          >
+            تطبيق
+          </Button>
+        )
+      )}
     </div>
   );
 }

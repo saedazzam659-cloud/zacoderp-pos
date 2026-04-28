@@ -1135,4 +1135,144 @@ router.post("/connection/test", requireSuperAdmin, async (req, res) => {
   }
 });
 
+// POST /api/admin/seo/connection/suggest — AI helper that extracts a
+// GA4 Property ID and a Search Console site URL from any free-text hint
+// the admin pastes (a GA dashboard URL, a Search Console URL, the company
+// website, an email signature, etc.). Falls back to a deterministic regex
+// pass when AI is not configured so the helper never silently fails.
+router.post("/connection/suggest", requireSuperAdmin, async (req: any, res): Promise<void> => {
+  try {
+    const hint = String(req.body?.hint ?? "").trim().slice(0, 2000);
+    if (!hint) {
+      res.status(400).json({ error: "اكتب رابط موقعك أو رابط لوحة Google Analytics لاقتراح الإعدادات" });
+      return;
+    }
+
+    // ── Deterministic pass — cheap, always runs ────────────────────────
+    // GA4 URLs look like: https://analytics.google.com/analytics/web/#/p123456789/...
+    // Property IDs are pure digits, typically 9-12 chars.
+    let analyticsPropertyId: string | null = null;
+    const ga4Match =
+      hint.match(/[/#]p(\d{6,15})\b/i) ||
+      hint.match(/properties\/(\d{6,15})\b/i) ||
+      hint.match(/property[_\s-]*id[^0-9]{0,8}(\d{6,15})/i) ||
+      hint.match(/\bGA4[^0-9]{0,8}(\d{6,15})/i);
+    if (ga4Match) analyticsPropertyId = ga4Match[1];
+
+    // Search Console: pull a clean origin from any URL in the hint, or
+    // recognise an explicit sc-domain:example.com / *.example.com form.
+    let searchConsoleSiteUrl: string | null = null;
+    const scDomainMatch = hint.match(/sc-domain:([a-z0-9.-]+\.[a-z]{2,})/i);
+    if (scDomainMatch) {
+      searchConsoleSiteUrl = `sc-domain:${scDomainMatch[1].toLowerCase()}`;
+    } else {
+      const urlMatch = hint.match(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})(\/[^\s"'<>]*)?/i);
+      if (urlMatch) {
+        const host = urlMatch[1].toLowerCase().replace(/^www\./, "");
+        searchConsoleSiteUrl = `https://${host}/`;
+      } else {
+        const bareHost = hint.match(/\b([a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?)\b/i);
+        if (bareHost) {
+          searchConsoleSiteUrl = `https://${bareHost[1].toLowerCase().replace(/^www\./, "")}/`;
+        }
+      }
+    }
+
+    let notes = "";
+    let source: "ai" | "regex" = "regex";
+
+    // ── AI pass — only when configured. The AI can rescue cases where
+    // the user pasted Arabic prose or a screenshot transcript, and it
+    // can pick the right Search Console URL form (https vs sc-domain).
+    if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      const callerKey: number = (req as any).user?.id
+        ?? -Math.abs(((req.ip || "anon").split("").reduce((h: number, c: string) => (h * 31 + c.charCodeAt(0)) | 0, 0)));
+      const rl = checkSuggestRateLimit(callerKey);
+      if (!rl.ok) {
+        res.setHeader("Retry-After", String(rl.retryInSec));
+        res.status(429).json({ error: rl.reason, retryInSec: rl.retryInSec });
+        return;
+      }
+
+      const settings = await readAiSettings();
+      const prompt = [
+        `أنت مساعد إعداد لربط Google Analytics 4 و Google Search Console.`,
+        `سيعطيك المستخدم أي نص (رابط لوحة Analytics، رابط Search Console، اسم نطاق، ملاحظات بالعربية…)`,
+        `ومهمتك استخراج إعدادين فقط:`,
+        `1) analyticsPropertyId — معرّف GA4 الرقمي فقط (بدون G- أو p)، عادةً من 9 إلى 12 رقم.`,
+        `   إن لم تجد رقم Property واضح، أعد null.`,
+        `2) searchConsoleSiteUrl — رابط الموقع كما هو محفوظ في Search Console.`,
+        `   • إن كانت الخاصية من نوع URL prefix أعدها بصيغة "https://example.com/" مع شرطة مائلة في النهاية.`,
+        `   • إن كانت الخاصية من نوع Domain property أعدها بصيغة "sc-domain:example.com" بدون https.`,
+        `   • أزل www. إلا إذا كان واضحاً أن الموقع مسجّل بها.`,
+        `   إن لم تستطع التحديد، أعد null.`,
+        ``,
+        `اقتراحات أوّلية مبنية على Regex (قد تكون خاطئة، صحّحها أو أكّدها):`,
+        `- analyticsPropertyId المقترح: ${analyticsPropertyId ?? "null"}`,
+        `- searchConsoleSiteUrl المقترح: ${searchConsoleSiteUrl ?? "null"}`,
+        ``,
+        `النص الذي قدّمه المستخدم (بين علامتين):`,
+        `«${hint}»`,
+        ``,
+        `أضف حقل notes بالعربية في 1-2 جملة قصيرة جداً تشرح مصدر الاستخراج، أو تنبّه المستخدم إن كان عليه التأكد يدوياً.`,
+        ``,
+        `أعد JSON صالح فقط داخل كتلة \`\`\`json … \`\`\` بهذا الشكل:`,
+        `{ "analyticsPropertyId": "123456789" أو null,`,
+        `  "searchConsoleSiteUrl": "https://example.com/" أو "sc-domain:example.com" أو null,`,
+        `  "notes": "نص قصير بالعربية" }`,
+        `لا تكتب أي شيء خارج كتلة JSON.`,
+      ].join("\n");
+
+      try {
+        const client = new Anthropic({
+          apiKey:  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+          baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        });
+        const completion = await client.messages.create({
+          model: settings.model || "claude-sonnet-4-5",
+          max_tokens: 400,
+          temperature: 0.2,
+          messages: [{ role: "user", content: prompt }],
+        });
+        const text = completion.content
+          .filter((c: any) => c.type === "text")
+          .map((c: any) => c.text)
+          .join("\n");
+        const jsonBlock = text.match(/```json\s*([\s\S]*?)```/i);
+        const raw = jsonBlock ? jsonBlock[1] : text;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.analyticsPropertyId === "string" && /^\d{6,15}$/.test(parsed.analyticsPropertyId.trim())) {
+            analyticsPropertyId = parsed.analyticsPropertyId.trim();
+          } else if (parsed.analyticsPropertyId === null) {
+            // AI explicitly said no match — keep regex result if any.
+          }
+          if (typeof parsed.searchConsoleSiteUrl === "string") {
+            const v = parsed.searchConsoleSiteUrl.trim();
+            if (/^sc-domain:[a-z0-9.-]+\.[a-z]{2,}$/i.test(v) || /^https?:\/\//i.test(v)) {
+              searchConsoleSiteUrl = v;
+            }
+          }
+          if (typeof parsed.notes === "string") notes = parsed.notes.trim().slice(0, 240);
+          source = "ai";
+        }
+      } catch (aiErr: any) {
+        // AI failed — keep the regex result and report it to the client.
+        notes = `تعذّر الاتصال بالذكاء الاصطناعي، تم الاعتماد على الاستخراج التلقائي فقط.`;
+      }
+    } else {
+      notes = "خدمة الذكاء الاصطناعي غير مهيأة على الخادم — تم الاعتماد على الاستخراج التلقائي فقط.";
+    }
+
+    res.json({
+      analyticsPropertyId,
+      searchConsoleSiteUrl,
+      notes,
+      source,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تعذّر توليد الاقتراحات" });
+  }
+});
+
 export default router;
