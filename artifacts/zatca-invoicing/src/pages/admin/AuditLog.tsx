@@ -30,6 +30,7 @@ import {
   Link2,
   CheckCircle2,
   FileSearch,
+  FileCode2,
   X,
 } from "lucide-react";
 
@@ -249,47 +250,60 @@ export default function AuditLog() {
     return `${origin}${pathname}?entry=${id}`;
   }, []);
 
-  // ── Bulk-select share links (task #143) ─────────────────────────────
+  // ── Bulk-select share links (task #143, Markdown variant task #145) ──
   // Reviewers triaging long audit lists frequently want to drop a batch
-  // of permalinks into a chat or ticket. Per-row checkboxes plus a
-  // toolbar action let them do that in one click instead of copying
-  // each link individually. State is intentionally a Set keyed by row
-  // `id`, NOT by visible row index, so the selection survives:
-  //   • paginating to a different page (the Set keeps prior IDs)
+  // of permalinks into a chat or ticket. Per-row checkboxes plus toolbar
+  // actions let them do that in one click instead of copying each link
+  // individually. State is intentionally a Map keyed by row `id`, NOT
+  // by visible row index, so the selection survives:
+  //   • paginating to a different page (the Map keeps prior IDs)
   //   • re-filtering the listing (we keep the IDs even if a row is no
   //     longer visible — the eventual permalink still resolves the
   //     entry via `?entry=N`)
   //   • refetching (the rows array reference changes but IDs persist)
+  //
+  // Beyond bare IDs we also stash a small per-row summary (`createdAt`
+  // and `action`) at selection time so the Markdown copy variant
+  // (task #145) can render a meaningful link label —
+  // `Audit #123 — view at 2026-04-28 10:15:42` — without needing to
+  // re-fetch rows that have since paged out of view. Plain-text copy
+  // ignores the summary entirely, so an entry whose summary somehow
+  // went missing still copies as a working link.
+  //
   // We expose a header checkbox that selects/deselects only the rows
   // currently visible on the page (the typical "select-all" pattern in
   // table UIs); clearing the entire selection is offered explicitly via
   // the toolbar so a reviewer never gets stuck with stale picks from
   // pages they've moved away from.
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const selectedCount = selectedIds.size;
+  type SelectedRowMeta = { createdAt: string; action: string };
+  const [selectedRows, setSelectedRows] = useState<Map<number, SelectedRowMeta>>(new Map());
+  const selectedCount = selectedRows.size;
 
-  const toggleRowSelected = useCallback((id: number, checked: boolean) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (checked) next.add(id); else next.delete(id);
+  const toggleRowSelected = useCallback((row: AuditRow, checked: boolean) => {
+    setSelectedRows(prev => {
+      const next = new Map(prev);
+      if (checked) {
+        next.set(row.id, { createdAt: row.createdAt, action: row.action });
+      } else {
+        next.delete(row.id);
+      }
       return next;
     });
   }, []);
 
   const clearSelection = useCallback(() => {
-    setSelectedIds(new Set());
+    setSelectedRows(new Map());
   }, []);
 
   // Header checkbox state — based on currently-visible rows only. Empty
   // page → unchecked & disabled; some-but-not-all selected →
   // "indeterminate"; all selected → checked.
-  const visibleIds = useMemo(() => rows.map(r => r.id), [rows]);
   const visibleSelectedCount = useMemo(
-    () => visibleIds.reduce((acc, id) => acc + (selectedIds.has(id) ? 1 : 0), 0),
-    [visibleIds, selectedIds],
+    () => rows.reduce((acc, r) => acc + (selectedRows.has(r.id) ? 1 : 0), 0),
+    [rows, selectedRows],
   );
   const headerCheckboxState: boolean | "indeterminate" =
-    visibleIds.length > 0 && visibleSelectedCount === visibleIds.length
+    rows.length > 0 && visibleSelectedCount === rows.length
       ? true
       : visibleSelectedCount > 0
         ? "indeterminate"
@@ -301,33 +315,69 @@ export default function AuditLog() {
       // that as "select all visible" since the user clicked to leave the
       // mixed state, which is the common UX expectation.
       const shouldSelect = checked !== false;
-      setSelectedIds(prev => {
-        const next = new Set(prev);
+      setSelectedRows(prev => {
+        const next = new Map(prev);
         if (shouldSelect) {
-          for (const id of visibleIds) next.add(id);
+          for (const r of rows) next.set(r.id, { createdAt: r.createdAt, action: r.action });
         } else {
-          for (const id of visibleIds) next.delete(id);
+          for (const r of rows) next.delete(r.id);
         }
         return next;
       });
     },
-    [visibleIds],
+    [rows],
   );
 
-  // Copies the newline-joined list of permalinks for every selected row
-  // to the clipboard. We sort the IDs ascending so the pasted output is
-  // deterministic regardless of the order the reviewer happened to tick
-  // them — easier to scan in a chat/ticket and matches the natural
-  // order audit IDs are issued in. Prefers the async Clipboard API,
-  // falls back to a hidden textarea + execCommand for the same reason
-  // CopyIconButton does (insecure-context dev environments).
-  const copySelectedLinks = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const ids = [...selectedIds].sort((a, b) => a - b);
-    const text = ids
-      .map(id => buildShareLinkForId(id))
-      .filter(v => v.length > 0)
-      .join("\n");
+  // Escape characters that would break the `[label](url)` Markdown link
+  // syntax when the label appears between brackets. Backslash needs to
+  // come first so we don't double-escape characters we just inserted.
+  // The action label originates from translations and only ever contains
+  // safe characters today, but we still defend against future writers
+  // (e.g. someone adding a localized label that happens to contain a
+  // bracket) so the pasted output stays valid Markdown.
+  const escapeMarkdownLinkLabel = useCallback((s: string) => {
+    return s.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  }, []);
+
+  // Copies the list of permalinks for every selected row to the
+  // clipboard in either plain-text (one link per line) or Markdown
+  // (`- [label](url)` list-item) format. We sort the IDs ascending so
+  // the pasted output is deterministic regardless of the order the
+  // reviewer happened to tick them — easier to scan in a chat/ticket
+  // and matches the natural order audit IDs are issued in. Prefers the
+  // async Clipboard API, falls back to a hidden textarea + execCommand
+  // for the same reason CopyIconButton does (insecure-context dev
+  // environments).
+  //
+  // Both formats share the same selection, sorting, clipboard fallback,
+  // and toast feedback so the only thing that varies is the rendered
+  // body and the success toast description.
+  const copySelectedLinks = useCallback(async (format: "plain" | "markdown") => {
+    if (selectedRows.size === 0) return;
+    const ids = [...selectedRows.keys()].sort((a, b) => a - b);
+    const lines = ids
+      .map(id => {
+        const url = buildShareLinkForId(id);
+        if (!url) return null;
+        if (format === "plain") return url;
+        const meta = selectedRows.get(id);
+        // Build a "Audit #N — action at timestamp" label so the link
+        // is meaningful before being clicked. Falls back to just
+        // "Audit #N" if we somehow lost the per-row summary (e.g. the
+        // selection was hydrated from a future external source); the
+        // URL itself is always present so the link still resolves.
+        const labelText = meta
+          ? tr("copyMarkdownLinkLabel", {
+              id,
+              action: trAction(meta.action),
+              timestamp: new Date(meta.createdAt).toLocaleString(locale, { hour12: false }),
+            })
+          : tr("copyMarkdownLinkLabelMinimal", { id });
+        return `- [${escapeMarkdownLinkLabel(labelText)}](${url})`;
+      })
+      .filter((v): v is string => v != null && v.length > 0);
+
+    const text = lines.join("\n");
 
     if (!text) {
       toast({
@@ -363,11 +413,13 @@ export default function AuditLog() {
     }
 
     if (ok) {
+      const toastKey =
+        format === "markdown" ? "copySelectedLinksMarkdownToast" : "copySelectedLinksToast";
       toast({
         title: tr("copySuccessTitle"),
-        description: tr("copySelectedLinksToast", {
-          count: ids.length,
-          formattedCount: ids.length.toLocaleString(locale),
+        description: tr(toastKey, {
+          count: lines.length,
+          formattedCount: lines.length.toLocaleString(locale),
         }),
       });
     } else {
@@ -377,7 +429,7 @@ export default function AuditLog() {
         variant: "destructive",
       });
     }
-  }, [selectedIds, buildShareLinkForId, toast, tr, locale]);
+  }, [selectedRows, buildShareLinkForId, toast, tr, trAction, locale, escapeMarkdownLinkLabel]);
 
   return (
     <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
@@ -456,15 +508,32 @@ export default function AuditLog() {
           <div className="text-xs text-foreground/80">
             {tr("selectedCount", { count: selectedCount.toLocaleString(locale) })}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Plain-text and Markdown copy actions live side-by-side
+                (task #145). Both operate on the same selection — only
+                the rendered output changes — so the reviewer can pick
+                whichever paste target fits the destination (a chat box
+                where Markdown auto-renders vs. a plain text field).
+                The button order keeps the existing plain-text action
+                in its original position so muscle memory still works. */}
             <Button
               type="button"
               size="sm"
-              onClick={copySelectedLinks}
+              onClick={() => copySelectedLinks("plain")}
               data-testid="audit-bulk-copy-share-links"
             >
               <Link2 className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
               {tr("copySelectedLinks", { count: selectedCount.toLocaleString(locale) })}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => copySelectedLinks("markdown")}
+              data-testid="audit-bulk-copy-share-links-markdown"
+            >
+              <FileCode2 className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+              {tr("copySelectedLinksMarkdown", { count: selectedCount.toLocaleString(locale) })}
             </Button>
             <Button
               type="button"
@@ -550,8 +619,8 @@ export default function AuditLog() {
                       <tr
                         key={r.id}
                         data-testid="audit-row"
-                        data-selected={selectedIds.has(r.id) ? "true" : undefined}
-                        className={`border-b last:border-0 hover:bg-muted/30 cursor-pointer focus:outline-none focus:bg-muted/40 ${selectedIds.has(r.id) ? "bg-primary/5" : ""}`}
+                        data-selected={selectedRows.has(r.id) ? "true" : undefined}
+                        className={`border-b last:border-0 hover:bg-muted/30 cursor-pointer focus:outline-none focus:bg-muted/40 ${selectedRows.has(r.id) ? "bg-primary/5" : ""}`}
                         tabIndex={0}
                         role="button"
                         aria-label={tr("openDetails")}
@@ -574,8 +643,8 @@ export default function AuditLog() {
                           onKeyDown={(e) => e.stopPropagation()}
                         >
                           <Checkbox
-                            checked={selectedIds.has(r.id)}
-                            onCheckedChange={(v) => toggleRowSelected(r.id, v === true)}
+                            checked={selectedRows.has(r.id)}
+                            onCheckedChange={(v) => toggleRowSelected(r, v === true)}
                             aria-label={tr("selectRow")}
                             data-testid={`audit-row-select-${r.id}`}
                           />

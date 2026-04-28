@@ -1,10 +1,13 @@
 // E2E test for the bulk-select "Copy N links" toolbar on /admin/audit-log
-// in the zatca-invoicing artifact (task #143).
+// in the zatca-invoicing artifact (tasks #143 + #145).
 //
 // Why this test exists:
 //   Task #131 added a per-row share-link copy button. Task #143 builds on
 //   that with checkboxes plus a toolbar action so reviewers can copy a
-//   batch of permalinks at once. We need to assert end-to-end that:
+//   batch of permalinks at once. Task #145 adds a sibling "Copy as
+//   Markdown" action that emits `- [Audit #N — action at timestamp](url)`
+//   list items, sharing the same selection / clipboard plumbing as the
+//   plain variant. We need to assert end-to-end that:
 //     1. The toolbar stays hidden until at least one row is selected.
 //     2. Selecting individual rows reveals the toolbar with the right count.
 //     3. The header "select all on page" checkbox toggles every visible row.
@@ -12,6 +15,10 @@
 //        URLs (`{origin}/admin/audit-log?entry=N`) on the clipboard with a
 //        confirmation toast that reports the count.
 //     5. "Clear selection" empties the picks and hides the toolbar.
+//     6. Clicking "Copy as Markdown" emits `- [label](url)` lines, with
+//        the same selection used in (4), sorted ascending by id, and a
+//        meaningful label that includes the entry id + action so a
+//        reviewer can read the link without clicking it.
 //
 // Determinism story:
 //   - All seeded audit rows share a per-run TEST_TAG so the page's `?q=`
@@ -242,5 +249,40 @@ test("audit-log bulk copy: select rows, copy N links, clear selection", async ({
   // Toggle the header checkbox again — should deselect every visible row
   // and hide the toolbar.
   await page.getByTestId("audit-bulk-select-all").click();
+  await expect(toolbar).toBeHidden();
+
+  // ─── Markdown variant (task #145) ──────────────────────────────────
+  // Re-select the same two rows and copy via the sibling "Copy as
+  // Markdown" action. The sort order, clipboard fallback, toast pattern,
+  // and toolbar visibility must mirror the plain variant — only the
+  // emitted body differs (one `- [label](url)` line per id instead of
+  // bare URLs). The label must include the entry id and action so a
+  // reviewer pasting into a PR/Slack canvas sees something meaningful
+  // before clicking. We assert structure (markdown link syntax + URL +
+  // id reference) rather than the exact translated label so localized
+  // strings can evolve without breaking the regression.
+  await page.getByTestId(`audit-row-select-${idA}`).click();
+  await page.getByTestId(`audit-row-select-${idB}`).click();
+  await expect(page.getByTestId("audit-bulk-copy-share-links-markdown")).toBeVisible();
+
+  await page.getByTestId("audit-bulk-copy-share-links-markdown").click();
+  const clipboardMd = await page.evaluate(() => navigator.clipboard.readText());
+  const mdLines = clipboardMd.split("\n");
+  expect(mdLines).toHaveLength(2);
+  // Sorted ascending by id, same as the plain variant.
+  const mdExpectedIdsAsc = [idA, idB].sort((a, b) => a - b);
+  for (let i = 0; i < mdLines.length; i++) {
+    const id = mdExpectedIdsAsc[i];
+    const url = `${baseURL}/admin/audit-log?entry=${id}`;
+    // Format: `- [<some label containing the id>](<url>)`.
+    expect(mdLines[i]).toMatch(/^- \[.+\]\(.+\)$/);
+    expect(mdLines[i]).toContain(url);
+    // Label must reference the entry id so a reviewer can scan the
+    // pasted list without opening every link.
+    expect(mdLines[i]).toContain(String(id));
+  }
+
+  // Cleanup so the test ends with a quiet selection state.
+  await page.getByTestId("audit-bulk-clear-selection").click();
   await expect(toolbar).toBeHidden();
 });
