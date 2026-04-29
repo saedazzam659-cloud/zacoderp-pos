@@ -27,6 +27,7 @@ The frontend employs React with Vite and TailwindCSS, supporting a bilingual (Ar
 - **AI-Powered Features:** Incorporates Voice + AI Screen Actions, AI Production Assistant, AI Security Event Analysis, Real-time Security Alerts, In-App Inbox + AI Reports, SEO Connection AI Suggestion, and AI-assisted Tax Entry on Journal Entry Forms.
 - **Entity Account Auto-Creation:** Automatically creates posting sub-accounts for cashbox, bank, customer, supplier, and warehouse entities when not explicitly chosen by the user. The parent accounts are configurable via the Account Mapping screen.
 - **Company Logo on Print Surfaces:** The configured company logo is rendered on all print and PDF outputs across the system, with security measures in place to prevent XSS vulnerabilities.
+- **Per-Device Preferred Printer & Form Print Buttons:** Print Settings now lets each device save a preferred printer name (localStorage) with an instant test-sheet action. Every form that has a print template (sales invoices/quotations/orders, receipt vouchers, payment vouchers, journal entries, customer/supplier settlements) shows a dedicated "طباعة" button beside Save; popup-blocked print windows surface a clear toast instead of silently failing.
 
 ## System Design Choices
 - **Modular Monorepo:** Designed for code reusability and clear separation of concerns.

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -36,8 +36,10 @@ export default function SalesQuotations() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [printData, setPrintData] = useState<any>(null);
+  const [autoPrintOnOpen, setAutoPrintOnOpen] = useState(false);
 
-  async function openPrint(q: any) {
+  async function openPrint(q: any, opts?: { autoPrint?: boolean }) {
+    setAutoPrintOnOpen(!!opts?.autoPrint);
     try {
       const res = await fetch(`${API}/api/sales/sales-quotations/${q.id}`, { headers: authH });
       const full = await res.json();
@@ -62,6 +64,28 @@ export default function SalesQuotations() {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  // Pick up the auto-print hint planted by SalesDocumentForm via
+  // window.history.state when the user clicks "طباعة" on the
+  // quotation edit screen and gets redirected back here. We wait for
+  // both queries to load so the lookup and customer enrichment in
+  // openPrint both succeed, then clear the marker so refresh /
+  // re-visits don't re-print.
+  const autoPrintHandledRef = useRef(false);
+  useEffect(() => {
+    if (autoPrintHandledRef.current) return;
+    if (!quotations || quotations.length === 0) return;
+    if (!customers) return;
+    const st = (typeof window !== "undefined" ? window.history.state : null) as any;
+    const id = st?.autoPrintInvoiceId;
+    if (!id) return;
+    const q = quotations.find((x: any) => Number(x.id) === Number(id));
+    if (!q) return;
+    autoPrintHandledRef.current = true;
+    try { window.history.replaceState({}, ""); } catch { /* noop */ }
+    openPrint(q, { autoPrint: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotations, customers]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["sales-quotations"] });
 

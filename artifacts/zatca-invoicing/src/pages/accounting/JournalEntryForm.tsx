@@ -785,7 +785,16 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
   // post-save auto-print hook (whichever template the user picked).
   const openEntryPrintWindow = (template: "a4" | "thermal" = journalTemplate) => {
     const w = window.open("", "_blank", "width=1100,height=800");
-    if (!w) return;
+    if (!w) {
+      // Browser blocked the popup. Surface a clear message so the user
+      // knows to allow popups for this site instead of seeing nothing.
+      toast({
+        title: "تم منع النوافذ المنبثقة",
+        description: "اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.",
+        variant: "destructive",
+      });
+      return;
+    }
     const html = template === "thermal" ? buildEntryThermalHtml() : buildEntryPrintHtml();
     w.document.open(); w.document.write(html); w.document.close();
   };
@@ -1301,6 +1310,28 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           }
         >
           {saveMutation.isPending ? "جارٍ الحفظ..." : "حفظ"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            // Print-only path: never touches saveMutation. The print
+            // window builds its layout from the loaded `existing` row,
+            // so a brand-new (unsaved) entry has nothing to print yet.
+            if (isNew) {
+              toast({
+                title: "احفظ القيد أولاً قبل الطباعة",
+                description: "يصبح زر الطباعة فعّالاً بعد حفظ القيد مرة واحدة.",
+              });
+              return;
+            }
+            try { openEntryPrintWindow(); } catch { /* popup-blocker noise */ }
+          }}
+          className="gap-1.5"
+          data-testid="button-print"
+        >
+          <Printer className="h-4 w-4" />
+          طباعة
         </Button>
         <Button
           type="button"

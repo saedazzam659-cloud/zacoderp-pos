@@ -168,6 +168,24 @@ export default function SupplierSettlement() {
           saving={saveMut.isPending}
           saveDisabled={!form.settlementDate || !form.supplierId || !form.amount}
           saveLabel={t("purchasingPages.supplierSettlement.saveLabel")}
+          footer={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() =>
+                toast({
+                  title: "احفظ التسوية أولاً قبل الطباعة",
+                  description: "بعد الحفظ سيظهر زر طباعة بجانب كل سند في القائمة.",
+                })
+              }
+              data-testid="ss-print"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              طباعة
+            </Button>
+          }
         >
           <FormGrid>
             <Field label={t("purchasingPages.supplierSettlement.fields.docNumber")}><Input placeholder={t("purchasingPages.supplierSettlement.fields.docNumberPh")} value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>

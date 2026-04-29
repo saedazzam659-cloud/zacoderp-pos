@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -41,8 +41,10 @@ export default function SalesOrders() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [printData, setPrintData] = useState<any>(null);
+  const [autoPrintOnOpen, setAutoPrintOnOpen] = useState(false);
 
-  async function openPrint(o: any) {
+  async function openPrint(o: any, opts?: { autoPrint?: boolean }) {
+    setAutoPrintOnOpen(!!opts?.autoPrint);
     try {
       const res = await fetch(`${API}/api/sales/sales-orders/${o.id}`, { headers: authH });
       const full = await res.json();
@@ -72,6 +74,28 @@ export default function SalesOrders() {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  // Pick up the auto-print hint planted by SalesDocumentForm via
+  // window.history.state when the user clicks "طباعة" on the order
+  // edit screen and gets redirected back here. We wait until orders +
+  // customers have loaded so the lookup and customer enrichment in
+  // openPrint both succeed, then clear the marker so refresh /
+  // re-visits don't re-print.
+  const autoPrintHandledRef = useRef(false);
+  useEffect(() => {
+    if (autoPrintHandledRef.current) return;
+    if (!orders || orders.length === 0) return;
+    if (!customers) return;
+    const st = (typeof window !== "undefined" ? window.history.state : null) as any;
+    const id = st?.autoPrintInvoiceId;
+    if (!id) return;
+    const ord = orders.find((x: any) => Number(x.id) === Number(id));
+    if (!ord) return;
+    autoPrintHandledRef.current = true;
+    try { window.history.replaceState({}, ""); } catch { /* noop */ }
+    openPrint(ord, { autoPrint: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, customers]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["sales-orders"] });
 
@@ -283,7 +307,7 @@ export default function SalesOrders() {
         )}
       </div>
 
-      <SalesPrintModal open={!!printData} data={printData} onClose={() => setPrintData(null)} />
+      <SalesPrintModal open={!!printData} data={printData} onClose={() => setPrintData(null)} autoPrintOnOpen={autoPrintOnOpen} />
     </div>
   );
 }

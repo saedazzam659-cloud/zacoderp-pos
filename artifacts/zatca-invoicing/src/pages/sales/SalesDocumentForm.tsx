@@ -27,7 +27,7 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag } from "lucide-react";
+import { ArrowRight, ArrowLeft, ShoppingBag, FileSignature, ClipboardList, Plus, Trash2, FileText, ListOrdered, Calculator, Tag, Printer } from "lucide-react";
 import { offersApi } from "@/lib/offersApi";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1813,6 +1813,34 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(basePath)}>{t("common.cancel")}</Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            // Print-only path: skips save entirely, hands the existing
+            // doc id off to the list page which already owns the print
+            // modal + template flow. For an unsaved/new doc there is
+            // nothing to print yet, so we surface the same hint we use
+            // elsewhere instead of disabling the button silently.
+            if (!editId) {
+              toast({
+                title: "احفظ المستند أولاً قبل الطباعة",
+                description: "يصبح زر الطباعة فعّالاً بعد حفظ المستند مرة واحدة.",
+              });
+              return;
+            }
+            window.history.replaceState(
+              { autoPrintInvoiceId: editId, autoPrintTemplate: salesTemplate },
+              "",
+            );
+            navigate(basePath);
+          }}
+          disabled={saveMut.isPending}
+          className="gap-1.5"
+          data-testid="button-print"
+        >
+          <Printer className="h-4 w-4" />
+          طباعة
+        </Button>
         <Button onClick={handleSave} disabled={saveMut.isPending}>
           {saveMut.isPending ? t("common.saving") : isNew ? (isInvoice ? t("salesDocForm.saveInvoice") : isOrder ? t("salesDocForm.saveOrder") : t("salesDocForm.saveQuotation")) : t("salesDocForm.saveEdit")}
         </Button>

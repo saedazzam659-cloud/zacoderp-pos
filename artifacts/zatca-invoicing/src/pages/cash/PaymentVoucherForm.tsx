@@ -391,7 +391,17 @@ export default function PaymentVoucherForm() {
   function openPrintWindow() {
     if (!existing) return;
     const w = window.open("", "_blank", "width=900,height=700");
-    if (!w) return;
+    if (!w) {
+      // Browser blocked the popup. Surface a clear message so the
+      // user knows to allow popups for this site instead of seeing
+      // nothing happen after clicking "طباعة".
+      toast({
+        title: "تم منع النوافذ المنبثقة",
+        description: "اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء الطباعة.",
+        variant: "destructive",
+      });
+      return;
+    }
     const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === String(existing.cashBoxId));
     const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === String(existing.bankAccountId));
     const treasuryName = existing.paymentType === "bank"
@@ -860,6 +870,28 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
               {t("cashCommon.cancel")}
             </Button>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // Print-only path: opens the same print window the
+                  // top toolbar uses, but disables itself for unsaved
+                  // drafts since openPrintWindow() relies on `existing`.
+                  if (!existing) {
+                    toast({
+                      title: "احفظ سند الصرف أولاً قبل الطباعة",
+                      description: "يصبح زر الطباعة فعّالاً بعد حفظ السند مرة واحدة.",
+                    });
+                    return;
+                  }
+                  try { openPrintWindow(); } catch { /* popup-blocker noise */ }
+                }}
+                disabled={saveMut.isPending}
+                className="gap-1.5"
+                data-testid="pv-print"
+              >
+                <Printer className="h-4 w-4" />
+                {t(`${NS}.print`, "طباعة")}
+              </Button>
               <Button variant="outline" onClick={() => save("draft")} disabled={saveMut.isPending} className="gap-1.5" data-testid="pv-save-draft">
                 {pendingMode === "draft" && saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {t(`${NS}.saveDraft`, "حفظ كمسودة")}

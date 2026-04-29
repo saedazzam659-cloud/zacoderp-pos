@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 
@@ -1182,6 +1183,8 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
         </div>
       </div>
 
+      <LocalPrinterCard />
+
       <div className="flex justify-end">
         <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
           {saveMut.isPending ? (
@@ -1198,5 +1201,84 @@ function PrintPreferencesTab({ user, token, setUser }: { user: any; token: strin
         </Button>
       </div>
     </>
+  );
+}
+
+// Per-device "preferred printer" card. The printer name is stored in
+// localStorage, so it travels with the *machine* the user is on, not
+// with the user account — letting the same admin run the front desk
+// laptop and a back-office PC with two different printers. Browsers
+// can't read the OS printer list directly (security), so the field is
+// a hint that surfaces in pre-print toasts; the actual printer is
+// chosen in the system print dialog when window.print() runs.
+function LocalPrinterCard() {
+  const { toast } = useToast();
+  const [printer, setPrinter] = useState<string>(() => getPreferredPrinter());
+  const [saved, setSaved] = useState<string>(() => getPreferredPrinter());
+  const dirty = printer.trim() !== saved.trim();
+
+  function handleSave() {
+    setPreferredPrinter(printer);
+    setSaved(printer.trim());
+    toast({
+      title: printer.trim()
+        ? `تم حفظ الطابعة "${printer.trim()}" لهذا الجهاز`
+        : "تمت إزالة الطابعة المفضلة من هذا الجهاز",
+    });
+  }
+
+  function handleTest() {
+    const w = openPrinterTestSheet(saved || printer);
+    if (!w) {
+      toast({
+        title: "تم منع النوافذ المنبثقة",
+        description: "اسمح بفتح النوافذ المنبثقة من هذا الموقع لإجراء اختبار الطباعة.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-5 space-y-4">
+      <div>
+        <h2 className="font-semibold text-base flex items-center gap-2">
+          <Printer className="h-4 w-4 text-muted-foreground" />
+          الطابعة الافتراضية على هذا الجهاز
+        </h2>
+        <p className="text-xs text-muted-foreground mt-1 leading-6">
+          سجِّل اسم الطابعة المتصلة بهذا الجهاز ليظهر كتذكير قبل كل عملية طباعة.
+          لأسباب أمنية، لا تستطيع المتصفحات اختيار الطابعة تلقائياً — يبقى الاختيار
+          في نافذة الطباعة الخاصة بنظام التشغيل. هذا الإعداد محفوظ على هذا الجهاز
+          فقط، فإذا فتحت النظام من جهاز آخر فسيكون لكل جهاز طابعته الخاصة.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">اسم الطابعة (كما يظهر في نظام التشغيل)</Label>
+          <Input
+            value={printer}
+            onChange={(e) => setPrinter(e.target.value)}
+            placeholder="مثال: HP LaserJet M1136 / EPSON TM-T20"
+            dir="auto"
+          />
+        </div>
+        <Button onClick={handleSave} disabled={!dirty} className="gap-1.5">
+          <Save className="h-4 w-4" />
+          حفظ الطابعة
+        </Button>
+        <Button variant="outline" onClick={handleTest} className="gap-1.5">
+          <Printer className="h-4 w-4" />
+          اختبار الطباعة
+        </Button>
+      </div>
+
+      {saved && (
+        <div className="text-xs text-muted-foreground border-t pt-3">
+          الطابعة المحفوظة لهذا الجهاز:{" "}
+          <span className="font-semibold text-foreground">{saved}</span>
+        </div>
+      )}
+    </div>
   );
 }

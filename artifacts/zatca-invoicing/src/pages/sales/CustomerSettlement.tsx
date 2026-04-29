@@ -154,6 +154,24 @@ export default function CustomerSettlement() {
           saving={saveMut.isPending}
           saveDisabled={!form.settlementDate || !form.customerId || !form.amount}
           saveLabel="حفظ التحصيل"
+          footer={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() =>
+                toast({
+                  title: "احفظ التحصيل أولاً قبل الطباعة",
+                  description: "بعد الحفظ سيظهر زر طباعة بجانب كل سند في القائمة.",
+                })
+              }
+              data-testid="cs-print"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              طباعة
+            </Button>
+          }
         >
           <FormGrid>
             <Field label="رقم المستند"><Input placeholder="تلقائي" dir="ltr" className="text-left" value={form.docNumber} onChange={e => setForm((p: any) => ({ ...p, docNumber: e.target.value }))} /></Field>
