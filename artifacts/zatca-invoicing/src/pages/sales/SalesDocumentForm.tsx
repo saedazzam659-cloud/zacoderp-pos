@@ -857,6 +857,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const totalAmount = grossTotal - discountAmt;
 
   const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+
+  // Per-doc-type print preferences for sales invoices. We don't open
+  // the popup directly here — the list page (SalesInvoices) owns the
+  // SalesPrintModal, so we redirect there with a hint in window.history
+  // state and let it pick up `defaultTemplate` + `autoPrintOnOpen`.
+  // This only applies to invoices (not quotations / orders).
+  const autoPrintSalesInvoice = isInvoice && !!(user as any)?.company?.printAutoAfterSaveSales;
+  const salesTemplate: "a4" | "thermal" =
+    ((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4";
+
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/sales/${apiPath}/${editId}` : `${API}/api/sales/${apiPath}`;
@@ -876,7 +886,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       }
       return j;
     },
-    onSuccess: () => {
+    onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
       toast({ title: isNew
         ? (isInvoice
@@ -889,6 +899,17 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             : isOrder
               ? t("salesDocForm.toastOrderSaved")
               : t("salesDocForm.toastQuotationSaved")) });
+      // If auto-print is on for sales invoices, hand the just-saved id
+      // and chosen template to the list page via history.state. The
+      // list page reads it once on mount and triggers the print modal.
+      if (autoPrintSalesInvoice && saved?.id) {
+        try {
+          window.history.replaceState(
+            { autoPrintInvoiceId: saved.id, autoPrintTemplate: salesTemplate },
+            "",
+          );
+        } catch { /* ignore history failures */ }
+      }
       navigate(basePath);
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),

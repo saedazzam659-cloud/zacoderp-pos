@@ -514,12 +514,28 @@ export default function JournalEntryForm() {
     validateMutation.mutate();
   }
 
+  // Pull the company-wide auto-print preferences for journal entries.
+  // When `printAutoAfterSaveJournal` is on, the save flow opens the
+  // print popup before navigating back to the list — using the chosen
+  // template (a4 vs thermal). The button below the form is unchanged
+  // and always available regardless of these settings.
+  const autoPrintJournal = !!(user as any)?.company?.printAutoAfterSaveJournal;
+  const journalTemplate: "a4" | "thermal" =
+    ((user as any)?.company?.printTemplateJournal === "thermal") ? "thermal" : "a4";
+
   const saveMutation = useMutation({
     mutationFn: (data: any) =>
       isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
       toast({ title: isNew ? "تم إنشاء القيد بنجاح" : "تم تحديث القيد بنجاح" });
+      if (autoPrintJournal) {
+        // Fire the print popup synchronously off the user-initiated save
+        // click so the browser's pop-up blocker still treats it as
+        // user-allowed. We do this *before* navigating away so the
+        // entry's lines are still in scope for the HTML builder.
+        try { openEntryPrintWindow(journalTemplate); } catch { /* swallow popup-blocker noise */ }
+      }
       navigate("/accounting/journals");
     },
     onError: (e: any) => {
@@ -603,6 +619,66 @@ export default function JournalEntryForm() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `قيد ${docLabel}`);
     XLSX.writeFile(wb, `journal-entry-${docLabel}.xlsx`);
+  };
+
+  // Build a compact 80 mm thermal-receipt HTML for the current entry.
+  // Mirrors the A4 builder's data model but drops the wide table in
+  // favour of a stacked per-line list so totals stay legible on the
+  // narrower paper. Same `safeLogoSrc` defang for the company logo.
+  const buildEntryThermalHtml = () => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const logoHtml = safeLogo
+      ? `<div style="text-align:center;margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:inline-block;" /></div>`
+      : "";
+    const linesHtml = printableLines.map((l, i) => {
+      const a = acctMap.get(Number(l.accountId));
+      const debit  = Number(l.debit  || 0);
+      const credit = Number(l.credit || 0);
+      const side = debit > 0 ? `مدين ${debit.toFixed(2)}` : `دائن ${credit.toFixed(2)}`;
+      return `<div class="line">
+        <div class="acc">${i + 1}. ${escapeHtml(a?.code ?? "")} — ${escapeHtml(a?.nameAr || a?.nameEn || "—")}</div>
+        <div class="amt">${side}</div>
+        ${l.description ? `<div class="desc">${escapeHtml(l.description)}</div>` : ""}
+      </div>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>قيد ${escapeHtml(docLabel)}</title>
+<style>
+@page { size: 80mm auto; margin: 3mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#000; margin:0; padding:0; width:74mm; font-size:11px; line-height:1.4; }
+.center { text-align:center; }
+.bold { font-weight:700; }
+.h1 { font-size:13px; font-weight:700; margin:6px 0 2px; }
+.h2 { font-size:13px; font-weight:700; margin:6px 0; padding:4px 0; border-top:1px dashed #000; border-bottom:1px dashed #000; text-align:center; }
+.row { display:flex; justify-content:space-between; padding:1px 0; }
+.line { padding:4px 0; border-bottom:1px dashed #999; }
+.line .acc { font-size:11px; }
+.line .amt { font-family:"Consolas",monospace; font-size:11px; font-weight:700; }
+.line .desc { font-size:10px; color:#333; margin-top:2px; }
+.totals { margin-top:6px; padding:4px 0; border-top:2px solid #000; border-bottom:2px solid #000; font-weight:700; }
+.balance { text-align:center; padding:4px 0; font-size:12px; font-weight:700; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } body { width:auto; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
+${logoHtml}
+${user?.company?.nameAr ? `<div class="center bold" style="font-size:13px;">${escapeHtml(user.company.nameAr)}</div>` : ""}
+<div class="h2">قيد محاسبي</div>
+<div class="row"><span>رقم القيد</span><span class="bold">${escapeHtml(docLabel)}</span></div>
+<div class="row"><span>التاريخ</span><span class="bold">${escapeHtml(entryDate)}</span></div>
+<div class="row"><span>النوع</span><span class="bold">${escapeHtml(typeLabel)}</span></div>
+<div class="row"><span>العملة</span><span class="bold">${escapeHtml(currency)}</span></div>
+${description ? `<div style="font-size:10px;padding:4px 0;color:#333;border-top:1px dashed #000;margin-top:4px;"><span class="bold">البيان: </span>${escapeHtml(description)}</div>` : ""}
+<div style="margin-top:6px;">${linesHtml}</div>
+<div class="totals">
+  <div class="row"><span>إجمالي المدين</span><span>${totalDebit.toFixed(2)}</span></div>
+  <div class="row"><span>إجمالي الدائن</span><span>${totalCredit.toFixed(2)}</span></div>
+</div>
+<div class="balance" style="color:${isBalanced ? "#15803d" : "#b91c1c"};">${isBalanced ? "متوازن ✓" : `فرق: ${diff.toFixed(2)}`}</div>
+<div class="center" style="font-size:9px;color:#555;margin-top:8px;">طُبع في ${today}</div>
+<script>setTimeout(()=>window.print(),300);</script>
+</body></html>`;
   };
 
   const buildEntryPrintHtml = () => {
@@ -697,10 +773,14 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 </body></html>`;
   };
 
-  const openEntryPrintWindow = () => {
+  // Open the print popup using either the A4 layout (default) or the
+  // 80 mm thermal layout. Called by the "Print" button (A4) and by the
+  // post-save auto-print hook (whichever template the user picked).
+  const openEntryPrintWindow = (template: "a4" | "thermal" = journalTemplate) => {
     const w = window.open("", "_blank", "width=1100,height=800");
     if (!w) return;
-    w.document.open(); w.document.write(buildEntryPrintHtml()); w.document.close();
+    const html = template === "thermal" ? buildEntryThermalHtml() : buildEntryPrintHtml();
+    w.document.open(); w.document.write(html); w.document.close();
   };
 
   if (!isNew && loadingEdit) {
@@ -798,13 +878,13 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
 
           {!isNew && (
             <>
-              <Button variant="outline" size="sm" onClick={openEntryPrintWindow} className="gap-1.5 print:hidden">
+              <Button variant="outline" size="sm" onClick={() => openEntryPrintWindow()} className="gap-1.5 print:hidden">
                 <Printer className="h-4 w-4" /> طباعة
               </Button>
               <Button variant="outline" size="sm" onClick={handleExportEntryExcel} className="gap-1.5 text-green-700 border-green-200 hover:bg-green-50 print:hidden">
                 <FileSpreadsheet className="h-4 w-4" /> Excel
               </Button>
-              <Button variant="outline" size="sm" onClick={openEntryPrintWindow} className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50 print:hidden">
+              <Button variant="outline" size="sm" onClick={() => openEntryPrintWindow()} className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50 print:hidden">
                 <FileDown className="h-4 w-4" /> PDF
               </Button>
             </>

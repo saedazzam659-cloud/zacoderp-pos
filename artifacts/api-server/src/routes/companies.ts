@@ -112,12 +112,25 @@ router.put("/:id", async (req, res) => {
 // PATCH /:id/general-settings — update logo + decimal places + auto-posting toggle
 router.patch("/:id/general-settings", async (req, res) => {
   const id = parseInt(req.params.id);
-  const { logo, decimalPlaces, autoPostingEnabled,
+  const {
+    logo, decimalPlaces, autoPostingEnabled,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
+    // Per-doc-type print preferences (auto-print toggle + template name).
+    // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
+    // either "a4" or "thermal".  Validated below before write so we never
+    // persist garbage that other surfaces would have to defensively parse.
+    printAutoAfterSaveSales, printAutoAfterSaveReceipt,
+    printAutoAfterSavePayment, printAutoAfterSaveJournal,
+    printTemplateSales, printTemplateReceipt,
+    printTemplatePayment, printTemplateJournal,
   } = req.body as {
     logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
+    printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
+    printAutoAfterSavePayment?: boolean; printAutoAfterSaveJournal?: boolean;
+    printTemplateSales?: string; printTemplateReceipt?: string;
+    printTemplatePayment?: string; printTemplateJournal?: string;
   };
   const updates: Record<string, any> = { updatedAt: new Date() };
   if (logo !== undefined) updates.logo = logo;
@@ -147,6 +160,28 @@ router.patch("/:id/general-settings", async (req, res) => {
   }
   if (printShowTimestamp !== undefined) updates.printShowTimestamp = !!printShowTimestamp;
   if (printShowZatcaBrand !== undefined) updates.printShowZatcaBrand = !!printShowZatcaBrand;
+  // Auto-print toggles — coerce to boolean.
+  if (printAutoAfterSaveSales   !== undefined) updates.printAutoAfterSaveSales   = !!printAutoAfterSaveSales;
+  if (printAutoAfterSaveReceipt !== undefined) updates.printAutoAfterSaveReceipt = !!printAutoAfterSaveReceipt;
+  if (printAutoAfterSavePayment !== undefined) updates.printAutoAfterSavePayment = !!printAutoAfterSavePayment;
+  if (printAutoAfterSaveJournal !== undefined) updates.printAutoAfterSaveJournal = !!printAutoAfterSaveJournal;
+  // Template selectors — restrict to the two layouts the app actually
+  // implements.  Anything else is rejected up-front so a typo in the
+  // client doesn't silently disable auto-print downstream.
+  const validTemplate = (v: any) => v === "a4" || v === "thermal";
+  for (const [key, val] of [
+    ["printTemplateSales",    printTemplateSales],
+    ["printTemplateReceipt",  printTemplateReceipt],
+    ["printTemplatePayment",  printTemplatePayment],
+    ["printTemplateJournal",  printTemplateJournal],
+  ] as const) {
+    if (val !== undefined) {
+      if (!validTemplate(val)) {
+        res.status(400).json({ error: `قيمة نموذج الطباعة غير صالحة لـ ${key}` }); return;
+      }
+      updates[key] = val;
+    }
+  }
   const [company] = await db.update(companiesTable).set(updates)
     .where(eq(companiesTable.id, id)).returning();
   if (!company) { res.status(404).json({ error: "الشركة غير موجودة" }); return; }

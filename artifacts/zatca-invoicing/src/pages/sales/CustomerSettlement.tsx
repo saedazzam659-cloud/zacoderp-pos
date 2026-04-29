@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, ArrowDownCircle, CheckCircle } from "lucide-react";
+import { Plus, Trash2, ArrowDownCircle, CheckCircle, Printer } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
+import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -48,12 +49,46 @@ export default function CustomerSettlement() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["customer-settlements"] });
 
+  // Pull the per-doc-type print preferences for receipt vouchers so
+  // the form can auto-print after save and the row-level button can
+  // honour the chosen template (A4 vs thermal).
+  const autoPrintReceipt = !!(user as any)?.company?.printAutoAfterSaveReceipt;
+  const receiptTemplate: "a4" | "thermal" =
+    ((user as any)?.company?.printTemplateReceipt === "thermal") ? "thermal" : "a4";
+
+  // Print one settlement (used by the row "Print" button and by the
+  // post-save auto-print hook). Resolves the customer, account, and
+  // company snapshots locally so the popup is fully self-contained.
+  function printOne(s: any, template: "a4" | "thermal" = receiptTemplate) {
+    const customer = customers.find((c: any) => Number(c.id) === Number(s.customerId)) || null;
+    const account  = accounts.find((a: any) => Number(a.id) === Number(s.accountId)) || null;
+    const html = buildVoucherPrintHtml({
+      kind: "receipt",
+      template,
+      doc: s,
+      counterparty: customer,
+      account,
+      company: user?.company ?? null,
+    });
+    openVoucherPrintWindow(html);
+  }
+
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const res = await fetch(`${API}/api/sales/customer-settlements`, { method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: "تم حفظ التحصيل" }); },
+    onSuccess: (saved: any) => {
+      invalidate();
+      // Open the print popup synchronously off the user-initiated save
+      // click so popup blockers continue to allow it. We do this before
+      // resetting the form so customer/account lookups still resolve.
+      if (autoPrintReceipt && saved) {
+        try { printOne(saved, receiptTemplate); } catch { /* ignore popup-blocker noise */ }
+      }
+      reset();
+      toast({ title: "تم حفظ التحصيل" });
+    },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -181,6 +216,10 @@ export default function CustomerSettlement() {
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="طباعة سند القبض"
+                        onClick={() => printOne(s)}>
+                        <Printer className="h-3.5 w-3.5" />
+                      </Button>
                       {s.status === "draft" && (
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
                           onClick={() => { if (confirm("ترحيل التحصيل؟")) postMut.mutate(s.id); }}>

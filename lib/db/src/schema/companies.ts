@@ -60,6 +60,19 @@ export const companiesTable = pgTable("companies", {
   printFooterReturn:    text("print_footer_return").notNull().default("تم استلام المرتجع — شكراً لتعاملكم"),
   printShowTimestamp:   boolean("print_show_timestamp").notNull().default(true),
   printShowZatcaBrand:  boolean("print_show_zatca_brand").notNull().default(true),
+  // ─── Auto-print after save + per-doc-type template (a4 | thermal) ─────
+  // When `printAutoAfterSave*` is true, the matching form opens a print
+  // window automatically right after the save mutation succeeds. The
+  // template column picks the visual layout used for that auto-print
+  // (and is the default selection on manual-print buttons too).
+  printAutoAfterSaveSales:    boolean("print_auto_after_save_sales").notNull().default(false),
+  printAutoAfterSaveReceipt:  boolean("print_auto_after_save_receipt").notNull().default(false),
+  printAutoAfterSavePayment:  boolean("print_auto_after_save_payment").notNull().default(false),
+  printAutoAfterSaveJournal:  boolean("print_auto_after_save_journal").notNull().default(false),
+  printTemplateSales:    text("print_template_sales").notNull().default("a4"),
+  printTemplateReceipt:  text("print_template_receipt").notNull().default("a4"),
+  printTemplatePayment:  text("print_template_payment").notNull().default("a4"),
+  printTemplateJournal:  text("print_template_journal").notNull().default("a4"),
   // ─── Automatic backup settings ────────────────────────────────────────
   autoBackupEnabled:        boolean("auto_backup_enabled").notNull().default(true),
   autoBackupFrequencyHours: integer("auto_backup_frequency_hours").notNull().default(24),

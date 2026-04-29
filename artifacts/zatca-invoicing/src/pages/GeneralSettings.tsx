@@ -324,7 +324,7 @@ export default function GeneralSettings() {
 
       {/* ─── Tabs Header (3 tabs aligned to top-right in RTL) ───────────────── */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
-        <TabsList className="grid w-full grid-cols-6 h-11 bg-muted/50">
+        <TabsList className="grid w-full grid-cols-8 h-11 bg-muted/50">
           <TabsTrigger value="general" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Settings2 className="h-4 w-4" />
             {t("pages.generalSettings.general")}
@@ -352,6 +352,10 @@ export default function GeneralSettings() {
           <TabsTrigger value="printText" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
             <Printer className="h-4 w-4" />
             {t("pages.generalSettings.printText")}
+          </TabsTrigger>
+          <TabsTrigger value="printPrefs" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+            <Printer className="h-4 w-4" />
+            إعدادات الطباعة
           </TabsTrigger>
         </TabsList>
 
@@ -841,6 +845,10 @@ export default function GeneralSettings() {
         <TabsContent value="printText" className="mt-5 space-y-6">
           <PrintFooterTab user={user} token={token} setUser={setUser} />
         </TabsContent>
+
+        <TabsContent value="printPrefs" className="mt-5 space-y-6">
+          <PrintPreferencesTab user={user} token={token} setUser={setUser} />
+        </TabsContent>
       </Tabs>
 
     </div>
@@ -1042,6 +1050,151 @@ function PrintFooterTab({ user, token, setUser }: { user: any; token: string; se
           {saveMut.isPending
             ? <><Loader2 className="h-4 w-4 ml-2 animate-spin" />{t("pages.generalSettings.printFooterSaving")}</>
             : <><Save className="h-4 w-4 ml-2" />{t("pages.generalSettings.printFooterSave")}</>}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+// ─── Sub-component: Print Preferences tab ─────────────────────────────────
+// Per-doc-type preferences for "auto-print after save" + "A4 vs thermal".
+// Covers four surfaces: sales invoices, customer receipt vouchers,
+// supplier payment vouchers, and journal entries. Each row has its
+// own toggle + template select; one save button pushes the whole set.
+function PrintPreferencesTab({ user, token, setUser }: { user: any; token: string; setUser: any }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const cid = user?.company?.id ?? user?.companyId;
+  const company = user?.company ?? {};
+
+  type PrefRow = {
+    autoKey: "printAutoAfterSaveSales" | "printAutoAfterSaveReceipt" | "printAutoAfterSavePayment" | "printAutoAfterSaveJournal";
+    tplKey:  "printTemplateSales"     | "printTemplateReceipt"     | "printTemplatePayment"     | "printTemplateJournal";
+    label: string;
+    hint:  string;
+  };
+  const ROWS: PrefRow[] = [
+    { autoKey: "printAutoAfterSaveSales",   tplKey: "printTemplateSales",   label: "فواتير المبيعات",       hint: "تنطبق على الفواتير الصادرة من شاشة المبيعات" },
+    { autoKey: "printAutoAfterSaveReceipt", tplKey: "printTemplateReceipt", label: "سند القبض (تحصيل العملاء)", hint: "ينطبق على إيصالات تحصيل العملاء" },
+    { autoKey: "printAutoAfterSavePayment", tplKey: "printTemplatePayment", label: "سند الصرف (تسديد الموردين)", hint: "ينطبق على إيصالات تسديد الموردين" },
+    { autoKey: "printAutoAfterSaveJournal", tplKey: "printTemplateJournal", label: "القيود المحاسبية",      hint: "ينطبق على شاشة إنشاء/تعديل القيد" },
+  ];
+
+  // Local form state, seeded from the user's company. We update the
+  // local copy on every toggle/select change and only PATCH on Save.
+  const [form, setForm] = useState<Record<string, any>>({
+    printAutoAfterSaveSales:   !!company.printAutoAfterSaveSales,
+    printAutoAfterSaveReceipt: !!company.printAutoAfterSaveReceipt,
+    printAutoAfterSavePayment: !!company.printAutoAfterSavePayment,
+    printAutoAfterSaveJournal: !!company.printAutoAfterSaveJournal,
+    printTemplateSales:    company.printTemplateSales   ?? "a4",
+    printTemplateReceipt:  company.printTemplateReceipt ?? "a4",
+    printTemplatePayment:  company.printTemplatePayment ?? "a4",
+    printTemplateJournal:  company.printTemplateJournal ?? "a4",
+  });
+
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(form),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? "تعذر الحفظ");
+      return j;
+    },
+    onSuccess: (data) => {
+      if (setUser) {
+        setUser((u: any) =>
+          u
+            ? {
+                ...u,
+                company: {
+                  ...u.company,
+                  printAutoAfterSaveSales:   data.printAutoAfterSaveSales,
+                  printAutoAfterSaveReceipt: data.printAutoAfterSaveReceipt,
+                  printAutoAfterSavePayment: data.printAutoAfterSavePayment,
+                  printAutoAfterSaveJournal: data.printAutoAfterSaveJournal,
+                  printTemplateSales:   data.printTemplateSales,
+                  printTemplateReceipt: data.printTemplateReceipt,
+                  printTemplatePayment: data.printTemplatePayment,
+                  printTemplateJournal: data.printTemplateJournal,
+                },
+              }
+            : u,
+        );
+      }
+      qc.invalidateQueries({ queryKey: ["auth-me"] });
+      toast({ title: "تم حفظ إعدادات الطباعة" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <>
+      <div className="rounded-xl border bg-card p-5 space-y-4">
+        <div>
+          <h2 className="font-semibold text-base flex items-center gap-2">
+            <Printer className="h-4 w-4 text-muted-foreground" />
+            إعدادات الطباعة لكل مستند
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            اختر لكل نوع مستند ما إذا كنت تريد فتح نافذة الطباعة تلقائياً بعد الحفظ، وحدد نموذج الطباعة (ورقة A4 أو طابعة حرارية 80 ملم).
+            عند تعطيل الطباعة التلقائية، تبقى الطباعة متاحة من زر منفصل في الشاشة المعنية.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {ROWS.map((row) => (
+            <div
+              key={row.autoKey}
+              className="grid grid-cols-1 md:grid-cols-[1fr_auto_220px] gap-4 items-center rounded-lg border bg-muted/30 p-4"
+            >
+              <div>
+                <div className="font-semibold text-sm">{row.label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{row.hint}</div>
+              </div>
+
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <span className="text-sm">طباعة تلقائية بعد الحفظ</span>
+                <Switch
+                  checked={!!form[row.autoKey]}
+                  onCheckedChange={(v) => setForm((p) => ({ ...p, [row.autoKey]: !!v }))}
+                />
+              </label>
+
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">نموذج الطباعة</Label>
+                <select
+                  value={form[row.tplKey]}
+                  onChange={(e) => setForm((p) => ({ ...p, [row.tplKey]: e.target.value }))}
+                  className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="a4">ورقة A4</option>
+                  <option value="thermal">طابعة حرارية 80 مم</option>
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>
+          {saveMut.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              جاري الحفظ...
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4 ml-2" />
+              حفظ إعدادات الطباعة
+            </>
+          )}
         </Button>
       </div>
     </>

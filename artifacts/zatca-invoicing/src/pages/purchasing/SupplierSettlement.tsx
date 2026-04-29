@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, Banknote, CheckCircle } from "lucide-react";
+import { Plus, Trash2, Banknote, CheckCircle, Printer } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
+import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -54,12 +55,44 @@ export default function SupplierSettlement() {
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["supplier-settlements"] });
 
+  // Per-doc-type print preferences for payment vouchers (سند صرف).
+  const autoPrintPayment = !!(user as any)?.company?.printAutoAfterSavePayment;
+  const paymentTemplate: "a4" | "thermal" =
+    ((user as any)?.company?.printTemplatePayment === "thermal") ? "thermal" : "a4";
+
+  // Print one settlement (used by the row "Print" button and by the
+  // post-save auto-print hook). Resolves the supplier, account, and
+  // company snapshots locally so the popup window is self-contained.
+  function printOne(s: any, template: "a4" | "thermal" = paymentTemplate) {
+    const supplier = suppliers.find((c: any) => Number(c.id) === Number(s.supplierId)) || null;
+    const account  = accounts.find((a: any) => Number(a.id) === Number(s.accountId)) || null;
+    const html = buildVoucherPrintHtml({
+      kind: "payment",
+      template,
+      doc: s,
+      counterparty: supplier,
+      account,
+      company: user?.company ?? null,
+    });
+    openVoucherPrintWindow(html);
+  }
+
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const res = await fetch(`${API}/api/purchasing/supplier-settlements`, { method: "POST", headers, body: JSON.stringify({ ...data, companyId: cid }) });
       const j = await res.json(); if (!res.ok) throw new Error(j.error); return j;
     },
-    onSuccess: () => { invalidate(); reset(); toast({ title: t("purchasingPages.supplierSettlement.toasts.saved") }); },
+    onSuccess: (saved: any) => {
+      invalidate();
+      // Open the print popup synchronously off the user-initiated save
+      // click so popup blockers continue to allow it. We do this before
+      // resetting the form so the supplier/account lookups still resolve.
+      if (autoPrintPayment && saved) {
+        try { printOne(saved, paymentTemplate); } catch { /* ignore popup-blocker noise */ }
+      }
+      reset();
+      toast({ title: t("purchasingPages.supplierSettlement.toasts.saved") });
+    },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
@@ -207,6 +240,10 @@ export default function SupplierSettlement() {
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="طباعة سند الصرف"
+                        onClick={() => printOne(s)}>
+                        <Printer className="h-3.5 w-3.5" />
+                      </Button>
                       {s.status === "draft" && (
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title={t("purchasingPages.supplierSettlement.postTip")}
                           onClick={() => { if (confirm(t("purchasingPages.supplierSettlement.confirmPost"))) postMut.mutate(s.id); }}>

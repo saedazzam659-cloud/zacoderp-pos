@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
@@ -770,10 +770,40 @@ interface Props {
   open: boolean;
   onClose: () => void;
   data: PrintData | null;
+  /** Optional initial template selection.  When omitted, defaults to
+   *  template 1 (classic A4) — historical behaviour.  Pass "thermal" to
+   *  preselect template 7 so callers driven by the company-wide auto-print
+   *  preference don't need to know about specific template ids. */
+  defaultTemplate?: "a4" | "thermal";
+  /** When true, immediately fires the print pipeline as soon as the
+   *  modal opens.  Used by the post-save auto-print flow so the user
+   *  doesn't have to click again.  The modal still renders so the user
+   *  can re-print or pick a different template. */
+  autoPrintOnOpen?: boolean;
 }
 
-export default function SalesPrintModal({ open, onClose, data }: Props) {
-  const [selected, setSelected] = useState(1);
+export default function SalesPrintModal({ open, onClose, data, defaultTemplate, autoPrintOnOpen }: Props) {
+  const initialId = defaultTemplate === "thermal" ? 7 : 1;
+  const [selected, setSelected] = useState(initialId);
+  // Re-sync the selected template when the caller's preference changes
+  // (e.g. opening the modal a second time for a different template).
+  useEffect(() => { setSelected(defaultTemplate === "thermal" ? 7 : 1); }, [defaultTemplate]);
+  // Fire-and-forget auto-print on open. We track the last id we auto-
+  // printed so we don't loop on re-renders, and reset when the modal
+  // closes so the next "open" can auto-print again.
+  const printedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || !autoPrintOnOpen || !data) { printedKeyRef.current = null; return; }
+    const key = `${(data as any)?.doc?.id ?? ""}-${defaultTemplate ?? "a4"}`;
+    if (printedKeyRef.current === key) return;
+    printedKeyRef.current = key;
+    // Defer to the next tick so the dialog has a chance to mount before
+    // we open the popup — some browsers throttle popups opened during
+    // the same task as a state update.
+    const t = setTimeout(() => { handlePrint(); }, 100);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoPrintOnOpen, data, defaultTemplate]);
 
   function handlePrint() {
     if (!data) return;

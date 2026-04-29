@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -34,17 +34,30 @@ export default function SalesInvoices() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [printData, setPrintData] = useState<any>(null);
+  // Holds the user-chosen template for the currently-open print modal.
+  // Defaulted to the company's saved sales template so the modal opens
+  // on the right preset whether triggered manually or via auto-print.
+  const salesTemplatePref: "a4" | "thermal" =
+    ((user as any)?.company?.printTemplateSales === "thermal") ? "thermal" : "a4";
+  const [printTemplate, setPrintTemplate] = useState<"a4" | "thermal">(salesTemplatePref);
+  // When true, the modal triggers window.print() automatically once mounted.
+  // We flip it back off after each open so manual reopens don't re-print.
+  const [autoPrintOnOpen, setAutoPrintOnOpen] = useState(false);
 
-  async function openPrint(inv: any) {
+  async function openPrint(inv: any, opts?: { template?: "a4" | "thermal"; autoPrint?: boolean }) {
     try {
       const res = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { headers: authH });
       const full = await res.json();
       const customer = customers.find((c: any) => c.id === inv.customerId) ?? null;
+      setPrintTemplate(opts?.template ?? salesTemplatePref);
+      setAutoPrintOnOpen(!!opts?.autoPrint);
       setPrintData({ type: "invoice", doc: full, lines: full.lines ?? [], customer, company: user?.company ?? null });
     } catch (e: any) {
       toast({ title: e?.message ?? "تعذّر تحميل الفاتورة للطباعة", variant: "destructive" });
     }
   }
+
+  const autoPrintHandledRef = useRef(false);
 
   const { data: invoices = [], isLoading } = useQuery<any[]>({
     queryKey: ["sales-invoices", cid],
@@ -57,6 +70,27 @@ export default function SalesInvoices() {
     queryFn: async () => { const r = await fetch(cid ? `${API}/api/customers?companyId=${cid}` : `${API}/api/customers`, { headers: authH }); return r.json(); },
     enabled: !!user,
   });
+
+  // Pick up the auto-print hint planted by SalesDocumentForm via
+  // window.history.state when redirecting back here after save. We
+  // wait until invoices and customers have loaded so the invoice
+  // lookup and the customer enrichment in openPrint both succeed,
+  // then clear the marker so refresh / re-visits don't re-print.
+  useEffect(() => {
+    if (autoPrintHandledRef.current) return;
+    if (!invoices || invoices.length === 0) return;
+    if (!customers) return;
+    const st = (typeof window !== "undefined" ? window.history.state : null) as any;
+    const id = st?.autoPrintInvoiceId;
+    if (!id) return;
+    const tpl: "a4" | "thermal" = st?.autoPrintTemplate === "thermal" ? "thermal" : "a4";
+    const inv = invoices.find((x: any) => Number(x.id) === Number(id));
+    if (!inv) return;
+    autoPrintHandledRef.current = true;
+    try { window.history.replaceState({}, ""); } catch { /* noop */ }
+    openPrint(inv, { template: tpl, autoPrint: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, customers]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["sales-invoices"] });
 
@@ -293,7 +327,13 @@ export default function SalesInvoices() {
           />
         )}
       </div>
-      <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
+      <SalesPrintModal
+        open={!!printData}
+        onClose={() => { setPrintData(null); setAutoPrintOnOpen(false); }}
+        data={printData}
+        defaultTemplate={printTemplate}
+        autoPrintOnOpen={autoPrintOnOpen}
+      />
     </div>
   );
 }
