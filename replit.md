@@ -121,3 +121,32 @@ The website-fetch step uses an SSRF-hardened `safeFetchHtml` helper:
 - end-to-end timeout that covers BOTH headers and body streaming, plus a 500 KB body cap, plus manual redirect handling that re-validates each hop.
 
 Extracted signals (`G-XXXXXXXXXX` measurement IDs, `GTM-XXXXXX` containers, legacy `UA-…`) are returned as `analyticsMeasurementId` / `gtmContainerId` / `legacyUaId` and surfaced read-only in `SeoConnectionDialog` via `InfoRow`. They are NOT auto-applied to the Property ID field because the Measurement ID is not the numeric Property ID — that limitation is documented in the Arabic note returned to the admin.
+
+## Tax Entry button on Journal Entry form (قيد الضريبة)
+
+The Journal Entry form (`artifacts/zatca-invoicing/src/pages/accounting/JournalEntryForm.tsx`)
+exposes a "قيد الضريبة" dropdown next to "إضافة سطر" with two options:
+- **مدين — ضريبة المدخلات (input VAT)** — splits 15% out of the first
+  line's debit amount and appends a new debit line for the input-VAT
+  account.
+- **دائن — ضريبة المخرجات (output VAT)** — splits 15% out of the first
+  line's credit amount and appends a new credit line for the output-VAT
+  account.
+
+The chosen VAT account is picked by the new endpoint
+`POST /api/ai/suggest-vat-account` (in `artifacts/api-server/src/routes/ai.ts`).
+It mirrors the `/suggest-receipt-account` pattern: pulls active POSTING
+accounts for the company, asks the AI to pick a VAT account ID
+(asset for `input`, liability for `output`), and falls back to
+deterministic Arabic-keyword matching (ضريبة المدخلات / المخرجات + code
+hints 1240 / 2140) so the UI still works when AI is offline. Body accepts
+`{ direction, companyId? }` — the `companyId` field is honored only for
+SuperAdmin (tenant users always resolve to their own company).
+
+Because the action only redistributes the first line's amount on the same
+side (line 1 → line 1 minus VAT, plus a new VAT line equal to VAT), the
+entry stays balanced and no separate balance-recheck is needed.
+
+The button is disabled for source-document-locked entries (sales/purchase
+invoices, vouchers, settlements, etc.) — the same lock that prevents
+manual editing also disables tax-line generation.

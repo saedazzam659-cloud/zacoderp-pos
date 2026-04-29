@@ -38,6 +38,13 @@ export interface JournalValidationResult {
   source: "ai" | "fallback";
 }
 
+export interface VatAccountSuggestion {
+  accountId: number | null;
+  accountLabel: string;
+  reasoning: string;
+  source: "ai" | "rules";
+}
+
 export const journalEntriesApi = {
   list:   (cid?: number) => get<any[]>(`/journal-entries${cid ? `?companyId=${cid}` : ""}`),
   get:    (id: number, cid?: number) => get<any>(`/journal-entries/${id}${cid ? `?companyId=${cid}` : ""}`),
@@ -46,4 +53,6 @@ export const journalEntriesApi = {
   remove: (id: number) => del(`/journal-entries/${id}`),
   aiValidate: (data: { entry: any; lines: any[] }) =>
     post<JournalValidationResult>("/ai/validate-journal-entry", data),
+  suggestVatAccount: (data: { direction: "input" | "output"; companyId?: number }) =>
+    post<VatAccountSuggestion>("/ai/suggest-vat-account", data),
 };

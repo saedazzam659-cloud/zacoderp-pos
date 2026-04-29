@@ -1708,6 +1708,151 @@ ${JSON.stringify(rowsForPrompt, null, 2)}
 //   source: "ai" | "fallback"
 // }
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// Suggest the company's VAT account for the "قيد الضريبة" button on
+// the Journal Entry form. Given a direction ("input" → ضريبة المدخلات
+// on the Dr side, or "output" → ضريبة المخرجات on the Cr side), this
+// picks the best matching posting account from the company's chart
+// of accounts. The frontend then splits 15% out of the first line and
+// adds a new VAT line on the same side using this account.
+//
+// Strategy:
+//   1. Pull active POSTING accounts in the company.
+//   2. Try AI (when configured): give the model a short list of asset
+//      / liability candidates and ask it to pick one ID.
+//   3. Always fall back to a deterministic keyword match so the UI
+//      never returns nothing when AI is offline.
+router.post("/suggest-vat-account", async (req, res) => {
+  try {
+    // SuperAdmin needs the companyId threaded through the body since the
+    // request isn't tied to a tenant; tenant users always resolve to their
+    // own company regardless of what they pass.
+    const bodyCid = Number((req.body as any)?.companyId);
+    const cid = resolveCompanyId(req as any, Number.isFinite(bodyCid) && bodyCid > 0 ? bodyCid : undefined);
+    if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
+    const { direction } = req.body as { direction?: "input" | "output" };
+    if (direction !== "input" && direction !== "output") {
+      res.status(400).json({ error: "direction يجب أن يكون input أو output" });
+      return;
+    }
+
+    const accounts = await db.select({
+      id: accountsTable.id, code: accountsTable.code,
+      nameAr: accountsTable.nameAr, nameEn: accountsTable.nameEn,
+      accountType: accountsTable.accountType, isPosting: accountsTable.isPosting,
+    }).from(accountsTable)
+      .where(and(eq(accountsTable.companyId, cid), eq(accountsTable.isActive, true)));
+
+    const posting = accounts.filter(a => a.isPosting);
+    // Input VAT lives in assets (it's a recoverable claim against the gov't);
+    // Output VAT lives in liabilities (it's owed to the gov't on collected sales).
+    const naturalPool = posting.filter(a =>
+      direction === "input"
+        ? a.accountType === "asset"
+        : a.accountType === "liability"
+    );
+    // We always allow the deterministic search to fall back to ALL posting
+    // accounts in case the chart doesn't tag VAT accounts under the natural
+    // type.
+    const arabicKw = direction === "input"
+      ? ["ضريبة المدخلات", "ضريبة مدخلات", "ضريبة قيمة مضافة مدخلات", "ضريبة شراء", "vat input", "input vat"]
+      : ["ضريبة المخرجات", "ضريبة مخرجات", "ضريبة قيمة مضافة مخرجات", "ضريبة بيع", "vat output", "output vat"];
+
+    const codeHint = direction === "input" ? "1240" : "2140";
+
+    function findByKeywords(pool: typeof accounts, kw: string[]) {
+      const lc = (s: string | null | undefined) => String(s ?? "").toLowerCase();
+      return pool.find(a => {
+        const t = `${lc(a.nameAr)} ${lc(a.nameEn)} ${lc(a.code)}`;
+        return kw.some(k => k && t.includes(k.toLowerCase()));
+      });
+    }
+
+    const buildFallback = () => {
+      const acc =
+        findByKeywords(naturalPool, arabicKw) ||
+        findByKeywords(posting,     arabicKw) ||
+        posting.find(a => a.code === codeHint) ||
+        naturalPool[0] ||
+        null;
+      return {
+        accountId: acc?.id ?? null,
+        accountLabel: acc ? `${acc.code} - ${acc.nameAr ?? acc.nameEn ?? ""}`.trim() : "",
+        reasoning: acc
+          ? (direction === "input"
+              ? "تم اختيار حساب ضريبة المدخلات بناءً على اسم الحساب أو نوعه (أصل)."
+              : "تم اختيار حساب ضريبة المخرجات بناءً على اسم الحساب أو نوعه (التزام).")
+          : (direction === "input"
+              ? "لم يتم العثور على حساب ضريبة مدخلات. أنشئ حساباً باسم 'ضريبة المدخلات' أو حدّده يدوياً."
+              : "لم يتم العثور على حساب ضريبة مخرجات. أنشئ حساباً باسم 'ضريبة المخرجات' أو حدّده يدوياً."),
+        source: "rules" as const,
+      };
+    };
+
+    if (!OPENAI_BASE || !OPENAI_KEY || posting.length === 0) {
+      res.json(buildFallback()); return;
+    }
+
+    try {
+      // Limit candidates to assets+liabilities to keep the prompt small.
+      const candidates = posting.filter(a => a.accountType === "asset" || a.accountType === "liability");
+      const fmtList = candidates.map(a =>
+        `{ "id": ${a.id}, "code": "${a.code}", "name": "${a.nameAr}${a.nameEn ? " / " + a.nameEn : ""}", "type": "${a.accountType}" }`
+      ).join(",\n");
+
+      const userPrompt = `أنت محاسب سعودي خبير في ضريبة القيمة المضافة (15%). المستخدم في شاشة قيد محاسبي ويريد إضافة سطر للضريبة:
+- الاتجاه المطلوب: ${direction === "input" ? "ضريبة مدخلات (تظهر في طرف المدين، طبيعتها أصل قابل للاسترداد من الهيئة)" : "ضريبة مخرجات (تظهر في طرف الدائن، طبيعتها التزام للهيئة)"}.
+
+دليل الحسابات (ترحيل فقط — أصول/التزامات):
+[${fmtList}]
+
+قواعد الاختيار:
+1. اختر الحساب الذي يحمل اسماً يطابق "${direction === "input" ? "ضريبة المدخلات / ضريبة قيمة مضافة (مدخلات) / VAT Input" : "ضريبة المخرجات / ضريبة قيمة مضافة (مخرجات) / VAT Output"}".
+2. للمدخلات يفضّل حساب من نوع "asset"، وللمخرجات يفضّل حساب من نوع "liability".
+3. إن لم يوجد حساب مخصص، اختر أقرب حساب يفي بالغرض ووضّح السبب.
+4. أعد فقط ID موجود في القائمة — لا تخترع.
+
+أعد JSON فقط:
+{ "accountId": <id>, "reasoning": "شرح موجز بالعربية لسبب الاختيار" }`;
+
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 400,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب سعودي. ترد بـ JSON صالح فقط." },
+            { role: "user", content: userPrompt },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(buildFallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(buildFallback()); return; }
+
+      const accId = Number(parsed?.accountId);
+      const acc = candidates.find(a => a.id === accId);
+      if (!acc) { res.json(buildFallback()); return; }
+      res.json({
+        accountId: acc.id,
+        accountLabel: `${acc.code} - ${acc.nameAr ?? acc.nameEn ?? ""}`.trim(),
+        reasoning: String(parsed?.reasoning || "").trim() ||
+          (direction === "input" ? "اقتراح تلقائي لحساب ضريبة المدخلات." : "اقتراح تلقائي لحساب ضريبة المخرجات."),
+        source: "ai" as const,
+      });
+    } catch {
+      res.json(buildFallback());
+      return;
+    }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
 router.post("/validate-journal-entry", async (req, res) => {
   try {
     const { entry, lines } = req.body as {

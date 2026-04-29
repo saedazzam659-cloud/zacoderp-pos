@@ -16,13 +16,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
-import { Sparkles, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Sparkles, AlertTriangle, CheckCircle2, Receipt } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Plus, Trash2, ArrowRight, BookOpen, AlertCircle,
   FileText, Printer, FileSpreadsheet, FileDown, Lock,
   ChevronRight, ChevronLeft, Search,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
 
 const ENTRY_TYPES = [
@@ -311,6 +314,98 @@ export default function JournalEntryForm() {
     const l = newLine();
     setLines(prev => [...prev, l]);
     setFocusLineId(l.id);
+  }
+
+  // ── قيد الضريبة (Tax Entry) ─────────────────────────────────────
+  // Splits 15% of the FIRST line into a new VAT line on the same side.
+  //   • "input"  → ضريبة المدخلات: deducts 15% from line-1's debit
+  //                 and adds a new Dr line with the input-VAT account.
+  //   • "output" → ضريبة المخرجات: deducts 15% from line-1's credit
+  //                 and adds a new Cr line with the output-VAT account.
+  // The chosen VAT account is picked by AI from the company's chart
+  // of accounts (with deterministic fallback). The entry remains
+  // balanced because we only redistribute the first line — total
+  // debits/credits don't change.
+  const VAT_RATE = 0.15;
+  const taxEntryMutation = useMutation({
+    mutationFn: (direction: "input" | "output") =>
+      journalEntriesApi.suggestVatAccount({ direction, companyId: cid }),
+  });
+
+  async function applyTaxEntry(direction: "input" | "output") {
+    if (isLockedSourceEntry) return;
+    if (lines.length === 0) {
+      toast({ title: "لا توجد سطور", description: "أضف سطراً أولاً قبل توليد قيد الضريبة.", variant: "destructive" });
+      return;
+    }
+    const first = lines[0];
+    if (!first.accountId) {
+      toast({ title: "السطر الأول بدون حساب", description: "اختر الحساب في السطر الأول قبل توليد قيد الضريبة.", variant: "destructive" });
+      return;
+    }
+    const sideField: "debit" | "credit" = direction === "input" ? "debit" : "credit";
+    const baseAmount = parseFloat(first[sideField] || "0") || 0;
+    if (baseAmount <= 0) {
+      toast({
+        title: direction === "input" ? "السطر الأول لا يحتوي على مبلغ مدين" : "السطر الأول لا يحتوي على مبلغ دائن",
+        description: direction === "input"
+          ? "أدخل مبلغاً في خانة المدين بالسطر الأول قبل توليد ضريبة المدخلات."
+          : "أدخل مبلغاً في خانة الدائن بالسطر الأول قبل توليد ضريبة المخرجات.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Round to 2 decimals to avoid floating-point dust.
+    const vatAmount = Math.round(baseAmount * VAT_RATE * 100) / 100;
+    if (vatAmount <= 0) {
+      toast({ title: "قيمة الضريبة صفر", description: "تحقّق من قيمة السطر الأول.", variant: "destructive" });
+      return;
+    }
+    const newFirstAmount = Math.round((baseAmount - vatAmount) * 100) / 100;
+
+    let suggestion: { accountId: number | null; accountLabel: string; reasoning: string; source: "ai" | "rules" };
+    try {
+      suggestion = await taxEntryMutation.mutateAsync(direction);
+    } catch (e: any) {
+      toast({
+        title: "تعذر اقتراح حساب الضريبة",
+        description: e?.message ?? "حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!suggestion.accountId) {
+      toast({
+        title: direction === "input" ? "لم يتم العثور على حساب ضريبة المدخلات" : "لم يتم العثور على حساب ضريبة المخرجات",
+        description: suggestion.reasoning || "أنشئ الحساب في دليل الحسابات أو حدّده يدوياً.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const vatLineDescription = direction === "input"
+      ? `ضريبة المدخلات 15% على ${vatAmount.toFixed(2)}`
+      : `ضريبة المخرجات 15% على ${vatAmount.toFixed(2)}`;
+    const vatLine: JournalLine = {
+      id: crypto.randomUUID(),
+      accountId: String(suggestion.accountId),
+      costCenter: "",
+      debit:  direction === "input"  ? vatAmount.toFixed(2) : "",
+      credit: direction === "output" ? vatAmount.toFixed(2) : "",
+      description: vatLineDescription,
+    };
+
+    setLines(prev => {
+      if (prev.length === 0) return prev;
+      const head = { ...prev[0], [sideField]: newFirstAmount.toFixed(2) };
+      return [head, ...prev.slice(1), vatLine];
+    });
+    setFocusLineId(vatLine.id);
+
+    toast({
+      title: direction === "input" ? "تمت إضافة سطر ضريبة المدخلات" : "تمت إضافة سطر ضريبة المخرجات",
+      description: `${suggestion.accountLabel} • القيمة ${vatAmount.toFixed(2)} ${currency} • ${suggestion.source === "ai" ? "اقتراح ذكاء اصطناعي" : "قواعد محلية"}`,
+    });
   }
 
   // ── Form-wide Enter-key navigation ──────────────────────────────
@@ -924,7 +1019,39 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
           <TabsContent value="header" className="mt-0">
             <CardContent className="p-0">
               {/* Toolbar */}
-              <div className="flex items-center justify-end px-4 py-2 border-b bg-muted/10">
+              <div className="flex items-center justify-end gap-2 px-4 py-2 border-b bg-muted/10">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline" size="sm"
+                      disabled={isLockedSourceEntry || taxEntryMutation.isPending}
+                      className="h-7 gap-1 text-xs shrink-0"
+                      title="إضافة سطر ضريبة قيمة مضافة (15%) إلى السطر الأول"
+                    >
+                      <Receipt className="h-3.5 w-3.5" />
+                      {taxEntryMutation.isPending ? "جارٍ التحليل..." : "قيد الضريبة"}
+                      <Sparkles className="h-3 w-3 text-primary/70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel className="text-xs">قيد ضريبة القيمة المضافة (15%)</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={() => applyTaxEntry("input")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">مدين — ضريبة المدخلات</span>
+                      <span className="text-[10px] text-muted-foreground">يُخصم 15% من السطر الأول (مدين)</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => applyTaxEntry("output")}
+                      className="text-xs flex flex-col items-start gap-0.5"
+                    >
+                      <span className="font-semibold">دائن — ضريبة المخرجات</span>
+                      <span className="text-[10px] text-muted-foreground">يُخصم 15% من السطر الأول (دائن)</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   variant="outline" size="sm"
                   onClick={addLine}
