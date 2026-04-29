@@ -191,32 +191,63 @@ async function deleteCompanyWithRelations(id: number) {
       (ownedTables as any).rows ?? [];
 
     // 2. Loop through each table and delete that company's rows. We
-    //    re-try once on FK failure to absorb cases where Postgres
-    //    aborts a row delete because a sibling table hasn't been
-    //    cleaned yet. Any table that still refuses after the retry
-    //    bubbles up so the caller can roll the whole transaction back.
-    const stillFailing: string[] = [];
+    //    re-try several passes on FK failure to absorb cases where
+    //    Postgres aborts a row delete because a sibling table hasn't
+    //    been cleaned yet (parent rows can't go before their children).
+    //
+    //    CRITICAL: each per-table DELETE runs inside its own SAVEPOINT.
+    //    Without that, the FIRST failed DELETE in this transaction would
+    //    "abort" the whole transaction at the Postgres level — every
+    //    subsequent statement would then fail with "current transaction
+    //    is aborted, commands ignored until end of transaction block".
+    //    That's exactly why hard-delete used to report _every_ table as
+    //    failing instead of just the genuine FK conflicts. The savepoint
+    //    rolls back only that one DELETE so the rest of the pass can
+    //    keep going, and a follow-up pass can retry it once its child
+    //    rows are gone.
     let pass = 0;
     let pending = tableRows.map((r) => r.table_name);
-    while (pending.length > 0 && pass < 3) {
+    let lastError: unknown = null;
+    // Bumped from 3 → 6 passes: in deeply nested schemas (e.g. invoices →
+    // sales_invoices → sales_invoice_lines → ledger entries) it can take
+    // more than 3 ordered passes for cascade chains to settle.
+    while (pending.length > 0 && pass < 6) {
       const next: string[] = [];
       for (const table of pending) {
+        const sp = `sp_del_${pass}_${table.replace(/[^a-zA-Z0-9_]/g, "_")}`;
         try {
+          await tx.execute(sql.raw(`SAVEPOINT "${sp}"`));
           await tx.execute(sql.raw(
             `DELETE FROM "${table}" WHERE company_id = ${id}`,
           ));
-        } catch {
+          await tx.execute(sql.raw(`RELEASE SAVEPOINT "${sp}"`));
+        } catch (e) {
+          lastError = e;
+          // Roll back the failed DELETE so the outer transaction stays
+          // alive for the remaining tables and the retry passes.
+          try { await tx.execute(sql.raw(`ROLLBACK TO SAVEPOINT "${sp}"`)); } catch {}
+          try { await tx.execute(sql.raw(`RELEASE SAVEPOINT "${sp}"`)); } catch {}
           next.push(table);
         }
+      }
+      // If a pass made no progress, retrying again won't help — bail
+      // immediately rather than burn the rest of the budget.
+      if (next.length === pending.length) {
+        pending = next;
+        break;
       }
       pending = next;
       pass++;
     }
-    if (pending.length > 0) stillFailing.push(...pending);
 
-    if (stillFailing.length > 0) {
+    if (pending.length > 0) {
+      // Surface the actual Postgres error from the last failed DELETE
+      // so the SuperAdmin can see WHY (FK from a non-company_id table,
+      // for instance) instead of just a list of tables.
+      const reason = lastError instanceof Error ? lastError.message : String(lastError ?? "");
       throw new Error(
-        `تعذّر حذف بيانات الشركة من الجداول التالية: ${stillFailing.join(", ")}`,
+        `تعذّر حذف بيانات الشركة من الجداول التالية: ${pending.join(", ")}` +
+        (reason ? ` — السبب: ${reason}` : ""),
       );
     }
 
