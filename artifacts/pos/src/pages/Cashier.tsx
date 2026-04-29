@@ -735,6 +735,8 @@ export default function CashierPage() {
             grandTotal={grandTotal}
             warning={submitError}
             onClose={clearCart}
+            companyLogo={((user?.company as any)?.logo ?? null) as string | null}
+            companyNameAr={(user?.company?.nameAr ?? "") as string}
           />
         )}
       </AnimatePresence>
@@ -1035,6 +1037,12 @@ function ReceiptModal(props: {
   grandTotal: number;
   warning: string | null;
   onClose: () => void;
+  // The configured company logo (base64 data URL) and Arabic name —
+  // forwarded from the parent so we can render a print-only header at
+  // the top of the receipt with the brand mark.  Both fall back to
+  // empty when the company has no logo / name configured.
+  companyLogo: string | null;
+  companyNameAr: string;
 }) {
   const {
     method,
@@ -1046,6 +1054,8 @@ function ReceiptModal(props: {
     grandTotal,
     warning,
     onClose,
+    companyLogo,
+    companyNameAr,
   } = props;
 
   return (
@@ -1062,6 +1072,28 @@ function ReceiptModal(props: {
         transition={{ type: "spring", damping: 22, stiffness: 250 }}
         className="bg-card rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-card-border"
       >
+        {/*
+          Print-only company header — hidden on screen (the modal already
+          shows a colourful confirmation banner) but appended to the
+          printed receipt so the cashier slip carries the configured
+          brand mark and shop name.  Falls back gracefully when neither
+          a logo nor an Arabic name is configured.
+        */}
+        {(companyLogo || companyNameAr) && (
+          <div className="hidden print:block text-center pt-3 pb-2 border-b">
+            {companyLogo && (
+              <img
+                src={companyLogo}
+                alt=""
+                className="mx-auto"
+                style={{ maxHeight: 50, maxWidth: 150, objectFit: "contain" }}
+              />
+            )}
+            {companyNameAr && (
+              <div className="text-sm font-bold mt-1">{companyNameAr}</div>
+            )}
+          </div>
+        )}
         <div className="bg-gradient-to-br from-primary to-chart-2 text-primary-foreground p-6 text-center relative overflow-hidden">
           <motion.div
             initial={{ scale: 0 }}

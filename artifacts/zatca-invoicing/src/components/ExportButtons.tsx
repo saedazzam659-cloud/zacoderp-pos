@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Download, FileSpreadsheet, FileText, ChevronDown, Loader2, Printer } from "lucide-react";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface ExportButtonsProps {
   rows: Record<string, unknown>[];
@@ -31,6 +32,11 @@ export default function ExportButtons({
   rows, columns, filename, title, subtitle, disabled, size = "sm", totalsRow, summaryFooter,
 }: ExportButtonsProps) {
   const [busy, setBusy] = useState(false);
+  // The company logo is stored on the user's `company` object as a base64
+  // data URL.  We forward it to every PDF/print invocation so the print
+  // header carries the company brand consistently across all reports.
+  const { user } = useAuth() as any;
+  const companyLogo: string | null = user?.company?.logo ?? null;
 
   async function handleExport(type: "excel" | "pdf" | "print") {
     setBusy(true);
@@ -42,10 +48,10 @@ export default function ExportButtons({
         exportToExcel([...rows, ...extra], columns, filename, "Sheet1", totalsRow);
       } else if (type === "pdf") {
         // Open PDF view without auto-print so user can save as PDF (Ctrl+S)
-        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter);
+        exportToPDF(rows, columns, filename, title, subtitle, false, totalsRow, summaryFooter, companyLogo);
       } else {
         // Print: open the formatted HTML and trigger window.print() automatically
-        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter);
+        exportToPDF(rows, columns, filename, title, subtitle, true, totalsRow, summaryFooter, companyLogo);
       }
     } finally {
       setBusy(false);

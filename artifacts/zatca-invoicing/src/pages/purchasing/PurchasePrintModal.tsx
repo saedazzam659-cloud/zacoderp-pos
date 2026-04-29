@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { safeLogoSrc } from "@/lib/export";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 
@@ -37,8 +38,17 @@ function docTitle(type: "invoice" | "return") {
 }
 
 function companyBlock(c: any) {
+  // Render the company logo above the textual identity block when one
+  // is configured on the General Settings page.  Pass through
+  // `safeLogoSrc` to defang attribute-injection / XSS via crafted
+  // values before the logo reaches the print HTML sink.
+  const safeLogo = safeLogoSrc(c?.logo);
+  const logo = safeLogo
+    ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:160px;object-fit:contain;display:block;" /></div>`
+    : "";
   return `
     <div>
+      ${logo}
       <div style="font-size:15px;font-weight:700;">${c?.nameAr ?? "اسم الشركة"}</div>
       ${c?.nameEn ? `<div style="font-size:10px;opacity:.7;">${c.nameEn}</div>` : ""}
       ${c?.vatNumber ? `<div>الرقم الضريبي: ${c.vatNumber}</div>` : ""}
@@ -188,9 +198,12 @@ function template2(d: PrintData): string {
   </style>
   </head><body>
   <div class="top-bar" style="position:relative">
-    <div>
-      <div style="font-size:20px;font-weight:700;">${company?.nameAr ?? "اسم الشركة"}</div>
-      <div style="opacity:.8;font-size:11px;margin-top:2px;">${company?.vatNumber ? `ر.ض: ${company.vatNumber}` : ""} ${company?.city ?? ""}</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      ${(() => { const sl = safeLogoSrc(company?.logo); return sl ? `<div style="background:#fff;border-radius:6px;padding:3px 6px;display:inline-flex;align-items:center;justify-content:center;"><img src="${sl}" alt="" style="max-height:42px;max-width:120px;object-fit:contain;display:block;"/></div>` : ""; })()}
+      <div>
+        <div style="font-size:20px;font-weight:700;">${company?.nameAr ?? "اسم الشركة"}</div>
+        <div style="opacity:.8;font-size:11px;margin-top:2px;">${company?.vatNumber ? `ر.ض: ${company.vatNumber}` : ""} ${company?.city ?? ""}</div>
+      </div>
     </div>
     <div style="text-align:center">
       <div style="font-size:18px;font-weight:800;">${docTitle(d.type)}</div>
@@ -317,11 +330,14 @@ function template4(d: PrintData): string {
   </head><body>
   <div class="stripe"></div>
   <div class="header">
-    <div>
-      <div style="font-size:19px;font-weight:800;color:#92400e;">${company?.nameAr ?? "الشركة"}</div>
-      ${company?.vatNumber ? `<div style="font-size:11px;color:#b45309;">ر.ض: ${company.vatNumber}</div>` : ""}
-      ${company?.crNumber  ? `<div style="font-size:11px;color:#b45309;">س.ت: ${company.crNumber}</div>`  : ""}
-      ${company?.city      ? `<div style="font-size:11px;color:#78716c;">${company.city}</div>` : ""}
+    <div style="display:flex;align-items:center;gap:10px;">
+      ${(() => { const sl = safeLogoSrc(company?.logo); return sl ? `<img src="${sl}" alt="" style="max-height:48px;max-width:130px;object-fit:contain;display:block;"/>` : ""; })()}
+      <div>
+        <div style="font-size:19px;font-weight:800;color:#92400e;">${company?.nameAr ?? "الشركة"}</div>
+        ${company?.vatNumber ? `<div style="font-size:11px;color:#b45309;">ر.ض: ${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div style="font-size:11px;color:#b45309;">س.ت: ${company.crNumber}</div>`  : ""}
+        ${company?.city      ? `<div style="font-size:11px;color:#78716c;">${company.city}</div>` : ""}
+      </div>
     </div>
     <div class="doc-pill">
       <div style="font-size:12px;color:#92400e;font-weight:700;">${docTitle(d.type)}</div>

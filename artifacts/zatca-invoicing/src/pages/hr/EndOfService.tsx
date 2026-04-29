@@ -14,11 +14,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function EndOfService() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
+  const { user } = useAuth() as any;
+  const companyLogo: string | null = user?.company?.logo ?? null;
+  const companyNameAr: string = user?.company?.nameAr ?? "";
   const isRtl = i18n.language === "ar";
   const tr = (k: string, opts?: any) => t(`hrPages.endOfService.${k}`, opts) as string;
   const pickName = (ar?: string, en?: string) => isRtl ? (ar ?? en ?? "") : (en ?? ar ?? "");
@@ -98,7 +102,28 @@ export default function EndOfService() {
 
   return (
     <div className="space-y-4 p-2 md:p-4" data-testid="page-eos" dir={isRtl ? "rtl" : "ltr"}>
-      <div className="flex items-center gap-2">
+      {/*
+        Print-only header — hidden on screen (`hidden`) but revealed by
+        `print:block` so window.print() captures the company brand at the
+        top of every printed EOS settlement.  Mirrors the same logo +
+        company-name treatment used by the rest of the system's reports.
+      */}
+      <div className="hidden print:block text-center border-b-2 border-primary pb-2 mb-2">
+        {companyLogo && (
+          <img
+            src={companyLogo}
+            alt=""
+            className="mx-auto"
+            style={{ maxHeight: 54, maxWidth: 170, objectFit: "contain" }}
+          />
+        )}
+        {companyNameAr && (
+          <div className="text-base font-bold text-primary mt-1">{companyNameAr}</div>
+        )}
+        <div className="text-lg font-semibold mt-1">{tr("title")}</div>
+      </div>
+
+      <div className="flex items-center gap-2 print:hidden">
         <Calculator className="size-6 text-primary" />
         <h1 className="text-xl font-semibold">{tr("title")}</h1>
       </div>

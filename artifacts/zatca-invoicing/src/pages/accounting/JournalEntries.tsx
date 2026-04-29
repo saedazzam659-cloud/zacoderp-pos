@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useFormatters } from "@/lib/format";
+import { safeLogoSrc } from "@/lib/export";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { Button } from "@/components/ui/button";
@@ -134,6 +135,17 @@ export default function JournalEntries() {
     const dir = isRtl ? "rtl" : "ltr";
     const lang = isRtl ? "ar" : "en";
     const align = isRtl ? "right" : "left";
+    // Pull the configured company logo (base64 data URL) so the print
+    // header carries the same brand mark as every other report in the
+    // app.  Pass through `safeLogoSrc` to defang attribute-injection
+    // / XSS via crafted values before stitching into the print HTML.
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyNameHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
     return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
 <style>
 @page {
@@ -164,6 +176,8 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 </style></head><body>
 <button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
 <div class="h">
+  ${logoHtml}
+  ${companyNameHtml}
   <h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
   <div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${today} — ${escapeHtml(t("journalEntries.entriesCount", { count: rows.length }))}</div>
 </div>

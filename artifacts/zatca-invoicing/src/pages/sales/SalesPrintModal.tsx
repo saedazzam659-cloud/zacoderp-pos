@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { safeLogoSrc } from "@/lib/export";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 
@@ -63,14 +64,33 @@ function baseStyles(accent: string, accentText = "#fff") {
 }
 
 function companyBlock(c: any) {
+  // Render the configured logo on top of the textual block so every layout
+  // variant (classic / modern / receipt / etc.) shows the brand mark
+  // automatically.  When the company has no logo the <img> is omitted.
+  // The src is run through `safeLogoSrc` to defang attribute-injection
+  // / XSS via crafted base64 data URLs.
+  const safeLogo = safeLogoSrc(c?.logo);
+  const logo = safeLogo
+    ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:160px;object-fit:contain;display:block;" /></div>`
+    : "";
   return `
     <div>
+      ${logo}
       <div style="font-size:15px;font-weight:700;">${c?.nameAr ?? "اسم الشركة"}</div>
       ${c?.nameEn ? `<div style="font-size:10px;opacity:.7;">${c.nameEn}</div>` : ""}
       ${c?.vatNumber ? `<div>الرقم الضريبي: ${c.vatNumber}</div>` : ""}
       ${c?.crNumber  ? `<div>السجل التجاري: ${c.crNumber}</div>`  : ""}
       ${c?.city      ? `<div>${c.city}${c.country ? ` — ${c.country}` : ""}</div>` : ""}
     </div>`;
+}
+
+// Reusable centered logo header used by the thermal / receipt-style
+// templates (6 + 7) which don't render the full `companyBlock` —
+// they just need the brand mark on top of the company name.
+function logoCenterHtml(c: any, maxH = 50, maxW = 150): string {
+  const safeLogo = safeLogoSrc(c?.logo);
+  if (!safeLogo) return "";
+  return `<div style="text-align:center;margin-bottom:4px;"><img src="${safeLogo}" alt="" style="max-height:${maxH}px;max-width:${maxW}px;object-fit:contain;display:inline-block;" /></div>`;
 }
 
 function customerBlock(cu: any) {
@@ -213,9 +233,12 @@ function template2(d: PrintData): string {
   </style>
   </head><body>
   <div class="top-bar" style="position:relative">
-    <div>
-      <div style="font-size:20px;font-weight:700;">${company?.nameAr ?? "اسم الشركة"}</div>
-      <div style="opacity:.8;font-size:11px;margin-top:2px;">${company?.vatNumber ? `ر.ض: ${company.vatNumber}` : ""} ${company?.city ?? ""}</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      ${(() => { const sl = safeLogoSrc(company?.logo); return sl ? `<div style="background:#fff;border-radius:6px;padding:3px 6px;display:inline-flex;align-items:center;justify-content:center;"><img src="${sl}" alt="" style="max-height:42px;max-width:120px;object-fit:contain;display:block;"/></div>` : ""; })()}
+      <div>
+        <div style="font-size:20px;font-weight:700;">${company?.nameAr ?? "اسم الشركة"}</div>
+        <div style="opacity:.8;font-size:11px;margin-top:2px;">${company?.vatNumber ? `ر.ض: ${company.vatNumber}` : ""} ${company?.city ?? ""}</div>
+      </div>
     </div>
     <div style="text-align:center">
       <div style="font-size:18px;font-weight:800;">${docTitle(d.type)}</div>
@@ -342,11 +365,14 @@ function template4(d: PrintData): string {
   </head><body>
   <div class="stripe"></div>
   <div class="header">
-    <div>
-      <div style="font-size:19px;font-weight:800;color:#92400e;">${company?.nameAr ?? "الشركة"}</div>
-      ${company?.vatNumber ? `<div style="font-size:11px;color:#b45309;">ر.ض: ${company.vatNumber}</div>` : ""}
-      ${company?.crNumber  ? `<div style="font-size:11px;color:#b45309;">س.ت: ${company.crNumber}</div>`  : ""}
-      ${company?.city      ? `<div style="font-size:11px;color:#78716c;">${company.city}</div>` : ""}
+    <div style="display:flex;align-items:center;gap:10px;">
+      ${(() => { const sl = safeLogoSrc(company?.logo); return sl ? `<img src="${sl}" alt="" style="max-height:48px;max-width:130px;object-fit:contain;display:block;"/>` : ""; })()}
+      <div>
+        <div style="font-size:19px;font-weight:800;color:#92400e;">${company?.nameAr ?? "الشركة"}</div>
+        ${company?.vatNumber ? `<div style="font-size:11px;color:#b45309;">ر.ض: ${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div style="font-size:11px;color:#b45309;">س.ت: ${company.crNumber}</div>`  : ""}
+        ${company?.city      ? `<div style="font-size:11px;color:#78716c;">${company.city}</div>` : ""}
+      </div>
     </div>
     <div class="doc-pill">
       <div style="font-size:12px;color:#92400e;font-weight:700;">${docTitle(d.type)}</div>
@@ -553,6 +579,7 @@ function template6(d: PrintData): string {
   </style>
   </head><body>
     <div class="center">
+      ${logoCenterHtml(company, 46, 140)}
       <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
       ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
       <div class="meta">
@@ -675,6 +702,7 @@ function template7(d: PrintData): string {
   </style>
   </head><body>
     <div class="header">
+      ${logoCenterHtml(company, 46, 130)}
       <div class="name-ar">${company?.nameAr ?? "اسم الشركة"}</div>
       ${company?.nameEn ? `<div class="name-en">${company.nameEn}</div>` : ""}
       <div class="meta">

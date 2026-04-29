@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { journalEntriesApi } from "@/lib/journalEntriesApi";
 import { branchesApi } from "@/lib/branchesApi";
+import { safeLogoSrc } from "@/lib/export";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Button } from "@/components/ui/button";
@@ -606,6 +607,17 @@ export default function JournalEntryForm() {
 
   const buildEntryPrintHtml = () => {
     const today = new Date().toLocaleDateString("ar-SA");
+    // Forward the configured company logo and Arabic name into the print
+    // header so single-entry printouts carry the same branding as the
+    // rest of the system's reports.  `safeLogoSrc` defangs any crafted
+    // value before it is interpolated into the print HTML.
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyNameHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
     const lineRowsHtml = printableLines.map((l, i) => {
       const a = acctMap.get(Number(l.accountId));
       return `<tr>
@@ -655,6 +667,8 @@ tfoot td { background:#eef2ff; font-weight:700; padding:8px; border:1px solid #1
 </style></head><body>
 <button class="print-btn" onclick="window.print()">طباعة / حفظ PDF</button>
 <div class="head">
+  ${logoHtml}
+  ${companyNameHtml}
   <h1>قيد محاسبي — ${escapeHtml(docLabel)}</h1>
   <div class="meta">طُبع في ${today}</div>
 </div>

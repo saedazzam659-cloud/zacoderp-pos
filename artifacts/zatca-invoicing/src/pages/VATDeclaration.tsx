@@ -630,6 +630,10 @@ function VATExportMenu({
   const isAr = i18n.language?.startsWith("ar");
   const companyName = (isAr ? data.company?.nameAr : (data.company?.nameEn ?? data.company?.nameAr)) ?? "";
   const { dp } = useFmt();
+  // Pull `user` so we can fall back to the auth-context company logo
+  // when the report payload omits it — keeps every printed PDF
+  // consistently branded regardless of which side carries the value.
+  const { user } = useAuth();
 
   const VAT_COLS = [
     { key: "section", header: t("vatDeclaration.exportColSection"), width: 14 },
@@ -749,6 +753,16 @@ function VATExportMenu({
       ],
       t("vatDeclaration.printDocTitle"),
       `${companyName} — ${period.label} (${period.from} ${t("vatDeclaration.toDate")} ${period.to})`,
+      // The VAT declaration export resolves the company from the loaded
+      // declaration data; forward its logo so the printed PDF carries
+      // the same branding as every other report.  The narrow type from
+      // the OpenAPI codegen doesn't include `logo`, hence the cast.
+      // Falls back to the auth context's company logo when the report
+      // payload omits it — keeps every PDF consistently branded
+      // regardless of which side carries the value.
+      (((data.company as any)?.logo as string | null)
+        ?? ((user?.company as any)?.logo as string | null)
+        ?? null),
     );
   }
 

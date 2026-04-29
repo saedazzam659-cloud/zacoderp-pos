@@ -213,3 +213,49 @@ Wired from POST handlers in `cash-boxes.ts`, `bank-accounts.ts`,
 `inventory.ts` (warehouses), `customers.ts`, `suppliers.ts`.  All five
 JE pipelines already prefer the entity's own `accountId` over the
 mapping fallback (pre-existing behaviour, untouched).
+
+## Company Logo on Print Surfaces
+
+The configured company logo (stored on `companies.logo` as a base64
+data URL or absolute http(s) URL, managed in General Settings) is
+rendered on every print/PDF surface across the system:
+
+- **Generic reports** (30+ via `ExportButtons` → `lib/export.ts`):
+  `exportToPDF` and `printSectionsAsPDF` accept an optional `logo`
+  parameter and render a centered, white-rounded-card-wrapped `<img>`
+  above the title in the green header.  `ExportButtons` reads
+  `useAuth().user.company.logo` and forwards it automatically.
+- **Sales prints** — all 7 templates (`SalesPrintModal.tsx`):
+  - Templates 1/3/5 via the `companyBlock(c)` helper (logo on top of
+    the textual block).
+  - Templates 2/4 via an inline IIFE in the colored top-bar header.
+  - Templates 6/7 (thermal 80 mm) via `logoCenterHtml(c)`.
+- **Purchase prints** — all 5 templates (`PurchasePrintModal.tsx`):
+  - Templates 1/3/5 via shared `companyBlock(c)`.
+  - Templates 2/4 via inline IIFE in the colored header.
+- **Journal Entries** (`JournalEntries.tsx` list-print and
+  `JournalEntryForm.tsx` single-entry print): logo + Arabic name in
+  the top centred header of `buildPrintHtml` / `buildEntryPrintHtml`.
+- **End of Service** (`EndOfService.tsx`): hidden on screen via
+  `hidden print:block`, revealed only when `window.print()` is
+  invoked on the React DOM.
+- **VAT Declaration** (`VATDeclaration.tsx`): forwards
+  `data.company.logo ?? user.company.logo ?? null` to
+  `printSectionsAsPDF`.
+- **POS Cashier receipt** (`artifacts/pos/src/pages/Cashier.tsx`):
+  `ReceiptModal` accepts `companyLogo` + `companyNameAr` props and
+  renders a print-only header (`hidden print:block`) above the
+  confirmation banner.
+
+### Security: `safeLogoSrc` allowlist
+All print surfaces stitch HTML by string interpolation into
+`document.write()`, so any company-supplied `logo` value reaches the
+browser as raw HTML.  To eliminate stored-XSS risk, every logo value
+is run through `safeLogoSrc(raw)` (exported from
+`artifacts/zatca-invoicing/src/lib/export.ts`) before insertion.  The
+helper accepts only well-formed
+`data:image/(png|jpeg|jpg|gif|webp|svg+xml);base64,...` URIs and
+absolute `https?://` URLs whose bodies use only safe URL chars.
+Anything containing `"`, `'`, `<`, `>`, backtick, whitespace, or
+control chars is rejected (returns `null`), which the callers render
+as "no logo" — graceful degradation, no exception.

@@ -58,6 +58,33 @@ export function exportToExcel(
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
+// ─── Safe Logo Source ────────────────────────────────────────────────────────
+// All print surfaces stitch their HTML by string interpolation into
+// `document.write()`, so any company-supplied `logo` value reaches the
+// browser as raw HTML.  To eliminate the resulting stored-XSS risk we
+// run every logo through a strict allowlist before insertion: only
+// well-formed `data:image/<png|jpeg|jpg|gif|webp|svg+xml>;base64,...`
+// URIs and absolute `https?://` URLs are accepted, and the chars that
+// could break out of an `src="..."` attribute (`"`, `'`, `<`, `>`, `&`,
+// whitespace, control chars) are rejected outright.  Anything that
+// fails validation is dropped (returns `null`), which the callers
+// render as "no logo" — graceful degradation, no exception.
+export function safeLogoSrc(raw: unknown): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  // Reject anything containing characters that could break out of the
+  // `src="..."` attribute or smuggle a JS scheme via crafted whitespace.
+  // Allowed within data:/http(s): URIs are unreserved + sub-delims +
+  // base64 chars + a few path/query separators.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F"'<>`\s]/.test(s)) return null;
+  const dataRe = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+  const httpRe = /^https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+$/;
+  if (dataRe.test(s) || httpRe.test(s)) return s;
+  return null;
+}
+
 // ─── PDF Export (HTML Print) ──────────────────────────────────────────────────
 // Uses the browser's native print-to-PDF which fully supports Arabic/RTL text.
 
@@ -76,12 +103,27 @@ export function exportToPDF(
   // surface "previous balance / movement / closing balance" classic
   // Arabic accounting summaries that don't fit a single table row.
   summaryFooter?: Array<{ label: string; value: string; tone?: "default" | "debit" | "credit" | "primary" }> | null,
+  // Optional company logo (base64 data URL or absolute http(s) URL) shown
+  // centered above the title in the green header of the printed page.
+  logo?: string | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+
+  // Logo HTML — wrapped in a white rounded card so it renders cleanly on
+  // top of the dark-green header background regardless of the source image
+  // having transparency or its own padding.  Falls back to an empty string
+  // when the company has no logo configured.  The src is run through
+  // `safeLogoSrc` to defang attribute-injection / XSS via crafted values.
+  const safeLogo = safeLogoSrc(logo);
+  const logoHtml = safeLogo
+    ? `<div style="background:#fff;border-radius:8px;padding:5px 8px;display:inline-block;margin-bottom:8px;">
+         <img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />
+       </div>`
+    : "";
 
   const theadCells = columns
     .map(c => `<th>${escape(c.header)}</th>`)
@@ -259,6 +301,7 @@ export function exportToPDF(
 </head>
 <body>
   <div class="header">
+    ${logoHtml}
     <h1>${escape(title)}</h1>
     ${subtitle ? `<p>${escape(subtitle)}</p>` : ""}
   </div>
@@ -311,12 +354,22 @@ export function printSectionsAsPDF(
   sections: PrintSection[],
   documentTitle: string,
   subtitle: string,
+  // Optional company logo (base64 data URL or http(s) URL) shown above
+  // the title in the green header.  Same contract as exportToPDF's `logo`.
+  logo?: string | null,
 ) {
   const escape = (s: unknown) =>
     String(s ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+
+  const safeLogo = safeLogoSrc(logo);
+  const logoHtml = safeLogo
+    ? `<div style="background:#fff;border-radius:8px;padding:5px 8px;display:inline-block;margin-bottom:8px;">
+         <img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;" />
+       </div>`
+    : "";
 
   const today = new Date().toLocaleDateString("ar-SA-u-nu-latn", {
     year: "numeric",
@@ -439,6 +492,7 @@ export function printSectionsAsPDF(
 </head>
 <body>
   <div class="header">
+    ${logoHtml}
     <h1>${escape(documentTitle)}</h1>
     <p>${escape(subtitle)}</p>
   </div>
