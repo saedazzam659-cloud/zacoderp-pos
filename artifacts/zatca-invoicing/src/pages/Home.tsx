@@ -115,7 +115,7 @@ export default function Home() {
         "@context": "https://schema.org",
         "@type":    "Organization",
         "name":     "زاكود المحاسبي",
-        "alternateName": ["Zakoud", "زاكود", "نظام محاسبة سعودي معتمد من ZATCA"],
+        "alternateName": ["Zacoderp", "Zacode ERP", "زاكود", "نظام محاسبة سعودي معتمد من ZATCA"],
         "url":      origin,
         "logo":     `${origin}${BASE}/favicon.svg`,
         "image":    `${origin}${BASE}/opengraph.jpg`,
@@ -137,7 +137,7 @@ export default function Home() {
         "@context": "https://schema.org",
         "@type":    "SoftwareApplication",
         "name":     "زاكود المحاسبي",
-        "alternateName": "Zakoud Accounting",
+        "alternateName": "Zacoderp",
         "operatingSystem": "Web, Windows, macOS, Linux, iOS, Android",
         "applicationCategory": "BusinessApplication",
         "applicationSubCategory": "AccountingSoftware",
@@ -202,7 +202,7 @@ export default function Home() {
         <title>زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية</title>
         <meta name="description" content="زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. فاتورة إلكترونية، محاسبة مالية، ضريبة القيمة المضافة 15%، نقاط بيع، ومخزون في منصة عربية واحدة. ابدأ مجاناً بدون بطاقة دفع." />
         <link rel="canonical" href={canonical} />
-        <meta name="keywords" content="زاكود, زاكود المحاسبي, Zakoud, نظام محاسبة سعودي, نظام محاسبي سعودي, فاتورة إلكترونية, ZATCA, زاتكا, FATOORA, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة, ERP سعودي" />
+        <meta name="keywords" content="زاكود, زاكود المحاسبي, Zacoderp, Zacode ERP, نظام محاسبة سعودي, نظام محاسبي سعودي, فاتورة إلكترونية, ZATCA, زاتكا, FATOORA, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة, ERP سعودي" />
         <meta name="author" content="زاكود المحاسبي" />
         <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
         <meta name="theme-color" content="#0d9488" />
