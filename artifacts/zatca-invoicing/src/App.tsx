@@ -208,7 +208,8 @@ import CustomerSettlement   from "@/pages/sales/CustomerSettlement";
 
 import CashBoxes        from "@/pages/cash/CashBoxes";
 import BankAccounts     from "@/pages/cash/BankAccounts";
-import ReceiptVouchers  from "@/pages/cash/ReceiptVouchers";
+import ReceiptVouchers     from "@/pages/cash/ReceiptVouchers";
+import ReceiptVoucherForm  from "@/pages/cash/ReceiptVoucherForm";
 import PaymentVouchers  from "@/pages/cash/PaymentVouchers";
 import CashTransfers    from "@/pages/cash/CashTransfers";
 
@@ -546,7 +547,9 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/cash" component={CashHub} />}
             {!isSuperAdmin && <PermRoute path="/cash/boxes"            module="cash_boxes"        component={CashBoxes}       />}
             {!isSuperAdmin && <PermRoute path="/cash/banks"            module="bank_accounts"     component={BankAccounts}    />}
-            {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers" module="receipt_vouchers"  component={ReceiptVouchers} />}
+            {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers"     module="receipt_vouchers"  component={ReceiptVouchers}    />}
+            {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers/new" module="receipt_vouchers" action="create" component={ReceiptVoucherForm} />}
+            {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers/:id" module="receipt_vouchers" component={ReceiptVoucherForm} />}
             {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers" module="payment_vouchers"  component={PaymentVouchers} />}
             {!isSuperAdmin && <PermRoute path="/cash/transfers"        module="cash_boxes"        component={CashTransfers}   />}
 

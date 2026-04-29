@@ -1,23 +1,30 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { parseError } from "@/lib/parseError";
 import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { AccountCombobox } from "@/components/AccountCombobox";
-import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Sparkles, Loader2 } from "lucide-react";
-import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
+import { ArrowDownCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
-const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY = { date: today(), paymentType: "cash", cashBoxId: "", bankAccountId: "", entityType: "customer", entityId: "", entityName: "", accountId: "", amount: "", exchangeRate: "1", refType: "", refNumber: "", description: "", notes: "" };
+
+// ─────────────────────────────────────────────────────────────────
+// Listing-only screen for receipt vouchers. The data-entry form is
+// a dedicated full-page route (`/cash/receipt-vouchers/new` and
+// `/cash/receipt-vouchers/:id`) so users get the same comfortable
+// layout, searchable comboboxes, Enter-key navigation, prev/next
+// nav and live JE preview as the journal-entries form.
+// This component only owns:
+//   • table + search + pagination
+//   • post / unpost / delete confirmation dialogs
+//   • navigation to the dedicated form route on add/edit
+// ─────────────────────────────────────────────────────────────────
 
 export default function ReceiptVouchers() {
   const { user, token } = useAuth();
@@ -25,6 +32,7 @@ export default function ReceiptVouchers() {
   const { t } = useTranslation();
   const { fmt, isRtl } = useFormatters();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const h = { Authorization: `Bearer ${token}` };
   const cid = user?.companyId;
   const NS = "receiptVouchers";
@@ -35,169 +43,27 @@ export default function ReceiptVouchers() {
     other: t(`${NS}.other`),
   };
 
-  const [search,  setSearch]  = useState("");
-  const [panel,   setPanel]   = useState(false);
-  const [editing, setEditing] = useState<any>(null);
-  const [form,    setForm]    = useState<typeof EMPTY>(EMPTY);
-  // Peek the next code from the central sequence engine. Skip while editing
-  // an existing voucher (we already know its code) and while the panel is
-  // closed so we don't waste a fetch on every list render.
-  const nextCode = useNextSequenceNumber("receipt_voucher", panel && !editing);
-  const [acctId,  setAcctId]  = useState("");
+  const [search, setSearch] = useState("");
   const [postRow,   setPostRow]   = useState<any>(null);
   const [delRow,    setDelRow]    = useState<any>(null);
   const [unpostRow, setUnpostRow] = useState<any>(null);
-  const [aiBusy,    setAiBusy]    = useState(false);
-  const [aiReason,  setAiReason]  = useState("");
 
   const { data: vouchers = [], isLoading } = useQuery({
     queryKey: ["receipt-vouchers", cid],
     queryFn: () => fetch(`${API}/api/receipt-vouchers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
-  const { data: cashBoxes = [] } = useQuery({
-    queryKey: ["cash-boxes", cid],
-    queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()),
-    enabled: !!cid,
-  });
-  const { data: bankAccounts = [] } = useQuery({
-    queryKey: ["bank-accounts", cid],
-    queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()),
-    enabled: !!cid,
-  });
-  const { data: customers = [] } = useQuery({
-    queryKey: ["customers", cid],
-    queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
-    enabled: !!cid,
-  });
-  const { data: suppliers = [] } = useQuery({
-    queryKey: ["suppliers", cid],
-    queryFn: () => fetch(`${API}/api/suppliers?companyId=${cid}`, { headers: h }).then(r => r.json()),
-    enabled: !!cid,
-  });
 
   const filtered = (vouchers as any[]).filter((v: any) =>
     v.code?.includes(search) || v.description?.includes(search) || v.entityName?.includes(search)
   );
-
   const pager = usePagination(filtered);
-  const totalAmount = (vouchers as any[]).filter((v: any) => v.status === "posted").reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
+  const totalAmount = (vouchers as any[])
+    .filter((v: any) => v.status === "posted")
+    .reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
-  const ACCT_KEY = `rv:lastAccountId:${cid}`;
-  function openAdd()  {
-    const last = typeof window !== "undefined" ? localStorage.getItem(ACCT_KEY) || "" : "";
-    setEditing(null);
-    setForm({ ...EMPTY, date: today() });
-    setAcctId(last);
-    setAiReason("");
-    setPanel(true);
-  }
-  function openEdit(r: any) {
-    setEditing(r);
-    setForm({ date: r.date, paymentType: r.paymentType || "cash", cashBoxId: r.cashBoxId ? String(r.cashBoxId) : "", bankAccountId: r.bankAccountId ? String(r.bankAccountId) : "", entityType: r.entityType || "customer", entityId: r.entityId ? String(r.entityId) : "", entityName: r.entityName ?? "", accountId: "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", refType: r.refType ?? "", refNumber: r.refNumber ?? "", description: r.description ?? "", notes: r.notes ?? "" });
-    setAcctId(r.accountId ? String(r.accountId) : "");
-    setAiReason("");
-    setPanel(true);
-  }
-
-  async function suggestAccount() {
-    setAiBusy(true);
-    setAiReason("");
-    try {
-      const res = await fetch(`${API}/api/ai/suggest-receipt-account?companyId=${cid}`, {
-        method: "POST",
-        headers: { ...h, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entityType: form.entityType,
-          entityId: form.entityId ? parseInt(form.entityId) : null,
-          entityName: form.entityName,
-          description: form.description,
-          refType: form.refType,
-          refNumber: form.refNumber,
-          notes: form.notes,
-          amount: Number(form.amount || 0),
-        }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || t(`${NS}.aiFailed`));
-      if (j.accountId) {
-        setAcctId(String(j.accountId));
-        setAiReason(j.reasoning || "");
-        toast({ title: t(`${NS}.aiSuggested`), description: j.accountLabel });
-      } else {
-        toast({ title: t(`${NS}.aiNotFound`), description: j.reasoning, variant: "destructive" });
-      }
-    } catch (e: any) {
-      toast({ title: t(`${NS}.aiFailed`), description: parseError(e), variant: "destructive" });
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
-  function jePreview() {
-    const amt = Number(form.amount || 0);
-    if (!isFinite(amt) || amt <= 0) return null;
-    const cb = (cashBoxes as any[]).find((c: any) => String(c.id) === form.cashBoxId);
-    const ba = (bankAccounts as any[]).find((b: any) => String(b.id) === form.bankAccountId);
-    const cbName = cb ? (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) : "";
-    const baName = ba ? (isRtl ? ba.nameAr : (ba.nameEn || ba.nameAr)) : "";
-    const drLabel = form.paymentType === "bank"
-      ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
-      : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
-    const crLabel = acctId ? t(`${NS}.pickedAccount`) :
-      (form.entityType === "customer" && form.entityName) ? t(`${NS}.customerPrefix`, { name: form.entityName }) :
-      (form.entityType === "supplier" && form.entityName) ? t(`${NS}.supplierPrefix`, { name: form.entityName }) :
-      t(`${NS}.noCounter`);
-    return { drLabel, crLabel, amount: amt };
-  }
-
-  // Honour the company-level "auto-post on save" toggle. When the tenant
-  // chose manual posting (autoPostingEnabled === false) the voucher is
-  // saved as a draft and the user must explicitly click "اعتماد"; when
-  // automatic, we chain the /post call right after the create succeeds —
-  // same contract sales/purchase invoices use.
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
-  const saveMut = useMutation({
-    mutationFn: async () => {
-      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
-      const amtNum = Number(cleanAmt);
-      if (!isFinite(amtNum) || amtNum <= 0) throw new Error(t(`${NS}.invalidAmount`));
-      const body = { ...form, amount: amtNum.toFixed(2), companyId: cid, accountId: acctId ? parseInt(acctId) : null, cashBoxId: form.cashBoxId ? parseInt(form.cashBoxId) : null, bankAccountId: form.bankAccountId ? parseInt(form.bankAccountId) : null, entityId: form.entityId ? parseInt(form.entityId) : null };
-      const url = editing ? `${API}/api/receipt-vouchers/${editing.id}` : `${API}/api/receipt-vouchers`;
-      const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
-      const j = await res.json();
-      if (autoPostingEnabled && j?.id && (j.status ?? "draft") === "draft") {
-        // The voucher itself is already in the DB; treat a post failure
-        // as "saved as draft, posting failed" instead of throwing — that
-        // way the panel still closes and the user doesn't accidentally
-        // re-submit and create a duplicate voucher.
-        const pr = await fetch(`${API}/api/receipt-vouchers/${j.id}/post`, { method: "POST", headers: h });
-        const pj = await pr.json().catch(() => ({}));
-        if (!pr.ok) return { ...j, _posted: false, _postError: pj?.error || pr.statusText };
-        return { ...pj, _posted: true };
-      }
-      return { ...j, _posted: false };
-    },
-    onSuccess: (data: any) => {
-      try { if (acctId) localStorage.setItem(ACCT_KEY, acctId); } catch {}
-      qc.invalidateQueries({ queryKey: ["receipt-vouchers"] });
-      setPanel(false);
-      if (data?._postError) {
-        toast({
-          variant: "destructive",
-          title: t(`${NS}.savedButPostFailed`, "تم الحفظ كمسودة — لكن فشل الترحيل"),
-          description: data._postError,
-        });
-      } else {
-        toast({
-          title: editing ? t(`${NS}.saved_update`) : t(`${NS}.saved_create`),
-          description: data?._posted === false ? t(`${NS}.savedDraftHint`, "تم الحفظ كمسودة — الترحيل يدوي") : undefined,
-        });
-      }
-    },
-    onError: (e: any) => toast({ title: t(`${NS}.err_save`), description: parseError(e), variant: "destructive" }),
-  });
+  function openAdd()  { navigate("/cash/receipt-vouchers/new"); }
+  function openEdit(r: any) { navigate(`/cash/receipt-vouchers/${r.id}`); }
 
   const postMut = useMutation({
     mutationFn: async (id: number) => {
@@ -225,12 +91,6 @@ export default function ReceiptVouchers() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  function f(name: keyof typeof EMPTY) {
-    return { value: form[name] as string, onChange: (e: any) => setForm(p => ({ ...p, [name]: e.target.value })) };
-  }
-
-  const entityList = form.entityType === "customer" ? customers : form.entityType === "supplier" ? suppliers : [];
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -253,103 +113,6 @@ export default function ReceiptVouchers() {
           </div>
         ))}
       </div>
-
-      {panel && (
-        <FormPanel
-          icon={ArrowDownCircle}
-          title={editing ? t(`${NS}.editVoucher`) : t(`${NS}.newLong`)}
-          subtitle={t(`${NS}.formSubtitle`)}
-          width="4xl"
-          onClose={() => setPanel(false)}
-          onSave={() => saveMut.mutate()}
-          saving={saveMut.isPending}
-          saveDisabled={!form.amount || !form.date}
-        >
-          <FormGrid>
-            <Field label={t(`${NS}.code`)}>
-              <Input
-                value={editing ? (editing.code ?? "") : (nextCode.number ?? (nextCode.loading ? "..." : t(`${NS}.autoCode`)))}
-                readOnly
-                disabled
-                className="font-mono text-sm bg-muted/30"
-                data-testid="input-receipt-code"
-              />
-            </Field>
-            <Field label={t(`${NS}.date`)} required><Input type="date" {...f("date")} /></Field>
-            <Field label={t(`${NS}.paymentMethod`)}>
-              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.paymentType} onChange={e => setForm(p => ({ ...p, paymentType: e.target.value, cashBoxId: "", bankAccountId: "" }))}>
-                <option value="cash">{t(`${NS}.cash`)}</option>
-                <option value="bank">{t(`${NS}.bank`)}</option>
-              </select>
-            </Field>
-            {form.paymentType === "cash" ? (
-              <Field label={t(`${NS}.cashBox`)} className="md:col-span-2">
-                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.cashBoxId} onChange={e => setForm(p => ({ ...p, cashBoxId: e.target.value }))}>
-                  <option value="">{t(`${NS}.selectCashBox`)}</option>
-                  {(cashBoxes as any[]).map((c: any) => <option key={c.id} value={c.id}>{isRtl ? c.nameAr : (c.nameEn || c.nameAr)}</option>)}
-                </select>
-              </Field>
-            ) : (
-              <Field label={t(`${NS}.bankAccount`)} className="md:col-span-2">
-                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.bankAccountId} onChange={e => setForm(p => ({ ...p, bankAccountId: e.target.value }))}>
-                  <option value="">{t(`${NS}.selectBank`)}</option>
-                  {(bankAccounts as any[]).map((b: any) => <option key={b.id} value={b.id}>{isRtl ? b.nameAr : (b.nameEn || b.nameAr)}</option>)}
-                </select>
-              </Field>
-            )}
-            <Field label={t(`${NS}.entityType`)}>
-              <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.entityType} onChange={e => setForm(p => ({ ...p, entityType: e.target.value, entityId: "", entityName: "" }))}>
-                <option value="customer">{t(`${NS}.customer`)}</option>
-                <option value="supplier">{t(`${NS}.supplier`)}</option>
-                <option value="other">{t(`${NS}.other`)}</option>
-              </select>
-            </Field>
-            {form.entityType === "other" ? (
-              <Field label={t(`${NS}.entityName`)}><Input placeholder="..." {...f("entityName")} /></Field>
-            ) : (
-              <Field label={form.entityType === "customer" ? t(`${NS}.customer`) : t(`${NS}.supplier`)}>
-                <select className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" value={form.entityId} onChange={e => { const found = (entityList as any[]).find((x: any) => String(x.id) === e.target.value); setForm(p => ({ ...p, entityId: e.target.value, entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "" })); }}>
-                  <option value="">{t(`${NS}.selectEntity`)}</option>
-                  {(entityList as any[]).map((e: any) => <option key={e.id} value={e.id}>{isRtl ? e.nameAr : (e.nameEn || e.nameAr)}</option>)}
-                </select>
-              </Field>
-            )}
-            <Field label={t(`${NS}.counterAccount`)} className="md:col-span-2">
-              <div className="flex gap-2 items-stretch">
-                <div className="flex-1"><AccountCombobox value={acctId} onValueChange={setAcctId} placeholder={t("cashCommon.selectAccount")} grouped={false} /></div>
-                <Button type="button" variant="outline" size="sm" onClick={suggestAccount} disabled={aiBusy} className="gap-1.5 shrink-0 text-purple-700 border-purple-300 hover:bg-purple-50" title={t(`${NS}.aiTitle`)}>
-                  {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                  {t(`${NS}.aiSuggest`)}
-                </Button>
-              </div>
-              {aiReason && <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed bg-purple-50/50 border border-purple-100 rounded p-2">{aiReason}</p>}
-            </Field>
-            <Field label={t(`${NS}.amount`)} required><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></Field>
-            <Field label={t(`${NS}.exchangeRate`)}><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
-            <Field label={t(`${NS}.refType`)}><Input placeholder={t(`${NS}.refTypePh`)} {...f("refType")} /></Field>
-            <Field label={t(`${NS}.refNumber`)}><Input placeholder="INV-0001" dir="ltr" className="text-left" {...f("refNumber")} /></Field>
-            <Field label={t(`${NS}.description`)} className="md:col-span-2"><Input placeholder={t(`${NS}.descriptionPh`)} {...f("description")} /></Field>
-            <Field label={t("cashCommon.notes")} className="md:col-span-2"><Input placeholder={t("cashCommon.notesPlaceholder")} {...f("notes")} /></Field>
-          </FormGrid>
-
-          {(() => {
-            const p = jePreview();
-            if (!p) return null;
-            return (
-              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/40 p-3">
-                <p className="text-xs font-semibold text-blue-900 mb-2">{t(`${NS}.jePreview`)}</p>
-                <table className="w-full text-xs">
-                  <thead><tr className="text-blue-800/70"><th className="text-start pb-1">{t(`${NS}.jeCol`)}</th><th className={`${isRtl ? "text-left pl-2" : "text-right pr-2"} pb-1`}>{t(`${NS}.jeDr`)}</th><th className={`${isRtl ? "text-left" : "text-right"} pb-1`}>{t(`${NS}.jeCr`)}</th></tr></thead>
-                  <tbody className="font-mono">
-                    <tr className="border-t border-blue-200/60"><td className="py-1 text-start">{p.drLabel}</td><td className={`${isRtl ? "text-left pl-2" : "text-right pr-2"}`}>{fmt(p.amount)}</td><td className={`${isRtl ? "text-left" : "text-right"}`}>—</td></tr>
-                    <tr className="border-t border-blue-200/60"><td className="py-1 text-start">{p.crLabel}</td><td className={`${isRtl ? "text-left pl-2" : "text-right pr-2"}`}>—</td><td className={`${isRtl ? "text-left" : "text-right"}`}>{fmt(p.amount)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            );
-          })()}
-        </FormPanel>
-      )}
 
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between border-b px-4 py-3">
