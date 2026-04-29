@@ -288,6 +288,112 @@ router.get("/modules", async (req, res) => {
   }
 });
 
+// ─── Bulk DELETE matching the same filter set as the listing handler ────
+//   DELETE /api/audit-log
+//     query params: same as GET / (companyId, userId, module, action, from,
+//                   to, q). Acts on EVERY row that matches — there is no
+//                   ?ids= override here; the audit-log page already gives
+//                   the reviewer a per-row checkbox flow for surgical work,
+//                   so this endpoint is the "clean by filter" companion.
+//
+// Returns: { deleted: number }
+//
+// Tenant scoping mirrors the listing handler:
+//   • Non-superadmin admins are PINNED to their own company and CANNOT
+//     widen via ?companyId — the value is ignored.
+//   • SuperAdmin may pass ?companyId to constrain, OR omit it to clean
+//     across every tenant. Because that is destructive, we record a
+//     dedicated `delete` audit row capturing the resolved filter set
+//     and the affected count BEFORE returning so the action itself is
+//     auditable (the new row is written with `module: "audit_log"` so
+//     it is filterable from the UI).
+//
+// Registered BEFORE `/:id` so the literal "/" delete path wins over the
+// `:id` placeholder.
+router.delete("/", async (req, res) => {
+  try {
+    const u = req.authUser!;
+    const isSuper = u.role === "superadmin";
+
+    const cid = isSuper
+      ? resolveCompanyId(req, req.query.companyId ? Number(req.query.companyId) : undefined)
+      : (u.companyId ?? undefined);
+
+    const userId = req.query.userId ? Number(req.query.userId) : undefined;
+    const mod    = typeof req.query.module === "string" ? req.query.module.slice(0, 80) : undefined;
+    const act    = typeof req.query.action === "string" ? req.query.action.slice(0, 32) : undefined;
+    const from   = typeof req.query.from === "string" ? new Date(req.query.from) : undefined;
+    const to     = typeof req.query.to   === "string" ? new Date(req.query.to)   : undefined;
+    const q      = typeof req.query.q    === "string" ? req.query.q.trim().slice(0, 80) : "";
+
+    const conds: any[] = [];
+    if (cid != null && Number.isFinite(cid))   conds.push(eq(auditLogTable.companyId, cid));
+    if (userId && Number.isFinite(userId))     conds.push(eq(auditLogTable.userId,    userId));
+    if (mod)                                   conds.push(eq(auditLogTable.module,    mod));
+    if (act)                                   conds.push(eq(auditLogTable.action,    act));
+    if (from && !isNaN(from.getTime()))        conds.push(gte(auditLogTable.createdAt, from));
+    if (to   && !isNaN(to.getTime()))          conds.push(lte(auditLogTable.createdAt, to));
+    if (q) {
+      const pat = `%${q}%`;
+      conds.push(
+        sql`(${auditLogTable.username} ILIKE ${pat} OR ${auditLogTable.path} ILIKE ${pat})`
+      );
+    }
+
+    // Defense in depth: a non-superadmin call with no companyId resolved
+    // (e.g. malformed token) MUST NOT wipe global rows. Bail rather than
+    // silently match everything.
+    if (!isSuper && (cid == null || !Number.isFinite(cid))) {
+      res.status(400).json({ error: "تعذر تحديد نطاق الشركة" });
+      return;
+    }
+
+    const where = conds.length ? and(...conds) : undefined;
+
+    // Count first so we can report what we deleted AND so the audit row we
+    // write below carries the exact figure.
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(auditLogTable)
+      .where(where as any);
+    const matched = Number(count ?? 0);
+
+    if (matched > 0) {
+      await db.delete(auditLogTable).where(where as any);
+    }
+
+    // Self-record the deletion so future readers see who cleaned what.
+    // Filter set is captured verbatim so a follow-up reviewer can replay
+    // the same query on the (now empty) result.
+    try {
+      await writeAudit(req, {
+        module:     "audit_log",
+        action:     "delete",
+        entityType: "audit_log",
+        statusCode: 200,
+        metadata: {
+          deletedCount: matched,
+          filters: {
+            companyId: cid ?? null,
+            userId:    userId ?? null,
+            module:    mod ?? null,
+            action:    act ?? null,
+            from:      typeof req.query.from === "string" ? req.query.from : null,
+            to:        typeof req.query.to   === "string" ? req.query.to   : null,
+            q:         q || null,
+          },
+        },
+      });
+    } catch (logErr) {
+      req.log?.warn?.({ err: logErr }, "audit-log: failed to record self-delete");
+    }
+
+    res.json({ deleted: matched });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "تعذر حذف سجل النشاط" });
+  }
+});
+
 // Single-entry fetch — powers the shareable permalink (task #126). The
 // audit-log page encodes the open dialog's row id in `?entry=N` so a URL
 // like `/admin/audit-log?entry=12345` reopens the same details modal. When
