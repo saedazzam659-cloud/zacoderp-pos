@@ -20,6 +20,7 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   cashbox:               ["cash_on_hand"],
   bank:                  ["bank_main", "bank_fees"],
   letter_of_credit:      ["lc_margin", "lc_liability", "lc_commission", "lc_expenses", "lc_fx_diff", "inventory", "bank"],
+  entity_account_parents: ["cash_account_parent", "bank_account_parent", "customer_account_parent", "warehouse_account_parent", "supplier_account_parent"],
 };
 
 // Default LC chart-of-accounts seed used by /seed-lc
