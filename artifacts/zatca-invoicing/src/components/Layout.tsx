@@ -7,7 +7,7 @@ import {
   Package, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
-  TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote,
+  TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote, Wrench,
   Wallet, Landmark, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
   Search, Home, HelpCircle, ChevronLeft, Mic,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
@@ -104,7 +104,7 @@ const INVENTORY_REPORTS_PERMS   = ["items"];
 // Includes "accounting_reports" so users who only have the reports
 // permission still see the (now-parent) Accounting menu, since the
 // accounting reports section is nested INSIDE this group.
-const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries","accounting_reports"];
+const ACCOUNTING_GROUP_PERMS    = ["accounts","journal_entries","accounting_reports","accounting_maintenance"];
 const ACCOUNTING_REPORTS_PERMS  = ["accounting_reports"];
 
 const superAdminNav: NavDef[] = [
@@ -282,6 +282,7 @@ const accountingSubNav: NavDef[] = [
   { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target,        permKey: "accounts" },
   { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange, permKey: "accounts" },
   { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
+  { nameKey: "nav.accountingMaintenance", href: "/accounting/maintenance", icon: Wrench,    permKey: "accounting_maintenance" },
 ];
 const reportsSubNav: NavDef[] = [
   { nameKey: "nav.accountStatement", href: "/accounting/reports/account-statement", icon: FileText,   permKey: "accounting_reports" },
@@ -519,7 +520,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   sales:       ["sales", "sales_module", "sales_reports", "customers"],
   purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
   cash:        ["cash", "cash_module", "cash_reports"],
-  accounting:  ["accounting", "accounts", "accounting_reports"],
+  accounting:  ["accounting", "accounts", "accounting_reports", "accounting_maintenance"],
   hr:          ["hr", "hr_module"],
   production:  ["production"],
   contracting: ["contracting"],

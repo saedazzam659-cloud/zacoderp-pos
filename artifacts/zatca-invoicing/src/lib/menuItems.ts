@@ -37,6 +37,7 @@ export const MENU_ITEMS: MenuItem[] = [
   { key: "cash_reports",       label: "تقارير النقد والبنوك",       section: "المحاسبة" },
   { key: "accounts",           label: "الحسابات العامة",            section: "المحاسبة" },
   { key: "accounting_reports", label: "التقارير المحاسبية",         section: "المحاسبة" },
+  { key: "accounting_maintenance", label: "الصيانة المحاسبية وميزان المراجعة", section: "المحاسبة" },
 
   { key: "hr_module",          label: "شؤون الموظفين",              section: "شؤون الموظفين" },
 
@@ -87,6 +88,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   cash_reports:       "cash",
   accounts:           "accounting",
   accounting_reports: "accounting",
+  accounting_maintenance: "accounting",
   hr_module:          "hr",
   contracting:        "contracting",
   production:         "production",

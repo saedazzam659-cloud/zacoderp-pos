@@ -71,6 +71,7 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   { key: "receipt_vouchers",     label: "perms.modules.receipt_vouchers",     group: G.accounting, actions: ALL },
   { key: "payment_vouchers",     label: "perms.modules.payment_vouchers",     group: G.accounting, actions: ALL },
   { key: "accounting_reports",   label: "perms.modules.accounting_reports",   group: G.accounting, actions: ["view", "export"] },
+  { key: "accounting_maintenance", label: "perms.modules.accounting_maintenance", group: G.accounting, actions: ALL },
 
   { key: "vat_declaration",      label: "perms.modules.vat_declaration",      group: G.tax,        actions: ["view", "export"] },
 

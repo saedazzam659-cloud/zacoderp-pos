@@ -802,7 +802,7 @@ router.post("/register", async (req, res) => {
     inventory:  ["inventory_mobile", "inventory_reports"],
     pos:        ["pos"],
     cash:       ["cash_module", "cash_reports"],
-    accounting: ["accounts", "accounting_reports"],
+    accounting: ["accounts", "accounting_reports", "accounting_maintenance"],
     hr:         ["hr_module"],
     zatca:      ["zatca", "reports"],
     // Contracting/Construction ERP — single permission key matching the

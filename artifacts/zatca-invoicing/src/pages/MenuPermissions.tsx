@@ -12,6 +12,7 @@ import {
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
+  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
@@ -43,6 +44,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   cash_reports:       PieChart,
   accounts:           BookOpen,
   accounting_reports: PieChart,
+  accounting_maintenance: Wrench,
   hr_module:          UserCog,
   contracting:        HardHat,
   production:         Factory,

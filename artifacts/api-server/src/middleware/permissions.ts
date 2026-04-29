@@ -52,6 +52,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   accounts: "accounts",
   journal_entries: "accounts",
   accounting_reports: "accounting_reports",
+  accounting_maintenance: "accounting_maintenance",
   // POS
   pos: "pos",
   // Inventory

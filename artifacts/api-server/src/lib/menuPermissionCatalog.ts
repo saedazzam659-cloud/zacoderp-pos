@@ -45,6 +45,7 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "cash_reports",
   "accounts",
   "accounting_reports",
+  "accounting_maintenance",
   // ── شؤون الموظفين ──
   "hr_module",
   // ── إدارة المقاولات ──
