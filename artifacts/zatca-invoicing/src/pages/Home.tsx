@@ -114,22 +114,43 @@ export default function Home() {
       {
         "@context": "https://schema.org",
         "@type":    "Organization",
-        "name":     "نظام الفاتورة الإلكترونية السعودية",
-        "alternateName": "نظام محاسبة سعودي",
+        "name":     "زاكود المحاسبي",
+        "alternateName": ["Zakoud", "زاكود", "نظام محاسبة سعودي معتمد من ZATCA"],
         "url":      origin,
-        "logo":     `${origin}/favicon.svg`,
-        "description": "نظام محاسبة سعودي شامل ومعتمد من ZATCA: فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون.",
+        "logo":     `${origin}${BASE}/favicon.svg`,
+        "image":    `${origin}${BASE}/opengraph.jpg`,
+        "description": "زاكود المحاسبي — نظام محاسبة سعودي شامل ومعتمد من ZATCA: فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون.",
         "areaServed": { "@type": "Country", "name": areaName },
       },
       {
         "@context": "https://schema.org",
         "@type":    "WebSite",
         "url":      origin,
-        "name":     "نظام محاسبة سعودي معتمد من ZATCA",
+        "name":     "زاكود المحاسبي",
+        "alternateName": "نظام محاسبة سعودي معتمد من ZATCA",
         "inLanguage": "ar-SA",
         // SearchAction intentionally omitted: there is no /search endpoint
         // on this site, so emitting a fake target would trigger Google
         // structured-data warnings and hurt rich-result eligibility.
+      },
+      {
+        "@context": "https://schema.org",
+        "@type":    "SoftwareApplication",
+        "name":     "زاكود المحاسبي",
+        "alternateName": "Zakoud Accounting",
+        "operatingSystem": "Web, Windows, macOS, Linux, iOS, Android",
+        "applicationCategory": "BusinessApplication",
+        "applicationSubCategory": "AccountingSoftware",
+        "url":      origin,
+        "image":    `${origin}${BASE}/opengraph.jpg`,
+        "description": "نظام محاسبة وفوترة إلكترونية سعودي معتمد من ZATCA — يشمل المحاسبة المالية، نقاط البيع، المخزون، والموارد البشرية.",
+        "inLanguage": "ar-SA",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "SAR",
+          "description": "تجربة مجانية بدون بطاقة دفع",
+        },
       },
       {
         "@context": "https://schema.org",
@@ -161,7 +182,7 @@ export default function Home() {
   // Helmet@3 + React 19 doesn't reliably populate document.title.
   useEffect(() => {
     const prev = document.title;
-    document.title = "زاكود المحاسبي";
+    document.title = "زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية";
     return () => { document.title = prev; };
   }, []);
 
@@ -178,17 +199,32 @@ export default function Home() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>زاكود المحاسبي</title>
-        <meta name="description" content="أفضل نظام محاسبة سعودي معتمد من ZATCA — فاتورة إلكترونية، محاسبة مالية، ضريبة قيمة مضافة، نقاط بيع، مخزون، وموارد بشرية في منصة عربية واحدة. ابدأ تجربتك المجانية الآن." />
+        <title>زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA وفاتورة إلكترونية</title>
+        <meta name="description" content="زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. فاتورة إلكترونية، محاسبة مالية، ضريبة القيمة المضافة 15%، نقاط بيع، ومخزون في منصة عربية واحدة. ابدأ مجاناً بدون بطاقة دفع." />
         <link rel="canonical" href={canonical} />
-        <meta name="keywords" content="نظام محاسبة سعودي, فاتورة إلكترونية, ZATCA, زاتكا, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة" />
+        <meta name="keywords" content="زاكود, زاكود المحاسبي, Zakoud, نظام محاسبة سعودي, نظام محاسبي سعودي, فاتورة إلكترونية, ZATCA, زاتكا, FATOORA, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة, ERP سعودي" />
+        <meta name="author" content="زاكود المحاسبي" />
+        <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+        <meta name="theme-color" content="#0d9488" />
+        <meta name="application-name" content="زاكود المحاسبي" />
+        <meta name="apple-mobile-web-app-title" content="زاكود" />
         <meta property="og:type" content="website" />
-        <meta property="og:title" content="زاكود المحاسبي" />
-        <meta property="og:description" content="فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون — كل ما تحتاجه شركتك السعودية في منصة واحدة." />
+        <meta property="og:site_name" content="زاكود المحاسبي" />
+        <meta property="og:title" content="زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA" />
+        <meta property="og:description" content="فاتورة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون لشركتك السعودية في منصة واحدة معتمدة من ZATCA. ابدأ مجاناً." />
         <meta property="og:url" content={canonical} />
+        <meta property="og:image" content={`${origin}${BASE}/opengraph.jpg`} />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="زاكود المحاسبي - نظام محاسبة سعودي معتمد من ZATCA" />
         <meta property="og:locale" content="ar_SA" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="robots" content="index,follow,max-image-preview:large" />
+        <meta name="twitter:title" content="زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA" />
+        <meta name="twitter:description" content="فاتورة إلكترونية ومحاسبة شاملة معتمدة من ZATCA لشركتك السعودية." />
+        <meta name="twitter:image" content={`${origin}${BASE}/opengraph.jpg`} />
+        <link rel="alternate" hrefLang="ar-SA" href={canonical} />
+        <link rel="alternate" hrefLang="ar" href={canonical} />
+        <link rel="alternate" hrefLang="x-default" href={canonical} />
       </Helmet>
 
       {/* Top bar */}
