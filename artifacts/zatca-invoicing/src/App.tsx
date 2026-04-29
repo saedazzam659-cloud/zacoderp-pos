@@ -244,6 +244,40 @@ function LoadingScreen() {
 // standalone POS artifact at the path-router level.
 const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/blog", "/pos-system", "/"];
 
+// Top-level URL prefixes that belong to the authenticated app. When an
+// unauthenticated visitor lands on one of these (e.g. they middle-click
+// "/accounting" from another tab, paste an in-app link, or refresh
+// after their session expires), we redirect them to /login with the
+// original destination preserved in ?redirect=… instead of showing the
+// custom 404 — the 404 was meant for SEO crawlers hitting random
+// unknown URLs, not for legitimate deep-link traffic by users.
+const PROTECTED_PREFIXES = [
+  "/accounting", "/admin", "/ai-reports", "/cash", "/companies",
+  "/contracting", "/control-panel", "/customers", "/general-settings",
+  "/hr", "/inbox", "/inventory", "/invoices", "/notifications",
+  "/org", "/pos-management", "/pos-monitoring", "/pos-settings",
+  "/pos-terminals", "/production", "/purchasing", "/sales", "/security",
+  "/seo", "/sessions", "/settings", "/suppliers", "/users",
+  "/vat-declaration", "/voice-assistant", "/work-sessions", "/zatca",
+  "/zatca-bridge", "/zatca-report",
+];
+
+function isProtectedDeepLink(loc: string): boolean {
+  return PROTECTED_PREFIXES.some(p => loc === p || loc.startsWith(p + "/"));
+}
+
+// Sanitize the post-login redirect target so it can't be used as an
+// open-redirect to a different origin. Must be a simple in-app path
+// starting with a single "/", no scheme, no protocol-relative "//".
+function safeRedirectTarget(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const v = String(raw);
+  if (!v.startsWith("/")) return null;
+  if (v.startsWith("//")) return null;
+  if (v.includes("://")) return null;
+  return v;
+}
+
 function AppRoutes() {
   const { isAuthenticated, loading, user } = useAuth();
   const [location] = useLocation();
@@ -261,9 +295,15 @@ function AppRoutes() {
   // Redirect logged-in users away from auth pages. /pricing is left out
   // of this list intentionally — it's a marketing page and should remain
   // viewable even when signed in, so admins can sanity-check the public
-  // funnel without logging out.
+  // funnel without logging out. If they reached /login via a deep link
+  // (?redirect=…), bounce them straight to that destination.
   if (isAuthenticated && (location === "/login" || location === "/register")) {
-    return <Redirect to="/" />;
+    let target = "/";
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      target = safeRedirectTarget(sp.get("redirect")) ?? "/";
+    } catch { /* noop */ }
+    return <Redirect to={target} />;
   }
 
   // Unauthenticated visitors: serve guest landings directly, render the
@@ -289,6 +329,18 @@ function AppRoutes() {
       // shows pairing instructions when no token is set.
       location === "/hr/face/kiosk";
     if (!knownPublicRoute) {
+      // Distinguish a real "page does not exist" 404 (random typo or
+      // SEO crawler probing) from a legitimate user opening an in-app
+      // link in a fresh tab without a session. For known protected
+      // prefixes, send them through the login form and hand them back
+      // their original destination after auth. Everything else stays
+      // a 404 so search engines don't see the login form for
+      // arbitrary URLs.
+      if (isProtectedDeepLink(location)) {
+        const search = (typeof window !== "undefined" && window.location.search) || "";
+        const target = safeRedirectTarget(location + search) ?? "/";
+        return <Redirect to={`/login?redirect=${encodeURIComponent(target)}`} />;
+      }
       return <NotFound />;
     }
     // The kiosk URL bypasses the normal Switch (which requires auth) and

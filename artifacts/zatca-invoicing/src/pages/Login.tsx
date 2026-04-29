@@ -59,6 +59,28 @@ export default function Login() {
   const { login, setSession } = useAuth();
   const { toast } = useToast();
 
+  // After a successful login we usually go to the home dashboard, but if
+  // the user got here via a deep-link redirect (e.g. opened
+  // /accounting in a fresh tab while logged out), App.tsx forwards
+  // them to /login?redirect=<original-path>. Honor that target so the
+  // user lands on the page they actually wanted.
+  const goAfterLogin = () => {
+    let target = "/";
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const raw = sp.get("redirect");
+      if (raw) {
+        // Same open-redirect guard as App.tsx#safeRedirectTarget:
+        // must be a single-leading-slash in-app path, no scheme,
+        // no protocol-relative "//".
+        if (raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("://")) {
+          target = raw;
+        }
+      }
+    } catch { /* noop */ }
+    setLocation(target);
+  };
+
   // Common form state
   // companyCode is the public, human-friendly tenant code shown to the
   // user at registration (e.g. "ZTC-1042"). The new login form
@@ -224,7 +246,7 @@ export default function Login() {
     // Edge-case: server returned a full session immediately
     if (j.token && j.user) {
       setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
-      setLocation("/");
+      goAfterLogin();
     }
   };
 
@@ -251,7 +273,7 @@ export default function Login() {
           try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
           catch { /* private mode / quota — non-fatal */ }
         }
-        setLocation("/");
+        goAfterLogin();
         return;
       } catch (err: any) {
         // 409 + useSuperAdminFlow signals: this account requires the SA flow.
@@ -300,7 +322,7 @@ export default function Login() {
       }
       setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
       toast({ title: t("auth.sa.welcome", "أهلًا بعودتك") });
-      setLocation("/");
+      goAfterLogin();
     } catch (err: any) {
       setError(err?.message || t("auth.sa.otpInvalid", "الرمز غير صحيح"));
     } finally {
@@ -346,7 +368,7 @@ export default function Login() {
       if (!r.ok) { setError(j.error || t("auth.sa.recoveryInvalid", "الرمز غير صحيح")); return; }
       setSession({ token: j.token, sessionId: j.sessionId ?? null, user: j.user });
       toast({ title: t("auth.sa.welcome", "أهلًا بعودتك") });
-      setLocation("/");
+      goAfterLogin();
     } catch (err: any) {
       setError(err?.message || "");
     } finally {
