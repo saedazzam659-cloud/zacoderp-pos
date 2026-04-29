@@ -7,9 +7,63 @@ import {
   purchaseInvoicesTable,
   purchaseReturnsTable,
   invoicesTable,
+  journalEntriesTable,
+  journalEntryLinesTable,
+  accountsTable,
+  accountingMappingsTable,
 } from "@workspace/db";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, inArray, notInArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+
+// Entry types created automatically by source documents (sales/purchase
+// invoices, vouchers, payroll, stock moves). Their VAT impact is ALREADY
+// captured by the invoice tables aggregated above, so they MUST be excluded
+// from the manual-adjustment query to avoid double counting.
+// Mirrors LOCKED_ENTRY_TYPES in routes/journalEntries.ts — keep in sync.
+const AUTO_GENERATED_ENTRY_TYPES = [
+  "purchase_invoice", "purchase_return",
+  "sales_invoice", "sales_return",
+  "receipt_voucher", "payment_voucher", "receipt", "payment",
+  "stock_transfer", "stock_adjustment",
+  "supplier_settlement", "customer_settlement",
+  "payroll_run", "employee_loan", "eos_payment",
+];
+
+// Default account codes used by the seed chart of accounts when the tenant
+// has not customized accountingMappings yet. These match the defaults in
+// artifacts/api-server/src/lib/accountingMappings.ts.
+const VAT_OUTPUT_DEFAULT_CODE = "21041";
+const VAT_INPUT_DEFAULT_CODE  = "11071";
+
+// Resolve the company's VAT output / VAT input account ids. Prefers the
+// accountingMappings configured by the tenant; falls back to the default
+// chart-of-accounts codes (21041 / 11071). Returns null for either side if
+// neither source can resolve the account — the caller treats that as
+// "no manual adjustments to report" for that side.
+async function resolveVatAccountIds(companyId: number) {
+  const mappings = await db.select().from(accountingMappingsTable).where(and(
+    eq(accountingMappingsTable.companyId, companyId),
+    inArray(accountingMappingsTable.roleKey, ["vat_output", "vat_input"]),
+  ));
+  let outputId: number | null = null;
+  let inputId:  number | null = null;
+  for (const m of mappings) {
+    if (m.accountId == null) continue;
+    if (m.roleKey === "vat_output" && outputId == null) outputId = m.accountId;
+    if (m.roleKey === "vat_input"  && inputId  == null) inputId  = m.accountId;
+  }
+  if (outputId == null || inputId == null) {
+    const accts = await db.select().from(accountsTable).where(and(
+      eq(accountsTable.companyId, companyId),
+      inArray(accountsTable.code, [VAT_OUTPUT_DEFAULT_CODE, VAT_INPUT_DEFAULT_CODE]),
+    ));
+    for (const a of accts) {
+      if (outputId == null && a.code === VAT_OUTPUT_DEFAULT_CODE) outputId = a.id;
+      if (inputId  == null && a.code === VAT_INPUT_DEFAULT_CODE)  inputId  = a.id;
+    }
+  }
+  return { outputId, inputId };
+}
 
 const router = Router();
 router.use(extractAuth);
@@ -175,7 +229,100 @@ router.get("/vat-declaration", async (req, res) => {
   const outputTax = net(outputSales, outputReturnsCls);
   const inputTax  = net(inputPurch,  inputReturnsCls);
 
-  const netVat = outputTax.total.vat - inputTax.total.vat;
+  // ─── Manual journal-entry adjustments to VAT ───────────────────────────
+  // Tenants sometimes record VAT corrections, accruals, or write-offs
+  // directly via a journal entry instead of a sales/purchase invoice
+  // (e.g. an external auditor adjustment). These don't show up in the
+  // invoice tables, so we additively pull them in here. We only count
+  // POSTED entries whose entryType is NOT in AUTO_GENERATED_ENTRY_TYPES —
+  // auto-generated entries from invoices/vouchers would otherwise be
+  // double-counted with the invoice-based aggregation above.
+  //
+  // VAT-output is a liability account: a credit increases output VAT
+  // (additional VAT collected), a debit reduces it (refund/correction).
+  // VAT-input is an asset account: a debit increases input VAT
+  // (recoverable), a credit reduces it.
+  const { outputId: vatOutAcctId, inputId: vatInAcctId } = await resolveVatAccountIds(companyId);
+
+  type AdjustmentEntry = {
+    id: number;
+    docNumber: string | null;
+    entryDate: string;
+    description: string | null;
+    entryType: string;
+    outputVat: number;
+    inputVat:  number;
+  };
+  const journalAdjustments: {
+    outputVat: number;
+    inputVat:  number;
+    entryCount: number;
+    entries: AdjustmentEntry[];
+  } = { outputVat: 0, inputVat: 0, entryCount: 0, entries: [] };
+
+  const targetAccountIds = [vatOutAcctId, vatInAcctId].filter((x): x is number => x != null);
+  if (targetAccountIds.length > 0) {
+    const rows = await db
+      .select({
+        id:           journalEntriesTable.id,
+        docNumber:    journalEntriesTable.docNumber,
+        entryDate:    journalEntriesTable.entryDate,
+        description:  journalEntriesTable.description,
+        entryType:    journalEntriesTable.entryType,
+        lineAccount:  journalEntryLinesTable.accountId,
+        lineDebit:    journalEntryLinesTable.debit,
+        lineCredit:   journalEntryLinesTable.credit,
+      })
+      .from(journalEntriesTable)
+      .innerJoin(
+        journalEntryLinesTable,
+        eq(journalEntryLinesTable.entryId, journalEntriesTable.id),
+      )
+      .where(and(
+        eq(journalEntriesTable.companyId, companyId),
+        eq(journalEntriesTable.status, "posted"),
+        gte(journalEntriesTable.entryDate, from),
+        lte(journalEntriesTable.entryDate, to),
+        notInArray(journalEntriesTable.entryType, AUTO_GENERATED_ENTRY_TYPES),
+        inArray(journalEntryLinesTable.accountId, targetAccountIds),
+      ));
+
+    const byEntry = new Map<number, AdjustmentEntry>();
+    for (const r of rows) {
+      let agg = byEntry.get(r.id);
+      if (!agg) {
+        agg = {
+          id: r.id, docNumber: r.docNumber, entryDate: r.entryDate,
+          description: r.description, entryType: r.entryType,
+          outputVat: 0, inputVat: 0,
+        };
+        byEntry.set(r.id, agg);
+      }
+      const debit  = Number(r.lineDebit);
+      const credit = Number(r.lineCredit);
+      if (vatOutAcctId != null && r.lineAccount === vatOutAcctId) {
+        agg.outputVat += credit - debit;
+      }
+      if (vatInAcctId != null && r.lineAccount === vatInAcctId) {
+        agg.inputVat += debit - credit;
+      }
+    }
+    // Drop entries whose net VAT impact rounds to zero — those are pure
+    // contra entries between the two VAT accounts (e.g. period-end
+    // settlement) and adding zero rows clutters the report.
+    const entries = Array.from(byEntry.values())
+      .filter(e => Math.abs(e.outputVat) > 0.005 || Math.abs(e.inputVat) > 0.005)
+      .sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.id - b.id);
+
+    journalAdjustments.entries    = entries;
+    journalAdjustments.entryCount = entries.length;
+    journalAdjustments.outputVat  = entries.reduce((s, e) => s + e.outputVat, 0);
+    journalAdjustments.inputVat   = entries.reduce((s, e) => s + e.inputVat,  0);
+  }
+
+  // Net VAT now factors in the manual adjustments on both sides.
+  const netVat = (outputTax.total.vat + journalAdjustments.outputVat)
+               - (inputTax.total.vat  + journalAdjustments.inputVat);
 
   // Discount disclosure on the sales side (sales_invoices + legacy).
   const discountTotal =
@@ -218,6 +365,11 @@ router.get("/vat-declaration", async (req, res) => {
     netVat,
     discountTotal,
     invoiceBreakdown,
+    // Manual VAT adjustments recorded directly in the journal (NOT auto-
+    // generated from invoices). The frontend renders these as a separate
+    // section so the auditor can see exactly what came from invoices vs
+    // what came from a journal-level correction.
+    journalAdjustments,
   });
 });
 

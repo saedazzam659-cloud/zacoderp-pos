@@ -36,6 +36,9 @@ import {
   purchaseInvoicesTable,
   purchaseReturnsTable,
   invoicesTable,
+  accountsTable,
+  journalEntriesTable,
+  journalEntryLinesTable,
 } from "@workspace/db";
 
 import app from "../src/app.ts";
@@ -57,6 +60,14 @@ const insertedSalesRetIds:   number[] = [];
 const insertedPurchInvIds:   number[] = [];
 const insertedPurchRetIds:   number[] = [];
 const insertedLegacyInvIds:  number[] = [];
+const insertedJournalIds:    number[] = [];
+const insertedAccountIds:    number[] = [];
+
+// VAT account ids seeded for the test company so the report's
+// `journalAdjustments` aggregator has accounts to look up. These mirror
+// the default codes (21041 / 11071) shipped in the seed chart of accounts.
+let vatOutputAccountId: number;
+let vatInputAccountId:  number;
 
 // Fixed "current" period the test seeds into. Using a date FAR in the past
 // keeps the seeded rows out of any other test's "this month" window and
@@ -265,10 +276,137 @@ before(async () => {
     grandTotal: "8554.00",
   }).returning({ id: invoicesTable.id });
   insertedLegacyInvIds.push(li2.id);
+
+  // ── Seed VAT accounts (chart of accounts) ────────────────────────────────
+  // Use the default codes (21041 / 11071) so the report's
+  // resolveVatAccountIds() falls back to them via the accounts table.
+  const [vatOutAcct] = await db.insert(accountsTable).values({
+    companyId: testCompanyId,
+    code: "21041",
+    nameAr: `${TEST_TAG} ضريبة المخرجات`,
+    nameEn: `${TEST_TAG} VAT output`,
+    accountType: "liability",
+    level: 4,
+    isPosting: true,
+    isActive: true,
+  }).returning({ id: accountsTable.id });
+  vatOutputAccountId = vatOutAcct.id;
+  insertedAccountIds.push(vatOutputAccountId);
+
+  const [vatInAcct] = await db.insert(accountsTable).values({
+    companyId: testCompanyId,
+    code: "11071",
+    nameAr: `${TEST_TAG} ضريبة المدخلات`,
+    nameEn: `${TEST_TAG} VAT input`,
+    accountType: "asset",
+    level: 4,
+    isPosting: true,
+    isActive: true,
+  }).returning({ id: accountsTable.id });
+  vatInputAccountId = vatInAcct.id;
+  insertedAccountIds.push(vatInputAccountId);
+
+  // A non-VAT account so we can prove the aggregator only sums VAT lines.
+  const [otherAcct] = await db.insert(accountsTable).values({
+    companyId: testCompanyId,
+    code: "11011",
+    nameAr: `${TEST_TAG} الصندوق`,
+    nameEn: `${TEST_TAG} Cash`,
+    accountType: "asset",
+    level: 4,
+    isPosting: true,
+    isActive: true,
+  }).returning({ id: accountsTable.id });
+  insertedAccountIds.push(otherAcct.id);
+
+  // ── Seed manual journal entries (VAT adjustments) ─────────────────────────
+  // JE-1: posted, in period, manual ('general'). Credits VAT output by 25
+  // (additional output VAT due) — should ADD 25 to journalAdjustments.outputVat.
+  const [je1] = await db.insert(journalEntriesTable).values({
+    companyId: testCompanyId,
+    docNumber: `${TEST_TAG}-JE-1`,
+    entryDate: IN_PERIOD,
+    description: "VAT correction (auditor adjustment)",
+    entryType: "general",
+    status: "posted",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalIds.push(je1.id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: je1.id, accountId: otherAcct.id, debit: "25.00", credit: "0.00", sortOrder: 0 },
+    { entryId: je1.id, accountId: vatOutputAccountId, debit: "0.00", credit: "25.00", sortOrder: 1 },
+  ]);
+
+  // JE-2: posted, in period, manual. Debits VAT input by 10
+  // (additional recoverable VAT) — should ADD 10 to journalAdjustments.inputVat.
+  const [je2] = await db.insert(journalEntriesTable).values({
+    companyId: testCompanyId,
+    docNumber: `${TEST_TAG}-JE-2`,
+    entryDate: IN_PERIOD,
+    description: "Recoverable VAT correction",
+    entryType: "general",
+    status: "posted",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalIds.push(je2.id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: je2.id, accountId: vatInputAccountId, debit: "10.00", credit: "0.00", sortOrder: 0 },
+    { entryId: je2.id, accountId: otherAcct.id, debit: "0.00", credit: "10.00", sortOrder: 1 },
+  ]);
+
+  // JE-3: posted but auto-generated from a sales invoice — MUST be filtered
+  // out so VAT impact is not double counted with the invoice tables above.
+  const [je3] = await db.insert(journalEntriesTable).values({
+    companyId: testCompanyId,
+    docNumber: `${TEST_TAG}-JE-AUTO`,
+    entryDate: IN_PERIOD,
+    description: "Auto JE from sales invoice",
+    entryType: "sales_invoice",
+    status: "posted",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalIds.push(je3.id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: je3.id, accountId: otherAcct.id, debit: "9999.00", credit: "0.00", sortOrder: 0 },
+    { entryId: je3.id, accountId: vatOutputAccountId, debit: "0.00", credit: "9999.00", sortOrder: 1 },
+  ]);
+
+  // JE-4: DRAFT — must be excluded by status filter.
+  const [je4] = await db.insert(journalEntriesTable).values({
+    companyId: testCompanyId,
+    docNumber: `${TEST_TAG}-JE-DRAFT`,
+    entryDate: IN_PERIOD,
+    description: "Draft adjustment (should not count)",
+    entryType: "general",
+    status: "draft",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalIds.push(je4.id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: je4.id, accountId: otherAcct.id, debit: "5000.00", credit: "0.00", sortOrder: 0 },
+    { entryId: je4.id, accountId: vatOutputAccountId, debit: "0.00", credit: "5000.00", sortOrder: 1 },
+  ]);
+
+  // JE-5: posted but OUT of period — must be excluded by date filter.
+  const [je5] = await db.insert(journalEntriesTable).values({
+    companyId: testCompanyId,
+    docNumber: `${TEST_TAG}-JE-FUTURE`,
+    entryDate: OUT_PERIOD,
+    description: "Future adjustment (should not count)",
+    entryType: "general",
+    status: "posted",
+  }).returning({ id: journalEntriesTable.id });
+  insertedJournalIds.push(je5.id);
+  await db.insert(journalEntryLinesTable).values([
+    { entryId: je5.id, accountId: otherAcct.id, debit: "8000.00", credit: "0.00", sortOrder: 0 },
+    { entryId: je5.id, accountId: vatOutputAccountId, debit: "0.00", credit: "8000.00", sortOrder: 1 },
+  ]);
 });
 
 after(async () => {
   // Strict ID-based deletes — never LIKE — so we cannot touch real data.
+  // Journal lines cascade-delete via the FK to journal_entries; deleting
+  // the entries is enough.
+  if (insertedJournalIds.length)
+    await db.delete(journalEntriesTable).where(inArray(journalEntriesTable.id, insertedJournalIds));
+  if (insertedAccountIds.length)
+    await db.delete(accountsTable).where(inArray(accountsTable.id, insertedAccountIds));
   if (insertedSalesInvIds.length)
     await db.delete(salesInvoicesTable).where(inArray(salesInvoicesTable.id, insertedSalesInvIds));
   if (insertedSalesRetIds.length)
@@ -348,9 +486,12 @@ test("aggregates input VAT from posted purchase invoices and subtracts purchase 
   assert.ok(Math.abs(b.inputTax.standardRated.vat - 52.5) < 0.01,
     `inputTax.standardRated.vat expected 52.5, got ${b.inputTax.standardRated.vat}`);
 
-  // Net VAT = output (240) − input (52.5) = 187.5
-  assert.ok(Math.abs(b.netVat - 187.5) < 0.01,
-    `netVat expected 187.5, got ${b.netVat}`);
+  // Net VAT (invoice side only) = output (240) − input (52.5) = 187.5
+  // The full netVat is asserted separately in the journalAdjustments test
+  // (which adds +25 output / +10 input from manual JEs → 202.5).
+  const invoiceOnlyNet = b.outputTax.total.vat - b.inputTax.total.vat;
+  assert.ok(Math.abs(invoiceOnlyNet - 187.5) < 0.01,
+    `invoice-side netVat expected 187.5, got ${invoiceOnlyNet}`);
 });
 
 test("surfaces returns separately as positive deductions for the frontend disclosure", async () => {
@@ -392,6 +533,48 @@ test("returns the seeded company info on the report header", async () => {
   assert.equal(r.status, 200);
   assert.ok(r.body.company, "company block must be present");
   assert.ok(r.body.company!.nameAr.includes(TEST_TAG), "company nameAr must match seeded tenant");
+});
+
+test("includes manual journal-entry VAT adjustments in the report", async () => {
+  // Manual JEs (entryType='general') that touch the VAT output / VAT input
+  // accounts must surface in `journalAdjustments` and feed into netVat.
+  // Specifically:
+  //   • JE-1 credits VAT-output by 25 → outputVat += 25
+  //   • JE-2 debits  VAT-input  by 10 → inputVat  += 10
+  //   • JE-AUTO (entryType='sales_invoice') is auto-generated → MUST be filtered out.
+  //   • JE-DRAFT is draft → MUST be filtered out.
+  //   • JE-FUTURE is out of period → MUST be filtered out.
+  const r = await api<VATResponse & {
+    journalAdjustments: {
+      outputVat: number;
+      inputVat: number;
+      entryCount: number;
+      entries: Array<{ id: number; docNumber: string | null; entryType: string; outputVat: number; inputVat: number }>;
+    };
+  }>("/api/reports/vat-declaration", {
+    token: adminToken,
+    query: { from: PERIOD_FROM, to: PERIOD_TO },
+  });
+  assert.equal(r.status, 200);
+  const ja = r.body.journalAdjustments;
+  assert.ok(ja, "journalAdjustments block must be present");
+
+  assert.equal(ja.entryCount, 2, `expected 2 manual VAT JEs, got ${ja.entryCount}`);
+  assert.ok(Math.abs(ja.outputVat - 25) < 0.01, `journalAdjustments.outputVat expected 25, got ${ja.outputVat}`);
+  assert.ok(Math.abs(ja.inputVat - 10)  < 0.01, `journalAdjustments.inputVat expected 10, got ${ja.inputVat}`);
+
+  // None of the surfaced entries may carry an auto-generated entryType.
+  for (const e of ja.entries) {
+    assert.notEqual(e.entryType, "sales_invoice",   "auto-generated entry leaked into adjustments");
+    assert.notEqual(e.entryType, "purchase_invoice","auto-generated entry leaked into adjustments");
+  }
+
+  // netVat must now reflect the adjustments:
+  //   invoice-side: output 240, input 52.5 → 187.5
+  //   adjustments:  output  25, input 10   → +25 − 10 = +15
+  //   netVat = 187.5 + 15 = 202.5
+  assert.ok(Math.abs(r.body.netVat - 202.5) < 0.01,
+    `netVat with adjustments expected 202.5, got ${r.body.netVat}`);
 });
 
 test("rejects malformed date params with a clear 400 (no silent timezone shift)", async () => {

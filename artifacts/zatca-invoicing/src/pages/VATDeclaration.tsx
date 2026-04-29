@@ -14,7 +14,7 @@ import {
   FileText, Printer, CalendarRange, Building2,
   AlertCircle, Hash, BadgePercent, ReceiptText,
   ArrowDownToLine, ArrowUpFromLine, Scale,
-  Download, FileSpreadsheet, ChevronDown,
+  Download, FileSpreadsheet, ChevronDown, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFmt } from "@/hooks/use-fmt";
@@ -75,6 +75,25 @@ interface VATData {
   netVat: number;
   discountTotal: number;
   invoiceBreakdown: { standardTypeCount: number; simplifiedTypeCount: number; totalCount: number };
+  // Manual VAT corrections recorded directly in the journal (corrections,
+  // accruals, write-offs). The backend filters out auto-generated entries
+  // from invoices/vouchers to avoid double counting. Sign convention:
+  //   outputVat: positive = additional output VAT due, negative = correction
+  //   inputVat:  positive = additional recoverable VAT, negative = correction
+  journalAdjustments?: {
+    outputVat: number;
+    inputVat:  number;
+    entryCount: number;
+    entries: Array<{
+      id: number;
+      docNumber: string | null;
+      entryDate: string;
+      description: string | null;
+      entryType: string;
+      outputVat: number;
+      inputVat:  number;
+    }>;
+  };
 }
 
 async function fetchVAT(from: string, to: string, token: string | null, errMsg: string): Promise<VATData> {
@@ -451,6 +470,62 @@ export default function VATDeclaration() {
               </tbody>
             </table>
           </div>
+
+          {/* ── SECTION 2.5: JOURNAL ENTRY ADJUSTMENTS ─────────────────────── */}
+          {/* Manual VAT corrections recorded directly in the journal (e.g.    */}
+          {/* an external auditor adjustment, period-end accrual, or write-   */}
+          {/* off). Auto-generated entries from invoices/vouchers are filtered */}
+          {/* out by the backend so figures are not double counted.            */}
+          <div className="border-t border-border">
+            <SectionHeader color="slate" icon={BookOpen} title={t("vatDeclaration.journalAdjustmentsSection")} />
+          </div>
+
+          {data.journalAdjustments && data.journalAdjustments.entryCount > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-xs font-semibold text-muted-foreground bg-muted/50 border-b border-border">
+                    <th className="w-10 px-3 py-2.5 text-center">{t("vatDeclaration.colNum")}</th>
+                    <th className="px-5 py-2.5 text-right">{t("vatDeclaration.colJEDate")}</th>
+                    <th className="px-5 py-2.5 text-right">{t("vatDeclaration.colJEDocNum")}</th>
+                    <th className="px-5 py-2.5 text-right">{t("vatDeclaration.colDescription")}</th>
+                    <th className="px-5 py-2.5 text-left w-40 border-r border-border/50">{t("vatDeclaration.colJEOutputVat")}</th>
+                    <th className="px-5 py-2.5 text-left w-40">{t("vatDeclaration.colJEInputVat")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.journalAdjustments.entries.map((e, idx) => (
+                    <tr key={e.id} className="border-b border-border/40 text-sm hover:bg-muted/30">
+                      <td className="w-10 px-3 py-3 text-center text-xs text-muted-foreground font-medium">{idx + 1}</td>
+                      <td className="px-5 py-3 tabular-nums">{fmtDate(e.entryDate)}</td>
+                      <td className="px-5 py-3 font-mono text-xs">{e.docNumber ?? "—"}</td>
+                      <td className="px-5 py-3 text-muted-foreground">{e.description ?? "—"}</td>
+                      <td className="px-5 py-3 text-left border-r border-border/40 tabular-nums font-mono text-sm">
+                        {Math.abs(e.outputVat) > 0.005 ? fmtNum(e.outputVat) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-5 py-3 text-left tabular-nums font-mono text-sm">
+                        {Math.abs(e.inputVat) > 0.005 ? fmtNum(e.inputVat) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-slate-100 dark:bg-slate-800/50 font-bold border-t-2 border-border text-sm">
+                    <td className="w-10 px-3 py-3" />
+                    <td className="px-5 py-3" colSpan={3}>{t("vatDeclaration.rowJETotalAdjustments")}</td>
+                    <td className="px-5 py-3 text-left border-r border-border/40 tabular-nums font-mono">
+                      {fmtNum(data.journalAdjustments.outputVat)}
+                    </td>
+                    <td className="px-5 py-3 text-left tabular-nums font-mono">
+                      {fmtNum(data.journalAdjustments.inputVat)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="px-5 py-6 text-center text-sm text-muted-foreground border-b border-border/40">
+              {t("vatDeclaration.journalAdjustmentsEmpty")}
+            </div>
+          )}
 
           {/* ── NOTE ──────────────────────────────────────────────────────────── */}
           <div className="flex items-start gap-2.5 px-5 py-3 bg-blue-50/80 dark:bg-blue-950/20 border-t border-blue-200/60 dark:border-blue-800/40 no-print">
