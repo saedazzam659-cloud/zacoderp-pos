@@ -77,6 +77,18 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newVat, setNewVat] = useState("");
+  // National Address (العنوان الوطني) — all optional, used by ZATCA & B2B invoices
+  const [newBuildingNumber, setNewBuildingNumber] = useState("");
+  const [newStreet,         setNewStreet]         = useState("");
+  const [newDistrict,       setNewDistrict]       = useState("");
+  const [newCity,           setNewCity]           = useState("");
+  const [newPostalCode,     setNewPostalCode]     = useState("");
+
+  function resetForm() {
+    setNewName(""); setNewVat("");
+    setNewBuildingNumber(""); setNewStreet(""); setNewDistrict("");
+    setNewCity(""); setNewPostalCode("");
+  }
 
   const createCustomer = useMutation({
     mutationFn: async () => {
@@ -88,7 +100,12 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
         body: JSON.stringify({
           companyId: user?.companyId,
           nameAr,
-          vatNumber: newVat.trim() || undefined,
+          vatNumber:      newVat.trim()            || undefined,
+          buildingNumber: newBuildingNumber.trim() || undefined,
+          street:         newStreet.trim()         || undefined,
+          district:       newDistrict.trim()       || undefined,
+          city:           newCity.trim()           || undefined,
+          postalCode:     newPostalCode.trim()     || undefined,
           country: "SA",
         }),
       });
@@ -103,7 +120,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast({ title: "تم إضافة العميل" });
       setOpen(false);
-      setNewName(""); setNewVat("");
+      resetForm();
       if (cus?.id) onCustomerChange(String(cus.id));
     },
     onError: (e: any) => toast({ title: "تعذّر إضافة العميل", description: e?.message, variant: "destructive" }),
@@ -116,7 +133,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
         <button
           type="button"
           className="text-[11px] leading-none text-primary hover:underline inline-flex items-center gap-0.5"
-          onClick={() => { setNewName(""); setNewVat(""); setOpen(true); }}
+          onClick={() => { resetForm(); setOpen(true); }}
         >
           <Plus className="h-2.5 w-2.5" />عميل جديد
         </button>
@@ -132,10 +149,10 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
       />
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent dir="rtl" className="sm:max-w-md">
+        <DialogContent dir="rtl" className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>إضافة عميل جديد</DialogTitle>
-            <DialogDescription>أدخل اسم العميل ورقمه الضريبي (اختياري) لإضافته بسرعة. سيتم إنشاء حساب له تلقائياً في شجرة الحسابات.</DialogDescription>
+            <DialogDescription>أدخل اسم العميل ورقمه الضريبي والعنوان الوطني (اختياري) لإضافته بسرعة. سيتم إنشاء حساب له تلقائياً في شجرة الحسابات.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
@@ -145,6 +162,36 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
             <div className="space-y-1.5">
               <Label className="text-sm">الرقم الضريبي (VAT)</Label>
               <Input value={newVat} onChange={(e) => setNewVat(e.target.value)} placeholder="310000000000003" dir="ltr" className="text-left font-mono" maxLength={15} />
+            </div>
+
+            {/* National Address — العنوان الوطني (Saudi Post) */}
+            <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-semibold">العنوان الوطني (اختياري)</Label>
+                <span className="text-[10px] text-muted-foreground">يُستخدم في طباعة الفاتورة الضريبية</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">رقم المبنى</Label>
+                  <Input value={newBuildingNumber} onChange={(e) => setNewBuildingNumber(e.target.value)} placeholder="1234" dir="ltr" inputMode="numeric" maxLength={4} className="text-left font-mono h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">الرمز البريدي</Label>
+                  <Input value={newPostalCode} onChange={(e) => setNewPostalCode(e.target.value)} placeholder="12345" dir="ltr" inputMode="numeric" maxLength={5} className="text-left font-mono h-9" />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <Label className="text-xs text-muted-foreground">اسم الشارع</Label>
+                  <Input value={newStreet} onChange={(e) => setNewStreet(e.target.value)} placeholder="شارع الملك فهد" className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">الحي</Label>
+                  <Input value={newDistrict} onChange={(e) => setNewDistrict(e.target.value)} placeholder="حي العليا" className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">المدينة</Label>
+                  <Input value={newCity} onChange={(e) => setNewCity(e.target.value)} placeholder="الرياض" className="h-9" />
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-2">
