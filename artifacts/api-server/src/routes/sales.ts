@@ -250,7 +250,63 @@ router.get("/sales-invoices", async (req, res) => {
         ...branchScopeSpread(req, salesInvoicesTable.branchId, req.query.branchId),
       ))
       .orderBy(desc(salesInvoicesTable.invoiceDate));
-    res.json(rows);
+
+    // Enrich each invoice with its latest linked receipt voucher so the
+    // listing can show a "paid via cash/bank" badge in the side row. We
+    // pull all linked vouchers for this tenant in a single query and
+    // group in memory — cheap, and avoids N+1 even for large tenants.
+    const ids = rows.map(r => r.id);
+    if (ids.length === 0) { res.json(rows); return; }
+    const { receiptVouchersTable } = await import("@workspace/db");
+    const { inArray } = await import("drizzle-orm");
+    const links = await db.select({
+      voucherId:     receiptVouchersTable.id,
+      code:          receiptVouchersTable.code,
+      paymentType:   receiptVouchersTable.paymentType,
+      amount:        receiptVouchersTable.amount,
+      status:        receiptVouchersTable.status,
+      date:          receiptVouchersTable.date,
+      salesInvoiceId: receiptVouchersTable.salesInvoiceId,
+    }).from(receiptVouchersTable).where(and(
+      eq(receiptVouchersTable.companyId, cid),
+      inArray(receiptVouchersTable.salesInvoiceId, ids),
+      // Only POSTED vouchers turn an invoice into "paid". Drafts stay
+      // invisible in the listing badge — otherwise we would mislead the
+      // user that an invoice is settled when in reality the voucher is
+      // still being edited.
+      eq(receiptVouchersTable.status, "posted"),
+    ));
+    // Group by invoice; deterministic tiebreaker: latest date, then
+    // highest voucherId, so the badge never flickers between rows that
+    // share the same date.
+    const byInvoice = new Map<number, typeof links>();
+    for (const l of links) {
+      if (!l.salesInvoiceId) continue;
+      const arr = byInvoice.get(l.salesInvoiceId) ?? [];
+      arr.push(l);
+      byInvoice.set(l.salesInvoiceId, arr);
+    }
+    const enriched = rows.map(r => {
+      const arr = byInvoice.get(r.id) ?? [];
+      const sorted = [...arr].sort((a, b) => {
+        const dateCmp = String(b.date).localeCompare(String(a.date));
+        if (dateCmp !== 0) return dateCmp;
+        return b.voucherId - a.voucherId;
+      });
+      const top = sorted[0];
+      return {
+        ...r,
+        paymentSettlement: top ? {
+          voucherId:   top.voucherId,
+          code:        top.code,
+          paymentType: top.paymentType,
+          amount:      top.amount,
+          status:      top.status,
+          date:        top.date,
+        } : null,
+      };
+    });
+    res.json(enriched);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

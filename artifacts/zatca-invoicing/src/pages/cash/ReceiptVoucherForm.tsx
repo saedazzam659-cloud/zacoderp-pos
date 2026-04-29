@@ -13,13 +13,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { AccountCombobox } from "@/components/AccountCombobox";
+import { Switch } from "@/components/ui/switch";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import {
-  ArrowDownCircle, ArrowRight, ChevronRight, ChevronLeft, Search,
-  Sparkles, Loader2, Save, Send, Lock, FileText, Banknote,
-  Wallet, Building2, User2, Printer,
+  ArrowDownCircle, ArrowRight, ChevronLeft, Search,
+  Loader2, Save, Send, Lock, FileText, Banknote,
+  Wallet, Building2, User2, Printer, Link2, X, Settings2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -30,12 +29,11 @@ interface FormState {
   paymentType: "cash" | "bank";
   cashBoxId: string;
   bankAccountId: string;
-  entityType: "customer" | "supplier" | "other";
-  entityId: string;
-  entityName: string;
-  accountId: string;
+  entityId: string;       // customer id (always)
+  entityName: string;     // cached name for JE preview
   amount: string;
   exchangeRate: string;
+  salesInvoiceId: string; // optional link
   refType: string;
   refNumber: string;
   description: string;
@@ -47,12 +45,11 @@ const EMPTY: FormState = {
   paymentType: "cash",
   cashBoxId: "",
   bankAccountId: "",
-  entityType: "customer",
   entityId: "",
   entityName: "",
-  accountId: "",
   amount: "",
   exchangeRate: "1",
+  salesInvoiceId: "",
   refType: "",
   refNumber: "",
   description: "",
@@ -70,20 +67,22 @@ export default function ReceiptVoucherForm() {
   const [matchNew] = useRoute("/cash/receipt-vouchers/new");
   const [matchEdit, params] = useRoute("/cash/receipt-vouchers/:id");
   const isNew  = !!matchNew;
-  const editId = matchEdit && !isNew ? Number((params as any).id) : null;
+  // Wouter matches "/new" against ":id" too — guard against opening the
+  // create-mode URL in edit mode.
+  const rawId  = matchEdit && !isNew ? (params as any).id : null;
+  const editId = rawId && /^\d+$/.test(String(rawId)) ? Number(rawId) : null;
 
   const NS = "receiptVouchers";
   const cid = user?.companyId;
   const h = { Authorization: `Bearer ${token}` };
 
   const [form, setForm] = useState<FormState>(EMPTY);
-  const [aiBusy, setAiBusy]     = useState(false);
-  const [aiReason, setAiReason] = useState("");
+  const [linkInvoice, setLinkInvoice] = useState(false);
 
   // ── Sequence preview for new vouchers ───────────────────────────
   const seqPeek = useNextSequenceNumber("receipt_voucher", isNew);
 
-  // ── Data fetches (cash boxes, banks, customers, suppliers) ───────
+  // ── Data fetches ─────────────────────────────────────────────────
   const { data: cashBoxes = [] } = useQuery<any[]>({
     queryKey: ["cash-boxes", cid],
     queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()),
@@ -99,10 +98,15 @@ export default function ReceiptVoucherForm() {
     queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
-  const { data: suppliers = [] } = useQuery<any[]>({
-    queryKey: ["suppliers", cid],
-    queryFn: () => fetch(`${API}/api/suppliers?companyId=${cid}`, { headers: h }).then(r => r.json()),
+  // Sales invoices for the optional link picker. We pull the full list
+  // for this tenant once and filter client-side per selected customer —
+  // simpler than maintaining a per-customer endpoint and the data is
+  // small (already used elsewhere in the UI).
+  const { data: salesInvoices = [] } = useQuery<any[]>({
+    queryKey: ["sales-invoices", cid],
+    queryFn: () => fetch(`${API}/api/sales/sales-invoices?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
+    staleTime: 30_000,
   });
 
   // ── Voucher list (used both for prev/next nav and for edit-mode load) ─
@@ -127,28 +131,18 @@ export default function ReceiptVoucherForm() {
       paymentType: (existing.paymentType ?? "cash") as "cash" | "bank",
       cashBoxId: existing.cashBoxId ? String(existing.cashBoxId) : "",
       bankAccountId: existing.bankAccountId ? String(existing.bankAccountId) : "",
-      entityType: (existing.entityType ?? "customer") as "customer" | "supplier" | "other",
       entityId: existing.entityId ? String(existing.entityId) : "",
       entityName: existing.entityName ?? "",
-      accountId: existing.accountId ? String(existing.accountId) : "",
       amount: existing.amount ?? "",
       exchangeRate: existing.exchangeRate ?? "1",
+      salesInvoiceId: existing.salesInvoiceId ? String(existing.salesInvoiceId) : "",
       refType: existing.refType ?? "",
       refNumber: existing.refNumber ?? "",
       description: existing.description ?? "",
       notes: existing.notes ?? "",
     });
+    setLinkInvoice(!!existing.salesInvoiceId);
   }, [existing]);
-
-  // ── Auto-pre-fill the counter account from last-used (per company) ──
-  const ACCT_KEY = `rv:lastAccountId:${cid}`;
-  useEffect(() => {
-    if (!isNew || form.accountId) return;
-    try {
-      const last = localStorage.getItem(ACCT_KEY) || "";
-      if (last) setForm(p => ({ ...p, accountId: last }));
-    } catch {}
-  }, [isNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Document navigation (prev/next/jump-by-search) ─────────────
   const navList = vouchers as any[];
@@ -190,17 +184,45 @@ export default function ReceiptVoucherForm() {
       description: b.accountNumber ?? b.iban ?? undefined,
     })), [bankAccounts, isRtl]);
 
-  const entityList = form.entityType === "customer"
-    ? customers
-    : form.entityType === "supplier" ? suppliers : [];
+  const customerItems: ComboboxItem[] = useMemo(() =>
+    (customers as any[]).map(c => ({
+      value: String(c.id),
+      label: isRtl ? c.nameAr : (c.nameEn || c.nameAr),
+      code: c.code ?? undefined,
+      description: c.phone ?? c.email ?? undefined,
+    })), [customers, isRtl]);
 
-  const entityItems: ComboboxItem[] = useMemo(() =>
-    (entityList as any[]).map(e => ({
-      value: String(e.id),
-      label: isRtl ? e.nameAr : (e.nameEn || e.nameAr),
-      code: e.code ?? undefined,
-      description: e.phone ?? e.email ?? undefined,
-    })), [entityList, isRtl]);
+  // Sales invoices the picked customer still has open / payable. We
+  // include posted invoices (most common case — settle a credit invoice)
+  // and exclude cancelled ones; if the form is editing an existing
+  // voucher whose linked invoice was since cancelled, we still surface
+  // it so the user can see the (stale) link.
+  const invoiceItems: ComboboxItem[] = useMemo(() => {
+    if (!form.entityId) return [];
+    const cid_filter = Number(form.entityId);
+    const list = (salesInvoices as any[])
+      .filter((inv: any) => Number(inv.customerId) === cid_filter && inv.status !== "cancelled")
+      .map((inv: any) => ({
+        value: String(inv.id),
+        label: inv.docNumber ?? `SI-${inv.id}`,
+        description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
+        code: inv.status,
+      }));
+    // Make sure the currently-linked invoice is always selectable, even
+    // if it's owned by a different customer or is cancelled.
+    if (form.salesInvoiceId && !list.some(i => i.value === form.salesInvoiceId)) {
+      const inv = (salesInvoices as any[]).find((x: any) => String(x.id) === form.salesInvoiceId);
+      if (inv) {
+        list.unshift({
+          value: String(inv.id),
+          label: inv.docNumber ?? `SI-${inv.id}`,
+          description: `${inv.invoiceDate} • ${Number(inv.totalAmount || 0).toFixed(2)} ${inv.currencyCode || "SAR"}`,
+          code: inv.status,
+        });
+      }
+    }
+    return list;
+  }, [salesInvoices, form.entityId, form.salesInvoiceId]);
 
   // ── Live Journal-Entry preview (mirrors backend posting logic) ──
   function jePreview() {
@@ -213,55 +235,14 @@ export default function ReceiptVoucherForm() {
     const drLabel = form.paymentType === "bank"
       ? (ba ? t(`${NS}.bankPrefix`, { name: baName }) : t(`${NS}.noBankSelected`))
       : (cb ? t(`${NS}.cashPrefix`, { name: cbName }) : t(`${NS}.noCashSelected`));
-    const crLabel = form.accountId ? t(`${NS}.pickedAccount`) :
-      (form.entityType === "customer" && form.entityName) ? t(`${NS}.customerPrefix`, { name: form.entityName }) :
-      (form.entityType === "supplier" && form.entityName) ? t(`${NS}.supplierPrefix`, { name: form.entityName }) :
-      t(`${NS}.noCounter`);
+    const crLabel = form.entityName
+      ? t(`${NS}.customerPrefix`, { name: form.entityName })
+      : t(`${NS}.noCustomerSelected`, "— لم يتم اختيار العميل —");
     return { drLabel, crLabel, amount: amt };
   }
 
-  // ── AI: suggest counter account ────────────────────────────────
-  async function suggestAccount() {
-    setAiBusy(true);
-    setAiReason("");
-    try {
-      const res = await fetch(`${API}/api/ai/suggest-receipt-account?companyId=${cid}`, {
-        method: "POST",
-        headers: { ...h, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entityType: form.entityType,
-          entityId: form.entityId ? parseInt(form.entityId) : null,
-          entityName: form.entityName,
-          description: form.description,
-          refType: form.refType,
-          refNumber: form.refNumber,
-          notes: form.notes,
-          amount: Number(form.amount || 0),
-        }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || t(`${NS}.aiFailed`));
-      if (j.accountId) {
-        setForm(p => ({ ...p, accountId: String(j.accountId) }));
-        setAiReason(j.reasoning || "");
-        toast({ title: t(`${NS}.aiSuggested`), description: j.accountLabel });
-      } else {
-        toast({ title: t(`${NS}.aiNotFound`), description: j.reasoning, variant: "destructive" });
-      }
-    } catch (e: any) {
-      toast({ title: t(`${NS}.aiFailed`), description: parseError(e), variant: "destructive" });
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
   // ── Save / Save-and-post mutation ──────────────────────────────
-  // `mode` decides whether we just save (draft) or save and immediately
-  // post. The backend always returns the voucher in its CURRENT state
-  // (draft after POST/PUT), so we chain /post when the user explicitly
-  // asked for it.
   const [pendingMode, setPendingMode] = useState<"draft" | "post" | null>(null);
-  const [tab, setTab] = useState<"voucher" | "entity">("voucher");
   const isLockedSourceEntry = !isNew && existing?.status === "posted";
 
   const saveMut = useMutation({
@@ -274,15 +255,20 @@ export default function ReceiptVoucherForm() {
         throw new Error(t(`${NS}.cashBoxRequired`, "الخزنة مطلوبة عند الدفع نقداً"));
       if (form.paymentType === "bank" && !form.bankAccountId)
         throw new Error(t(`${NS}.bankRequired`, "الحساب البنكي مطلوب عند الدفع بنكاً"));
+      if (!form.entityId)
+        throw new Error(t(`${NS}.customerRequired`, "اختيار العميل مطلوب"));
 
       const body = {
         ...form,
         amount: amtNum.toFixed(2),
         companyId: cid,
-        accountId:    form.accountId    ? parseInt(form.accountId)    : null,
+        // Server force-overrides to "customer" but we send it for clarity.
+        entityType: "customer",
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
         entityId:     form.entityId     ? parseInt(form.entityId)     : null,
+        salesInvoiceId: linkInvoice && form.salesInvoiceId
+          ? parseInt(form.salesInvoiceId) : null,
       };
 
       const url = isNew
@@ -310,9 +296,11 @@ export default function ReceiptVoucherForm() {
       return { ...saved, _posted: false };
     },
     onSuccess: (data: any) => {
-      try { if (form.accountId) localStorage.setItem(ACCT_KEY, form.accountId); } catch {}
       qc.invalidateQueries({ queryKey: ["receipt-vouchers"] });
       qc.invalidateQueries({ queryKey: ["receipt-voucher", data.id] });
+      // The sales-invoices listing surfaces the linked payment, so make
+      // sure it refetches after a save that touches a link.
+      qc.invalidateQueries({ queryKey: ["sales-invoices"] });
       if (data?._postError) {
         toast({
           variant: "destructive",
@@ -341,27 +329,11 @@ export default function ReceiptVoucherForm() {
       });
       return;
     }
-    // Auto-switch to whichever tab contains a missing required field
-    // so the user actually sees the highlighted control.
-    if (
-      !form.date ||
-      (form.paymentType === "cash" && !form.cashBoxId) ||
-      (form.paymentType === "bank" && !form.bankAccountId)
-    ) {
-      setTab("voucher");
-    } else {
-      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
-      const amtNum = Number(cleanAmt);
-      if (!isFinite(amtNum) || amtNum <= 0) setTab("entity");
-    }
     setPendingMode(mode);
     saveMut.mutate(mode);
   }
 
   // ── Form-wide Enter-key navigation ─────────────────────────────
-  // Same pattern as JournalEntryForm: Enter advances focus to the next
-  // editable control; Enter on the last control saves as draft (we do
-  // NOT auto-post on Enter — posting is an explicit user action).
   const formRef = useRef<HTMLDivElement>(null);
 
   function getNavList(): HTMLElement[] {
@@ -412,7 +384,7 @@ export default function ReceiptVoucherForm() {
     advanceFromTarget(target);
   }
 
-  // ── Print (single voucher) — opens a printer-friendly window ──
+  // ── Print (single voucher) ─────────────────────────────────────
   function escapeHtml(s: any) {
     return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
   }
@@ -425,6 +397,9 @@ export default function ReceiptVoucherForm() {
     const treasuryName = existing.paymentType === "bank"
       ? (ba ? (isRtl ? ba.nameAr : (ba.nameEn || ba.nameAr)) : "—")
       : (cb ? (isRtl ? cb.nameAr : (cb.nameEn || cb.nameAr)) : "—");
+    const linkedInv = existing.salesInvoiceId
+      ? (salesInvoices as any[]).find((i: any) => i.id === existing.salesInvoiceId)
+      : null;
     const html = `<!doctype html><html dir="rtl"><head><meta charset="utf-8"/><title>سند قبض ${escapeHtml(existing.code)}</title>
 <style>
 body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:24px; }
@@ -446,8 +421,8 @@ h1 { color:#1e3a8a; border-bottom: 2px solid #1e3a8a; padding-bottom:8px; margin
   <div><div class="lbl">الحالة</div><div class="val">${existing.status === "posted" ? "مرحَّل" : "مسودة"}</div></div>
   <div><div class="lbl">وسيلة الدفع</div><div class="val">${existing.paymentType === "bank" ? "بنك" : "نقداً"}</div></div>
   <div><div class="lbl">${existing.paymentType === "bank" ? "الحساب البنكي" : "الخزنة"}</div><div class="val">${escapeHtml(treasuryName)}</div></div>
-  <div><div class="lbl">الجهة</div><div class="val">${escapeHtml(existing.entityName ?? "—")}</div></div>
-  <div><div class="lbl">المرجع</div><div class="val">${escapeHtml(existing.refType ?? "")} ${escapeHtml(existing.refNumber ?? "")}</div></div>
+  <div><div class="lbl">العميل</div><div class="val">${escapeHtml(existing.entityName ?? "—")}</div></div>
+  <div><div class="lbl">فاتورة المبيعات المرتبطة</div><div class="val">${linkedInv ? escapeHtml(linkedInv.docNumber ?? `SI-${linkedInv.id}`) : "—"}</div></div>
 </div>
 <div class="amount-box">
   <div class="lbl">المبلغ المستلم</div>
@@ -476,6 +451,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
       onKeyDown={handleFormKeyDown}
       className="p-6 space-y-5 max-w-6xl mx-auto pb-24"
       dir={isRtl ? "rtl" : "ltr"}
+      data-testid="receipt-voucher-form"
     >
       {/* ─── Header bar ────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -499,14 +475,13 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* prev/next/search — only on edit views */}
           {!isNew && navList.length > 0 && (
             <div className="flex items-center gap-1 rounded-md border bg-background px-1 py-0.5 print:hidden">
               <Button type="button" variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs"
                 disabled={!prevVoucher}
                 onClick={() => prevVoucher && navigate(`/cash/receipt-vouchers/${prevVoucher.id}`)}
                 title={prevVoucher ? `${prevVoucher.code}` : ""}>
-                <ChevronRight className={cn("h-3.5 w-3.5", !isRtl && "rotate-180")} />
+                <ChevronLeft className={cn("h-3.5 w-3.5", isRtl && "rotate-180")} />
                 {t(`${NS}.prev`, "السابق")}
               </Button>
               <span className="text-[11px] tabular-nums px-1.5 text-muted-foreground select-none">
@@ -542,7 +517,6 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
             </Button>
           )}
 
-          {/* Status badge */}
           {!isNew && existing && (
             <span className={cn(
               "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border",
@@ -570,24 +544,17 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
       {/* ─── Two-column body: form + live preview ─────────────── */}
       <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
-          {/* ── Left column: form (two-tab layout) ────────────── */}
-          <div>
-            <Tabs value={tab} onValueChange={(v) => setTab(v as "voucher" | "entity")} className="w-full">
-              <TabsList className="grid grid-cols-2 w-full h-11">
-                <TabsTrigger value="voucher" className="gap-2 data-[state=active]:bg-amber-50 data-[state=active]:text-amber-900 data-[state=active]:shadow-sm">
-                  <FileText className="h-4 w-4" />
-                  <span className="font-semibold">{t(`${NS}.section_voucher`, "بيانات السند")}</span>
-                </TabsTrigger>
-                <TabsTrigger value="entity" className="gap-2 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-900 data-[state=active]:shadow-sm">
-                  <User2 className="h-4 w-4" />
-                  <span className="font-semibold">{t(`${NS}.section_entity`, "الجهة والمبلغ")}</span>
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Tab 1: voucher header */}
-              <TabsContent value="voucher" className="mt-4 space-y-3">
-                <Card className="border-2">
-                  <CardContent className="pt-5 pb-5 space-y-4">
+          {/* ── Left column: SINGLE-TAB form ──────────────────── */}
+          <div className="space-y-4">
+            {/* Section: Header */}
+            <Card className="border-2">
+              <CardHeader className="py-3 px-4 border-b bg-muted/30">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-amber-700" />
+                  {t(`${NS}.section_header`, "بيانات السند")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-4">
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.code`)}</Label>
@@ -597,7 +564,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     <Label className="text-xs font-medium">
                       {t(`${NS}.date`)} <span className="text-destructive">*</span>
                     </Label>
-                    <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" />
+                    <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="rv-date" />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.exchangeRate`)}</Label>
@@ -607,10 +574,11 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
 
                 {/* Payment method as visual segmented buttons (cash | bank) */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.paymentMethod`)}</Label>
+                  <Label className="text-xs font-medium">{t(`${NS}.paymentMethod`)} <span className="text-destructive">*</span></Label>
                   <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
                     <button type="button"
                       onClick={() => setForm(p => ({ ...p, paymentType: "cash", bankAccountId: "" }))}
+                      data-testid="rv-paytype-cash"
                       className={cn(
                         "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
                         form.paymentType === "cash"
@@ -621,6 +589,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     </button>
                     <button type="button"
                       onClick={() => setForm(p => ({ ...p, paymentType: "bank", cashBoxId: "" }))}
+                      data-testid="rv-paytype-bank"
                       className={cn(
                         "px-4 h-8 rounded-md text-xs font-medium flex items-center gap-1.5 transition",
                         form.paymentType === "bank"
@@ -630,6 +599,9 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                       <Building2 className="h-3.5 w-3.5" /> {t(`${NS}.bank`)}
                     </button>
                   </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {t(`${NS}.jeHintDr`, "هذا الجانب سيكون مديناً في القيد المحاسبي")}
+                  </p>
                 </div>
 
                 {/* Cash box / bank account — searchable comboboxes */}
@@ -662,83 +634,43 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     />
                   </div>
                 )}
-                  </CardContent>
-                </Card>
-                <div className="flex justify-end pt-1">
-                  <Button type="button" onClick={() => setTab("entity")} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
-                    {t(`${NS}.nextStep`, "التالي: الجهة والمبلغ")}
-                    {isRtl ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </TabsContent>
+              </CardContent>
+            </Card>
 
-              {/* Tab 2: entity, amount, counter account */}
-              <TabsContent value="entity" className="mt-4 space-y-3">
-                <Card className="border-2">
-                  <CardContent className="pt-5 pb-5 space-y-4">
-                {/* Entity type as segmented buttons */}
+            {/* Section: Customer + Amount */}
+            <Card className="border-2 border-blue-100">
+              <CardHeader className="py-3 px-4 border-b bg-blue-50/40">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
+                  <User2 className="h-4 w-4" />
+                  {t(`${NS}.section_customer`, "العميل والمبلغ")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-4">
+                {/* Customer (only entity option) */}
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.entityType`)}</Label>
-                  <div className="inline-flex rounded-lg border bg-muted/20 p-0.5">
-                    {(["customer", "supplier", "other"] as const).map(et => (
-                      <button key={et} type="button"
-                        onClick={() => setForm(p => ({ ...p, entityType: et, entityId: "", entityName: "" }))}
-                        className={cn(
-                          "px-4 h-8 rounded-md text-xs font-medium transition",
-                          form.entityType === et
-                            ? "bg-background text-foreground shadow-sm border"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}>
-                        {t(`${NS}.${et}`)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Entity selector — searchable for customer/supplier; free text for other */}
-                {form.entityType === "other" ? (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.entityName`)}</Label>
-                    <Input value={form.entityName} onChange={e => setForm(p => ({ ...p, entityName: e.target.value }))} placeholder={t(`${NS}.entityName`)} className="h-9 text-sm" />
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">
-                      {form.entityType === "customer" ? t(`${NS}.customer`) : t(`${NS}.supplier`)}
-                    </Label>
-                    <SearchCombobox
-                      items={entityItems}
-                      value={form.entityId}
-                      onValueChange={v => {
-                        const found = (entityList as any[]).find((x: any) => String(x.id) === v);
-                        setForm(p => ({
-                          ...p,
-                          entityId: v,
-                          entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
-                        }));
-                      }}
-                      placeholder={t(`${NS}.selectEntity`)}
-                      searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
-                      emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
-                    />
-                  </div>
-                )}
-
-                {/* Counter account + AI suggest */}
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">{t(`${NS}.counterAccount`)}</Label>
-                  <div className="flex gap-2 items-stretch">
-                    <div className="flex-1">
-                      <AccountCombobox value={form.accountId} onValueChange={v => setForm(p => ({ ...p, accountId: v }))} placeholder={t("cashCommon.selectAccount")} grouped={false} />
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={suggestAccount} disabled={aiBusy} className="gap-1.5 shrink-0 text-purple-700 border-purple-300 hover:bg-purple-50">
-                      {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                      {t(`${NS}.aiSuggest`)}
-                    </Button>
-                  </div>
-                  {aiReason && (
-                    <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed bg-purple-50/50 border border-purple-100 rounded p-2">{aiReason}</p>
-                  )}
+                  <Label className="text-xs font-medium">
+                    {t(`${NS}.customer`)} <span className="text-destructive">*</span>
+                  </Label>
+                  <SearchCombobox
+                    items={customerItems}
+                    value={form.entityId}
+                    onValueChange={v => {
+                      const found = (customers as any[]).find((x: any) => String(x.id) === v);
+                      setForm(p => ({
+                        ...p,
+                        entityId: v,
+                        entityName: (isRtl ? found?.nameAr : (found?.nameEn || found?.nameAr)) || "",
+                        // Linking a different customer invalidates the linked invoice.
+                        salesInvoiceId: "",
+                      }));
+                    }}
+                    placeholder={t(`${NS}.selectCustomer`, "— اختر العميل —")}
+                    searchPlaceholder={t(`${NS}.searchEntity`, "ابحث بالاسم أو الكود...")}
+                    emptyText={t(`${NS}.noResults`, "لا توجد نتائج")}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {t(`${NS}.jeHintCr`, "العميل سيكون دائناً في القيد المحاسبي")}
+                  </p>
                 </div>
 
                 {/* Amount — large prominent input */}
@@ -753,13 +685,81 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                       value={form.amount}
                       onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
                       dir="ltr"
+                      data-testid="rv-amount"
                       className={cn("h-12 text-xl font-mono font-bold text-left", isRtl ? "pr-11" : "pl-11")}
                     />
                   </div>
                 </div>
 
-                {/* Reference fields (collapsible-feeling: small grid) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {/* Optional: link to a sales invoice */}
+                <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/30 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Link2 className="h-4 w-4 text-blue-700" />
+                      <Label htmlFor="rv-link-toggle" className="text-xs font-semibold text-blue-900 cursor-pointer">
+                        {t(`${NS}.linkInvoiceTitle`, "سداد مقابل فاتورة مبيعات (اختياري)")}
+                      </Label>
+                    </div>
+                    <Switch
+                      id="rv-link-toggle"
+                      checked={linkInvoice}
+                      onCheckedChange={(v) => {
+                        setLinkInvoice(v);
+                        if (!v) setForm(p => ({ ...p, salesInvoiceId: "" }));
+                      }}
+                      data-testid="rv-link-toggle"
+                    />
+                  </div>
+                  {linkInvoice && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">
+                        {t(`${NS}.selectInvoiceToLink`, "اختر فاتورة المبيعات")}
+                      </Label>
+                      <div className="flex gap-2 items-stretch">
+                        <div className="flex-1">
+                          <SearchCombobox
+                            items={invoiceItems}
+                            value={form.salesInvoiceId}
+                            onValueChange={v => setForm(p => ({ ...p, salesInvoiceId: v }))}
+                            placeholder={form.entityId
+                              ? t(`${NS}.selectInvoicePh`, "— اختر فاتورة —")
+                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                            searchPlaceholder={t(`${NS}.searchInvoice`, "ابحث برقم الفاتورة...")}
+                            emptyText={form.entityId
+                              ? t(`${NS}.noOpenInvoices`, "لا توجد فواتير لهذا العميل")
+                              : t(`${NS}.pickCustomerFirst`, "اختر العميل أولاً")}
+                          />
+                        </div>
+                        {form.salesInvoiceId && (
+                          <Button
+                            type="button" variant="ghost" size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            onClick={() => setForm(p => ({ ...p, salesInvoiceId: "" }))}
+                            title={t(`${NS}.clearLink`, "إلغاء الربط")}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {t(`${NS}.linkHint`, "عند الربط ستظهر فاتورة المبيعات «مسددة» في قائمة فواتير المبيعات بنوع السداد المحدد.")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Section: References & Notes */}
+            <Card className="border-2 border-slate-100">
+              <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-slate-700" />
+                  {t(`${NS}.section_refs`, "المراجع والبيان")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 pb-4 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.refType`)}</Label>
                     <Input value={form.refType} onChange={e => setForm(p => ({ ...p, refType: e.target.value }))} placeholder={t(`${NS}.refTypePh`)} className="h-9 text-sm" />
@@ -769,8 +769,6 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     <Input value={form.refNumber} onChange={e => setForm(p => ({ ...p, refNumber: e.target.value }))} placeholder="INV-0001" dir="ltr" className="h-9 text-sm text-left font-mono" />
                   </div>
                 </div>
-
-                {/* Description + notes */}
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.description`)}</Label>
                   <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder={t(`${NS}.descriptionPh`)} className="h-9 text-sm" />
@@ -779,16 +777,8 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                   <Label className="text-xs font-medium">{t("cashCommon.notes")}</Label>
                   <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder={t("cashCommon.notesPlaceholder")} className="text-sm resize-none" rows={2} />
                 </div>
-                  </CardContent>
-                </Card>
-                <div className="flex justify-start pt-1">
-                  <Button type="button" variant="ghost" onClick={() => setTab("voucher")} className="gap-1.5">
-                    {isRtl ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-                    {t(`${NS}.prevStep`, "السابق: بيانات السند")}
-                  </Button>
-                </div>
-              </TabsContent>
-            </Tabs>
+              </CardContent>
+            </Card>
           </div>
 
           {/* ── Right column: live JE preview (sticky on desktop) ── */}
@@ -831,12 +821,31 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
               </CardContent>
             </Card>
 
+            <div className="text-[11px] text-blue-900/80 leading-relaxed bg-blue-50/40 border border-blue-200 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <Settings2 className="h-4 w-4 mt-0.5 text-blue-700 shrink-0" />
+                <div className="space-y-1.5">
+                  <p className="font-semibold">{t(`${NS}.mappingsHintTitle`, "روابط الحسابات العامة")}</p>
+                  <p>
+                    {t(`${NS}.mappingsHintBody`, "حسابات الخزينة/البنك/العميل الافتراضية تُدار الآن من شاشة «ربط القيود المحاسبية» في لوحة التحكم — قسم «تسوية العملاء (سندات القبض)».")}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-[11px] text-blue-700 hover:text-blue-900 underline underline-offset-2"
+                    onClick={() => navigate("/settings/accounting-mappings")}
+                  >
+                    {t(`${NS}.openMappings`, "فتح شاشة ربط القيود المحاسبية")}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="text-[11px] text-muted-foreground leading-relaxed bg-muted/20 border rounded-lg p-3">
               <p className="font-semibold mb-1">{t(`${NS}.tipsTitle`, "اختصارات سريعة")}</p>
               <ul className="space-y-0.5 list-disc list-inside">
                 <li>{t(`${NS}.tip_enter`, "Enter للانتقال للحقل التالي")}</li>
                 <li>{t(`${NS}.tip_search`, "اكتب في القوائم للبحث الفوري")}</li>
-                <li>{t(`${NS}.tip_ai`, "زر AI يقترح الحساب المقابل")}</li>
+                <li>{t(`${NS}.tip_link`, "فعّل الربط لربط السند بفاتورة مبيعات")}</li>
               </ul>
             </div>
           </aside>
@@ -851,12 +860,12 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
               {t("cashCommon.cancel")}
             </Button>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => save("draft")} disabled={saveMut.isPending} className="gap-1.5">
+              <Button variant="outline" onClick={() => save("draft")} disabled={saveMut.isPending} className="gap-1.5" data-testid="rv-save-draft">
                 {pendingMode === "draft" && saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {t(`${NS}.saveDraft`, "حفظ كمسودة")}
               </Button>
               {autoPostingEnabled && (
-                <Button onClick={() => save("post")} disabled={saveMut.isPending} className="gap-1.5 bg-green-600 hover:bg-green-700">
+                <Button onClick={() => save("post")} disabled={saveMut.isPending} className="gap-1.5 bg-green-600 hover:bg-green-700" data-testid="rv-save-post">
                   {pendingMode === "post" && saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   {t(`${NS}.saveAndPost`, "حفظ وترحيل")}
                 </Button>

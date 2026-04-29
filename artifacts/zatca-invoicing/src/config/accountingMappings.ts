@@ -75,12 +75,12 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "customer_settlement",
-    label: "تسوية العملاء",
-    description: "قبض دفعة من العميل: مدين الخزينة/البنك، دائن العميل.",
+    label: "تسوية العملاء (سندات القبض)",
+    description: "روابط الحسابات العامة لسندات القبض — تُستخدم تلقائياً عند الترحيل: مدين الخزينة/البنك، دائن العميل. الخزن والبنوك تستخدم حساباتها المباشرة أولاً ثم تعود إلى هذه الحسابات احتياطياً.",
     roles: [
-      { key: "cash",       label: "الخزينة (مدين)", description: "استلام نقدي.", defaultHintCode: "1110", accountType: "asset" },
-      { key: "bank",       label: "البنك (مدين)", description: "إيداع بنكي.", defaultHintCode: "1130", accountType: "asset" },
-      { key: "receivable", label: "حساب العملاء (دائن)", description: "خصم من رصيد العميل.", defaultHintCode: "1210", accountType: "asset" },
+      { key: "cash",       label: "الخزينة (مدين) — افتراضي لسندات القبض النقدية", description: "حساب النقدية الافتراضي إذا لم تكن الخزنة المختارة في سند القبض مرتبطة بحساب محاسبي.", defaultHintCode: "1110", accountType: "asset" },
+      { key: "bank",       label: "البنك (مدين) — افتراضي لسندات القبض البنكية", description: "حساب البنك الافتراضي إذا لم يكن الحساب البنكي المختار في سند القبض مرتبطاً بحساب محاسبي.", defaultHintCode: "1130", accountType: "asset" },
+      { key: "receivable", label: "حساب العملاء (دائن) — افتراضي لسندات القبض", description: "حساب الذمم المدينة الافتراضي إذا لم يكن العميل في سند القبض مرتبطاً بحساب محاسبي.", defaultHintCode: "1210", accountType: "asset" },
     ],
   },
   {

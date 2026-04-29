@@ -5,6 +5,7 @@ import { companiesTable } from "./companies";
 import { branchesTable } from "./branches";
 import { accountsTable } from "./accounts";
 import { currenciesTable } from "./currencies";
+import { salesInvoicesTable } from "./sales";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const cashVoucherStatusEnum = pgEnum("cash_voucher_status", ["draft", "posted"]);
@@ -68,6 +69,10 @@ export const receiptVouchersTable = pgTable("receipt_vouchers", {
   exchangeRate:  numeric("exchange_rate", { precision: 15, scale: 6 }).default("1"),
   refType:       text("ref_type"),
   refNumber:     text("ref_number"),
+  // Optional FK to a sales invoice this receipt is settling. When set,
+  // the sales-invoices listing surfaces a "paid via cash/bank" badge so
+  // accountants can see at a glance which invoices were collected.
+  salesInvoiceId: integer("sales_invoice_id").references(() => salesInvoicesTable.id, { onDelete: "set null" }),
   description:   text("description"),
   notes:         text("notes"),
   status:        cashVoucherStatusEnum("status").notNull().default("draft"),
