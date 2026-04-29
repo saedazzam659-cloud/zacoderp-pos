@@ -115,3 +115,69 @@ Clicking the new sidebar entry will currently land on the global
 not-found page until the maintenance pages are implemented. That is
 intentional — the user only requested the menu/permission registration
 in this task.
+
+## Accounting Maintenance & Trial Balance module — full implementation
+
+The "الصيانة المحاسبية وميزان المراجعة" module is now fully built end-to-end
+on top of the menu/permissions scaffolding above.
+
+DB schema (`lib/db/src/schema/trialBalances.ts`, registered in
+`lib/db/src/schema/index.ts`):
+- `trial_balances` — header (companyId, fiscalYear, periodStart/End,
+  balanceType: opening|before_review|after_review|closing, status:
+  draft|in_review|approved, totals, notes, createdBy, approvedBy/At,
+  sourceTrialBalanceId for closing-clones).
+- `trial_balance_details` — per-account lines with originalDebit/Credit
+  preserved alongside current debit/credit, isUnlinked flag for codes
+  not found in the chart of accounts, changeReason.
+- `trial_balance_adjustments` — adjustment journal-entry references
+  (trialBalanceId, journalEntryId, description, category, amount,
+  createdBy).
+- `trial_balance_logs` — append-only audit trail (action, details JSON,
+  userId, createdAt).
+
+Backend (`artifacts/api-server/src/routes/trial-balances.ts`, mounted at
+`/api/trial-balances`, gated by `requireModulePermission(
+"accounting_maintenance")`):
+- Full CRUD, line edit/add/delete with audit log.
+- `POST /:id/import` — bulk-imports lines, links accountCode to the
+  chart of accounts, marks unlinked rows.
+- `GET /:id/compare/:otherId` — line-by-line diff between two trial
+  balances of the same company.
+- `POST /:id/adjustments` — wraps JE header + JE lines + adjustment row
+  + detail mutations in a single `db.transaction`; validates EVERY
+  `accountId` belongs to the caller's company up-front (tenant
+  isolation), enforces debit=credit on the adjustment.
+- `POST /:id/approve` — debit=credit guard, flips to approved, stamps
+  approver/timestamp, audited.
+- `POST /:id/convert-to-closing` — clones an approved TB into a new
+  `balanceType: "closing"` row carrying `sourceTrialBalanceId`.
+- `GET /:id/report?type=detailed|summary|before-after|adjustments`.
+
+AI helper (`artifacts/api-server/src/routes/ai.ts` →
+`POST /api/ai/analyze-trial-balance`, also gated by
+`requireModulePermission("accounting_maintenance")`): detects abnormal
+balances (asset/expense with credit, liability/equity/revenue with
+debit), suggests an offsetting adjustment when imbalanced. Tries the
+configured `OPENAI_BASE`/`OPENAI_KEY` model and falls back to a fully
+deterministic rule-based result so the UI works without an AI key.
+
+Frontend (`artifacts/zatca-invoicing/src/pages/accounting/`):
+- `TrialBalances.tsx` — list with status/type filters, search, create
+  dialog, navigates to detail page.
+- `TrialBalanceDetail.tsx` — header card (status, totals, debit-credit
+  diff indicator) plus 5 tabs: Lines (edit/delete with reason),
+  Compare (against any other TB), Adjustments (add via balanced
+  multi-line form), Reports (4 report variants + print), Audit Log.
+  Top-bar actions: import, export Excel, AI analyze, approve, convert
+  to closing.
+- `TrialBalanceImportDialog.tsx` — XLSX/CSV upload via SheetJS with
+  Arabic+English header auto-mapping (كود الحساب / مدين / دائن / etc.),
+  client-side preview, balance check, replace-existing toggle, and a
+  downloadable Arabic template.
+- API client at `artifacts/zatca-invoicing/src/lib/trialBalancesApi.ts`.
+- Routes wired in `App.tsx` at `/accounting/maintenance` and
+  `/accounting/maintenance/:id`, gated by the `accounting_maintenance`
+  module permission.
+- All UI strings under `trialBalanceMaintenance.*` in both `ar.json`
+  and `en.json`.

@@ -143,6 +143,8 @@ import Branches from "@/pages/org/Branches";
 import JournalEntries from "@/pages/accounting/JournalEntries";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import OpeningBalances from "@/pages/accounting/OpeningBalances";
+import TrialBalances from "@/pages/accounting/TrialBalances";
+import TrialBalanceDetail from "@/pages/accounting/TrialBalanceDetail";
 import Currencies from "@/pages/settings/Currencies";
 import AccountingMappings from "@/pages/settings/AccountingMappings";
 import DataImportExport from "@/pages/settings/DataImportExport";
@@ -472,6 +474,8 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/journals/new"   module="journal_entries" action="create" component={JournalEntryForm} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals/:id"   module="journal_entries" component={JournalEntryForm} />}
             {!isSuperAdmin && <PermRoute path="/accounting/opening-balances" module="journal_entries" action="create" component={OpeningBalances} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/maintenance"      module="accounting_maintenance" component={TrialBalances} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/maintenance/:id"  module="accounting_maintenance" component={TrialBalanceDetail} />}
             {/* Accounting Reports */}
             {!isSuperAdmin && <Route path="/accounting/reports"><Redirect to="/accounting/reports/trial-balance" /></Route>}
             {!isSuperAdmin && <PermRoute path="/accounting/reports/account-statement" module="accounting_reports" component={AccountStatement} />}

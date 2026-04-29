@@ -8,6 +8,7 @@ export * from "./inventory";
 export * from "./accounts";
 export * from "./branches";
 export * from "./journalEntries";
+export * from "./trialBalances";
 export * from "./currencies";
 export * from "./purchasing";
 export * from "./sales";

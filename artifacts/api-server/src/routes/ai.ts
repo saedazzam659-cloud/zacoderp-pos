@@ -8,7 +8,7 @@ import {
 } from "@workspace/db";
 import { and, eq, desc } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
 
@@ -3134,5 +3134,121 @@ ${SEVERITIES.map(s => `- ${s}`).join("\n")}
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "AI vision failed" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Trial Balance — analyze imbalance, abnormal accounts, suggest adjustments
+// ═══════════════════════════════════════════════════════════════════
+router.post("/analyze-trial-balance", requireModulePermission("accounting_maintenance"), async (req, res) => {
+  try {
+    const { lines, totalDebit, totalCredit } = req.body as {
+      lines: Array<{ accountCode: string; accountName: string; accountType?: string; debit: number|string; credit: number|string }>;
+      totalDebit: number|string;
+      totalCredit: number|string;
+    };
+    if (!Array.isArray(lines)) {
+      res.status(400).json({ error: "lines required" }); return;
+    }
+    const td = Number(totalDebit ?? 0);
+    const tc = Number(totalCredit ?? 0);
+    const diff = +(td - tc).toFixed(2);
+
+    function fallback() {
+      // Deterministic rules: detect imbalance + flag abnormal accounts
+      // (asset/expense should be debit-positive; liability/equity/revenue credit-positive).
+      const abnormal: Array<{ accountCode: string; accountName: string; reason: string; severity: "low"|"medium"|"high" }> = [];
+      for (const l of lines) {
+        const t = String(l.accountType || "").toLowerCase();
+        const d = Number(l.debit  ?? 0);
+        const c = Number(l.credit ?? 0);
+        if (d < 0 || c < 0) {
+          abnormal.push({ accountCode: l.accountCode, accountName: l.accountName, reason: "قيمة سالبة في المدين/الدائن", severity: "high" });
+        }
+        if (d > 0 && c > 0) {
+          abnormal.push({ accountCode: l.accountCode, accountName: l.accountName, reason: "كلا الجانبين (مدين ودائن) لهما قيم", severity: "medium" });
+        }
+        if ((t === "asset" || t === "expense") && c > 0 && d === 0) {
+          abnormal.push({ accountCode: l.accountCode, accountName: l.accountName, reason: `حساب ${t === "asset" ? "أصول" : "مصروفات"} برصيد دائن (غير معتاد)`, severity: "low" });
+        }
+        if ((t === "liability" || t === "equity" || t === "revenue") && d > 0 && c === 0) {
+          abnormal.push({ accountCode: l.accountCode, accountName: l.accountName, reason: `حساب ${t === "liability" ? "خصوم" : t === "equity" ? "حقوق ملكية" : "إيرادات"} برصيد مدين (غير معتاد)`, severity: "low" });
+        }
+      }
+      const suggestions: Array<{ description: string; lines: Array<{ accountCode: string; debit: number; credit: number }> }> = [];
+      if (Math.abs(diff) > 0.01) {
+        suggestions.push({
+          description: `قيد تسوية تلقائي لمعالجة الفرق ${Math.abs(diff).toFixed(2)} ر.س`,
+          lines: diff > 0
+            ? [
+                { accountCode: "*ضع كود حساب فرق المراجعة المدين*", debit: 0, credit: Math.abs(diff) },
+                { accountCode: "*ضع كود الحساب المقابل*", debit: Math.abs(diff), credit: 0 },
+              ]
+            : [
+                { accountCode: "*ضع كود حساب فرق المراجعة الدائن*", debit: Math.abs(diff), credit: 0 },
+                { accountCode: "*ضع كود الحساب المقابل*", debit: 0, credit: Math.abs(diff) },
+              ],
+        });
+      }
+      const imbalanceReason = Math.abs(diff) > 0.01
+        ? `الميزان غير متوازن بفرق ${diff.toFixed(2)} ر.س (المدين ${td.toFixed(2)} مقابل الدائن ${tc.toFixed(2)}). راجع البنود الشاذة أدناه أو طبّق قيد تسوية مقترح.`
+        : `الميزان متوازن (إجمالي المدين = إجمالي الدائن = ${td.toFixed(2)} ر.س).`;
+      return {
+        source: "fallback" as const,
+        balanced: Math.abs(diff) < 0.01,
+        difference: diff,
+        imbalanceReason,
+        abnormalAccounts: abnormal,
+        suggestions,
+      };
+    }
+
+    if (!OPENAI_BASE || !OPENAI_KEY) { res.json(fallback()); return; }
+    try {
+      const top = lines.slice(0, 80).map(l => `${l.accountCode}|${l.accountName}|${l.accountType||""}|${Number(l.debit||0).toFixed(2)}|${Number(l.credit||0).toFixed(2)}`).join("\n");
+      const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          max_completion_tokens: 1500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "أنت محاسب خبير تحلل ميزان المراجعة. ترد بـ JSON فقط." },
+            { role: "user", content:
+`حلّل ميزان المراجعة التالي:
+- إجمالي المدين: ${td.toFixed(2)}
+- إجمالي الدائن: ${tc.toFixed(2)}
+- الفرق: ${diff.toFixed(2)}
+
+البنود (code|name|type|debit|credit):
+${top}
+
+أرجع JSON بالحقول التالية:
+{
+  "balanced": boolean,
+  "imbalanceReason": "تفسير قصير للفرق إن وُجد",
+  "abnormalAccounts": [{ "accountCode": "...", "accountName": "...", "reason": "...", "severity": "low|medium|high" }],
+  "suggestions": [{ "description": "...", "lines": [{ "accountCode": "...", "debit": 0, "credit": 0 }] }]
+}` },
+          ],
+        }),
+      });
+      if (!r.ok) { res.json(fallback()); return; }
+      const data = await r.json();
+      let parsed: any;
+      try { parsed = JSON.parse(data?.choices?.[0]?.message?.content ?? "{}"); }
+      catch { res.json(fallback()); return; }
+      res.json({
+        source: "ai",
+        balanced: parsed?.balanced === true || Math.abs(diff) < 0.01,
+        difference: diff,
+        imbalanceReason: String(parsed?.imbalanceReason || "").trim() || fallback().imbalanceReason,
+        abnormalAccounts: Array.isArray(parsed?.abnormalAccounts) ? parsed.abnormalAccounts : [],
+        suggestions: Array.isArray(parsed?.suggestions) ? parsed.suggestions : [],
+      });
+    } catch { res.json(fallback()); }
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تحليل ميزان المراجعة فشل" });
   }
 });
