@@ -39,12 +39,12 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   },
   {
     key: "supplier_settlement",
-    label: "تسوية الموردين",
-    description: "سداد دفعة نقدية أو بنكية للمورد: مدين المورد، دائن الخزينة/البنك.",
+    label: "تسوية الموردين (سندات الصرف)",
+    description: "روابط الحسابات العامة لسندات الصرف — تُستخدم تلقائياً عند الترحيل: مدين المورد، دائن الخزينة/البنك. الخزن والبنوك تستخدم حساباتها المباشرة أولاً ثم تعود إلى هذه الحسابات احتياطياً.",
     roles: [
-      { key: "payable", label: "حساب الموردين (مدين)", description: "تخفيض التزام المورد.", defaultHintCode: "2110", accountType: "liability" },
-      { key: "cash",    label: "الخزينة (دائن)", description: "خصم نقدي من الصندوق.", defaultHintCode: "1110", accountType: "asset" },
-      { key: "bank",    label: "البنك (دائن)", description: "خصم من الحساب البنكي.", defaultHintCode: "1130", accountType: "asset" },
+      { key: "payable", label: "حساب الموردين (مدين) — افتراضي لسندات الصرف", description: "حساب الذمم الدائنة الافتراضي إذا لم يكن المورد في سند الصرف مرتبطاً بحساب محاسبي.", defaultHintCode: "2110", accountType: "liability" },
+      { key: "cash",    label: "الخزينة (دائن) — افتراضي لسندات الصرف النقدية", description: "حساب النقدية الافتراضي إذا لم تكن الخزنة المختارة في سند الصرف مرتبطة بحساب محاسبي.", defaultHintCode: "1110", accountType: "asset" },
+      { key: "bank",    label: "البنك (دائن) — افتراضي لسندات الصرف البنكية", description: "حساب البنك الافتراضي إذا لم يكن الحساب البنكي المختار في سند الصرف مرتبطاً بحساب محاسبي.", defaultHintCode: "1130", accountType: "asset" },
     ],
   },
   {
