@@ -14,6 +14,7 @@ import {
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope,
   ScrollText, Database, ListOrdered, HardDrive, Trash2,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -1330,6 +1331,7 @@ function SidebarInner({
   onAiToolsToggle,
   onNavigate,
   onLogout,
+  onClose,
 }: {
   location: string;
   isSuperAdmin: boolean;
@@ -1373,6 +1375,12 @@ function SidebarInner({
   onAiToolsToggle: () => void;
   onNavigate: () => void;
   onLogout: () => void;
+  /** Optional close handler. When provided we render a close button in
+      the header — only visible on mobile (`md:hidden`) — so the mobile
+      drawer offers an obvious way to dismiss itself in addition to the
+      backdrop tap. The desktop sidebar passes this same callback but
+      the button is hidden by responsive utilities. */
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   const filteredBusiness = companyBusinessNav.filter(i => !i.permKey || menuPerms[i.permKey] !== false);
@@ -1386,18 +1394,32 @@ function SidebarInner({
 
   return (
     <>
-      {/* Logo */}
+      {/* Logo + (mobile-only) close button. The close button is rendered
+          here so users on a phone always see an unmistakable way to dismiss
+          the drawer, in addition to tapping the dim backdrop. The ZATCA
+          badge stays for desktop where the X is hidden. */}
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-sidebar-border px-4">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm shadow">Z</div>
-          <div>
-            <p className="text-sm font-bold text-sidebar-foreground leading-tight">{t("auth.appName")}</p>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold text-sm shadow">Z</div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-sidebar-foreground leading-tight truncate">{t("auth.appName")}</p>
             <p className="text-[10px] text-sidebar-foreground/50 leading-tight">ZATCA e-Invoicing</p>
           </div>
         </div>
         <div className="hidden md:flex items-center gap-1 text-[10px] text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
           <ShieldCheck className="h-2.5 w-2.5" /><span>ZATCA</span>
         </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("common.close", { defaultValue: "إغلاق" })}
+            className="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors"
+            data-testid="mobile-sidebar-close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Context badge */}
@@ -2049,6 +2071,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleCashReportsToggle       = () => setCashReportsOpen(v => !v);
   const closeMobile = () => setMobileOpen(false);
 
+  // Lock body scroll while the mobile drawer is open so the page behind
+  // the dim backdrop doesn't scroll under the user's finger when they
+  // swipe inside the drawer. Restored on close / unmount. Wrapped in a
+  // window guard so SSR/test setups don't blow up touching `document`.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [mobileOpen]);
+
+  // ESC closes the mobile drawer — keyboard users (and external
+  // keyboards on tablets) expect this from any modal-style overlay.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeMobile(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen, closeMobile]);
+
   // ─── Auto-expand groups on direct URL navigation ───────────────────────
   // The useState initializers above only run ONCE at mount. When the user
   // navigates between routes (via Link or by typing the URL), the relevant
@@ -2154,6 +2198,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     aiToolsOpen,
     onAiToolsToggle: handleAiToolsToggle,
     onNavigate: closeMobile,
+    onClose: closeMobile,
     onLogout: logout,
   };
 
@@ -2172,16 +2217,40 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <SidebarInner {...sharedProps} />
       </aside>
 
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={closeMobile} />
-      )}
-      <aside className={cn(
-        "fixed inset-y-0 z-40 flex w-72 flex-col bg-sidebar transition-transform duration-200 md:hidden",
-        isRtl
-          ? `right-0 border-l border-border ${mobileOpen ? "translate-x-0" : "translate-x-full"}`
-          : `left-0 border-r border-border ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`
-      )}>
+      {/* Mobile overlay — always mounted so we can fade it; pointer-events
+          off when closed so it doesn't block touches. */}
+      <div
+        className={cn(
+          "fixed inset-0 z-30 bg-black/50 backdrop-blur-sm transition-opacity duration-200 md:hidden",
+          mobileOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}
+        onClick={closeMobile}
+        aria-hidden={!mobileOpen}
+      />
+      {/* Mobile drawer
+          - Responsive width: 86vw on a phone (so a sliver of the app is
+            still visible behind the dim) but capped at 20rem on tablets.
+          - Strong shadow for depth over the dim backdrop.
+          - Safe-area inset support for iPhone notches via env() padding.
+          - Slides in/out with translate-x; aria-hidden + tabIndex track
+            visibility so keyboard / screen-reader users aren't trapped
+            in an off-screen panel. */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 z-40 flex w-[86vw] max-w-[20rem] flex-col bg-sidebar shadow-2xl transition-transform duration-200 ease-out md:hidden",
+          isRtl
+            ? `right-0 border-l border-border ${mobileOpen ? "translate-x-0" : "translate-x-full"}`
+            : `left-0 border-r border-border ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`
+        )}
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+        aria-hidden={!mobileOpen}
+        aria-label={isRtl ? "القائمة الجانبية" : "Side menu"}
+        role="dialog"
+        aria-modal="true"
+      >
         <SidebarInner {...sharedProps} />
       </aside>
 
