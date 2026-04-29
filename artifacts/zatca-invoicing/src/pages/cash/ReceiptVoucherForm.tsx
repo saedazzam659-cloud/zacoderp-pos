@@ -311,7 +311,7 @@ export default function ReceiptVoucherForm() {
         toast({
           title: data?._posted
             ? (isNew ? t(`${NS}.saved_create`) : t(`${NS}.saved_update`))
-            : t(`${NS}.savedDraft`, "تم الحفظ كمسودة"),
+            : t(`${NS}.savedDraft`, "تم الحفظ بنجاح"),
         });
       }
       navigate("/cash/receipt-vouchers");

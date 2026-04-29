@@ -16,6 +16,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "react-i18next";
+import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import { Sparkles, AlertTriangle, CheckCircle2, Receipt } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -94,6 +96,7 @@ export default function JournalEntryForm() {
   const editId   = matchEdit ? Number((params as any).id) : null;
   const qc       = useQueryClient();
   const { toast } = useToast();
+  const { t }     = useTranslation();
 
   const [activeTab,    setActiveTab]    = useState("header");
   const [docNumber,    setDocNumber]    = useState("");
@@ -528,7 +531,11 @@ export default function JournalEntryForm() {
       isNew ? journalEntriesApi.create(data) : journalEntriesApi.update(editId!, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
-      toast({ title: isNew ? "تم إنشاء القيد بنجاح" : "تم تحديث القيد بنجاح" });
+      // The toast title reflects whether the auto-print preference for
+      // journal entries actually fires below. Posting is not part of
+      // the JE save flow (handled separately from the list), so we
+      // never set `posted: true` here.
+      toast({ title: getSaveToastTitle(t, { posted: false, printed: autoPrintJournal }) });
       if (autoPrintJournal) {
         // Fire the print popup synchronously off the user-initiated save
         // click so the browser's pop-up blocker still treats it as

@@ -53,7 +53,13 @@
     "subtotal": "الصافي",
     "vat": "الضريبة",
     "discount": "الخصم",
-    "grandTotal": "الإجمالي"
+    "grandTotal": "الإجمالي",
+    "savedToast": {
+      "saved": "تم الحفظ بنجاح",
+      "savedAndPrinted": "تم الحفظ والطباعة بنجاح",
+      "savedAndPosted": "تم الحفظ والترحيل بنجاح",
+      "savedAndPostedAndPrinted": "تم الحفظ والترحيل والطباعة بنجاح"
+    }
   },
   "pagination": {
     "rowsPerPage": "صفوف لكل صفحة:",
@@ -1705,7 +1711,7 @@
     "tip_tree": "تبويب «شجرة الحسابات» لاختيار سريع",
     "saveDraft": "حفظ كمسودة",
     "saveAndPost": "حفظ وترحيل",
-    "savedDraft": "تم الحفظ كمسودة",
+    "savedDraft": "تم الحفظ بنجاح",
     "saved_create": "تم إنشاء المعاملة",
     "saved_update": "تم تحديث المعاملة",
     "savedButPostFailed": "تم الحفظ كمسودة — لكن فشل الترحيل",
@@ -2003,7 +2009,7 @@
     "searchBank": "ابحث عن حساب بنكي...",
     "searchEntity": "ابحث بالاسم أو الكود...",
     "noResults": "لا توجد نتائج",
-    "savedDraft": "تم الحفظ كمسودة",
+    "savedDraft": "تم الحفظ بنجاح",
     "savedDraftHint": "تم الحفظ كمسودة — الترحيل يدوي",
     "saveDraft": "حفظ كمسودة",
     "saveAndPost": "حفظ وترحيل",
@@ -2127,7 +2133,7 @@
     "mappingsHintTitle": "روابط الحسابات العامة",
     "mappingsHintBody": "حسابات الخزينة/البنك/المورد الافتراضية تُدار الآن من شاشة «ربط القيود المحاسبية» في لوحة التحكم — قسم «تسوية الموردين (سندات الصرف)».",
     "openMappings": "فتح شاشة ربط القيود المحاسبية",
-    "savedDraft": "تم الحفظ كمسودة",
+    "savedDraft": "تم الحفظ بنجاح",
     "savedButPostFailed": "تم الحفظ كمسودة — لكن فشل الترحيل",
     "saveDraft": "حفظ كمسودة",
     "saveAndPost": "حفظ وترحيل",

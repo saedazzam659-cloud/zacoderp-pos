@@ -12,6 +12,7 @@ import { Plus, Trash2, Banknote, CheckCircle, Printer } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
+import { getSaveToastTitle } from "@/lib/saveToast";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -91,7 +92,10 @@ export default function SupplierSettlement() {
         try { printOne(saved, paymentTemplate); } catch { /* ignore popup-blocker noise */ }
       }
       reset();
-      toast({ title: t("purchasingPages.supplierSettlement.toasts.saved") });
+      // Reflect whether the auto-print preference actually fired in
+      // the toast wording. Posting is a separate row action here, so
+      // we never set `posted: true` on the save toast.
+      toast({ title: getSaveToastTitle(t, { posted: false, printed: autoPrintPayment && !!saved }) });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });

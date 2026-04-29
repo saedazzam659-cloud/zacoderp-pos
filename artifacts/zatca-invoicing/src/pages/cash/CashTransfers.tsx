@@ -86,9 +86,11 @@ export default function CashTransfers() {
           description: data._postError,
         });
       } else {
+        // Drop the legacy "saved as draft — posting is manual" hint:
+        // when posting is manual we want the success toast to look
+        // like a clean "saved" — not surface posting state at all.
         toast({
           title: editing ? t("cashTransfers.saved_update") : t("cashTransfers.saved_create"),
-          description: data?._posted === false ? t("cashTransfers.savedDraftHint", "تم الحفظ كمسودة — الترحيل يدوي") : undefined,
         });
       }
     },

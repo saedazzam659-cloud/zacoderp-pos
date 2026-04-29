@@ -309,7 +309,7 @@ export default function FinancialTransactionForm() {
         toast({
           title: data?._posted
             ? (isNew ? t(`${NS}.saved_create`, "تم إنشاء المعاملة") : t(`${NS}.saved_update`, "تم تحديث المعاملة"))
-            : t(`${NS}.savedDraft`, "تم الحفظ كمسودة"),
+            : t(`${NS}.savedDraft`, "تم الحفظ بنجاح"),
         });
       }
       navigate("/cash/financial-transactions");

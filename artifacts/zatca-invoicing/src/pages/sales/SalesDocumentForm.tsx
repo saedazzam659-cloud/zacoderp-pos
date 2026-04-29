@@ -11,6 +11,7 @@ import { trimTrailingZeros } from "@/hooks/use-fmt";
 import { useFormatters } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useToast } from "@/hooks/use-toast";
+import { getSaveToastTitle } from "@/lib/saveToast";
 import { useNextSequenceNumber, type SequenceTxType } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -888,17 +889,15 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     },
     onSuccess: (saved: any) => {
       qc.invalidateQueries({ queryKey: [isInvoice ? "sales-invoices" : isOrder ? "sales-orders" : "sales-quotations"] });
-      toast({ title: isNew
-        ? (isInvoice
-            ? t("salesDocForm.toastInvoiceCreated")
-            : isOrder
-              ? t("salesDocForm.toastOrderCreated")
-              : t("salesDocForm.toastQuotationCreated"))
-        : (isInvoice
-            ? t("salesDocForm.toastInvoiceSaved")
-            : isOrder
-              ? t("salesDocForm.toastOrderSaved")
-              : t("salesDocForm.toastQuotationSaved")) });
+      // Reflect what actually happened: invoices auto-post when the
+      // company has auto-posting enabled, and they auto-print when the
+      // per-doc-type print preference is on. Quotations and orders
+      // never auto-post (no journal entry), so for them `posted` stays
+      // false. The toast wording falls back to the defaults baked into
+      // the helper if the i18n keys are missing.
+      const didPost   = isInvoice && autoPostingEnabled;
+      const didPrint  = autoPrintSalesInvoice && !!saved?.id;
+      toast({ title: getSaveToastTitle(t, { posted: didPost, printed: didPrint }) });
       // If auto-print is on for sales invoices, hand the just-saved id
       // and chosen template to the list page via history.state. The
       // list page reads it once on mount and triggers the print modal.

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "react-i18next";
+import { getSaveToastTitle } from "@/lib/saveToast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +23,7 @@ const EMPTY = { docNumber: "", settlementDate: today(), customerId: "", paymentM
 export default function CustomerSettlement() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
@@ -87,7 +90,10 @@ export default function CustomerSettlement() {
         try { printOne(saved, receiptTemplate); } catch { /* ignore popup-blocker noise */ }
       }
       reset();
-      toast({ title: "تم حفظ التحصيل" });
+      // Reflect whether the auto-print preference actually fired in the
+      // toast wording. Posting is a separate row action here, so we
+      // never set `posted: true` on the save toast.
+      toast({ title: getSaveToastTitle(t, { posted: false, printed: autoPrintReceipt && !!saved }) });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });

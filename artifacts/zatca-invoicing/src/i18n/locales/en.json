@@ -53,7 +53,13 @@
     "subtotal": "Subtotal",
     "vat": "VAT",
     "discount": "Discount",
-    "grandTotal": "Total"
+    "grandTotal": "Total",
+    "savedToast": {
+      "saved": "Saved successfully",
+      "savedAndPrinted": "Saved and printed successfully",
+      "savedAndPosted": "Saved and posted successfully",
+      "savedAndPostedAndPrinted": "Saved, posted, and printed successfully"
+    }
   },
   "pagination": {
     "rowsPerPage": "Rows per page:",
@@ -1703,7 +1709,7 @@
     "tip_tree": "Use the chart-of-accounts tab for fast picks",
     "saveDraft": "Save as draft",
     "saveAndPost": "Save & post",
-    "savedDraft": "Saved as draft",
+    "savedDraft": "Saved successfully",
     "saved_create": "Transaction created",
     "saved_update": "Transaction updated",
     "savedButPostFailed": "Saved as draft — but posting failed",
@@ -2001,7 +2007,7 @@
     "searchBank": "Search bank account...",
     "searchEntity": "Search by name or code...",
     "noResults": "No results",
-    "savedDraft": "Saved as draft",
+    "savedDraft": "Saved successfully",
     "savedDraftHint": "Saved as draft — posting is manual",
     "saveDraft": "Save Draft",
     "saveAndPost": "Save & Post",
@@ -2125,7 +2131,7 @@
     "mappingsHintTitle": "General Account Mappings",
     "mappingsHintBody": "Default cash/bank/supplier accounts are now managed from the “Accounting Mappings” screen — Supplier Settlement (Payment Vouchers) section.",
     "openMappings": "Open accounting mappings",
-    "savedDraft": "Saved as draft",
+    "savedDraft": "Saved successfully",
     "savedButPostFailed": "Saved as draft — but posting failed",
     "saveDraft": "Save as draft",
     "saveAndPost": "Save & Post",
