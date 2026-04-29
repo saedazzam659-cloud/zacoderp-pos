@@ -1219,8 +1219,13 @@ router.post("/companies/:id/users", requireSuperAdmin, async (req, res) => {
   const { username, email, password, role = "admin" } = req.body;
   if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
 
-  const [existing] = await db.select().from(usersTable).where(eq(usersTable.username, username));
-  if (existing) { res.status(409).json({ error: "اسم المستخدم موجود مسبقاً" }); return; }
+  // Username uniqueness is scoped to the company since the April 2026
+  // companyCode redesign — two different tenants can each have a user
+  // named "ahmed". A global lookup here would falsely reject a duplicate
+  // that lives in another company.
+  const [existing] = await db.select({ id: usersTable.id }).from(usersTable)
+    .where(and(eq(usersTable.companyId, companyId), eq(usersTable.username, username)));
+  if (existing) { res.status(409).json({ error: "اسم المستخدم موجود مسبقاً في هذه الشركة" }); return; }
 
   const passwordHash = await bcrypt.hash(password, 12);
   const [newUser] = await db.insert(usersTable).values({
