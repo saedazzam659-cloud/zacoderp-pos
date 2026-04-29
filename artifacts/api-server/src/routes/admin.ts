@@ -93,7 +93,11 @@ router.get("/requests", requireSuperAdmin, async (req, res) => {
   })
   .from(companiesTable)
   .leftJoin(usersTable, eq(usersTable.companyId, companiesTable.id))
-  .leftJoin(subscriptionsTable, eq(subscriptionsTable.companyId, companiesTable.id));
+  .leftJoin(subscriptionsTable, eq(subscriptionsTable.companyId, companiesTable.id))
+  // Soft-deleted companies must not appear in the registration-requests
+  // queue — their pending/active status snapshot is irrelevant once the
+  // tenant is in the trash.
+  .where(isNull(companiesTable.deletedAt));
 
   const rows = await query;
 
@@ -542,9 +546,14 @@ router.get("/subscriptions/usage", requireSuperAdmin, async (req, res) => {
   const latestSubsRows = sqlRows<LatestSubRow>(latestSubsResult as SqlExecuteResult<LatestSubRow>);
 
   const companyIds = latestSubsRows.map(s => Number(s.company_id));
+  // Soft-deleted companies must not pollute subscription usage —
+  // false over-limit alerts for trashed tenants would be misleading.
   const companies = companyIds.length === 0 ? [] : await db.select({
     id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status,
-  }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
+  }).from(companiesTable).where(and(
+    inArray(companiesTable.id, companyIds),
+    isNull(companiesTable.deletedAt),
+  ));
   const companyMap = new Map(companies.map(c => [c.id, c]));
 
   // Invoices within current subscription period of the LATEST sub only.
@@ -720,9 +729,11 @@ router.post("/seed", async (req, res) => {
   res.status(201).json({ ok: true, username: user.username, message: "تم إنشاء المشرف العام بنجاح" });
 });
 
-// GET /api/admin/stats — quick stats for superadmin dashboard
+// GET /api/admin/stats — quick stats for superadmin dashboard. Soft-deleted
+// companies don't count toward the totals — they live in the recycle bin
+// and shouldn't inflate "active/pending/total" tiles.
 router.get("/stats", requireSuperAdmin, async (_req, res) => {
-  const companies = await db.select().from(companiesTable);
+  const companies = await db.select().from(companiesTable).where(isNull(companiesTable.deletedAt));
   const users = await db.select().from(usersTable).where(eq(usersTable.role, "admin"));
   const pending = companies.filter(c => c.status === "pending").length;
   const active = companies.filter(c => c.status === "active").length;
@@ -1035,6 +1046,65 @@ router.get("/dashboard", requireSuperAdmin, async (_req, res) => {
   }
 });
 
+// GET /api/admin/companies/deleted — recycle bin for SuperAdmin. Returns
+// the same payload shape as GET /api/companies, ordered by most-recently
+// deleted first.
+//
+// IMPORTANT: this MUST be registered before "/companies/:id" — Express
+// matches in registration order, so otherwise the literal "/deleted"
+// would be captured as `:id="deleted"` → parseInt("deleted") = NaN.
+router.get("/companies/deleted", requireSuperAdmin, async (_req, res) => {
+  const rows = await db
+    .select()
+    .from(companiesTable)
+    .where(sql`${companiesTable.deletedAt} IS NOT NULL`)
+    .orderBy(desc(companiesTable.deletedAt));
+  res.json(rows);
+});
+
+// POST /api/admin/companies/:id/restore — undo a soft delete. Clears
+// deletedAt; users stay deactivated (the SuperAdmin must re-enable each
+// user explicitly to avoid silently re-opening a session that may have
+// been suspended for a reason).
+router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
+  }
+  const [company] = await db
+    .update(companiesTable)
+    .set({ deletedAt: null, updatedAt: new Date() })
+    .where(and(eq(companiesTable.id, id), sql`${companiesTable.deletedAt} IS NOT NULL`))
+    .returning();
+  if (!company) {
+    res.status(404).json({ error: "الشركة غير موجودة في سلة المحذوفات" }); return;
+  }
+  res.json({ ok: true, company });
+});
+
+// DELETE /api/admin/companies/:id/permanent — irreversible cascade delete.
+// Only callable on already-soft-deleted rows so a SuperAdmin can't skip
+// the trash step by accident.
+router.delete("/companies/:id/permanent", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صالح" }); return;
+    }
+    const [target] = await db
+      .select({ id: companiesTable.id })
+      .from(companiesTable)
+      .where(and(eq(companiesTable.id, id), sql`${companiesTable.deletedAt} IS NOT NULL`));
+    if (!target) {
+      res.status(404).json({ error: "الشركة غير موجودة في سلة المحذوفات" }); return;
+    }
+    await deleteCompanyWithRelations(id);
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل الحذف النهائي: " + (err.message ?? "خطأ غير متوقع") });
+  }
+});
+
 // GET /api/admin/companies/:id — full company profile for superadmin
 router.get("/companies/:id", requireSuperAdmin, async (req, res) => {
   const id = parseInt(req.params.id);
@@ -1222,11 +1292,14 @@ async function getOrphanLedgerRows(companyId: number) {
   return filterTrueOrphans(db, rows);
 }
 
-// GET /api/admin/companies — minimal list for dropdowns
+// GET /api/admin/companies — minimal list for dropdowns. Soft-deleted
+// companies are hidden — pickers must never offer them as a target.
 router.get("/companies", requireSuperAdmin, async (_req, res) => {
   const rows = await db.select({
     id: companiesTable.id, nameAr: companiesTable.nameAr, nameEn: companiesTable.nameEn, status: companiesTable.status,
-  }).from(companiesTable).orderBy(asc(companiesTable.nameAr));
+  }).from(companiesTable)
+    .where(isNull(companiesTable.deletedAt))
+    .orderBy(asc(companiesTable.nameAr));
   res.json(rows);
 });
 
@@ -1859,6 +1932,8 @@ function hoursSince(iso: string): number {
 router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
   try {
     // 1. All companies (we want disabled & suspended too, so admin can see them).
+    //    But soft-deleted ones must not pollute the backup health board —
+    //    they have no users, so they'd always render as "Red" (missing backups).
     const companies = await db.select({
       id: companiesTable.id,
       nameAr: companiesTable.nameAr,
@@ -1868,7 +1943,9 @@ router.get("/backups/overview", requireSuperAdmin, async (_req, res) => {
       autoBackupFrequencyHours: companiesTable.autoBackupFrequencyHours,
       autoBackupRetention: companiesTable.autoBackupRetention,
       lastAutoBackupAt: companiesTable.lastAutoBackupAt,
-    }).from(companiesTable).orderBy(asc(companiesTable.nameAr));
+    }).from(companiesTable)
+      .where(isNull(companiesTable.deletedAt))
+      .orderBy(asc(companiesTable.nameAr));
 
     if (companies.length === 0) {
       res.json({
@@ -3194,9 +3271,14 @@ router.get("/reports/plan-usage", requireSuperAdmin, async (req, res) => {
 
     const usageRows = sqlRows<PlanUsageRow>(result as SqlExecuteResult<PlanUsageRow>);
     const companyIds = usageRows.map(r => Number(r.company_id));
+    // Drop trashed tenants from the plan-usage report so aggregates
+    // reflect only live customers.
     const companies = companyIds.length === 0 ? [] : await db.select({
       id: companiesTable.id, nameAr: companiesTable.nameAr, status: companiesTable.status,
-    }).from(companiesTable).where(inArray(companiesTable.id, companyIds));
+    }).from(companiesTable).where(and(
+      inArray(companiesTable.id, companyIds),
+      isNull(companiesTable.deletedAt),
+    ));
     const companyMap = new Map(companies.map(c => [c.id, c]));
 
     let rows = usageRows.map(r => {

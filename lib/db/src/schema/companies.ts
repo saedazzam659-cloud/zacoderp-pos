@@ -71,6 +71,11 @@ export const companiesTable = pgTable("companies", {
   registrationIp: text("registration_ip"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  // Soft-delete timestamp. NULL = company is live; set = company is in the
+  // recycle bin and excluded from every regular list / dashboard query.
+  // SuperAdmin can restore (clear deletedAt) or hard-delete from the
+  // dedicated /companies/deleted screen.
+  deletedAt: timestamp("deleted_at"),
 });
 
 export const insertCompanySchema = createInsertSchema(companiesTable).omit({ id: true, createdAt: true, updatedAt: true });

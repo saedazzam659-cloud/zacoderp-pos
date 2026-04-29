@@ -35,6 +35,7 @@ import RegistrationRequests from "@/pages/RegistrationRequests";
 import Companies from "@/pages/Companies";
 import CompanyNew from "@/pages/CompanyNew";
 import CompanyDetails from "@/pages/CompanyDetails";
+import DeletedCompanies from "@/pages/DeletedCompanies";
 import Customers from "@/pages/Customers";
 import CustomerNew from "@/pages/CustomerNew";
 import Invoices from "@/pages/Invoices";
@@ -318,6 +319,7 @@ function AppRoutes() {
             {isSuperAdmin && <Route path="/admin/requests" component={RegistrationRequests} />}
             {isSuperAdmin && <Route path="/companies" component={Companies} />}
             {isSuperAdmin && <Route path="/companies/new" component={CompanyNew} />}
+            {isSuperAdmin && <Route path="/companies/deleted" component={DeletedCompanies} />}
             {isSuperAdmin && <Route path="/companies/:id" component={CompanyDetails} />}
             {isSuperAdmin && <Route path="/admin/subscriptions" component={SubscriptionManagement} />}
             {isSuperAdmin && <Route path="/admin/plans" component={PlanSettings} />}

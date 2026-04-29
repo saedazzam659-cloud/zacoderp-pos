@@ -12,7 +12,7 @@ import {
   Search, Home, HelpCircle, ChevronLeft, Mic,
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope,
-  ScrollText, Database, ListOrdered, HardDrive,
+  ScrollText, Database, ListOrdered, HardDrive, Trash2,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat,
   type LucideIcon,
 } from "lucide-react";
@@ -129,6 +129,7 @@ const superAdminNav: NavDef[] = [
   { nameKey: "nav.seoAiStudio",          href: "/admin/seo/ai",             icon: Sparkles },
   { nameKey: "nav.auditLog",             href: "/admin/audit-log",          icon: ScrollText },
   { nameKey: "nav.companies",            href: "/companies",                icon: Building2 },
+  { nameKey: "nav.deletedCompanies",     href: "/companies/deleted",        icon: Trash2 },
   { nameKey: "nav.posMonitoring",        href: "/pos-monitoring",           icon: Activity },
 ];
 // POS items used to live as flat NavItems in companyBusinessNav. Per the

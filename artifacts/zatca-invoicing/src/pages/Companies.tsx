@@ -60,11 +60,17 @@ export default function Companies() {
   const [expandedRow, setExpandedRow]   = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
+  // Soft delete: moves the company to /companies/deleted (recycle bin).
+  // Reversible from there via "إرجاع إلى مكانها"; permanent cascade
+  // delete is a separate, explicit action only available in that screen.
   const confirmDelete = () => {
     if (!deleteTarget) return;
     deleteCompany.mutate({ id: deleteTarget.id }, {
       onSuccess: () => {
-        toast({ title: "تم الحذف", description: `تم حذف شركة "${deleteTarget.name}" بنجاح.` });
+        toast({
+          title: "تم النقل إلى المحذوفات",
+          description: `نُقلت شركة "${deleteTarget.name}" إلى صفحة الشركات المحذوفة. يمكنك إرجاعها أو حذفها نهائياً من هناك.`,
+        });
         queryClient.invalidateQueries({ queryKey: ["companies"] });
         setDeleteTarget(null);
         setExpandedRow(null);
@@ -139,6 +145,11 @@ export default function Companies() {
             title="الشركات المسجّلة"
             subtitle={`نظام الفاتورة الإلكترونية — ${new Date().toLocaleDateString("ar-SA-u-nu-latn")}`}
           />
+          <Button asChild size="sm" variant="outline" className="gap-2">
+            <Link href="/companies/deleted">
+              <Trash2 className="h-3.5 w-3.5" />الشركات المحذوفة
+            </Link>
+          </Button>
           <Button asChild size="sm" className="gap-2">
             <Link href="/companies/new">
               <Plus className="h-3.5 w-3.5" />إضافة شركة
@@ -367,16 +378,15 @@ export default function Companies() {
                           <ExternalLink className="h-3.5 w-3.5" />عرض التفاصيل
                         </Link>
                       </Button>
-                      {/* Delete only for rejected or inactive companies */}
-                      {(company.status === "rejected" || company.status === "pending") && (
-                        <Button
-                          size="sm" variant="ghost"
-                          className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
-                          onClick={() => setDeleteTarget({ id: company.id, name: company.nameAr })}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />حذف نهائياً
-                        </Button>
-                      )}
+                      {/* Soft delete: any status. Moves to recycle bin
+                          (/companies/deleted) — fully reversible. */}
+                      <Button
+                        size="sm" variant="ghost"
+                        className="gap-1.5 h-8 text-destructive hover:bg-destructive/10 mr-auto"
+                        onClick={() => setDeleteTarget({ id: company.id, name: company.nameAr })}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />حذف مؤقت
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -399,14 +409,14 @@ export default function Companies() {
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <Trash2 className="h-5 w-5" />حذف الشركة نهائياً
+              <Trash2 className="h-5 w-5" />نقل الشركة إلى المحذوفات
             </AlertDialogTitle>
             <AlertDialogDescription className="text-right space-y-1">
-              <span>هل أنت متأكد من حذف شركة </span>
+              <span>سيتم نقل شركة </span>
               <strong className="text-foreground">"{deleteTarget?.name}"</strong>
-              <span> بشكل نهائي؟</span>
+              <span> إلى صفحة "الشركات المحذوفة" وستُعطّل حسابات مستخدميها فوراً.</span>
               <br />
-              <span className="text-destructive font-medium">سيتم حذف جميع البيانات المرتبطة بها ولا يمكن التراجع.</span>
+              <span className="text-muted-foreground">يمكنك إرجاعها لاحقاً، أو حذفها نهائياً من هناك.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-row-reverse gap-2">
@@ -417,7 +427,7 @@ export default function Companies() {
               className="bg-destructive hover:bg-destructive/90 text-destructive-foreground gap-2"
             >
               <Trash2 className="h-4 w-4" />
-              {deleteCompany.isPending ? "جاري الحذف..." : "نعم، احذف نهائياً"}
+              {deleteCompany.isPending ? "جاري النقل..." : "نعم، انقل إلى المحذوفات"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

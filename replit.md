@@ -21,6 +21,7 @@ The frontend employs React with Vite and TailwindCSS to deliver a bilingual (Ara
 - **Authentication:** Implements JWT-style Bearer tokens, single-session enforcement, real-time validation, and bcryptjs for password hashing. Includes a SuperAdmin multi-layer login with advanced security.
 - **ZATCA Integration:** Handles CSR generation (ECDSA secp256k1), APIs for compliance and production CSID onboarding, and invoice submission. QR codes are generated using TLV binary encoding, and XML generation adheres to UBL 2.1 ZATCA namespace.
 - **Self-Registration:** Supports a public registration flow for new companies and inactive admin users, with SuperAdmin approval, country-specific compliance, and dynamic module selection.
+- **Soft-Delete Recycle Bin for Companies:** "حذف مؤقت" on the Companies page sets `companies.deletedAt` (atomic with force-logout of tenant users); trashed companies are excluded from regular listings, dropdowns, SuperAdmin /stats, /requests, and are write-blocked (PUT 404). A dedicated "الشركات المحذوفة" page (SuperAdmin) lists them with "إرجاع إلى مكانها" (restore) and "حذف نهائي" (cascade purge via existing deleteCompanyWithRelations helper).
 - **Core Modules:**
     - **Inventory Management:** Comprehensive tracking of warehouses, items, stock, transfers, adjustments, and counts, including Weighted Average costing and multi-unit support.
     - **Fiscal Periods:** Manages fiscal years and periods with status tracking and overlap detection.

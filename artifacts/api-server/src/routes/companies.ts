@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { CreateCompanyBody, UpdateCompanyBody } from "@workspace/api-zod";
 import { extractAuth } from "../middleware/auth.js";
 import { requirePermission, audit } from "../middleware/permissions.js";
@@ -20,7 +20,13 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 router.get("/", async (req, res) => {
-  const companies = await db.select().from(companiesTable).orderBy(companiesTable.createdAt);
+  // Exclude soft-deleted companies — those live in the recycle bin and
+  // are accessed exclusively through GET /admin/companies/deleted.
+  const companies = await db
+    .select()
+    .from(companiesTable)
+    .where(isNull(companiesTable.deletedAt))
+    .orderBy(companiesTable.createdAt);
   res.json(companies);
 });
 
@@ -69,7 +75,12 @@ router.post("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const id = parseInt(req.params.id);
-  const [company] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  // Soft-deleted companies are off-limits to every regular consumer; only
+  // /admin/companies/deleted exposes them.
+  const [company] = await db
+    .select()
+    .from(companiesTable)
+    .where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt)));
   if (!company) {
     res.status(404).json({ error: "Company not found" });
     return;
@@ -85,10 +96,12 @@ router.put("/:id", async (req, res) => {
     return;
   }
   const data = parsed.data;
+  // Refuse to update soft-deleted companies — restoring is the only way
+  // to make a trashed tenant editable again.
   const [company] = await db.update(companiesTable).set({
     ...data,
     updatedAt: new Date(),
-  }).where(eq(companiesTable.id, id)).returning();
+  }).where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt))).returning();
   if (!company) {
     res.status(404).json({ error: "Company not found" });
     return;
@@ -242,22 +255,39 @@ router.patch("/:id/pos-settings", extractAuth, async (req, res) => {
   });
 });
 
+// DELETE /:id — SOFT delete. Sets companies.deletedAt and deactivates every
+// company user (so nobody can keep an active session on a "deleted" tenant).
+// The company stays in the recycle bin until SuperAdmin either restores it
+// or hard-deletes it from /admin/companies/deleted. NO related rows are
+// touched here — restore must yield exactly the original tenant.
 router.delete("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-
-    // Cascade: delete all related records before deleting company
-    const companyInvoices = await db.select({ id: invoicesTable.id }).from(invoicesTable).where(eq(invoicesTable.companyId, id));
-    for (const inv of companyInvoices) {
-      await db.delete(invoiceLineItemsTable).where(eq(invoiceLineItemsTable.invoiceId, inv.id));
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "معرّف الشركة غير صالح" });
+      return;
     }
-    await db.delete(invoicesTable).where(eq(invoicesTable.companyId, id));
-    await db.delete(customersTable).where(eq(customersTable.companyId, id));
-    await db.delete(suppliersTable).where(eq(suppliersTable.companyId, id));
-    await db.delete(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
-    await db.delete(usersTable).where(eq(usersTable.companyId, id));
-    await db.delete(companiesTable).where(eq(companiesTable.id, id));
-
+    // Atomic: company-flip + force-logout must succeed or fail together.
+    // Otherwise a partial failure could leave a "deleted" tenant whose
+    // users keep working sessions, or active users on a still-live tenant.
+    const company = await db.transaction(async (tx) => {
+      const [c] = await tx
+        .update(companiesTable)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(companiesTable.id, id), isNull(companiesTable.deletedAt)))
+        .returning();
+      if (!c) return null;
+      // Force-logout: clear session tokens and mark inactive so any open
+      // browser tab on this tenant fails the next /api/auth/me check.
+      await tx.update(usersTable)
+        .set({ isActive: false, sessionToken: null, sessionId: null, updatedAt: new Date() })
+        .where(eq(usersTable.companyId, id));
+      return c;
+    });
+    if (!company) {
+      res.status(404).json({ error: "الشركة غير موجودة أو محذوفة بالفعل" });
+      return;
+    }
     res.status(204).send();
   } catch (err: any) {
     res.status(500).json({ error: "فشل الحذف: " + (err.message ?? "خطأ غير متوقع") });
