@@ -1,3 +1,22 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Zacoderp / زاكود">
+  <defs>
+    <linearGradient id="zacBg" x1="0" y1="0" x2="180" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0FB7A6"/>
+      <stop offset="100%" stop-color="#0E7C8A"/>
+    </linearGradient>
+    <linearGradient id="zacShine" x1="0" y1="0" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="180" height="180" rx="36" fill="url(#zacBg)"/>
+  <rect width="180" height="180" rx="36" fill="url(#zacShine)"/>
+
+  <!-- Bold stylized Z mark, designed to read at favicon size -->
+  <path d="M48 50 H132 L72 122 H134 V140 H48 V128 L108 56 H48 Z"
+        fill="#FFFFFF"/>
+
+  <!-- accent dot — evokes the brand's checkmark / signature -->
+  <circle cx="139" cy="48" r="9" fill="#FACC15"/>
 </svg>
