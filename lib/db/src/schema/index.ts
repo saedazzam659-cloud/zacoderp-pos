@@ -38,6 +38,7 @@ export * from "./production";
 export * from "./securityEvents";
 export * from "./securityEventMedia";
 export * from "./securityNotificationRules";
+export * from "./surveillanceDevices";
 export * from "./voiceAssistant";
 export * from "./sessions";
 export * from "./inboxMessages";
