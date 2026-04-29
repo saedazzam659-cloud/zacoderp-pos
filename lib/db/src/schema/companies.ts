@@ -76,6 +76,14 @@ export const companiesTable = pgTable("companies", {
   // SuperAdmin can restore (clear deletedAt) or hard-delete from the
   // dedicated /companies/deleted screen.
   deletedAt: timestamp("deleted_at"),
+  // Public, human-friendly company code (e.g. "ZTC-1042"). Required by
+  // login: tenants identify themselves with (companyCode, username,
+  // password) so usernames can repeat across companies. Generated at
+  // registration. Backfilled for legacy rows as "ZTC-{id}". Unique
+  // among non-NULL values via a partial index added in the schema-pin
+  // ensureSchema run; intentionally nullable here so a company created
+  // before the column existed can be patched without blocking writes.
+  code: text("code"),
 });
 
 export const insertCompanySchema = createInsertSchema(companiesTable).omit({ id: true, createdAt: true, updatedAt: true });

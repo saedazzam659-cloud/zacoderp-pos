@@ -99,9 +99,14 @@ router.post("/", async (req, res) => {
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
     if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
 
-    // Username uniqueness (global — username column is unique)
-    const [exists] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.username, username));
-    if (exists) { res.status(409).json({ error: "اسم المستخدم مستخدم بالفعل" }); return; }
+    // Username uniqueness is scoped to THIS company (April 2026 redesign):
+    // the partial UNIQUE index on (company_id, username) lets two different
+    // companies each own a user named "ahmed". The check has to be scoped
+    // here too — a global lookup would falsely reject a perfectly legal
+    // duplicate that lives in another tenant.
+    const [exists] = await db.select({ id: usersTable.id }).from(usersTable)
+      .where(and(eq(usersTable.companyId, cid), eq(usersTable.username, username)));
+    if (exists) { res.status(409).json({ error: "اسم المستخدم مستخدم بالفعل في هذه الشركة" }); return; }
 
     const passwordHash = await bcrypt.hash(String(password), 12);
 

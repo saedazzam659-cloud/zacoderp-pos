@@ -167,6 +167,14 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
+  // Success view state. After a SELF-registration succeeds the server
+  // returns `pending: true` plus the auto-generated companyCode that the
+  // tenant will need to log in once the SuperAdmin approves them. We
+  // surface that code on a dedicated success card with a copy button so
+  // the user is much less likely to lose it. The previous flow redirected
+  // straight to /pending-approval, which never showed the code anywhere.
+  const [successCode, setSuccessCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "annual">(
     initialQuery.cycle ?? "monthly",
   );
@@ -492,8 +500,17 @@ export default function Register() {
       if (!res.ok) throw new Error(data.error ?? "حدث خطأ");
 
       if (data.pending) {
-        // Self-registration: redirect to pending approval page
-        setLocation("/pending-approval");
+        // Self-registration: show the success card with the auto-generated
+        // companyCode BEFORE redirecting. The code is the only way the
+        // tenant will be able to log in once SuperAdmin approves them, so
+        // we make the user explicitly acknowledge it. Falls back to the
+        // legacy redirect if the server somehow didn't include a code
+        // (defensive: keeps registration usable during partial deploys).
+        if (typeof data.companyCode === "string" && data.companyCode.length > 0) {
+          setSuccessCode(data.companyCode);
+        } else {
+          setLocation("/pending-approval");
+        }
       } else if (data.token) {
         // Admin-created: auto-login
         await register(form as RegisterData);
@@ -507,6 +524,80 @@ export default function Register() {
       setLoading(false);
     }
   };
+
+  // ── Success view (post-registration) ───────────────────────────────
+  // Shown only after a self-registration succeeds. Displays the
+  // freshly-generated companyCode prominently with a copy button so the
+  // user is forced to acknowledge it before moving on. Without this
+  // code, they would not be able to log in once SuperAdmin approves
+  // them — usernames are no longer globally unique, so login needs
+  // (companyCode, username, password).
+  if (successCode) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4" dir="rtl">
+        <div className="w-full max-w-xl">
+          <Card className="shadow-xl border-primary/30">
+            <CardContent className="pt-8 pb-6 space-y-5 text-center">
+              <div className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <Check className="h-7 w-7" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-foreground">تم استلام طلب التسجيل</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  سيتم مراجعة الحساب من قِبل الإدارة. ستتمكن من تسجيل الدخول بعد الموافقة.
+                </p>
+              </div>
+
+              {/* The kingpin: company code + copy. */}
+              <div className="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
+                <div className="text-xs font-medium text-muted-foreground">
+                  كود شركتك (لتسجيل الدخول)
+                </div>
+                <div
+                  className="text-3xl font-bold font-mono tracking-widest text-primary select-all"
+                  dir="ltr"
+                  data-testid="register-success-company-code"
+                >
+                  {successCode}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(successCode);
+                      setCodeCopied(true);
+                      toast({ title: "تم نسخ الكود" });
+                      setTimeout(() => setCodeCopied(false), 2000);
+                    } catch {
+                      toast({ title: "تعذر النسخ، انسخه يدوياً", variant: "destructive" as any });
+                    }
+                  }}
+                  data-testid="register-success-copy-code"
+                >
+                  {codeCopied ? <Check className="h-4 w-4" /> : null}
+                  {codeCopied ? "تم النسخ" : "نسخ الكود"}
+                </Button>
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2 mt-2">
+                  احتفظ بهذا الكود في مكان آمن — ستحتاجه مع اسم المستخدم وكلمة المرور في كل مرة تُسجّل فيها الدخول.
+                </p>
+              </div>
+
+              <Button
+                className="w-full gap-2"
+                onClick={() => setLocation("/pending-approval")}
+                data-testid="register-success-continue"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                المتابعة
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-muted flex items-center justify-center p-4" dir="rtl">

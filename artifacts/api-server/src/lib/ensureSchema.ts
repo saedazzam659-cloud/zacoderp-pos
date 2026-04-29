@@ -215,6 +215,47 @@ async function ensureColumns(
   return { applied, missingTables };
 }
 
+/**
+ * Reconcile the per-tenant identity model: usernames must be unique
+ * PER company (not globally), the SuperAdmin keyspace (company_id IS NULL)
+ * stays globally unique, and every company carries a public `code`
+ * (e.g. ZTC-42) that the user types at login.
+ *
+ * Drizzle's pgTable doesn't yet have first-class partial-index support
+ * we can rely on across schema-push, so we materialise the constraints
+ * here as raw SQL. All statements are idempotent and additive — safe
+ * to re-run on every boot.
+ */
+async function ensureTenantIdentityIndexes(): Promise<string[]> {
+  const applied: string[] = [];
+  const stmts: { label: string; sql: string }[] = [
+    // Drop the legacy global-unique on users.username if it survived.
+    { label: "drop legacy users_username_unique", sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_unique` },
+    { label: "drop legacy users_username_key",    sql: `ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key` },
+    // Tenant users: (company_id, username) is unique per company.
+    { label: "users_company_username_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS users_company_username_uniq ON users (company_id, username) WHERE company_id IS NOT NULL` },
+    // SuperAdmins (company_id IS NULL): username stays globally unique.
+    { label: "users_username_superadmin_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS users_username_superadmin_uniq ON users (username) WHERE company_id IS NULL` },
+    // companies.code is unique whenever populated.
+    { label: "companies_code_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS companies_code_uniq ON companies (code) WHERE code IS NOT NULL` },
+    // Backfill: any legacy company without a code gets ZTC-{id}.
+    { label: "backfill companies.code",
+      sql:   `UPDATE companies SET code = 'ZTC-' || id WHERE code IS NULL` },
+  ];
+  for (const { label, sql: stmt } of stmts) {
+    try {
+      await db.execute(sql.raw(stmt));
+      applied.push(label);
+    } catch (err) {
+      logger.warn({ err, label, stmt }, "ensureSchema: tenant-identity step failed (continuing)");
+    }
+  }
+  return applied;
+}
+
 async function runHeal(): Promise<void> {
   const { tables, enums } = collectSchemaEntities();
   logger.info({ tableCount: tables.length, enumCount: enums.length }, "ensureSchema: starting schema reconciliation");
@@ -235,6 +276,15 @@ async function runHeal(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "ensureSchema: column reconciliation failed");
     throw err;
+  }
+
+  // Tenant identity indexes depend on the columns above (companies.code in
+  // particular), so they must run AFTER ensureColumns.
+  let appliedIdentitySteps: string[] = [];
+  try {
+    appliedIdentitySteps = await ensureTenantIdentityIndexes();
+  } catch (err) {
+    logger.error({ err }, "ensureSchema: tenant identity reconciliation failed (continuing)");
   }
 
   if (missingTables.length) {

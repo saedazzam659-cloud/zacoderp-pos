@@ -6,7 +6,15 @@ import { branchesTable } from "./branches";
 
 export const usersTable = pgTable("users", {
   id: serial("id").primaryKey(),
-  username: text("username").notNull().unique(),
+  // Username uniqueness is NO LONGER global. Two partial unique indexes
+  // are enforced via raw SQL in the schema-pin / ensureSchema layer:
+  //   • UNIQUE(company_id, username) WHERE company_id IS NOT NULL
+  //   • UNIQUE(username)             WHERE company_id IS NULL
+  // The first lets two different companies each own a user named "ahmed"
+  // (the whole point of the companyCode redesign). The second keeps
+  // SuperAdmin (company_id IS NULL) globally unique so the SuperAdmin
+  // login flow can still find them by username alone.
+  username: text("username").notNull(),
   email: text("email"),
   passwordHash: text("password_hash").notNull(),
   companyId: integer("company_id").references(() => companiesTable.id, { onDelete: "cascade" }),

@@ -25,8 +25,21 @@ function loginClientIp(req: any): string | null {
 }
 
 // POST /api/auth/login
+//
+// Tenant identity model (April 2026 redesign):
+//   • Usernames are unique PER COMPANY, not globally. Two different
+//     companies can each own a user named "ahmed".
+//   • The client therefore identifies its tenant on every login by
+//     sending `companyCode` (the public, human-friendly code shown
+//     to the user at registration — e.g. "ZTC-1042").
+//   • SuperAdmin accounts have NO companyId and live in a separate
+//     keyspace; they do NOT use this endpoint (they call
+//     /api/auth/superadmin/login). However, tenants who fat-finger
+//     a SuperAdmin username here without a companyCode get a 409 +
+//     useSuperAdminFlow hint so the UI can redirect them to the
+//     correct flow with one click — preserving the legacy UX.
 router.post("/login", async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, companyCode } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
     return;
@@ -35,19 +48,53 @@ router.post("/login", async (req, res) => {
   const ip = loginClientIp(req);
   const ua = req.headers["user-agent"]?.toString()?.slice(0, 500) ?? null;
 
-  // SuperAdmin uses the dedicated multi-layer auth flow (2FA, devices,
-  // risk, etc). Tell the client to call the SuperAdmin endpoint instead.
-  const [maybeSuper] = await db.select({ role: usersTable.role }).from(usersTable)
-    .where(eq(usersTable.username, username));
-  if (maybeSuper?.role === "superadmin") {
-    res.status(409).json({
-      error: "هذا الحساب يتطلب تسجيل دخول السوبر أدمن",
-      useSuperAdminFlow: true,
-    });
+  // Resolve the tenant context. Two paths:
+  //   A. companyCode provided → look it up; reject early if unknown.
+  //   B. companyCode missing  → only legal for SuperAdmin fast-path
+  //      (legacy auto-redirect). Tenant users MUST send a code.
+  const trimmedCode = typeof companyCode === "string"
+    ? companyCode.trim().toUpperCase()
+    : "";
+  let tenantCompanyId: number | null = null;
+  if (trimmedCode) {
+    const [co] = await db.select({ id: companiesTable.id })
+      .from(companiesTable)
+      .where(eq(companiesTable.code, trimmedCode));
+    if (!co) {
+      // Treat unknown codes as a credentials failure (no enumeration).
+      // Audit so the Security Center still sees the attempt.
+      await writeAudit({
+        userId: null, username: String(username).slice(0, 80),
+        role: null, companyId: null,
+        module: "auth", action: "denied",
+        method: "POST", path: "/api/auth/login", statusCode: 401,
+        ip, userAgent: ua, metadata: { reason: "unknown_company_code" },
+      });
+      res.status(401).json({ error: "كود الشركة أو اسم المستخدم أو كلمة المرور غير صحيحة" });
+      return;
+    }
+    tenantCompanyId = co.id;
+  } else {
+    // No companyCode — check whether this is a SuperAdmin trying to
+    // sign in via the legacy single-input form. If so, hint the
+    // client to use the SA flow.
+    const [maybeSuper] = await db.select({ role: usersTable.role })
+      .from(usersTable)
+      .where(and(eq(usersTable.username, username), isNull(usersTable.companyId)));
+    if (maybeSuper?.role === "superadmin") {
+      res.status(409).json({
+        error: "هذا الحساب يتطلب تسجيل دخول السوبر أدمن",
+        useSuperAdminFlow: true,
+      });
+      return;
+    }
+    // Otherwise the tenant has to identify their company.
+    res.status(400).json({ error: "كود الشركة مطلوب" });
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.username, username));
+  const [user] = await db.select().from(usersTable)
+    .where(and(eq(usersTable.username, username), eq(usersTable.companyId, tenantCompanyId)));
   if (!user) {
     // Failed login → record as denied so the Security Center can show it.
     await writeAudit({
@@ -593,12 +640,16 @@ router.post("/register", async (req, res) => {
     return;
   }
 
-  // Check username uniqueness
-  const [existingUser] = await db.select().from(usersTable).where(eq(usersTable.username, username));
-  if (existingUser) {
-    res.status(409).json({ error: "اسم المستخدم مستخدم مسبقاً" });
-    return;
-  }
+  // Username uniqueness is no longer global (April 2026 redesign): two
+  // tenants can share the same username because the new login form
+  // disambiguates them by companyCode. The only conflict that could
+  // matter here is a SuperAdmin with the same username — and SuperAdmin
+  // accounts always have company_id IS NULL, so the partial UNIQUE index
+  // `users_username_superadmin_uniq` enforces this for them only. The
+  // tenant we are about to create gets a fresh company_id, so no
+  // pre-check is needed: the new user is trivially the only row for
+  // (this future company_id, username).
+
 
   // Plan limits
   const PLANS: Record<string, { maxUsers: number; maxInvoices: number; price: string }> = {
@@ -849,6 +900,31 @@ router.post("/register", async (req, res) => {
     ...(resolvedMenuPermissions ? { menuPermissions: resolvedMenuPermissions } : {}),
   }).returning();
 
+  // Generate the public, human-friendly company code that the tenant
+  // will use to identify itself on the new login form. We format it
+  // from the freshly-allocated id so it is guaranteed unique without
+  // a retry loop. Stored back on the company so existing tooling
+  // (admin lists, audit, future password-recovery emails) can surface
+  // it. Persistence MUST succeed — the user receives this code in the
+  // response and will type it on every login, so a stale/missing DB
+  // value would lock them out.
+  const generatedCompanyCode = `ZTC-${company.id}`;
+  try {
+    await db.update(companiesTable)
+      .set({ code: generatedCompanyCode })
+      .where(eq(companiesTable.id, company.id));
+    company.code = generatedCompanyCode;
+  } catch (err) {
+    req.log?.error?.({ err, companyId: company.id }, "company code generation failed");
+    // Roll back the orphan company so the user can retry cleanly.
+    try {
+      await db.delete(companiesTable).where(eq(companiesTable.id, company.id));
+    } catch (delErr) {
+      req.log?.error?.({ err: delErr, companyId: company.id }, "company rollback after code-generation failure also failed");
+    }
+    return res.status(500).json({ error: "تعذّر إنشاء كود الشركة. يرجى المحاولة مرة أخرى." });
+  }
+
   // Seed the default currency for the new company. The currency code is
   // derived from the country (SA→SAR, AE→AED, …) unless the client sent an
   // explicit `currency` override. Failures here are logged but do NOT roll
@@ -934,11 +1010,15 @@ router.post("/register", async (req, res) => {
       user: { id: newUser.id, username: newUser.username, email: newUser.email, role: newUser.role, companyId: company.id, company, subscription },
     });
   } else {
-    // Self-registered: pending approval
+    // Self-registered: pending approval. We surface the freshly-generated
+    // companyCode so the success screen can show it BIG with a copy
+    // button — without it the tenant has no way to log in once the
+    // SuperAdmin approves their account.
     res.status(201).json({
       pending: true,
       message: "تم استلام طلبك بنجاح. سيتم مراجعته من قِبل الإدارة وستُبلَّغ بالنتيجة قريباً.",
       companyId: company.id,
+      companyCode: generatedCompanyCode,
       username: newUser.username,
     });
   }
@@ -970,8 +1050,14 @@ router.put("/profile", async (req, res) => {
   const updates: Record<string, any> = { updatedAt: new Date() };
 
   if (newUsername && newUsername !== user.username) {
-    // Check uniqueness
-    const [existing] = await db.select().from(usersTable).where(eq(usersTable.username, newUsername));
+    // Username uniqueness is scoped to the user's keyspace:
+    //   • Tenant users → unique within their company (companyId match).
+    //   • SuperAdmin   → unique across the SuperAdmin pool (companyId IS NULL).
+    // This mirrors the partial UNIQUE indexes on the users table.
+    const conflictWhere = user.companyId == null
+      ? and(eq(usersTable.username, newUsername), isNull(usersTable.companyId))
+      : and(eq(usersTable.username, newUsername), eq(usersTable.companyId, user.companyId));
+    const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(conflictWhere);
     if (existing) { res.status(409).json({ error: "اسم المستخدم مستخدم من قِبل حساب آخر" }); return; }
     updates.username = newUsername;
   }

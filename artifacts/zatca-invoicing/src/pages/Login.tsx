@@ -60,6 +60,17 @@ export default function Login() {
   const { toast } = useToast();
 
   // Common form state
+  // companyCode is the public, human-friendly tenant code shown to the
+  // user at registration (e.g. "ZTC-1042"). The new login form
+  // disambiguates duplicate usernames across companies via this field.
+  // We pre-fill from localStorage so returning users on the same browser
+  // don't have to retype it. SuperAdmin path leaves it empty; the
+  // server's 409 useSuperAdminFlow hint still pivots them automatically.
+  const LAST_COMPANY_CODE_KEY = "zatca_last_company_code";
+  const [companyCode, setCompanyCode] = useState<string>(() => {
+    try { return localStorage.getItem(LAST_COMPANY_CODE_KEY) ?? ""; }
+    catch { return ""; }
+  });
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -230,9 +241,16 @@ export default function Login() {
         return;
       }
 
-      // Try the universal login endpoint first.
+      // Try the universal login endpoint first. We forward the
+      // companyCode the user typed; on success we remember it for the
+      // next visit so returning users only have to type it once.
       try {
-        await login(username.trim(), password);
+        const trimmedCode = companyCode.trim().toUpperCase();
+        await login(username.trim(), password, trimmedCode);
+        if (trimmedCode) {
+          try { localStorage.setItem(LAST_COMPANY_CODE_KEY, trimmedCode); }
+          catch { /* private mode / quota — non-fatal */ }
+        }
         setLocation("/");
         return;
       } catch (err: any) {
@@ -571,6 +589,30 @@ export default function Login() {
           {/* ── STEP: creds ─────────────────────────────────────────── */}
           {(step === "creds" || step === "blocked") && (
             <form onSubmit={submitCreds} className="space-y-4">
+              {/* Company code identifies the tenant. Only shown for the
+                  regular tenant flow — SuperAdmin pivots to its own UI
+                  and doesn't need a company code. */}
+              {!isSuperAdminFlow && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    كود الشركة <span className="text-destructive">*</span>
+                  </label>
+                  <Input
+                    value={companyCode}
+                    onChange={e => setCompanyCode(e.target.value.toUpperCase())}
+                    placeholder="ZTC-1042"
+                    dir="ltr"
+                    className="text-left font-mono tracking-wider uppercase"
+                    autoComplete="off"
+                    disabled={step === "blocked"}
+                    data-testid="login-company-code"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    الكود المُرسل لك بعد إنشاء حساب الشركة (يبدأ بـ ZTC-). اتركه فارغاً إن كنت سوبر أدمن.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">{t("auth.username")}</label>
                 <Input

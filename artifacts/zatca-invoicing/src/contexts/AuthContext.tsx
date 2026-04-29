@@ -62,7 +62,7 @@ interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, companyCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   setUser: React.Dispatch<React.SetStateAction<AuthUser | null>>;
@@ -187,10 +187,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [user, checkSession]);
 
-  const login = async (username: string, password: string) => {
+  const login = async (username: string, password: string, companyCode?: string) => {
+    // Tenant identity is now (companyCode, username, password). The
+    // server requires `companyCode` for tenant logins; it's only
+    // optional in the SuperAdmin-fast-path case where the universal
+    // login endpoint will return 409 + useSuperAdminFlow=true and the
+    // page will pivot to the dedicated SuperAdmin flow.
+    const trimmedCode = (companyCode ?? "").trim();
     const res = await apiFetch("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({
+        username,
+        password,
+        ...(trimmedCode ? { companyCode: trimmedCode } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
