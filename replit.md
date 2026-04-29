@@ -181,3 +181,35 @@ Frontend (`artifacts/zatca-invoicing/src/pages/accounting/`):
   module permission.
 - All UI strings under `trialBalanceMaintenance.*` in both `ar.json`
   and `en.json`.
+
+## Entity Account Auto-Creation (cashbox / bank / customer / supplier / warehouse)
+
+Each entity type has a posting **sub-account** auto-created on POST when
+the user does not pick one explicitly.  The parent under which the new
+sub-account is filed is configurable from the **Account Mapping** screen
+under document-type `entity_account_parents` (5 role keys:
+`cash_account_parent`, `bank_account_parent`, `customer_account_parent`,
+`warehouse_account_parent`, `supplier_account_parent`).  Defaults seed
+to codes 1101 / 1102 / 1103 / 1105 / 2101 respectively.
+
+Generic helper: `artifacts/api-server/src/lib/entityAccounts.ts`
+- `ensureEntitySubAccount(...)` resolves the parent in this order:
+  1. explicit mapping (with both `companyId` AND `accountType` guards
+     so a mis-mapped parent of the wrong type is silently ignored),
+  2. `like(code, "<prefix>%")` for a list of fallback prefixes,
+  3. `like(nameAr, "%<term>%")` for a list of name terms.
+- Generates the next sub-code: concatenated numeric (parent `1102` →
+  `11021`, `11022`, …) when the parent code is digits, else
+  `<parentCode>-NNN`.
+- Idempotent on same-name siblings (returns the existing id).
+- Flips the parent to `isPosting=false` once it gains a child.
+- Wrapped in a 5-attempt retry loop that catches Postgres unique
+  violations on `(company_id, code)` to handle concurrent POSTs.
+- Wrappers: `ensureCashBoxAccount`, `ensureBankAccountLedger`,
+  `ensureCustomerLedger`, `ensureSupplierLedger`,
+  `ensureWarehouseAccount`.
+
+Wired from POST handlers in `cash-boxes.ts`, `bank-accounts.ts`,
+`inventory.ts` (warehouses), `customers.ts`, `suppliers.ts`.  All five
+JE pipelines already prefer the entity's own `accountId` over the
+mapping fallback (pre-existing behaviour, untouched).

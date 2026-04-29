@@ -116,6 +116,14 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "warehouse_transfer",   roleKey: "inventory_destination",  accountCode: "11081" },
   { documentType: "warehouse_transfer",   roleKey: "transfer_cost",          accountCode: "5101"  },
 
+  // حسابات الكيانات (الآباء) — تستخدم للإنشاء التلقائي للحسابات الفرعية
+  // عند إنشاء خزن/بنوك/عملاء/موردين/مخازن جديدة بدون حساب محاسبي.
+  { documentType: "entity_account_parents", roleKey: "cash_account_parent",      accountCode: "1101" },
+  { documentType: "entity_account_parents", roleKey: "bank_account_parent",      accountCode: "1102" },
+  { documentType: "entity_account_parents", roleKey: "customer_account_parent",  accountCode: "1103" },
+  { documentType: "entity_account_parents", roleKey: "warehouse_account_parent", accountCode: "1105" },
+  { documentType: "entity_account_parents", roleKey: "supplier_account_parent",  accountCode: "2101" },
+
   // الاعتمادات المستندية
   { documentType: "letter_of_credit",     roleKey: "lc_margin",              accountCode: "1150"  },
   { documentType: "letter_of_credit",     roleKey: "lc_liability",           accountCode: "2150"  },

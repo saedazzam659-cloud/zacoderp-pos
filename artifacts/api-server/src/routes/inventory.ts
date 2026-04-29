@@ -12,6 +12,7 @@ import {
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac } from "../middleware/permissions.js";
+import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 
 const router = Router();
@@ -115,7 +116,18 @@ router.post("/warehouses", async (req, res) => {
   if (accountId && existing.some(w => w.accountId === Number(accountId))) {
     res.status(409).json({ error: "هذا الحساب مرتبط بمخزن آخر — اختر حساباً آخر" }); return;
   }
-  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: accountId ? Number(accountId) : null }).returning();
+  // Auto-create a sub-account under the warehouse parent (from the Account
+  // Mapping screen) when the user didn't explicitly pick one.
+  let resolvedAccountId: number | null = accountId ? Number(accountId) : null;
+  if (!resolvedAccountId) {
+    try {
+      resolvedAccountId = await ensureWarehouseAccount(cid, String(nameAr).trim());
+    } catch (err) {
+      req.log?.warn({ err }, "ensureWarehouseAccount failed");
+      resolvedAccountId = null;
+    }
+  }
+  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: resolvedAccountId }).returning();
   res.status(201).json(row);
 });
 

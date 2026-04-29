@@ -1,58 +1,18 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable, accountsTable } from "@workspace/db";
-import { and, eq, sql, like, or } from "drizzle-orm";
+import { customersTable, salesInvoicesTable, salesReturnsTable, receiptVouchersTable } from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
 import { CreateCustomerBody, UpdateCustomerBody, ListCustomersQueryParams } from "@workspace/api-zod";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { ensureCustomerLedger } from "../lib/entityAccounts.js";
 
 // Auto-create a sub-account under the "Accounts Receivable — Customers" parent.
-// Returns the new account id, or null if no suitable parent exists.
+// Delegates to the shared entity-account helper which reads the parent
+// from the Account Mapping screen (entity_account_parents.customer_account_parent)
+// and falls back to code-prefix / name-like lookup when the mapping isn't set.
 async function ensureCustomerAccount(companyId: number, customerName: string): Promise<number | null> {
-  const candidates = await db.select().from(accountsTable)
-    .where(and(
-      eq(accountsTable.companyId, companyId),
-      eq(accountsTable.accountType, "asset"),
-      or(
-        like(accountsTable.code, "1130%"),
-        like(accountsTable.nameAr, "%عملاء%"),
-        like(accountsTable.nameAr, "%مدين%"),
-      ),
-    ));
-  const parent =
-    candidates.find(a => a.code.startsWith("1130")) ??
-    candidates.find(a => (a.nameAr || "").includes("عملاء")) ??
-    candidates[0];
-  if (!parent) return null;
-
-  const siblings = await db.select({ code: accountsTable.code }).from(accountsTable)
-    .where(and(eq(accountsTable.companyId, companyId), eq(accountsTable.parentId, parent.id)));
-  const prefix = `${parent.code}-`;
-  let maxSeq = 0;
-  for (const s of siblings) {
-    if (s.code.startsWith(prefix)) {
-      const n = parseInt(s.code.slice(prefix.length), 10);
-      if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
-    }
-  }
-  const newCode = `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
-
-  const [created] = await db.insert(accountsTable).values({
-    companyId,
-    parentId: parent.id,
-    code: newCode,
-    nameAr: customerName,
-    accountType: "asset",
-    reportDirection: parent.reportDirection ?? null,
-    level: (parent.level ?? 1) + 1,
-    isPosting: true,
-    isActive: true,
-  }).returning();
-
-  if (parent.isPosting) {
-    await db.update(accountsTable).set({ isPosting: false }).where(eq(accountsTable.id, parent.id));
-  }
-  return created?.id ?? null;
+  return ensureCustomerLedger(companyId, customerName);
 }
 
 const router = Router();

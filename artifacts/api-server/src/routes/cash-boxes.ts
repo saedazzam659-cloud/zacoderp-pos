@@ -4,6 +4,7 @@ import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable } from "@wor
 import { eq, and, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
+import { ensureCashBoxAccount } from "../lib/entityAccounts.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -93,6 +94,18 @@ router.post("/", async (req, res) => {
     return;
   }
 
+  // Auto-create a sub-account under the cash parent (from the Account
+  // Mapping screen) when the user didn't explicitly pick one.
+  let accountId: number | null = toInt(d.accountId);
+  if (!accountId) {
+    try {
+      accountId = await ensureCashBoxAccount(cid, String(d.nameAr).trim());
+    } catch (err) {
+      req.log?.warn({ err }, "ensureCashBoxAccount failed");
+      accountId = null;
+    }
+  }
+
   const [row] = await db.insert(cashBoxesTable).values({
     companyId:  cid,
     branchId:   toInt(d.branchId),
@@ -100,7 +113,7 @@ router.post("/", async (req, res) => {
     nameAr:     String(d.nameAr).trim(),
     nameEn:     toStr(d.nameEn),
     currencyId: toInt(d.currencyId),
-    accountId:  toInt(d.accountId),
+    accountId,
     minBalance: toDec(d.minBalance, "0")!,
     maxBalance: toDec(d.maxBalance, null),
     isActive:   d.isActive ?? true,

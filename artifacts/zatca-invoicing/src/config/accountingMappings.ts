@@ -119,6 +119,18 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
   // عام في هذه الشاشة، مع الاستمرار في احترام إعداد «الترحيل التلقائي/اليدوي»
   // على مستوى الشركة.
   {
+    key: "entity_account_parents",
+    label: "حسابات الكيانات (الآباء) — الإنشاء التلقائي",
+    description: "اختر الحساب الأب لكل نوع كيان (خزن/بنوك/عملاء/موردين/مخازن). عند إنشاء كيان جديد بدون حساب محاسبي، يُنشئ النظام تلقائياً حساباً فرعياً تحت الحساب الأب المختار هنا، ويعطيه كوداً متسلسلاً (مثلاً 1102 → 11021، 11022، …). يمكنك بعد ذلك تعديل الحساب يدوياً من شجرة الحسابات.",
+    roles: [
+      { key: "cash_account_parent",      label: "أب حسابات الخزن (الصناديق النقدية)", description: "كل خزنة جديدة بدون حساب يتم إنشاؤها كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1101", accountType: "asset" },
+      { key: "bank_account_parent",      label: "أب الحسابات البنكية", description: "كل حساب بنكي جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1102", accountType: "asset" },
+      { key: "customer_account_parent",  label: "أب حسابات العملاء", description: "كل عميل جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1103", accountType: "asset" },
+      { key: "warehouse_account_parent", label: "أب حسابات المخازن", description: "كل مخزن جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "1105", accountType: "asset" },
+      { key: "supplier_account_parent",  label: "أب حسابات الموردين", description: "كل مورد جديد بدون حساب يتم إنشاؤه كحساب فرعي تحت هذا الحساب.", defaultHintCode: "2101", accountType: "liability" },
+    ],
+  },
+  {
     key: "letter_of_credit",
     label: "الاعتمادات المستندية",
     description: "القيود الخاصة بفتح الاعتماد وسداد الهامش وتحميل المصاريف والعمولات البنكية وفروق العملة، قبل ترحيل التكلفة النهائية على المخزون.",
