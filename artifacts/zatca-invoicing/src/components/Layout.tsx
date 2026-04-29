@@ -1820,17 +1820,35 @@ function TopBar({
 
   return (
     <header className="sticky top-0 z-10 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-      {/* Row 1: search + actions */}
-      <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
+      {/* Row 1: search + actions
+          Mobile philosophy: with 9+ desktop icons + a search field there is
+          no room left for the hamburger on a 390-px phone, so the menu
+          button "disappears" behind a horizontal overflow. We collapse the
+          topbar to the essentials on small screens (hamburger / app
+          name / notifications / avatar) and only show the rest from `md`
+          upward — the same breakpoint where the desktop sidebar appears
+          and the mobile drawer button is hidden anyway. */}
+      <div className="flex h-14 items-center gap-2 sm:gap-3 px-3 sm:px-6">
         <Button
-          variant="ghost" size="icon" className="md:hidden -ms-2"
+          variant="ghost" size="icon"
+          className="md:hidden -ms-1 h-10 w-10 shrink-0"
           onClick={onMobileMenu}
+          aria-label={t("topbar.openMenu", { defaultValue: "فتح القائمة" })}
+          data-testid="mobile-menu-trigger"
         >
           <Menu className="h-5 w-5" />
         </Button>
 
-        {/* Search */}
-        <div className="relative flex-1 max-w-md">
+        {/* Compact app title — visible only on mobile so the user always
+            knows where they are, even with the desktop sidebar hidden. */}
+        <div className="md:hidden flex items-center gap-2 min-w-0 flex-1">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs shadow">Z</div>
+          <span className="text-sm font-semibold truncate">{t("auth.appName")}</span>
+        </div>
+
+        {/* Search — hidden on phones (re-introduced as a search icon in the
+            mobile dropdown later); keeps the desktop quick-search intact. */}
+        <div className="relative hidden md:block flex-1 max-w-md">
           <Search className="absolute end-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           <Input
             type="search"
@@ -1839,40 +1857,43 @@ function TopBar({
           />
         </div>
 
-        <div className="flex-1" />
+        <div className="hidden md:block flex-1" />
 
-        {/* Right cluster */}
-        <div className="flex items-center gap-1">
-          {/* Quick links to documents */}
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.salesInvoices")}
+        {/* Right cluster
+            Phones see only NotificationBell + Avatar; everything else is
+            hidden behind `md:` so the toolbar fits within ~120px after
+            the hamburger and the app title. */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Quick links to documents — desktop/tablet only */}
+          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.salesInvoices")}
             onClick={() => navigate("/sales/invoices")}>
             <ShoppingBag className="h-[18px] w-[18px]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.salesReturns")}
+          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.salesReturns")}
             onClick={() => navigate("/sales/returns")}>
             <Undo2 className="h-[18px] w-[18px]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.purchaseInvoices")}
+          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-primary hover:bg-primary/10" title={t("nav.purchaseInvoices")}
             onClick={() => navigate("/purchasing/invoices")}>
             <ShoppingCart className="h-[18px] w-[18px]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.purchaseReturns")}
+          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-orange-600 hover:bg-orange-50" title={t("nav.purchaseReturns")}
             onClick={() => navigate("/purchasing/returns")}>
             <RotateCcw className="h-[18px] w-[18px]" />
           </Button>
-          <div className="h-5 w-px bg-border mx-1" />
-          <LanguageSwitcher variant="compact" />
-          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
+          <div className="hidden md:block h-5 w-px bg-border mx-1" />
+          <div className="hidden md:flex"><LanguageSwitcher variant="compact" /></div>
+          <Button variant="ghost" size="icon" className="hidden md:inline-flex h-9 w-9 text-muted-foreground hover:text-foreground" title={t("topbar.help")}>
             <HelpCircle className="h-[18px] w-[18px]" />
           </Button>
           <NotificationBell />
-          <SessionCountdown />
+          <div className="hidden md:flex"><SessionCountdown /></div>
           {/* Manual-session indicator: shows the user's currently-selected
               session (admin-managed entity) and lets them switch on the fly.
               Self-hides when the user has no sessions assigned. Distinct from
               SessionCountdown which tracks the per-login work_sessions clock. */}
-          <SessionIndicator />
-          <div className="h-5 w-px bg-border mx-1" />
+          <div className="hidden md:flex"><SessionIndicator /></div>
+          <div className="hidden md:block h-5 w-px bg-border mx-1" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-accent transition-colors">
@@ -2208,7 +2229,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isRtl = langMeta.dir === "rtl";
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-background" dir={langMeta.dir}>
+    <div
+      className="flex min-h-screen w-full flex-col bg-background overflow-x-hidden"
+      dir={langMeta.dir}
+    >
+      {/* `overflow-x-hidden` on the root prevents the off-screen mobile
+          drawer (translated 100% past the viewport edge) from creating a
+          phantom horizontal scrollbar — a frequent culprit for "the page
+          shifts when I tap the menu" reports on real iOS Safari. */}
       {/* Desktop Sidebar */}
       <aside className={cn(
         "fixed inset-y-0 z-20 hidden w-64 flex-col bg-sidebar md:flex",
@@ -2226,21 +2254,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         )}
         onClick={closeMobile}
         aria-hidden={!mobileOpen}
+        data-testid="mobile-sidebar-backdrop"
       />
       {/* Mobile drawer
-          - Responsive width: 86vw on a phone (so a sliver of the app is
+          - Responsive width: 88vw on a phone (so a sliver of the app is
             still visible behind the dim) but capped at 20rem on tablets.
           - Strong shadow for depth over the dim backdrop.
           - Safe-area inset support for iPhone notches via env() padding.
-          - Slides in/out with translate-x; aria-hidden + tabIndex track
-            visibility so keyboard / screen-reader users aren't trapped
-            in an off-screen panel. */}
+          - Slides in/out with translate-x; visibility:hidden when fully
+            off-screen so screen readers and keyboard tab order skip it.
+          - When closed we ALSO suppress pointer-events so a stale
+            off-screen drawer never accidentally swallows taps near the
+            screen edge (this was the main "menu won't open" symptom). */}
       <aside
         className={cn(
-          "fixed inset-y-0 z-40 flex w-[86vw] max-w-[20rem] flex-col bg-sidebar shadow-2xl transition-transform duration-200 ease-out md:hidden",
+          "fixed inset-y-0 z-40 flex w-[88vw] max-w-[20rem] flex-col bg-sidebar shadow-2xl transition-transform duration-200 ease-out md:hidden",
           isRtl
             ? `right-0 border-l border-border ${mobileOpen ? "translate-x-0" : "translate-x-full"}`
-            : `left-0 border-r border-border ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`
+            : `left-0 border-r border-border ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`,
+          mobileOpen ? "" : "pointer-events-none"
         )}
         style={{
           paddingTop: "env(safe-area-inset-top)",
@@ -2250,6 +2282,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         aria-label={isRtl ? "القائمة الجانبية" : "Side menu"}
         role="dialog"
         aria-modal="true"
+        data-testid="mobile-sidebar"
       >
         <SidebarInner {...sharedProps} />
       </aside>
