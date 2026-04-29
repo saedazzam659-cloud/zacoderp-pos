@@ -37,6 +37,7 @@ import {
   FileCode2,
   X,
   Download,
+  Trash2,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -453,6 +454,62 @@ export default function AuditLog() {
     }
   }, [selectedRows, downloadingCsv, headers, tr, toast, locale]);
 
+  // ─── Filter-driven bulk delete (toolbar) ─────────────────────────
+  // The toolbar button next to "Refresh" lets a reviewer wipe the rows
+  // matching the CURRENT filter set (date range, module, action, search,
+  // etc.). It is the cleanup companion to the per-row checkbox flow:
+  // checkboxes are for surgical work, this is for "clean by criteria".
+  //
+  // Flow: open a confirmation dialog showing the current `total` so the
+  // operator sees exactly how many rows are about to disappear, then
+  // call DELETE /api/audit-log with the same query string we use for
+  // the listing (the `params` memo, minus the paging fields the server
+  // ignores anyway). On success we invalidate the listing query to
+  // refetch a now-shorter page and clear any per-row selection that
+  // would have referenced just-deleted ids.
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingByFilter, setDeletingByFilter] = useState(false);
+  const deleteByFilter = useCallback(async () => {
+    if (deletingByFilter) return;
+    setDeletingByFilter(true);
+    try {
+      // Strip paging fields — the server ignores them on DELETE but it's
+      // clearer to send only the filters the operator actually picked.
+      const filterParams = new URLSearchParams(params);
+      filterParams.delete("limit");
+      filterParams.delete("offset");
+      const r = await fetch(`${API}/api/audit-log?${filterParams.toString()}`, {
+        method:  "DELETE",
+        headers,
+      });
+      if (!r.ok) {
+        const msg = await r.json().catch(() => ({} as any));
+        throw new Error(msg?.error || tr("deleteFailureDescription"));
+      }
+      const body = await r.json().catch(() => ({ deleted: 0 }));
+      const deleted = Number(body?.deleted ?? 0);
+      toast({
+        title: tr("deleteSuccessTitle"),
+        description: tr("deleteSuccessToast", {
+          count: deleted,
+          formattedCount: deleted.toLocaleString(locale),
+        }),
+      });
+      setSelectedRows(new Map());
+      setPage(0);
+      await refetch();
+    } catch (e: any) {
+      toast({
+        title: tr("deleteFailureTitle"),
+        description: e?.message || tr("deleteFailureDescription"),
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingByFilter(false);
+      setShowDeleteConfirm(false);
+    }
+  }, [deletingByFilter, params, headers, tr, toast, locale, refetch]);
+
   // Shared write-to-clipboard helper used by both the bulk copy paths
   // and the per-row Markdown secondary action (task #156). Prefers the
   // async Clipboard API and falls back to a hidden textarea +
@@ -690,10 +747,29 @@ export default function AuditLog() {
             <div className="text-xs text-muted-foreground">
               {tr("totalLabel")} <span className="font-mono font-semibold text-foreground">{total.toLocaleString(locale)}</span>
             </div>
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"} ${isFetching ? "animate-spin" : ""}`} />
-              {tr("refresh")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+                <RefreshCw className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"} ${isFetching ? "animate-spin" : ""}`} />
+                {tr("refresh")}
+              </Button>
+              {/* Filter-driven bulk delete: wipes EVERY row that matches
+                  the current filter state. Disabled when there's nothing
+                  to delete OR while another delete is in flight. The big
+                  destructive cue (red border + Trash2 icon) prevents
+                  click-by-mistake; the modal confirmation behind it
+                  shows the exact count before any DB write. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={total === 0 || deletingByFilter || isFetching}
+                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                data-testid="audit-toolbar-delete-by-filter"
+              >
+                <Trash2 className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />
+                {tr("deleteByFilter")}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1122,6 +1198,50 @@ export default function AuditLog() {
         trAction={trAction}
         shareLinkLabelForRow={shareLinkLabelForRow}
       />
+
+      {/* Confirm-before-delete dialog for the toolbar bulk-delete action.
+          Mounted at the page root so it overlays the listing card. The
+          row count shown is the live `total` from the listing query, so
+          the operator sees the same number they'd see in the toolbar
+          before committing. */}
+      <Dialog open={showDeleteConfirm} onOpenChange={(v) => { if (!v) setShowDeleteConfirm(false); }}>
+        <DialogContent dir={isRtl ? "rtl" : "ltr"}>
+          <DialogHeader className={isRtl ? "text-right sm:text-right" : undefined}>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              {tr("deleteConfirmTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {total > 0
+                ? tr("deleteConfirmDesc", { count: total, formattedCount: total.toLocaleString(locale) })
+                : tr("deleteConfirmZero")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className={`flex gap-2 ${isRtl ? "justify-start" : "justify-end"} pt-2`}>
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={deletingByFilter}
+              data-testid="audit-delete-confirm-cancel"
+            >
+              {tr("deleteCancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteByFilter}
+              disabled={deletingByFilter || total === 0}
+              data-testid="audit-delete-confirm-submit"
+            >
+              {deletingByFilter ? (
+                <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? "ml-2" : "mr-2"}`} />
+              ) : (
+                <Trash2 className={`h-4 w-4 ${isRtl ? "ml-2" : "mr-2"}`} />
+              )}
+              {tr("deleteConfirm")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -366,10 +366,23 @@ router.delete("/", async (req, res) => {
     // Filter set is captured verbatim so a follow-up reviewer can replay
     // the same query on the (now empty) result.
     try {
-      await writeAudit(req, {
+      // writeAudit takes a single payload (see middleware/permissions.ts:363)
+      // — the export_csv handler in this same file at line 224 is the
+      // canonical pattern. Mirror it so the self-recorded row carries the
+      // same actor/method/path triple every other audit row does, otherwise
+      // the row would silently fail to insert and we'd lose accountability
+      // for every bulk-clean.
+      await writeAudit({
+        userId:     u.id ?? null,
+        username:   u.username ?? null,
+        role:       u.role ?? null,
+        companyId:  u.companyId ?? null,
         module:     "audit_log",
         action:     "delete",
+        method:     req.method,
+        path:       req.originalUrl,
         entityType: "audit_log",
+        entityId:   null,
         statusCode: 200,
         metadata: {
           deletedCount: matched,
