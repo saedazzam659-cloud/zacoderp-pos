@@ -212,6 +212,8 @@ import ReceiptVouchers     from "@/pages/cash/ReceiptVouchers";
 import ReceiptVoucherForm  from "@/pages/cash/ReceiptVoucherForm";
 import PaymentVouchers  from "@/pages/cash/PaymentVouchers";
 import CashTransfers    from "@/pages/cash/CashTransfers";
+import FinancialTransactions    from "@/pages/cash/FinancialTransactions";
+import FinancialTransactionForm from "@/pages/cash/FinancialTransactionForm";
 
 const queryClient = new QueryClient();
 
@@ -552,6 +554,9 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/cash/receipt-vouchers/:id" module="receipt_vouchers" component={ReceiptVoucherForm} />}
             {!isSuperAdmin && <PermRoute path="/cash/payment-vouchers" module="payment_vouchers"  component={PaymentVouchers} />}
             {!isSuperAdmin && <PermRoute path="/cash/transfers"        module="cash_boxes"        component={CashTransfers}   />}
+            {!isSuperAdmin && <PermRoute path="/cash/financial-transactions"     module="cash_boxes" component={FinancialTransactions}    />}
+            {!isSuperAdmin && <PermRoute path="/cash/financial-transactions/new" module="cash_boxes" action="create" component={FinancialTransactionForm} />}
+            {!isSuperAdmin && <PermRoute path="/cash/financial-transactions/:id" module="cash_boxes" component={FinancialTransactionForm} />}
 
             {/* Settings routes */}
             {!isSuperAdmin && <PermRoute path="/settings/currencies"          module="currencies"       component={Currencies} />}
