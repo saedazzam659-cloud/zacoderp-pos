@@ -161,7 +161,7 @@ export default function Home() {
   // Helmet@3 + React 19 doesn't reliably populate document.title.
   useEffect(() => {
     const prev = document.title;
-    document.title = "نظام محاسبة سعودي معتمد من ZATCA — فوترة إلكترونية ومحاسبة شاملة";
+    document.title = "زاكود المحاسبي";
     return () => { document.title = prev; };
   }, []);
 
@@ -178,12 +178,12 @@ export default function Home() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>نظام محاسبة سعودي معتمد من ZATCA — فوترة إلكترونية ومحاسبة شاملة</title>
+        <title>زاكود المحاسبي</title>
         <meta name="description" content="أفضل نظام محاسبة سعودي معتمد من ZATCA — فاتورة إلكترونية، محاسبة مالية، ضريبة قيمة مضافة، نقاط بيع، مخزون، وموارد بشرية في منصة عربية واحدة. ابدأ تجربتك المجانية الآن." />
         <link rel="canonical" href={canonical} />
         <meta name="keywords" content="نظام محاسبة سعودي, فاتورة إلكترونية, ZATCA, زاتكا, محاسبة سعودية, نقاط بيع, مخزون, ضريبة القيمة المضافة" />
         <meta property="og:type" content="website" />
-        <meta property="og:title" content="نظام محاسبة سعودي معتمد من ZATCA" />
+        <meta property="og:title" content="زاكود المحاسبي" />
         <meta property="og:description" content="فوترة إلكترونية، محاسبة مالية، نقاط بيع، ومخزون — كل ما تحتاجه شركتك السعودية في منصة واحدة." />
         <meta property="og:url" content={canonical} />
         <meta property="og:locale" content="ar_SA" />
@@ -196,7 +196,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-bold min-w-0">
             <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-            <span className="hidden sm:inline truncate">نظام محاسبة سعودي معتمد من ZATCA</span>
+            <span className="hidden sm:inline truncate">زاكود المحاسبي</span>
           </div>
           <nav className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <CountrySelector variant="compact" testId="home-country-selector" className="hidden sm:flex" />
