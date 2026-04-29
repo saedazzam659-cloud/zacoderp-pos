@@ -477,13 +477,64 @@ function CashReportsNavGroup({
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-const DEFAULT_PERMS: Record<string, boolean> = {
-  dashboard: true, invoices: true, customers: true, suppliers: true,
-  zatca: true, reports: true, inventory: true,
-};
+// ── Sidebar permission gating ────────────────────────────────────────
+// `menu_permissions` on the company is a flat JSON of `{ key: boolean }`
+// where keys are GRANULAR menu permission keys defined in
+// `src/lib/menuItems.ts` (e.g. inventory_mobile, sales_module, accounts).
+// New companies always get a populated JSON via /api/auth/register
+// (module-derived perms + industry-derived OR-merge in routes/auth.ts).
+//
+// LEGACY BACKSTOP: companies created before granular permissions
+// existed have an empty/null `menu_permissions` JSON. To avoid
+// regressing those tenants we treat empty JSON as "show everything"
+// (the old behavior). The instant a SuperAdmin opens
+// /admin/menu-permissions and saves anything, the JSON becomes
+// non-empty and the strict allow-list semantics take over.
+//
+// The proxy returns `true` for ANY key access when the underlying
+// JSON is empty, so existing call sites like `menuPerms.dashboard`
+// keep working without checking emptiness everywhere.
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
-  try { return { ...DEFAULT_PERMS, ...JSON.parse(raw ?? "{}") }; }
-  catch { return { ...DEFAULT_PERMS }; }
+  let parsed: Record<string, boolean> = {};
+  try { parsed = JSON.parse(raw ?? "{}") || {}; } catch { parsed = {}; }
+  if (!parsed || typeof parsed !== "object" || Object.keys(parsed).length === 0) {
+    // Legacy backstop — return a "true for everything" object.
+    return new Proxy({} as Record<string, boolean>, { get: () => true });
+  }
+  return parsed;
+}
+
+// Each top-level sidebar group is allowed when ANY of these granular
+// permission keys is true. We accept BOTH the old high-level keys
+// (inventory/sales/purchasing/cash/accounting/hr/security) AND the new
+// granular keys so partially-migrated tenants stay functional. The
+// "new" groups (production, contracting, pos) only have a single key.
+const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
+  dashboard:   ["dashboard"],
+  zatca:       ["zatca"],
+  inventory:   ["inventory", "inventory_mobile", "inventory_reports"],
+  sales:       ["sales", "sales_module", "sales_reports", "customers"],
+  purchasing:  ["purchasing", "purchases_module", "purchases_reports", "suppliers"],
+  cash:        ["cash", "cash_module", "cash_reports"],
+  accounting:  ["accounting", "accounts", "accounting_reports"],
+  hr:          ["hr", "hr_module"],
+  production:  ["production"],
+  contracting: ["contracting"],
+  pos:         ["pos"],
+  security:    ["security", "security_events"],
+  aiTools:     ["ai_tools"],
+};
+
+// Returns true when the user may see the given top-level sidebar group.
+// SuperAdmin bypasses all gates so platform staff can always navigate.
+function isGroupAllowed(
+  menuPerms: Record<string, boolean>,
+  group: keyof typeof GROUP_PERMISSION_KEYS,
+  isSuperAdmin: boolean,
+): boolean {
+  if (isSuperAdmin) return true;
+  const keys = GROUP_PERMISSION_KEYS[group];
+  return keys.some(k => menuPerms[k] === true);
 }
 const PLAN_KEYS: Record<string, string> = {
   starter: "plans.starter", professional: "plans.professional", enterprise: "plans.enterprise",
@@ -1370,7 +1421,14 @@ function SidebarInner({
           </div>
         ) : (
           <>
-            {menuPerms.dashboard !== false && (
+            {/* Each top-level sidebar group is gated through `isGroupAllowed`,
+                which checks the granular keys defined in
+                GROUP_PERMISSION_KEYS for that group. SuperAdmin always
+                sees everything; legacy companies (empty menu_permissions
+                JSON) also see everything via the proxy backstop in
+                parseMenuPerms. New companies registered after this change
+                only see groups whose permission keys are explicitly true. */}
+            {isGroupAllowed(menuPerms, "dashboard", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <NavItem
                   item={{ nameKey: "nav.infoBoard", href: "/", icon: LayoutDashboard, exact: true }}
@@ -1386,7 +1444,7 @@ function SidebarInner({
               </div>
             )}
 
-            {menuPerms.zatca !== false && (
+            {isGroupAllowed(menuPerms, "zatca", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <ZatcaNavGroup
                   location={location}
@@ -1397,7 +1455,7 @@ function SidebarInner({
               </div>
             )}
 
-            {menuPerms.inventory !== false && (
+            {isGroupAllowed(menuPerms, "inventory", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <InventoryNavGroup
                   location={location}
@@ -1410,51 +1468,59 @@ function SidebarInner({
               </div>
             )}
 
-            <div className="space-y-0.5">
-              <SalesNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={salesOpen}
-                onToggle={onSalesToggle}
-                reportsOpen={salesReportsOpen}
-                onReportsToggle={onSalesReportsToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "sales", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <SalesNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={salesOpen}
+                  onToggle={onSalesToggle}
+                  reportsOpen={salesReportsOpen}
+                  onReportsToggle={onSalesReportsToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <PurchasingNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={purchasingOpen}
-                onToggle={onPurchasingToggle}
-                reportsOpen={purchasingReportsOpen}
-                onReportsToggle={onPurchasingReportsToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "purchasing", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <PurchasingNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={purchasingOpen}
+                  onToggle={onPurchasingToggle}
+                  reportsOpen={purchasingReportsOpen}
+                  onReportsToggle={onPurchasingReportsToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <CashNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={cashOpen}
-                onToggle={onCashToggle}
-                reportsOpen={cashReportsOpen}
-                onReportsToggle={onCashReportsToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "cash", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <CashNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={cashOpen}
+                  onToggle={onCashToggle}
+                  reportsOpen={cashReportsOpen}
+                  onReportsToggle={onCashReportsToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <AccountingNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={accountingOpen}
-                onToggle={onAccountingToggle}
-                reportsOpen={reportsOpen}
-                onReportsToggle={onReportsToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "accounting", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <AccountingNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={accountingOpen}
+                  onToggle={onAccountingToggle}
+                  reportsOpen={reportsOpen}
+                  onReportsToggle={onReportsToggle}
+                />
+              </div>
+            )}
 
-            {menuPerms.hr_module !== false && (
+            {isGroupAllowed(menuPerms, "hr", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <HrNavGroup
                   location={location}
@@ -1465,43 +1531,51 @@ function SidebarInner({
               </div>
             )}
 
-            <div className="space-y-0.5">
-              <ProductionNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={productionOpen}
-                onToggle={onProductionToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "production", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <ProductionNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={productionOpen}
+                  onToggle={onProductionToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <ContractingNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={contractingOpen}
-                onToggle={onContractingToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "contracting", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <ContractingNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={contractingOpen}
+                  onToggle={onContractingToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <PosNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={posOpen}
-                onToggle={onPosToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <PosNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={posOpen}
+                  onToggle={onPosToggle}
+                />
+              </div>
+            )}
 
-            <div className="space-y-0.5">
-              <SecurityNavGroup
-                location={location}
-                onNavigate={onNavigate}
-                open={securityOpen}
-                onToggle={onSecurityToggle}
-              />
-            </div>
+            {isGroupAllowed(menuPerms, "security", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <SecurityNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={securityOpen}
+                  onToggle={onSecurityToggle}
+                />
+              </div>
+            )}
 
-            {menuPerms.ai_tools !== false && (
+            {isGroupAllowed(menuPerms, "aiTools", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <AIToolsNavGroup
                   location={location}
