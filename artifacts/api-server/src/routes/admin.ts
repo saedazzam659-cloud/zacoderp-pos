@@ -152,28 +152,79 @@ router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
   res.json({ ok: true, company });
 });
 
-// Helper: cascade-delete a company and all its related records
+// Helper: cascade-delete a company and ALL its related records.
+//
+// The schema has 60+ tables that reference companies(id). Most have
+// ON DELETE CASCADE so a single `DELETE FROM companies` would cascade
+// them automatically — but ~19 tables (employees, journal_entries,
+// invoices, branches, currencies, regions, attendance_*, payroll_runs,
+// exchange_rates, ...) carry NO ACTION FKs that REFUSE the delete and
+// surface as the cryptic "Failed query: delete from companies" toast in
+// the recycle-bin UI. Hand-listing those tables (the previous shape of
+// this helper) drifts the moment a new schema lands.
+//
+// Strategy: discover every table that has a `company_id` column from
+// PostgreSQL's information_schema at runtime, then DELETE rows for the
+// target company from each one inside a single transaction. CASCADE
+// chains do their own work for *_lines / *_settlements children. Finally
+// remove the company row itself. Runtime discovery means new modules
+// added later are handled automatically.
 async function deleteCompanyWithRelations(id: number) {
-  // 1. Get all invoice IDs for this company
-  const companyInvoices = await db.select({ id: invoicesTable.id }).from(invoicesTable).where(eq(invoicesTable.companyId, id));
-  const invoiceIds = companyInvoices.map(i => i.id);
+  await db.transaction(async (tx) => {
+    // 1. Discover every public table holding a company_id integer column
+    //    that points at this tenant's data. Excludes the companies table
+    //    itself — that one is deleted last.
+    const ownedTables = await tx.execute<{ table_name: string }>(sql`
+      SELECT c.table_name
+      FROM information_schema.columns c
+      JOIN information_schema.tables  t
+        ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+      WHERE c.table_schema = 'public'
+        AND c.column_name  = 'company_id'
+        AND t.table_type   = 'BASE TABLE'
+        AND c.table_name   <> 'companies'
+      ORDER BY c.table_name
+    `);
 
-  // 2. Delete invoice line items
-  for (const invId of invoiceIds) {
-    await db.delete(invoiceLineItemsTable).where(eq(invoiceLineItemsTable.invoiceId, invId));
-  }
+    const tableRows: Array<{ table_name: string }> =
+      Array.isArray(ownedTables) ? ownedTables :
+      (ownedTables as any).rows ?? [];
 
-  // 3. Delete invoices
-  await db.delete(invoicesTable).where(eq(invoicesTable.companyId, id));
+    // 2. Loop through each table and delete that company's rows. We
+    //    re-try once on FK failure to absorb cases where Postgres
+    //    aborts a row delete because a sibling table hasn't been
+    //    cleaned yet. Any table that still refuses after the retry
+    //    bubbles up so the caller can roll the whole transaction back.
+    const stillFailing: string[] = [];
+    let pass = 0;
+    let pending = tableRows.map((r) => r.table_name);
+    while (pending.length > 0 && pass < 3) {
+      const next: string[] = [];
+      for (const table of pending) {
+        try {
+          await tx.execute(sql.raw(
+            `DELETE FROM "${table}" WHERE company_id = ${id}`,
+          ));
+        } catch {
+          next.push(table);
+        }
+      }
+      pending = next;
+      pass++;
+    }
+    if (pending.length > 0) stillFailing.push(...pending);
 
-  // 4. Delete customers, suppliers, subscriptions, users
-  await db.delete(customersTable).where(eq(customersTable.companyId, id));
-  await db.delete(suppliersTable).where(eq(suppliersTable.companyId, id));
-  await db.delete(subscriptionsTable).where(eq(subscriptionsTable.companyId, id));
-  await db.delete(usersTable).where(eq(usersTable.companyId, id));
+    if (stillFailing.length > 0) {
+      throw new Error(
+        `تعذّر حذف بيانات الشركة من الجداول التالية: ${stillFailing.join(", ")}`,
+      );
+    }
 
-  // 5. Delete company
-  await db.delete(companiesTable).where(eq(companiesTable.id, id));
+    // 3. Finally remove the company row itself. Any remaining FK error
+    //    here means a non-company_id table still references this row;
+    //    the caller will surface that as the user-visible failure.
+    await tx.delete(companiesTable).where(eq(companiesTable.id, id));
+  });
 }
 
 // DELETE /api/admin/requests/:id — delete request + all relations
