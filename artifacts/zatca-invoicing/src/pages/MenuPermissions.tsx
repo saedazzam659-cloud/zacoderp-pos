@@ -14,52 +14,48 @@ import {
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // ─── Menu definitions ──────────────────────────────────────────────────
+// Source of truth for the key/label/section trio is `lib/menuItems.ts`
+// (shared with /admin/industries and /register so the three pages stay
+// perfectly in sync). Icons live here because they're a presentation
+// concern owned by this page only — adding a new sidebar entry means
+// editing the lib AND adding a row in MENU_ICONS.
 interface MenuItem { key: string; label: string; icon: React.ElementType; section: string; }
 
-const MENU_ITEMS: MenuItem[] = [
-  { key: "dashboard",          label: "لوحة التحكم",                icon: LayoutDashboard, section: "رئيسي" },
+const MENU_ICONS: Record<string, React.ElementType> = {
+  dashboard:          LayoutDashboard,
+  invoices:           FileText,
+  customers:          Users,
+  suppliers:          Truck,
+  reports:            BarChart3,
+  inventory_mobile:   Smartphone,
+  inventory_reports:  Warehouse,
+  sales_module:       ShoppingCart,
+  sales_reports:      PieChart,
+  purchases_module:   ShoppingBag,
+  purchases_reports:  PieChart,
+  pos:                ShoppingCart,
+  cash_module:        Wallet,
+  cash_reports:       PieChart,
+  accounts:           BookOpen,
+  accounting_reports: PieChart,
+  hr_module:          UserCog,
+  contracting:        HardHat,
+  production:         Factory,
+  security_events:    ShieldAlert,
+  seo_dashboard:      TrendingUp,
+  ai_tools:           Sparkles,
+  zatca:              Link2,
+};
 
-  { key: "invoices",           label: "الفواتير",                    icon: FileText,        section: "الأعمال" },
-  { key: "customers",          label: "العملاء",                     icon: Users,           section: "الأعمال" },
-  { key: "suppliers",          label: "الموردون",                    icon: Truck,           section: "الأعمال" },
-  { key: "reports",            label: "الإقرار الضريبي",            icon: BarChart3,       section: "الأعمال" },
-
-  { key: "inventory_mobile",   label: "موبيل المخازن",              icon: Smartphone,      section: "المخازن" },
-  { key: "inventory_reports",  label: "تقارير المخازن",             icon: Warehouse,       section: "المخازن" },
-
-  { key: "sales_module",       label: "العملاء والمبيعات",          icon: ShoppingCart,    section: "المبيعات" },
-  { key: "sales_reports",      label: "تقارير العملاء والمبيعات",   icon: PieChart,        section: "المبيعات" },
-
-  { key: "purchases_module",   label: "الموردون والمشتريات",        icon: ShoppingBag,     section: "المشتريات" },
-  { key: "purchases_reports",  label: "تقارير الموردين والمشتريات", icon: PieChart,        section: "المشتريات" },
-
-  { key: "pos",                label: "نقاط البيع",                  icon: ShoppingCart,    section: "نقاط البيع" },
-
-  { key: "cash_module",        label: "النقد والبنوك",              icon: Wallet,          section: "المحاسبة" },
-  { key: "cash_reports",       label: "تقارير النقد والبنوك",       icon: PieChart,        section: "المحاسبة" },
-  { key: "accounts",           label: "الحسابات العامة",            icon: BookOpen,        section: "المحاسبة" },
-  { key: "accounting_reports", label: "التقارير المحاسبية",         icon: PieChart,        section: "المحاسبة" },
-
-  { key: "hr_module",          label: "شؤون الموظفين",              icon: UserCog,         section: "شؤون الموظفين" },
-
-  { key: "contracting",        label: "إدارة المقاولات",            icon: HardHat,         section: "إدارة المقاولات" },
-
-  { key: "production",         label: "الإنتاج والتصنيع",           icon: Factory,         section: "الإنتاج والتصنيع" },
-
-  { key: "security_events",    label: "الأمن والمراقبة",            icon: ShieldAlert,     section: "الأمن والمراقبة" },
-
-  { key: "seo_dashboard",      label: "إدارة SEO",                  icon: TrendingUp,      section: "تحليلات SEO" },
-
-  { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     icon: Sparkles,        section: "أدوات الذكاء الاصطناعي" },
-
-  { key: "zatca",              label: "ربط ZATCA",                   icon: Link2,           section: "النظام" },
-];
-
-const SECTIONS = Array.from(new Set(MENU_ITEMS.map(m => m.section)));
+const MENU_ITEMS: MenuItem[] = MENU_ITEMS_BASE.map(m => ({
+  ...m,
+  icon: MENU_ICONS[m.key] ?? LayoutDashboard,
+}));
 
 const SECTION_THEME: Record<string, { bg: string; text: string; border: string; ring: string }> = {
   "رئيسي":     { bg: "bg-blue-50",    text: "text-blue-700",    border: "border-blue-200",    ring: "from-blue-500/10" },

@@ -17,11 +17,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Briefcase, Pencil, Trash2, Plus, RefreshCw, Search, Sparkles, Power, Check,
+  CheckSquare, Square,
 } from "lucide-react";
+import {
+  MENU_ITEMS, SECTIONS, MENU_ITEM_BY_KEY, SECTION_THEME,
+} from "@/lib/menuItems";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// One row from /api/admin/industries
+// One row from /api/admin/industries. `recommendedModuleKeys` now stores
+// granular menu-permission keys (matching MENU_ITEMS in lib/menuItems.ts)
+// rather than the legacy high-level module keys. The column name was
+// kept for migration compatibility — semantically it is now a list of
+// menu permission keys that get auto-granted at registration.
 type IndustryRow = {
   id: number;
   code: string;
@@ -30,16 +38,6 @@ type IndustryRow = {
   emoji: string;
   recommendedModuleKeys: string[];
   sortOrder: number;
-  isActive: boolean;
-};
-
-// One row from /api/admin/modules — we only need a small subset to render
-// the multi-select picker inside the edit dialog.
-type ModuleOption = {
-  id: number;
-  key: string;
-  nameAr: string;
-  category: string;
   isActive: boolean;
 };
 
@@ -72,21 +70,11 @@ export default function Industries() {
   const [editing, setEditing] = useState<FormState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<IndustryRow | null>(null);
 
-  // Live data: industries list + modules list (for the multi-select picker)
   const listQ = useQuery<IndustryRow[]>({
     queryKey: ["admin-industries"],
     queryFn: async () => {
       const r = await fetch(`${API}/api/admin/industries`, { headers });
       if (!r.ok) throw new Error((await r.json()).error || "فشل جلب الأنشطة");
-      return r.json();
-    },
-  });
-
-  const modulesQ = useQuery<ModuleOption[]>({
-    queryKey: ["admin-modules", "for-industries"],
-    queryFn: async () => {
-      const r = await fetch(`${API}/api/admin/modules`, { headers });
-      if (!r.ok) throw new Error((await r.json()).error || "فشل جلب الوحدات");
       return r.json();
     },
   });
@@ -101,15 +89,6 @@ export default function Industries() {
       i.code.toLowerCase().includes(q)
     );
   }, [listQ.data, search]);
-
-  // For looking up module names by key in the read-only badge list shown
-  // on each industry card. Falls back to the raw key if the module was
-  // deleted from the catalog after the industry referenced it.
-  const moduleByKey = useMemo(() => {
-    const m = new Map<string, ModuleOption>();
-    for (const mod of modulesQ.data ?? []) m.set(mod.key, mod);
-    return m;
-  }, [modulesQ.data]);
 
   const saveMut = useMutation({
     mutationFn: async (form: FormState) => {
@@ -176,7 +155,7 @@ export default function Industries() {
   });
 
   // Helpers used inside the edit dialog
-  const toggleModuleInForm = (key: string) => {
+  const toggleMenuKeyInForm = (key: string) => {
     if (!editing) return;
     const has = editing.recommendedModuleKeys.includes(key);
     setEditing({
@@ -184,6 +163,20 @@ export default function Industries() {
       recommendedModuleKeys: has
         ? editing.recommendedModuleKeys.filter(k => k !== key)
         : [...editing.recommendedModuleKeys, key],
+    });
+  };
+
+  // "Toggle entire section" — picks all keys in a section if any are
+  // unselected; clears all of them if every key in the section is on.
+  const toggleSectionInForm = (section: string) => {
+    if (!editing) return;
+    const keysInSection = MENU_ITEMS.filter(m => m.section === section).map(m => m.key);
+    const allOn = keysInSection.every(k => editing.recommendedModuleKeys.includes(k));
+    setEditing({
+      ...editing,
+      recommendedModuleKeys: allOn
+        ? editing.recommendedModuleKeys.filter(k => !keysInSection.includes(k))
+        : Array.from(new Set([...editing.recommendedModuleKeys, ...keysInSection])),
     });
   };
 
@@ -196,7 +189,7 @@ export default function Industries() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             تُعرض هذه الأنشطة كـ <span className="font-medium">شرائح اختيار</span> في صفحة إنشاء الحساب،
-            وعند اختيار أي نشاط تُضاف وحداته الموصى بها تلقائياً لاختيار العميل.
+            وعند اختيار أي نشاط تُفعَّل صلاحيات القوائم المختارة هنا تلقائياً.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -264,20 +257,23 @@ export default function Industries() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="text-[11px] text-muted-foreground">الوحدات الموصى بها ({ind.recommendedModuleKeys.length}):</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    صلاحيات القوائم المُفعَّلة ({ind.recommendedModuleKeys.length}):
+                  </div>
                   <div className="flex flex-wrap gap-1">
                     {ind.recommendedModuleKeys.length === 0 ? (
-                      <span className="text-xs text-muted-foreground italic">لم يُضَف أي وحدة بعد</span>
+                      <span className="text-xs text-muted-foreground italic">لم تُحدَّد أي صلاحية بعد</span>
                     ) : ind.recommendedModuleKeys.map(k => {
-                      const mod = moduleByKey.get(k);
-                      const label = mod?.nameAr ?? k;
-                      const dim = !mod || !mod.isActive;
+                      const item = MENU_ITEM_BY_KEY[k];
+                      const label = item?.label ?? k;
+                      const dim = !item;
+                      const theme = item ? SECTION_THEME[item.section] : undefined;
                       return (
                         <Badge
                           key={k}
                           variant={dim ? "outline" : "secondary"}
-                          className={`text-[10px] ${dim ? "text-muted-foreground line-through" : ""}`}
-                          title={dim ? "الوحدة غير موجودة أو مُعطَّلة" : k}
+                          className={`text-[10px] ${dim ? "text-muted-foreground line-through" : ""} ${theme ? `${theme.bg} ${theme.text} ${theme.border}` : ""}`}
+                          title={dim ? "مفتاح غير معروف — راجع تعديل القوائم" : k}
                         >
                           {label}
                         </Badge>
@@ -317,8 +313,8 @@ export default function Industries() {
       <IndustryEditDialog
         editing={editing}
         setEditing={setEditing}
-        modules={modulesQ.data ?? []}
-        toggleModuleInForm={toggleModuleInForm}
+        toggleMenuKeyInForm={toggleMenuKeyInForm}
+        toggleSectionInForm={toggleSectionInForm}
         saveMut={saveMut}
       />
 
@@ -348,35 +344,45 @@ export default function Industries() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Edit dialog factored out to keep the page component readable. Receives
-// the live modules list so the multi-select chips reflect the current
-// catalogue (added or deactivated modules show up immediately).
+// Edit dialog factored out to keep the page component readable. The
+// menu-permission picker lives entirely on the client (MENU_ITEMS is
+// a static catalog) — no server fetch is needed.
 // ─────────────────────────────────────────────────────────────────────
 function IndustryEditDialog({
-  editing, setEditing, modules, toggleModuleInForm, saveMut,
+  editing, setEditing, toggleMenuKeyInForm, toggleSectionInForm, saveMut,
 }: {
   editing: FormState | null;
   setEditing: (s: FormState | null) => void;
-  modules: ModuleOption[];
-  toggleModuleInForm: (key: string) => void;
+  toggleMenuKeyInForm: (key: string) => void;
+  toggleSectionInForm: (section: string) => void;
   saveMut: ReturnType<typeof useMutation<any, any, FormState, any>>;
 }) {
-  // Group modules by category for the picker, mirroring the registration
-  // wizard's grouping so admins see them in the same shape end-users do.
-  const groups = useMemo(() => {
-    const map = new Map<string, ModuleOption[]>();
-    for (const m of modules) {
-      const cat = m.category || "بدون تصنيف";
-      if (!map.has(cat)) map.set(cat, []);
-      map.get(cat)!.push(m);
-    }
-    return Array.from(map.entries());
-  }, [modules]);
+  // Local search inside the picker — filters items by Arabic label, key,
+  // or section name. Reset on open so each new edit starts fresh.
+  const [pickerSearch, setPickerSearch] = useState("");
+  useEffect(() => { if (editing) setPickerSearch(""); }, [editing?.id, editing?.code]);
+
+  // Group items by section, applying the picker's search filter. Keep
+  // empty sections collapsed (filtered out) so the list stays compact
+  // when the operator types something narrow like "تقارير".
+  const filteredGroups = useMemo(() => {
+    const q = pickerSearch.trim().toLowerCase();
+    return SECTIONS.map(section => {
+      const items = MENU_ITEMS.filter(m => m.section === section).filter(m =>
+        !q
+          ? true
+          : m.label.toLowerCase().includes(q) ||
+            m.key.toLowerCase().includes(q) ||
+            m.section.toLowerCase().includes(q)
+      );
+      return { section, items };
+    }).filter(g => g.items.length > 0);
+  }, [pickerSearch]);
 
   // Reset scroll on open so a long picker list always starts at the top.
   useEffect(() => {
     if (editing) {
-      const el = document.getElementById("ind-modules-picker");
+      const el = document.getElementById("ind-perms-picker");
       if (el) el.scrollTop = 0;
     }
   }, [editing?.id]);
@@ -387,7 +393,7 @@ function IndustryEditDialog({
         <DialogHeader>
           <DialogTitle>{editing?.id ? "تعديل نشاط" : "إضافة نشاط جديد"}</DialogTitle>
           <DialogDescription>
-            النشاط يربط شريحة الاختيار في صفحة التسجيل بمجموعة افتراضية من وحدات النظام.
+            النشاط يربط شريحة الاختيار في صفحة التسجيل بمجموعة افتراضية من صلاحيات القوائم.
           </DialogDescription>
         </DialogHeader>
 
@@ -460,52 +466,96 @@ function IndustryEditDialog({
             </div>
 
             <div className="space-y-1.5 md:col-span-2">
-              <Label>
-                الوحدات الموصى بها
-                <span className="text-xs text-muted-foreground mr-2 font-normal">
-                  (محدّد {editing.recommendedModuleKeys.length} من {modules.length})
+              <Label className="flex items-center justify-between">
+                <span>
+                  صلاحيات القوائم المُفعَّلة لهذا النشاط
+                  <span className="text-xs text-muted-foreground mr-2 font-normal">
+                    (محدّد {editing.recommendedModuleKeys.length} من {MENU_ITEMS.length})
+                  </span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <Button
+                    type="button" size="sm" variant="ghost" className="h-7 text-xs"
+                    onClick={() => setEditing({ ...editing, recommendedModuleKeys: MENU_ITEMS.map(m => m.key) })}
+                  >
+                    تحديد الكل
+                  </Button>
+                  <Button
+                    type="button" size="sm" variant="ghost" className="h-7 text-xs"
+                    onClick={() => setEditing({ ...editing, recommendedModuleKeys: [] })}
+                  >
+                    مسح
+                  </Button>
                 </span>
               </Label>
+
+              <div className="relative">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  dir="rtl" className="pr-9"
+                  placeholder="بحث في الصلاحيات (مثال: تقارير، مخازن، POS)…"
+                  value={pickerSearch}
+                  onChange={(e) => setPickerSearch(e.target.value)}
+                />
+              </div>
+
               <div
-                id="ind-modules-picker"
-                className="border rounded-lg p-3 max-h-72 overflow-y-auto space-y-3"
+                id="ind-perms-picker"
+                className="border rounded-lg p-3 max-h-80 overflow-y-auto space-y-3"
               >
-                {modules.length === 0 ? (
-                  <div className="text-xs text-muted-foreground text-center py-4">
-                    لا توجد وحدات في النظام بعد. أضف وحدات من «وحدات النظام» أولاً.
+                {filteredGroups.length === 0 ? (
+                  <div className="text-xs text-muted-foreground text-center py-6">
+                    لا توجد نتائج مطابقة للبحث.
                   </div>
-                ) : groups.map(([cat, mods]) => (
-                  <div key={cat}>
-                    <div className="text-[11px] font-semibold text-muted-foreground mb-1.5 px-1">
-                      {cat}
+                ) : filteredGroups.map(({ section, items }) => {
+                  const theme = SECTION_THEME[section];
+                  const allKeys = MENU_ITEMS.filter(m => m.section === section).map(m => m.key);
+                  const selectedInSection = allKeys.filter(k => editing.recommendedModuleKeys.includes(k)).length;
+                  const allOn = selectedInSection === allKeys.length;
+                  return (
+                    <div key={section}>
+                      <div className="flex items-center justify-between mb-1.5 px-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleSectionInForm(section)}
+                          className={`text-[11px] font-semibold px-2 py-0.5 rounded inline-flex items-center gap-1 ${theme?.bg ?? ""} ${theme?.text ?? ""} ${theme?.border ?? ""} border hover:opacity-80 transition`}
+                          title={allOn ? "إلغاء تحديد القسم" : "تحديد القسم بالكامل"}
+                        >
+                          {allOn ? <CheckSquare className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+                          {section}
+                        </button>
+                        <span className="text-[10px] text-muted-foreground">
+                          {selectedInSection}/{allKeys.length}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {items.map(m => {
+                          const checked = editing.recommendedModuleKeys.includes(m.key);
+                          return (
+                            <button
+                              type="button"
+                              key={m.key}
+                              data-testid={`perm-pick-${m.key}`}
+                              onClick={() => toggleMenuKeyInForm(m.key)}
+                              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border-2 transition ${
+                                checked
+                                  ? "border-primary bg-primary/10 text-primary font-medium"
+                                  : "border-border bg-card text-muted-foreground hover:border-primary/40"
+                              }`}
+                              title={m.key}
+                            >
+                              {checked && <Check className="h-3 w-3" />}
+                              {m.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {mods.map(m => {
-                        const checked = editing.recommendedModuleKeys.includes(m.key);
-                        const dim = !m.isActive;
-                        return (
-                          <button
-                            type="button"
-                            key={m.key}
-                            onClick={() => toggleModuleInForm(m.key)}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border-2 transition ${
-                              checked
-                                ? "border-primary bg-primary/10 text-primary font-medium"
-                                : "border-border bg-card text-muted-foreground hover:border-primary/40"
-                            } ${dim ? "opacity-60" : ""}`}
-                            title={dim ? "الوحدة مُعطَّلة" : m.key}
-                          >
-                            {checked && <Check className="h-3 w-3" />}
-                            {m.nameAr}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="text-[10px] text-muted-foreground">
-                عند اختيار العميل لهذا النشاط في صفحة التسجيل ستُضاف الوحدات أعلاه تلقائياً لاختياره.
+                كل صلاحية محدَّدة هنا ستُفعَّل تلقائياً في «صلاحيات القوائم» للشركة الجديدة عند اختيار هذا النشاط في صفحة التسجيل.
               </div>
             </div>
 

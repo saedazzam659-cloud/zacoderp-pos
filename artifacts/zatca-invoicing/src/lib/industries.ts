@@ -1,11 +1,15 @@
 // =====================================================================
-// INDUSTRY CATALOG (multi-select)
-// Used by the registration wizard to pre-select a recommended set of
-// system modules for the new company. Multi-select: a user can pick any
-// subset of industries; the recommended modules are the UNION across the
-// selected industries.
-// `recommendedModules` references high-level keys from systemModules.ts —
-// keep the two files in sync.
+// INDUSTRY CATALOG (multi-select) — STATIC FALLBACK ONLY
+// Source of truth is the `industries` DB table (managed in
+// /admin/industries) and exposed via /api/admin/industries/public.
+// This file is consulted by the registration wizard solely as a
+// graceful fallback if the live fetch fails so the chip strip never
+// renders empty. Keep it in sync with DEFAULT_INDUSTRIES in
+// artifacts/api-server/src/routes/adminIndustries.ts.
+//
+// `recommendedModules` now stores GRANULAR menu-permission keys
+// (matching MENU_ITEMS in lib/menuItems.ts) so the registration flow
+// can hand them straight to the server-side menuPermissions builder.
 // =====================================================================
 
 export interface Industry {
@@ -13,37 +17,64 @@ export interface Industry {
   nameAr:             string;
   nameEn:             string;
   emoji:              string;   // small visual cue, no extra icon import
-  recommendedModules: string[]; // module keys from systemModules.ts
+  recommendedModules: string[]; // GRANULAR menu permission keys (lib/menuItems.ts)
 }
 
-// NOTE: "core" module (dashboard + invoices) is alwaysOn and granted automatically,
-// so it does NOT need to appear in recommendedModules. The wizard already shows
-// its permissions as enabled by default for every company.
-//
-// Industry tiers (per product spec):
-//   commercial  → inventory, sales, purchasing, accounting, hr
-//   industrial  → commercial + production
-//   contracting → industrial  + contracting management
 export const INDUSTRIES: Industry[] = [
   {
     code: "commercial", nameAr: "تجاري", nameEn: "Commercial", emoji: "🛒",
-    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr"],
+    recommendedModules: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module",
+    ],
   },
   {
     code: "industrial", nameAr: "صناعي", nameEn: "Industrial", emoji: "🏭",
-    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr", "production"],
+    recommendedModules: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module", "production",
+    ],
   },
   {
     code: "contracting", nameAr: "مقاولات", nameEn: "Contracting", emoji: "🏗️",
-    recommendedModules: ["inventory", "sales", "purchasing", "accounting", "hr", "production", "contracting"],
+    recommendedModules: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module", "production", "contracting",
+    ],
   },
   {
     code: "medical", nameAr: "طبي", nameEn: "Medical", emoji: "🩺",
-    recommendedModules: ["sales", "inventory", "cash", "accounting", "hr", "zatca", "pos"],
+    recommendedModules: [
+      "dashboard", "invoices", "customers",
+      "sales_module", "sales_reports",
+      "inventory_mobile", "inventory_reports",
+      "pos",
+      "cash_module", "accounts", "accounting_reports",
+      "hr_module", "zatca", "reports",
+    ],
   },
   {
     code: "hotels", nameAr: "فنادق", nameEn: "Hotels", emoji: "🏨",
-    recommendedModules: ["sales", "pos", "inventory", "cash", "accounting", "hr", "zatca"],
+    recommendedModules: [
+      "dashboard", "invoices", "customers",
+      "sales_module", "sales_reports",
+      "pos",
+      "inventory_mobile", "inventory_reports",
+      "cash_module", "accounts", "accounting_reports",
+      "hr_module", "zatca", "reports",
+    ],
   },
 ];
 

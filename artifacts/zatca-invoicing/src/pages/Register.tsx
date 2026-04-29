@@ -16,11 +16,18 @@ import {
   getCountryByCode, getCountryPolicy,
 } from "@/lib/countries";
 import { INDUSTRIES as INDUSTRIES_FALLBACK } from "@/lib/industries";
+import { MENU_ITEM_BY_KEY, deriveModulesFromMenuKeys } from "@/lib/menuItems";
 
 // Live row from /api/admin/industries/public — derived from the
 // `industries` table (SuperAdmin-managed in /admin/industries). Falls
 // back to the bundled INDUSTRIES_FALLBACK on a hard fetch error so the
 // chip strip never renders empty mid-registration.
+//
+// `recommendedModuleKeys` holds GRANULAR menu-permission keys (matching
+// MENU_ITEMS in lib/menuItems.ts) — those keys get OR'd straight into
+// the new company's menuPermissions on the server, AND we also derive
+// the parent billable modules from them here on the client so the
+// pricing display stays accurate.
 type LiveIndustry = {
   code:                  string;
   nameAr:                string;
@@ -303,9 +310,9 @@ export default function Register() {
     ? industriesQ.data
     : INDUSTRIES_FALLBACK_LIVE;
 
-  // Helper: resolve recommended module keys for the given industry codes
-  // against the live catalog (or fallback). Deduped via Set.
-  const unionRecommendedModulesLive = (industryCodes: string[]): string[] => {
+  // Helper: collect the granular menu-permission keys recommended by the
+  // given industry codes against the live catalog (or fallback). Deduped.
+  const unionMenuKeysLive = (industryCodes: string[]): string[] => {
     const set = new Set<string>();
     for (const code of industryCodes) {
       const ind = INDUSTRIES_LIVE.find(i => i.code === code);
@@ -313,6 +320,16 @@ export default function Register() {
     }
     return Array.from(set);
   };
+
+  // Helper: derive the high-level BILLABLE module keys (matching the
+  // /admin/modules catalog) implied by the granular menu-permission keys
+  // attached to the given industries. This is what gets folded into
+  // `selectedModules` so the pricing total + module-multiselect UI stay
+  // in sync. Permissions whose parent module is `null` (always-on core
+  // like dashboard/invoices/customers, or SuperAdmin-only seo/ai_tools)
+  // contribute nothing here — they're free.
+  const unionBillableModulesLive = (industryCodes: string[]): string[] =>
+    deriveModulesFromMenuKeys(unionMenuKeysLive(industryCodes));
 
   // Prune any selected module keys that are no longer in the live catalog.
   // This handles the case where an industry template auto-added a key
@@ -342,10 +359,13 @@ export default function Register() {
       const isActivating = !prev.includes(code);
       const next = isActivating ? [...prev, code] : prev.filter(c => c !== code);
       if (isActivating) {
-        // Merge in the recommendations for the newly-activated industry
-        // (deduped via Set). Existing manual picks are preserved.
+        // Merge the BILLABLE parent modules for the newly-activated
+        // industry into the selection so the price summary updates and
+        // the user can see what they're being charged for. The granular
+        // menu permissions themselves are auto-granted server-side from
+        // the industry codes — no need to ship them in selectedModules.
         setSelectedModules(curr => Array.from(
-          new Set([...curr, ...unionRecommendedModulesLive([code])]),
+          new Set([...curr, ...unionBillableModulesLive([code])]),
         ));
       }
       return next;
@@ -357,7 +377,7 @@ export default function Register() {
     const all = INDUSTRIES_LIVE.map(i => i.code);
     setSelectedIndustries(all);
     setSelectedModules(curr => Array.from(
-      new Set([...curr, ...unionRecommendedModulesLive(all)]),
+      new Set([...curr, ...unionBillableModulesLive(all)]),
     ));
   };
   // "مسح" clears BOTH industries and modules. Explicit, predictable.
@@ -664,6 +684,60 @@ export default function Register() {
                       اختر نشاطاً واحداً أو أكثر لاقتراح الوحدات المناسبة تلقائياً، أو حدّد الوحدات يدوياً أسفله.
                     </p>
                   )}
+
+                  {/* ── Live "what you'll get" panel ──
+                      Shown the instant the user picks any industry, so they
+                      can see exactly which sidebar items will appear after
+                      registration AND which billable parent modules were
+                      auto-added to their plan. Both lists are computed
+                      purely on the client from INDUSTRIES_LIVE / MENU_ITEMS,
+                      so the view always mirrors what the server will grant
+                      (auth.ts performs the same OR-merge by industry code).
+                      Keeping it inline (rather than only on the final review
+                      step) is the whole point of the industry → permissions
+                      link: the user must see the consequence of each chip
+                      click immediately. */}
+                  {selectedIndustries.length > 0 && (() => {
+                    const grantedKeys = unionMenuKeysLive(selectedIndustries);
+                    const billableMods = unionBillableModulesLive(selectedIndustries);
+                    if (grantedKeys.length === 0) return null;
+                    const labels = grantedKeys.map(k => MENU_ITEM_BY_KEY[k]?.label ?? k);
+                    const moduleNames = billableMods.map(k => MODULE_BY_KEY[k]?.nameAr ?? k);
+                    return (
+                      <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-2 text-xs">
+                        <div className="flex items-start gap-2">
+                          <Check className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-emerald-800 mb-1">
+                              صلاحيات القوائم المُفعَّلة تلقائياً ({grantedKeys.length})
+                            </div>
+                            <div
+                              className="text-emerald-700 leading-relaxed"
+                              data-testid="reg-summary-menu-perms"
+                            >
+                              {labels.join("، ")}
+                            </div>
+                          </div>
+                        </div>
+                        {moduleNames.length > 0 && (
+                          <div className="flex items-start gap-2 pt-2 border-t border-emerald-200">
+                            <Check className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-semibold text-emerald-800 mb-1">
+                                الوحدات المُضافة تلقائياً ({moduleNames.length})
+                              </div>
+                              <div
+                                className="text-emerald-700 leading-relaxed"
+                                data-testid="reg-summary-billable-modules"
+                              >
+                                {moduleNames.join("، ")}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ── 2. Billing cycle ── */}
@@ -942,6 +1016,24 @@ export default function Register() {
                         ? "الأساسيات فقط"
                         : `${selectedModules.length} وحدة (${selectedModules.map(k => MODULE_BY_KEY[k]?.nameAr ?? k).join("، ")})`}
                     </span>
+                    {/* Granular menu permissions auto-granted by the chosen
+                        industries — gives the user transparency about which
+                        sidebar items will appear on first login. Computed
+                        purely on the client from INDUSTRIES_LIVE so it
+                        always mirrors what the server will actually grant. */}
+                    {selectedIndustries.length > 0 && (() => {
+                      const grantedKeys = unionMenuKeysLive(selectedIndustries);
+                      if (grantedKeys.length === 0) return null;
+                      const labels = grantedKeys.map(k => MENU_ITEM_BY_KEY[k]?.label ?? k);
+                      return (
+                        <>
+                          <span className="text-muted-foreground">صلاحيات القوائم المُفعَّلة:</span>
+                          <span className="font-medium" data-testid="reg-summary-menu-perms">
+                            {grantedKeys.length} صلاحية ({labels.join("، ")})
+                          </span>
+                        </>
+                      );
+                    })()}
                     <span className="text-muted-foreground">تاريخ البدء:</span><span>{form.startDate}</span>
                     <span className="text-muted-foreground">تاريخ الانتهاء:</span><span>{form.endDate}</span>
                     <span className="text-muted-foreground">اسم المستخدم:</span><span className="font-mono text-xs">{form.username}</span>

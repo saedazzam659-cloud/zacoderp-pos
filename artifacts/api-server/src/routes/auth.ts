@@ -782,7 +782,50 @@ router.post("/register", async (req, res) => {
     }
     return JSON.stringify(out);
   };
-  const resolvedMenuPermissions = buildMenuPermissionsJson(selectedModules);
+  let resolvedMenuPermissions = buildMenuPermissionsJson(selectedModules);
+
+  // ── INDUSTRY-DRIVEN MENU PERMISSIONS ────────────────────────────────
+  // On top of the module-derived permissions above, OR in any granular
+  // menu-permission keys attached to the chosen industries (managed in
+  // /admin/industries → recommendedModuleKeys). This is what makes
+  // picking the "تجاري" chip on the registration screen automatically
+  // light up its sidebar items (dashboard, customers, sales, purchases,
+  // accounting, hr…) without the user having to toggle each one.
+  // We only honour ACTIVE industries — a deactivated industry can't
+  // leak permissions even if a stale client posted its code.
+  try {
+    const codes = (Array.isArray(selectedIndustries) ? selectedIndustries : [])
+      .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
+    if (codes.length > 0) {
+      const { industriesTable } = await import("@workspace/db");
+      const { inArray, and } = await import("drizzle-orm");
+      const rows = await db.select({
+        keys: industriesTable.recommendedModuleKeys,
+      }).from(industriesTable).where(and(
+        inArray(industriesTable.code, codes),
+        eq(industriesTable.isActive, true),
+      ));
+
+      const granted: Record<string, boolean> = resolvedMenuPermissions
+        ? JSON.parse(resolvedMenuPermissions)
+        : { dashboard: true, invoices: true, customers: true };
+      // Whitelist filter: even though writes to industries.recommendedModuleKeys
+      // go through the same canonical filter (see `routes/adminIndustries.ts`),
+      // we re-filter here as defense-in-depth — guards against legacy rows
+      // written before the whitelist existed and against any direct DB edits.
+      const { filterCanonicalKeys } = await import("../lib/menuPermissionCatalog.js");
+      for (const r of rows) {
+        const safeKeys = filterCanonicalKeys((r.keys ?? []) as unknown[]);
+        for (const k of safeKeys) granted[k] = true;
+      }
+      resolvedMenuPermissions = JSON.stringify(granted);
+    }
+  } catch (e) {
+    // Permission grant from industries is additive — failing it should
+    // never block a registration. Worst case: the user lands without
+    // the auto-granted menus and an admin enables them later.
+    req.log?.warn?.({ err: e }, "industry → menuPermissions merge failed");
+  }
 
   // Create company
   const [company] = await db.insert(companiesTable).values({

@@ -32,20 +32,18 @@ function normaliseCode(raw: unknown): string {
   return String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_");
 }
 
-// Coerces an arbitrary input to a clean string[] of module keys. Drops
-// non-strings, trims, dedupes, and preserves user-provided ordering.
+// Coerces an arbitrary input to a clean string[] of granular menu-
+// permission keys. Drops non-strings, trims, dedupes, preserves
+// user-provided ordering, AND validates each key against the canonical
+// catalog in `lib/menuPermissionCatalog.ts`. Unknown keys are silently
+// dropped — this is the chokepoint that prevents typos or stale UI
+// strings from ever reaching the DB and later leaking into a freshly
+// registered company's `menu_permissions` JSONB via the industry merge.
+import { filterCanonicalKeys } from "../lib/menuPermissionCatalog.js";
+
 function normaliseModuleKeys(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const v of raw) {
-    if (typeof v !== "string") continue;
-    const k = v.trim();
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    out.push(k);
-  }
-  return out;
+  return filterCanonicalKeys(raw);
 }
 
 // GET /api/admin/industries — full list (admin only)
@@ -174,34 +172,79 @@ router.delete("/:id", requireSuperAdmin, async (req, res) => {
 // =====================================================================
 // Default catalogue — used both by POST /seed (manual reseed from the
 // SuperAdmin UI) and by the bootstrap auto-seeder in api-server/index.ts
-// (so a fresh DB always has the activity-type chips ready). Keep in
-// sync with `recommendedModuleKeys` referencing live `modules.key`s.
+// (so a fresh DB always has the activity-type chips ready).
+//
+// `recommendedModuleKeys` now stores GRANULAR menu-permission keys
+// (matching MENU_ITEMS in artifacts/zatca-invoicing/src/lib/menuItems.ts)
+// — selecting an industry on the registration screen will OR these
+// keys directly into the new company's menuPermissions JSON, so the
+// linked sidebar items show up immediately. The legacy column name is
+// preserved for migration compatibility.
+//
+// Each default also includes the always-on core (dashboard, invoices,
+// customers) so the admin can see exactly what gets enabled. The
+// registration handler ignores duplicates harmlessly.
 // =====================================================================
 export const DEFAULT_INDUSTRIES: Array<Omit<typeof industriesTable.$inferInsert, "id" | "createdAt" | "updatedAt">> = [
   {
     code: "commercial",  nameAr: "تجاري",   nameEn: "Commercial",  emoji: "🛒",
     sortOrder: 10, isActive: true,
-    recommendedModuleKeys: ["inventory", "sales", "purchasing", "accounting", "hr"],
+    recommendedModuleKeys: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module",
+    ],
   },
   {
     code: "industrial",  nameAr: "صناعي",   nameEn: "Industrial",  emoji: "🏭",
     sortOrder: 20, isActive: true,
-    recommendedModuleKeys: ["inventory", "sales", "purchasing", "accounting", "hr", "production"],
+    recommendedModuleKeys: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module", "production",
+    ],
   },
   {
     code: "contracting", nameAr: "مقاولات", nameEn: "Contracting", emoji: "🏗️",
     sortOrder: 30, isActive: true,
-    recommendedModuleKeys: ["inventory", "sales", "purchasing", "accounting", "hr", "production", "contracting"],
+    recommendedModuleKeys: [
+      "dashboard", "invoices", "customers", "suppliers",
+      "inventory_mobile", "inventory_reports",
+      "sales_module", "sales_reports",
+      "purchases_module", "purchases_reports",
+      "cash_module", "cash_reports", "accounts", "accounting_reports",
+      "hr_module", "production", "contracting",
+    ],
   },
   {
     code: "medical",     nameAr: "طبي",     nameEn: "Medical",     emoji: "🩺",
     sortOrder: 40, isActive: true,
-    recommendedModuleKeys: ["sales", "inventory", "cash", "accounting", "hr", "zatca", "pos"],
+    recommendedModuleKeys: [
+      "dashboard", "invoices", "customers",
+      "sales_module", "sales_reports",
+      "inventory_mobile", "inventory_reports",
+      "pos",
+      "cash_module", "accounts", "accounting_reports",
+      "hr_module", "zatca", "reports",
+    ],
   },
   {
     code: "hotels",      nameAr: "فنادق",   nameEn: "Hotels",      emoji: "🏨",
     sortOrder: 50, isActive: true,
-    recommendedModuleKeys: ["sales", "pos", "inventory", "cash", "accounting", "hr", "zatca"],
+    recommendedModuleKeys: [
+      "dashboard", "invoices", "customers",
+      "sales_module", "sales_reports",
+      "pos",
+      "inventory_mobile", "inventory_reports",
+      "cash_module", "accounts", "accounting_reports",
+      "hr_module", "zatca", "reports",
+    ],
   },
 ];
 
