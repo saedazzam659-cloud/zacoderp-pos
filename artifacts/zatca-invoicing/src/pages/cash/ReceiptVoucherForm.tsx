@@ -32,6 +32,7 @@ interface FormState {
   entityId: string;       // customer id (always)
   entityName: string;     // cached name for JE preview
   amount: string;
+  currencyId: string;
   exchangeRate: string;
   salesInvoiceId: string; // optional link
   refType: string;
@@ -48,6 +49,7 @@ const EMPTY: FormState = {
   entityId: "",
   entityName: "",
   amount: "",
+  currencyId: "",
   exchangeRate: "1",
   salesInvoiceId: "",
   refType: "",
@@ -98,6 +100,22 @@ export default function ReceiptVoucherForm() {
     queryFn: () => fetch(`${API}/api/customers?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: () => fetch(`${API}/api/currencies?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
+  const defaultCurrencyId =
+    (currencies as any[]).find((c: any) => c.isDefault)?.id ??
+    (currencies as any[])[0]?.id ?? null;
+  // Sync the default currency into form state on new vouchers so that
+  // what the user sees pre-selected is actually what gets saved.
+  useEffect(() => {
+    if (isNew && !form.currencyId && defaultCurrencyId) {
+      setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
+    }
+  }, [isNew, form.currencyId, defaultCurrencyId]);
   // Sales invoices for the optional link picker. We pull the full list
   // for this tenant once and filter client-side per selected customer —
   // simpler than maintaining a per-customer endpoint and the data is
@@ -134,6 +152,7 @@ export default function ReceiptVoucherForm() {
       entityId: existing.entityId ? String(existing.entityId) : "",
       entityName: existing.entityName ?? "",
       amount: existing.amount ?? "",
+      currencyId: existing.currencyId ? String(existing.currencyId) : "",
       exchangeRate: existing.exchangeRate ?? "1",
       salesInvoiceId: existing.salesInvoiceId ? String(existing.salesInvoiceId) : "",
       refType: existing.refType ?? "",
@@ -267,6 +286,7 @@ export default function ReceiptVoucherForm() {
         cashBoxId:    form.cashBoxId    ? parseInt(form.cashBoxId)    : null,
         bankAccountId:form.bankAccountId? parseInt(form.bankAccountId): null,
         entityId:     form.entityId     ? parseInt(form.entityId)     : null,
+        currencyId:   form.currencyId   ? parseInt(form.currencyId)   : null,
         salesInvoiceId: linkInvoice && form.salesInvoiceId
           ? parseInt(form.salesInvoiceId) : null,
       };
@@ -565,7 +585,7 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 pb-4 space-y-4">
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.code`)}</Label>
                     <Input value={docLabel} readOnly disabled className="h-9 font-mono text-sm bg-muted/30" />
@@ -575,6 +595,22 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                       {t(`${NS}.date`)} <span className="text-destructive">*</span>
                     </Label>
                     <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" data-testid="rv-date" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}</Label>
+                    <select
+                      value={form.currencyId || (defaultCurrencyId ? String(defaultCurrencyId) : "")}
+                      onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}
+                      data-testid="rv-currency"
+                      className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                    >
+                      <option value="">{t(`${NS}.selectCurrency`, "اختر العملة")}</option>
+                      {(currencies as any[]).map((c: any) => (
+                        <option key={c.id} value={c.id}>
+                          {c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.exchangeRate`)}</Label>

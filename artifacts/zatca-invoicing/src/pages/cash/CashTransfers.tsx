@@ -15,7 +15,7 @@ import { ArrowLeftRight, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
-const EMPTY = { date: today(), transferType: "cash_to_bank", fromCashBoxId: "", fromBankId: "", toCashBoxId: "", toBankId: "", amount: "", exchangeRate: "1", description: "", notes: "" };
+const EMPTY = { date: today(), transferType: "cash_to_bank", fromCashBoxId: "", fromBankId: "", toCashBoxId: "", toBankId: "", amount: "", currencyId: "", exchangeRate: "1", description: "", notes: "" };
 
 export default function CashTransfers() {
   const { user, token } = useAuth();
@@ -43,6 +43,17 @@ export default function CashTransfers() {
   const { data: transfers = [], isLoading } = useQuery({ queryKey: ["cash-transfers", cid], queryFn: () => fetch(`${API}/api/cash-transfers?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
   const { data: cashBoxes = [] }            = useQuery({ queryKey: ["cash-boxes", cid],     queryFn: () => fetch(`${API}/api/cash-boxes?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
   const { data: bankAccounts = [] }         = useQuery({ queryKey: ["bank-accounts", cid],  queryFn: () => fetch(`${API}/api/bank-accounts?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid });
+  const { data: currencies = [] }           = useQuery<any[]>({ queryKey: ["currencies", cid],     queryFn: () => fetch(`${API}/api/currencies?companyId=${cid}`, { headers: h }).then(r => r.json()), enabled: !!cid, staleTime: 60_000 });
+  const defaultCurrencyId =
+    (currencies as any[]).find((c: any) => c.isDefault)?.id ??
+    (currencies as any[])[0]?.id ?? null;
+  // Sync the default currency into form state when opening the panel
+  // for a new transfer so what the user sees pre-selected is what gets saved.
+  useEffect(() => {
+    if (panel && !editing && !form.currencyId && defaultCurrencyId) {
+      setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
+    }
+  }, [panel, editing, form.currencyId, defaultCurrencyId]);
 
   const filtered = (transfers as any[]).filter((v: any) => v.code?.includes(search) || v.description?.includes(search));
 
@@ -50,7 +61,7 @@ export default function CashTransfers() {
   const totalAmount = (transfers as any[]).filter((v: any) => v.status === "posted").reduce((a: number, v: any) => a + parseFloat(v.amount || "0"), 0);
 
   function openAdd()  { setEditing(null); setForm({ ...EMPTY, date: today() }); setPanel(true); }
-  function openEdit(r: any) { setEditing(r); setForm({ date: r.date, transferType: r.transferType || "cash_to_bank", fromCashBoxId: r.fromCashBoxId ? String(r.fromCashBoxId) : "", fromBankId: r.fromBankId ? String(r.fromBankId) : "", toCashBoxId: r.toCashBoxId ? String(r.toCashBoxId) : "", toBankId: r.toBankId ? String(r.toBankId) : "", amount: r.amount ?? "", exchangeRate: r.exchangeRate ?? "1", description: r.description ?? "", notes: r.notes ?? "" }); setPanel(true); }
+  function openEdit(r: any) { setEditing(r); setForm({ date: r.date, transferType: r.transferType || "cash_to_bank", fromCashBoxId: r.fromCashBoxId ? String(r.fromCashBoxId) : "", fromBankId: r.fromBankId ? String(r.fromBankId) : "", toCashBoxId: r.toCashBoxId ? String(r.toCashBoxId) : "", toBankId: r.toBankId ? String(r.toBankId) : "", amount: r.amount ?? "", currencyId: r.currencyId ? String(r.currencyId) : "", exchangeRate: r.exchangeRate ?? "1", description: r.description ?? "", notes: r.notes ?? "" }); setPanel(true); }
 
   // Honour the company-level "auto-post on save" toggle: when automatic,
   // chain the /post call right after a successful save so the transfer's
@@ -59,7 +70,7 @@ export default function CashTransfers() {
   const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
   const saveMut = useMutation({
     mutationFn: async () => {
-      const body = { ...form, companyId: cid, fromCashBoxId: form.fromCashBoxId ? parseInt(form.fromCashBoxId) : null, fromBankId: form.fromBankId ? parseInt(form.fromBankId) : null, toCashBoxId: form.toCashBoxId ? parseInt(form.toCashBoxId) : null, toBankId: form.toBankId ? parseInt(form.toBankId) : null };
+      const body = { ...form, companyId: cid, fromCashBoxId: form.fromCashBoxId ? parseInt(form.fromCashBoxId) : null, fromBankId: form.fromBankId ? parseInt(form.fromBankId) : null, toCashBoxId: form.toCashBoxId ? parseInt(form.toCashBoxId) : null, toBankId: form.toBankId ? parseInt(form.toBankId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };
       const url = editing ? `${API}/api/cash-transfers/${editing.id}` : `${API}/api/cash-transfers`;
       const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
@@ -205,6 +216,20 @@ export default function CashTransfers() {
               </div>
             </div>
             <Field label={t("cashTransfers.amount")} required><Input type="number" step="0.01" placeholder="0.00" dir="ltr" className="text-left" {...f("amount")} /></Field>
+            <Field label={t("cashTransfers.currency", "العملة")}>
+              <select
+                className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                value={form.currencyId || (defaultCurrencyId ? String(defaultCurrencyId) : "")}
+                onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}
+              >
+                <option value="">{t("cashTransfers.selectCurrency", "اختر العملة")}</option>
+                {(currencies as any[]).map((c: any) => (
+                  <option key={c.id} value={c.id}>
+                    {c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label={t("cashTransfers.exchangeRate")}><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
             <Field label={t("cashTransfers.description")} className="md:col-span-2"><Input placeholder={t("cashTransfers.descriptionPlaceholder")} {...f("description")} /></Field>
             <Field label={t("cashCommon.notes")} className="md:col-span-2"><Input placeholder={t("cashCommon.notesPlaceholder")} {...f("notes")} /></Field>

@@ -42,6 +42,7 @@ interface FormState {
   toCashBoxId: string;
   toBankId: string;
   amount: string;
+  currencyId: string;
   exchangeRate: string;
   description: string;
   notes: string;
@@ -56,6 +57,7 @@ const EMPTY: FormState = {
   toCashBoxId: "",
   toBankId: "",
   amount: "",
+  currencyId: "",
   exchangeRate: "1",
   description: "",
   notes: "",
@@ -132,6 +134,22 @@ export default function FinancialTransactionForm() {
     enabled: !!cid,
     staleTime: 30_000,
   });
+  const { data: currencies = [] } = useQuery<any[]>({
+    queryKey: ["currencies", cid],
+    queryFn: () => fetch(`${API}/api/currencies?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    enabled: !!cid,
+    staleTime: 60_000,
+  });
+  const defaultCurrencyId =
+    (currencies as any[]).find((c: any) => c.isDefault)?.id ??
+    (currencies as any[])[0]?.id ?? null;
+  // Sync the default currency into form state on new transactions so
+  // that what the user sees pre-selected is actually what gets saved.
+  useEffect(() => {
+    if (isNew && !form.currencyId && defaultCurrencyId) {
+      setForm(p => ({ ...p, currencyId: String(defaultCurrencyId) }));
+    }
+  }, [isNew, form.currencyId, defaultCurrencyId]);
 
   // ── Edit-mode load ─────────────────────────────────────────────
   const { data: existing } = useQuery<any>({
@@ -151,6 +169,7 @@ export default function FinancialTransactionForm() {
       toCashBoxId:   existing.toCashBoxId   ? String(existing.toCashBoxId)   : "",
       toBankId:      existing.toBankId      ? String(existing.toBankId)      : "",
       amount: existing.amount ?? "",
+      currencyId: existing.currencyId ? String(existing.currencyId) : "",
       exchangeRate: existing.exchangeRate ?? "1",
       description: existing.description ?? "",
       notes: existing.notes ?? "",
@@ -267,6 +286,7 @@ export default function FinancialTransactionForm() {
         date: form.date,
         transferType,
         amount: amtNum.toFixed(2),
+        currencyId:    form.currencyId    ? parseInt(form.currencyId)    : null,
         exchangeRate: form.exchangeRate,
         description: form.description,
         notes: form.notes,
@@ -569,7 +589,7 @@ export default function FinancialTransactionForm() {
               <TabsContent value="info" className="mt-4 space-y-3">
                 <Card className="border-2">
                   <CardContent className="pt-5 pb-5 space-y-5">
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium">{t(`${NS}.code`, "كود المعاملة")}</Label>
                         <Input value={docLabel} readOnly disabled className="h-9 font-mono text-sm bg-muted/30" />
@@ -579,6 +599,22 @@ export default function FinancialTransactionForm() {
                           {t(`${NS}.date`, "التاريخ")} <span className="text-destructive">*</span>
                         </Label>
                         <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="h-9 text-sm" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium">{t(`${NS}.currency`, "العملة")}</Label>
+                        <select
+                          value={form.currencyId || (defaultCurrencyId ? String(defaultCurrencyId) : "")}
+                          onChange={e => setForm(p => ({ ...p, currencyId: e.target.value }))}
+                          data-testid="ft-currency"
+                          className="w-full h-9 border border-input rounded-md px-3 text-sm bg-background"
+                        >
+                          <option value="">{t(`${NS}.selectCurrency`, "اختر العملة")}</option>
+                          {(currencies as any[]).map((c: any) => (
+                            <option key={c.id} value={c.id}>
+                              {c.code} — {isRtl ? c.nameAr : (c.nameEn || c.nameAr)}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium">{t(`${NS}.exchangeRate`, "سعر الصرف")}</Label>
