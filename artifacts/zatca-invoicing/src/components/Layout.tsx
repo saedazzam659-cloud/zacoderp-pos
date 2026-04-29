@@ -491,21 +491,32 @@ function CashReportsNavGroup({
 // LEGACY BACKSTOP: companies created before granular permissions
 // existed have an empty/null `menu_permissions` JSON. To avoid
 // regressing those tenants we treat empty JSON as "show everything"
-// (the old behavior). The instant a SuperAdmin opens
-// /admin/menu-permissions and saves anything, the JSON becomes
-// non-empty and the strict allow-list semantics take over.
+// (the old behavior).
 //
-// The proxy returns `true` for ANY key access when the underlying
-// JSON is empty, so existing call sites like `menuPerms.dashboard`
-// keep working without checking emptiness everywhere.
+// MISSING-KEY DEFAULT (matches the SuperAdmin UI):
+// `pages/MenuPermissions.tsx` always merges saved JSON on top of a
+// "DEFAULT_PERMISSIONS = all true" base, so any key that's never been
+// persisted is rendered as enabled. Without the same default here, a
+// catalog key added AFTER a company was first saved (e.g. ai_tools,
+// accounting_maintenance, seo_dashboard) stays invisible in the
+// sidebar even though the admin sees it as enabled — and because the
+// UI diff is zero, the Save button is disabled and the admin can't
+// even persist the new key. So the runtime treats any property NOT
+// explicitly set to `false` as allowed, which keeps strict allow-list
+// semantics for explicit denials while letting newly-added catalog
+// keys auto-enable for legacy tenants.
 function parseMenuPerms(raw: string | null | undefined): Record<string, boolean> {
   let parsed: Record<string, boolean> = {};
   try { parsed = JSON.parse(raw ?? "{}") || {}; } catch { parsed = {}; }
-  if (!parsed || typeof parsed !== "object" || Object.keys(parsed).length === 0) {
-    // Legacy backstop — return a "true for everything" object.
-    return new Proxy({} as Record<string, boolean>, { get: () => true });
-  }
-  return parsed;
+  if (!parsed || typeof parsed !== "object") parsed = {};
+  return new Proxy(parsed, {
+    get: (target, prop) => {
+      if (typeof prop !== "string") return Reflect.get(target, prop);
+      // Explicit `false` wins; everything else (true / undefined / null)
+      // resolves to true so missing catalog keys default to allowed.
+      return target[prop] === false ? false : true;
+    },
+  });
 }
 
 // Each top-level sidebar group is allowed when ANY of these granular
