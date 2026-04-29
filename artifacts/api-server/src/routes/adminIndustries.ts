@@ -47,9 +47,30 @@ function normaliseModuleKeys(raw: unknown): string[] {
 }
 
 // GET /api/admin/industries — full list (admin only)
+//
+// Heavy template payloads (`coaTemplate`, `mappingsTemplate` JSON arrays)
+// are explicitly EXCLUDED — they are only fetched on demand via the
+// per-industry GET /:id/template/* endpoints. The list still surfaces
+// the row counts and upload timestamps so the UI can show a summary
+// badge ("📁 41 صف · آخر رفع …") next to each card.
 router.get("/", requireSuperAdmin, async (_req, res) => {
   try {
-    const rows = await db.select().from(industriesTable)
+    const rows = await db.select({
+      id:                          industriesTable.id,
+      code:                        industriesTable.code,
+      nameAr:                      industriesTable.nameAr,
+      nameEn:                      industriesTable.nameEn,
+      emoji:                       industriesTable.emoji,
+      recommendedModuleKeys:       industriesTable.recommendedModuleKeys,
+      sortOrder:                   industriesTable.sortOrder,
+      isActive:                    industriesTable.isActive,
+      coaTemplateRowCount:         industriesTable.coaTemplateRowCount,
+      coaTemplateUploadedAt:       industriesTable.coaTemplateUploadedAt,
+      mappingsTemplateRowCount:    industriesTable.mappingsTemplateRowCount,
+      mappingsTemplateUploadedAt:  industriesTable.mappingsTemplateUploadedAt,
+      createdAt:                   industriesTable.createdAt,
+      updatedAt:                   industriesTable.updatedAt,
+    }).from(industriesTable)
       .orderBy(asc(industriesTable.sortOrder), asc(industriesTable.id));
     res.json(rows);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -262,6 +283,135 @@ router.post("/seed", requireSuperAdmin, async (_req, res) => {
     const inserted = result.length;
     const skipped  = DEFAULT_INDUSTRIES.length - inserted;
     res.json({ ok: true, inserted, skipped });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// =====================================================================
+// PER-INDUSTRY DEFAULT TEMPLATES
+//
+// SuperAdmin uploads two optional templates per industry:
+//   • COA (chart of accounts) — full account tree
+//   • Mappings (accounting mappings) — document/role → account-code
+//
+// Templates are stored as parsed JSON arrays so the registration flow
+// can apply them in one DB round-trip without ever re-parsing an .xlsx.
+// Re-uploads REPLACE the stored template fully (per spec).
+// All endpoints are SuperAdmin-only.
+// =====================================================================
+
+const MAX_TEMPLATE_ROWS = 5000;
+
+function parseIndustryId(req: any, res: any): number | null {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return null; }
+  return id;
+}
+
+// ── COA template ─────────────────────────────────────────────────────
+router.get("/:id/template/coa", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const [row] = await db.select({
+      rows:       industriesTable.coaTemplate,
+      uploadedAt: industriesTable.coaTemplateUploadedAt,
+      count:      industriesTable.coaTemplateRowCount,
+    }).from(industriesTable).where(eq(industriesTable.id, id));
+    if (!row) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({
+      rows:       Array.isArray(row.rows) ? row.rows : [],
+      uploadedAt: row.uploadedAt,
+      count:      row.count,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/:id/template/coa", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows || rows.length === 0) { res.status(400).json({ error: "لا توجد صفوف للرفع" }); return; }
+    if (rows.length > MAX_TEMPLATE_ROWS) {
+      res.status(400).json({ error: `الحد الأقصى ${MAX_TEMPLATE_ROWS} صف في القالب الواحد` }); return;
+    }
+    const [updated] = await db.update(industriesTable).set({
+      coaTemplate:           rows,
+      coaTemplateRowCount:   rows.length,
+      coaTemplateUploadedAt: new Date(),
+      updatedAt:             new Date(),
+    }).where(eq(industriesTable.id, id)).returning({
+      coaTemplateRowCount:   industriesTable.coaTemplateRowCount,
+      coaTemplateUploadedAt: industriesTable.coaTemplateUploadedAt,
+    });
+    if (!updated) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({ ok: true, ...updated });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/:id/template/coa", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const [updated] = await db.update(industriesTable).set({
+      coaTemplate:           null,
+      coaTemplateRowCount:   0,
+      coaTemplateUploadedAt: null,
+      updatedAt:             new Date(),
+    }).where(eq(industriesTable.id, id)).returning({ id: industriesTable.id });
+    if (!updated) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Mappings template ────────────────────────────────────────────────
+router.get("/:id/template/mappings", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const [row] = await db.select({
+      rows:       industriesTable.mappingsTemplate,
+      uploadedAt: industriesTable.mappingsTemplateUploadedAt,
+      count:      industriesTable.mappingsTemplateRowCount,
+    }).from(industriesTable).where(eq(industriesTable.id, id));
+    if (!row) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({
+      rows:       Array.isArray(row.rows) ? row.rows : [],
+      uploadedAt: row.uploadedAt,
+      count:      row.count,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put("/:id/template/mappings", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows || rows.length === 0) { res.status(400).json({ error: "لا توجد صفوف للرفع" }); return; }
+    if (rows.length > MAX_TEMPLATE_ROWS) {
+      res.status(400).json({ error: `الحد الأقصى ${MAX_TEMPLATE_ROWS} صف في القالب الواحد` }); return;
+    }
+    const [updated] = await db.update(industriesTable).set({
+      mappingsTemplate:           rows,
+      mappingsTemplateRowCount:   rows.length,
+      mappingsTemplateUploadedAt: new Date(),
+      updatedAt:                  new Date(),
+    }).where(eq(industriesTable.id, id)).returning({
+      mappingsTemplateRowCount:   industriesTable.mappingsTemplateRowCount,
+      mappingsTemplateUploadedAt: industriesTable.mappingsTemplateUploadedAt,
+    });
+    if (!updated) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({ ok: true, ...updated });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/:id/template/mappings", requireSuperAdmin, async (req, res) => {
+  try {
+    const id = parseIndustryId(req, res); if (id === null) return;
+    const [updated] = await db.update(industriesTable).set({
+      mappingsTemplate:           null,
+      mappingsTemplateRowCount:   0,
+      mappingsTemplateUploadedAt: null,
+      updatedAt:                  new Date(),
+    }).where(eq(industriesTable.id, id)).returning({ id: industriesTable.id });
+    if (!updated) { res.status(404).json({ error: "النشاط غير موجود" }); return; }
+    res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

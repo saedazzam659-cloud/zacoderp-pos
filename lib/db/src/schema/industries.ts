@@ -24,6 +24,18 @@ export const industriesTable = pgTable("industries", {
     .$type<string[]>()
     .notNull()
     .default([]),
+  // ── Per-industry default templates (SuperAdmin uploads) ────────────
+  // Applied automatically when a NEW company picks this industry at
+  // registration. Re-uploads REPLACE the stored template fully.
+  // Keeping the JSON parsed-rows shape lets us restore an .xlsx download
+  // and apply the rows in one DB round-trip without re-parsing files.
+  coaTemplate: jsonb("coa_template").$type<any[] | null>(),
+  coaTemplateUploadedAt: timestamp("coa_template_uploaded_at"),
+  coaTemplateRowCount: integer("coa_template_row_count").notNull().default(0),
+  mappingsTemplate: jsonb("mappings_template").$type<any[] | null>(),
+  mappingsTemplateUploadedAt: timestamp("mappings_template_uploaded_at"),
+  mappingsTemplateRowCount: integer("mappings_template_row_count").notNull().default(0),
+
   sortOrder: integer("sort_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),

@@ -885,6 +885,28 @@ router.post("/register", async (req, res) => {
     price: finalPrice,
   });
 
+  // ── PER-INDUSTRY DEFAULT TEMPLATES ─────────────────────────────────
+  // SuperAdmin can attach a chart-of-accounts AND/OR an accounting-
+  // mappings template per industry from /admin/industries. When a NEW
+  // company picks one of those industries here, the templates are
+  // applied so the tenant boots with a ready COA + wired-up posting
+  // rules — no manual "Import Excel" step needed for first-time use.
+  // Failures are logged but never block registration: worst case the
+  // company starts empty and the admin can import templates manually.
+  try {
+    const codes = (Array.isArray(selectedIndustries) ? selectedIndustries : [])
+      .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
+    if (codes.length > 0) {
+      const { applyIndustryTemplates } = await import("../lib/applyIndustryTemplates.js");
+      const r = await applyIndustryTemplates(company.id, codes);
+      if (r.coaInserted > 0 || r.mappingsInserted > 0) {
+        req.log?.info?.({ companyId: company.id, ...r }, "industry templates applied");
+      }
+    }
+  } catch (err) {
+    req.log?.warn?.({ err }, "industry templates apply failed");
+  }
+
   // Hash password + create admin user (inactive until superadmin approves)
   const passwordHash = await bcrypt.hash(password, 12);
   const [newUser] = await db.insert(usersTable).values({
