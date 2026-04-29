@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet } from "@/lib/preferredPrinter";
+import { getPreferredPrinter, setPreferredPrinter, openPrinterTestSheet, detectUsbPrinter, isWebUsbSupported } from "@/lib/preferredPrinter";
 import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 
@@ -1215,6 +1215,8 @@ function LocalPrinterCard() {
   const { toast } = useToast();
   const [printer, setPrinter] = useState<string>(() => getPreferredPrinter());
   const [saved, setSaved] = useState<string>(() => getPreferredPrinter());
+  const [detecting, setDetecting] = useState(false);
+  const usbSupported = isWebUsbSupported();
   const dirty = printer.trim() !== saved.trim();
 
   function handleSave() {
@@ -1238,6 +1240,53 @@ function LocalPrinterCard() {
     }
   }
 
+  // Trigger the browser's USB-device chooser (filtered to printer
+  // class) and pre-fill the input with the picked printer's name. We
+  // do NOT auto-save — the user can review the suggested name and
+  // hit "حفظ الطابعة" to commit it.
+  async function handleAutoDetect() {
+    if (!usbSupported) {
+      toast({
+        title: "هذا المتصفح لا يدعم الاكتشاف التلقائي",
+        description: "ميزة الاكتشاف التلقائي تتطلب متصفح Chrome أو Edge أو Opera. يمكنك إدخال اسم الطابعة يدوياً.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setDetecting(true);
+    try {
+      const r = await detectUsbPrinter();
+      if (r.ok) {
+        setPrinter(r.name);
+        toast({
+          title: `تم اكتشاف الطابعة: ${r.name}`,
+          description: "اضغط \"حفظ الطابعة\" لتثبيت الاسم لهذا الجهاز.",
+        });
+      } else if (r.reason === "cancelled") {
+        // User closed the chooser; stay quiet.
+      } else if (r.reason === "no-name") {
+        toast({
+          title: "تم اختيار الطابعة لكن دون اسم قابل للقراءة",
+          description: "بعض الطابعات لا ترسل اسماً عبر USB. الرجاء إدخال الاسم يدوياً.",
+          variant: "destructive",
+        });
+      } else if (r.reason === "unsupported") {
+        toast({
+          title: "هذا المتصفح لا يدعم الاكتشاف التلقائي",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "تعذّر اكتشاف الطابعة",
+          description: r.message || "حدث خطأ غير متوقع. الرجاء إدخال الاسم يدوياً.",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setDetecting(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border bg-card p-5 space-y-4">
       <div>
@@ -1247,13 +1296,14 @@ function LocalPrinterCard() {
         </h2>
         <p className="text-xs text-muted-foreground mt-1 leading-6">
           سجِّل اسم الطابعة المتصلة بهذا الجهاز ليظهر كتذكير قبل كل عملية طباعة.
-          لأسباب أمنية، لا تستطيع المتصفحات اختيار الطابعة تلقائياً — يبقى الاختيار
-          في نافذة الطباعة الخاصة بنظام التشغيل. هذا الإعداد محفوظ على هذا الجهاز
-          فقط، فإذا فتحت النظام من جهاز آخر فسيكون لكل جهاز طابعته الخاصة.
+          يمكنك الضغط على <b>"اكتشاف تلقائي"</b> ليقوم المتصفح بقراءة اسم الطابعة
+          الموصولة عبر USB (يتطلب موافقتك في نافذة المتصفح، ويعمل في Chrome/Edge/Opera
+          ولا يلتقط الطابعات الشبكية)، أو أدخل الاسم يدوياً كما يظهر في نظام التشغيل.
+          هذا الإعداد محفوظ على هذا الجهاز فقط، ولكل جهاز طابعته الخاصة.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">اسم الطابعة (كما يظهر في نظام التشغيل)</Label>
           <Input
@@ -1263,6 +1313,18 @@ function LocalPrinterCard() {
             dir="auto"
           />
         </div>
+        <Button
+          variant="secondary"
+          onClick={handleAutoDetect}
+          disabled={detecting || !usbSupported}
+          className="gap-1.5"
+          title={usbSupported
+            ? "اكتشاف الطابعة المتصلة عبر USB"
+            : "غير مدعوم في هذا المتصفح"}
+        >
+          <Zap className="h-4 w-4" />
+          {detecting ? "جارٍ الاكتشاف..." : "اكتشاف تلقائي"}
+        </Button>
         <Button onClick={handleSave} disabled={!dirty} className="gap-1.5">
           <Save className="h-4 w-4" />
           حفظ الطابعة

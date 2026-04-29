@@ -30,6 +30,60 @@ export function setPreferredPrinter(name: string): void {
   }
 }
 
+// ── Auto-detect via WebUSB ────────────────────────────────────────
+// Browsers can't enumerate every installed printer for privacy, but
+// they DO let the user grant access to a single USB device through
+// `navigator.usb.requestDevice`. We filter on USB class 7 (Printer
+// class) so the chooser only shows printer-like devices. After the
+// user picks one we read the product/manufacturer strings the
+// printer reports over USB and use them as the suggested name.
+//
+// Caveats (surfaced to the caller via the result type):
+//   - Chrome/Edge/Opera only. Firefox & Safari don't ship WebUSB.
+//   - Only USB-connected printers — network/Wi-Fi printers won't
+//     show up in the chooser.
+//   - The user must accept the browser's USB-permission dialog.
+
+export type DetectPrinterResult =
+  | { ok: true; name: string; manufacturer?: string; product?: string }
+  | { ok: false; reason: "unsupported" | "cancelled" | "no-name" | "error"; message?: string };
+
+export async function detectUsbPrinter(): Promise<DetectPrinterResult> {
+  const nav = navigator as any;
+  if (!nav?.usb?.requestDevice) {
+    return { ok: false, reason: "unsupported" };
+  }
+  try {
+    // USB printer class code = 7 (per usb.org device-class assignments).
+    const device = await nav.usb.requestDevice({ filters: [{ classCode: 7 }] });
+    const product = (device?.productName ?? "").trim();
+    const manufacturer = (device?.manufacturerName ?? "").trim();
+    if (!product && !manufacturer) {
+      return { ok: false, reason: "no-name" };
+    }
+    // Prefer a combined "Manufacturer Product" label when both are
+    // distinct, e.g. "EPSON TM-T20" or "HP LaserJet M1136".
+    const name =
+      product && manufacturer && !product.toLowerCase().includes(manufacturer.toLowerCase())
+        ? `${manufacturer} ${product}`
+        : product || manufacturer;
+    return { ok: true, name, manufacturer, product };
+  } catch (err: any) {
+    // The API throws a NotFoundError when the user cancels the
+    // chooser without picking a device. Treat that as a benign
+    // "cancelled" so the UI can stay quiet.
+    const msg = String(err?.message ?? err ?? "");
+    if (err?.name === "NotFoundError" || /no device selected/i.test(msg)) {
+      return { ok: false, reason: "cancelled" };
+    }
+    return { ok: false, reason: "error", message: msg };
+  }
+}
+
+export function isWebUsbSupported(): boolean {
+  return typeof navigator !== "undefined" && !!(navigator as any).usb?.requestDevice;
+}
+
 // Open a tiny test sheet that calls window.print() so the user can
 // confirm the system print dialog is wired to their preferred printer.
 // Returns the opened window (or null when the popup was blocked).
