@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useGetInvoice, useIssueInvoice, useCancelInvoice } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { ensurePrinterReady } from "@/lib/printerGuard";
 import {
   ArrowRight, FileText, CheckCircle2, AlertTriangle, XCircle,
   Send, Printer, Ban, Upload, Loader2, Copy, FileCode2, Clock,
@@ -39,6 +40,7 @@ export default function InvoiceDetails() {
   const params = useParams();
   const id = parseInt(params.id || "0", 10);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const [submittingZatca, setSubmittingZatca] = useState(false);
   const [activeTab, setActiveTab] = useState("invoice");
@@ -192,7 +194,17 @@ export default function InvoiceDetails() {
                     : <><Upload className="h-4 w-4" />إرسال لـ ZATCA</>}
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={() => setPrintOpen(true)} className="gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // Early gate so the user sees the "no printer" message
+                  // immediately without the print template dialog flashing open.
+                  if (!ensurePrinterReady(toast, navigate)) return;
+                  setPrintOpen(true);
+                }}
+                className="gap-1.5"
+              >
                 <Printer className="h-4 w-4" />طباعة
               </Button>
             </>

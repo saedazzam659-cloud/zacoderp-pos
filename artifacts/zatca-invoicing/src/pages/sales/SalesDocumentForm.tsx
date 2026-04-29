@@ -12,6 +12,7 @@ import { useFormatters } from "@/lib/format";
 import { useStickyPriceIncludesVat } from "@/lib/useStickyPriceIncludesVat";
 import { useToast } from "@/hooks/use-toast";
 import { getSaveToastTitle } from "@/lib/saveToast";
+import { ensurePrinterReady } from "@/lib/printerGuard";
 import { useNextSequenceNumber, type SequenceTxType } from "@/hooks/useNextSequenceNumber";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1828,6 +1829,10 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               });
               return;
             }
+            // Early gate: if the device has no preferred printer set, show
+            // the "no printer connected" toast immediately instead of
+            // making the user navigate to the list page just to see it.
+            if (!ensurePrinterReady(toast, navigate)) return;
             window.history.replaceState(
               { autoPrintInvoiceId: editId, autoPrintTemplate: salesTemplate },
               "",

@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
+import { useToast } from "@/hooks/use-toast";
+import { ensurePrinterReady } from "@/lib/printerGuard";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 
@@ -785,6 +788,8 @@ interface Props {
 export default function SalesPrintModal({ open, onClose, data, defaultTemplate, autoPrintOnOpen }: Props) {
   const initialId = defaultTemplate === "thermal" ? 7 : 1;
   const [selected, setSelected] = useState(initialId);
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
   // Re-sync the selected template when the caller's preference changes
   // (e.g. opening the modal a second time for a different template).
   useEffect(() => { setSelected(defaultTemplate === "thermal" ? 7 : 1); }, [defaultTemplate]);
@@ -807,6 +812,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
 
   function handlePrint() {
     if (!data) return;
+    if (!ensurePrinterReady(toast, navigate)) return;
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
     const html = tmpl.fn(data);

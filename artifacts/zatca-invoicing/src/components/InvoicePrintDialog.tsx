@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import QRCode from "qrcode";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -6,6 +7,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Printer, X, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { ensurePrinterReady } from "@/lib/printerGuard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface PrintInvoice {
@@ -687,8 +690,11 @@ interface Props {
 export default function InvoicePrintDialog({ open, onClose, invoice }: Props) {
   const [selected, setSelected] = useState("professional");
   const [printing, setPrinting] = useState(false);
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const handlePrint = async () => {
+    if (!ensurePrinterReady(toast, navigate)) return;
     setPrinting(true);
     try {
       const html = await generateHtml(selected, invoice);

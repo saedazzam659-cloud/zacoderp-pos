@@ -1,9 +1,12 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { safeLogoSrc } from "@/lib/export";
+import { useToast } from "@/hooks/use-toast";
+import { ensurePrinterReady } from "@/lib/printerGuard";
 
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
 
@@ -490,9 +493,12 @@ interface Props {
 
 export default function PurchasePrintModal({ open, onClose, data }: Props) {
   const [selected, setSelected] = useState(1);
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   function handlePrint() {
     if (!data) return;
+    if (!ensurePrinterReady(toast, navigate)) return;
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
     const html = tmpl.fn(data);
