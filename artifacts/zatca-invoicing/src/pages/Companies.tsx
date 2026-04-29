@@ -94,6 +94,7 @@ export default function Companies() {
       c.nameAr?.includes(search) ||
       c.nameEn?.includes(search) ||
       c.vatNumber?.includes(search) ||
+      c.code?.toLowerCase().includes(search.toLowerCase()) ||
       c.city?.includes(search);
     const matchStatus =
       filterStatus === "all" || (c.status ?? "active") === filterStatus;
@@ -118,6 +119,7 @@ export default function Companies() {
           </Button>
           <ExportButtons
             rows={filtered.map((c: any) => ({
+              code:          c.code          ?? "",
               nameAr:        c.nameAr        ?? "",
               nameEn:        c.nameEn        ?? "",
               vatNumber:     c.vatNumber     ?? "",
@@ -130,6 +132,7 @@ export default function Companies() {
               zatca:         c.zatcaPcsid ? "مسجّلة" : (c.zatcaCsid ? "جزئي" : "غير مسجّلة"),
             }))}
             columns={[
+              { key: "code",            header: "كود الشركة",           width: 14 },
               { key: "nameAr",          header: "اسم الشركة (عربي)",    width: 28 },
               { key: "nameEn",          header: "اسم الشركة (إنجليزي)", width: 28 },
               { key: "vatNumber",       header: "الرقم الضريبي",        width: 20 },
@@ -205,8 +208,9 @@ export default function Companies() {
         {/* Column headers */}
         <div
           className="grid items-center gap-4 border-b bg-muted/40 px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide select-none"
-          style={{ gridTemplateColumns: "2fr 1.3fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
+          style={{ gridTemplateColumns: "2fr 0.8fr 1.2fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}>
           <span>الشركة</span>
+          <span>كود الشركة</span>
           <span>الرقم الضريبي</span>
           <span>الدولة</span>
           <span>المدينة</span>
@@ -266,7 +270,7 @@ export default function Companies() {
                 {/* Main row */}
                 <div
                   className="grid items-center gap-4 px-4 py-3.5 cursor-pointer"
-                  style={{ gridTemplateColumns: "2fr 1.3fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
+                  style={{ gridTemplateColumns: "2fr 0.8fr 1.2fr 0.85fr 0.9fr 1fr 0.9fr 0.8fr auto" }}
                   onClick={() => setExpandedRow(isExpanded ? null : company.id)}
                 >
                   {/* Company name */}
@@ -284,6 +288,17 @@ export default function Companies() {
                       {company.nameEn && <p className="text-xs text-muted-foreground truncate leading-tight">{company.nameEn}</p>}
                     </div>
                   </div>
+
+                  {/* Company code (used at /login). Mono + chip style so
+                      the SuperAdmin can spot and copy it at a glance — the
+                      code is what tenants type on the login page. */}
+                  <span
+                    className="inline-flex items-center justify-center font-mono text-[11px] font-semibold tracking-wide bg-primary/5 text-primary border border-primary/20 rounded-md px-2 py-0.5 w-fit truncate"
+                    data-testid={`company-code-${company.id}`}
+                    title={company.code ?? ""}
+                  >
+                    {company.code || "—"}
+                  </span>
 
                   {/* VAT */}
                   <span className="font-mono text-xs text-muted-foreground tracking-wide truncate">
