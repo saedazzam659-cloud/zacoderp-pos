@@ -1880,7 +1880,9 @@
     "searchNotFound": "No matching voucher found",
     "savedButPostFailed": "Saved as draft — but posting failed",
     "section_voucher": "Voucher Details",
-    "section_entity": "Entity & Amount"
+    "section_entity": "Entity & Amount",
+    "nextStep": "Next: Entity & Amount",
+    "prevStep": "Back: Voucher Details"
   },
   "paymentVouchers": {
     "title": "Payment Vouchers",

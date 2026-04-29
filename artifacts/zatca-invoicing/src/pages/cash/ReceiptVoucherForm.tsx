@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 import {
@@ -260,6 +261,7 @@ export default function ReceiptVoucherForm() {
   // (draft after POST/PUT), so we chain /post when the user explicitly
   // asked for it.
   const [pendingMode, setPendingMode] = useState<"draft" | "post" | null>(null);
+  const [tab, setTab] = useState<"voucher" | "entity">("voucher");
   const isLockedSourceEntry = !isNew && existing?.status === "posted";
 
   const saveMut = useMutation({
@@ -338,6 +340,19 @@ export default function ReceiptVoucherForm() {
         variant: "destructive",
       });
       return;
+    }
+    // Auto-switch to whichever tab contains a missing required field
+    // so the user actually sees the highlighted control.
+    if (
+      !form.date ||
+      (form.paymentType === "cash" && !form.cashBoxId) ||
+      (form.paymentType === "bank" && !form.bankAccountId)
+    ) {
+      setTab("voucher");
+    } else {
+      const cleanAmt = String(form.amount).replace(/[^\d.\-]/g, "");
+      const amtNum = Number(cleanAmt);
+      if (!isFinite(amtNum) || amtNum <= 0) setTab("entity");
     }
     setPendingMode(mode);
     saveMut.mutate(mode);
@@ -555,18 +570,24 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
       {/* ─── Two-column body: form + live preview ─────────────── */}
       <fieldset disabled={isLockedSourceEntry} className="m-0 p-0 border-0 disabled:opacity-75">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5 items-start">
-          {/* ── Left column: form ───────────────────────────── */}
-          <div className="space-y-5">
+          {/* ── Left column: form (two-tab layout) ────────────── */}
+          <div>
+            <Tabs value={tab} onValueChange={(v) => setTab(v as "voucher" | "entity")} className="w-full">
+              <TabsList className="grid grid-cols-2 w-full h-11">
+                <TabsTrigger value="voucher" className="gap-2 data-[state=active]:bg-amber-50 data-[state=active]:text-amber-900 data-[state=active]:shadow-sm">
+                  <FileText className="h-4 w-4" />
+                  <span className="font-semibold">{t(`${NS}.section_voucher`, "بيانات السند")}</span>
+                </TabsTrigger>
+                <TabsTrigger value="entity" className="gap-2 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-900 data-[state=active]:shadow-sm">
+                  <User2 className="h-4 w-4" />
+                  <span className="font-semibold">{t(`${NS}.section_entity`, "الجهة والمبلغ")}</span>
+                </TabsTrigger>
+              </TabsList>
 
-            {/* Card 1: voucher header */}
-            <Card className="border-2">
-              <CardHeader className="py-3 px-4 border-b bg-muted/20">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                  {t(`${NS}.section_voucher`, "بيانات السند")}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-4">
+              {/* Tab 1: voucher header */}
+              <TabsContent value="voucher" className="mt-4 space-y-3">
+                <Card className="border-2">
+                  <CardContent className="pt-5 pb-5 space-y-4">
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium">{t(`${NS}.code`)}</Label>
@@ -641,18 +662,20 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     />
                   </div>
                 )}
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+                <div className="flex justify-end pt-1">
+                  <Button type="button" onClick={() => setTab("entity")} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
+                    {t(`${NS}.nextStep`, "التالي: الجهة والمبلغ")}
+                    {isRtl ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </TabsContent>
 
-            {/* Card 2: entity, amount, counter account */}
-            <Card className="border-2">
-              <CardHeader className="py-3 px-4 border-b bg-muted/20">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <User2 className="h-4 w-4 text-muted-foreground" />
-                  {t(`${NS}.section_entity`, "الجهة والمبلغ")}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 pb-4 space-y-4">
+              {/* Tab 2: entity, amount, counter account */}
+              <TabsContent value="entity" className="mt-4 space-y-3">
+                <Card className="border-2">
+                  <CardContent className="pt-5 pb-5 space-y-4">
                 {/* Entity type as segmented buttons */}
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t(`${NS}.entityType`)}</Label>
@@ -756,8 +779,16 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                   <Label className="text-xs font-medium">{t("cashCommon.notes")}</Label>
                   <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder={t("cashCommon.notesPlaceholder")} className="text-sm resize-none" rows={2} />
                 </div>
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+                <div className="flex justify-start pt-1">
+                  <Button type="button" variant="ghost" onClick={() => setTab("voucher")} className="gap-1.5">
+                    {isRtl ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                    {t(`${NS}.prevStep`, "السابق: بيانات السند")}
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
 
           {/* ── Right column: live JE preview (sticky on desktop) ── */}

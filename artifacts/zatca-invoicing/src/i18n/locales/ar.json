@@ -1882,7 +1882,9 @@
     "searchNotFound": "لم يتم العثور على سند مطابق",
     "savedButPostFailed": "تم الحفظ كمسودة — لكن فشل الترحيل",
     "section_voucher": "بيانات السند",
-    "section_entity": "الجهة والمبلغ"
+    "section_entity": "الجهة والمبلغ",
+    "nextStep": "التالي: الجهة والمبلغ",
+    "prevStep": "السابق: بيانات السند"
   },
   "paymentVouchers": {
     "title": "سندات الصرف",
