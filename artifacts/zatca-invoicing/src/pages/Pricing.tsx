@@ -124,7 +124,7 @@ export default function Pricing() {
   // React 19, so set it explicitly. Restore the previous title on unmount.
   useEffect(() => {
     const prev = document.title;
-    document.title = "باقات وأسعار نظام الفاتورة الإلكترونية السعودية ZATCA — اشترك الآن";
+    document.title = "باقات وأسعار زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA";
     return () => { document.title = prev; };
   }, []);
 
@@ -142,7 +142,7 @@ export default function Pricing() {
       "name":      p.nameAr,
       "alternateName": p.nameEn || undefined,
       "description": asFeatures(p.features).slice(0, 3).join("، "),
-      "brand":     { "@type": "Brand", "name": "نظام الفاتورة الإلكترونية السعودية" },
+      "brand":     { "@type": "Brand", "name": "زاكود المحاسبي" },
       "url":       `${origin}/pricing?plan=${encodeURIComponent(p.key)}`,
       "offers": {
         "@type":         "Offer",
@@ -185,16 +185,30 @@ export default function Pricing() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>باقات وأسعار نظام الفاتورة الإلكترونية السعودية ZATCA — اشترك الآن</title>
-        <meta name="description" content="باقات نظام الفاتورة الإلكترونية السعودية المعتمد من ZATCA: مبتدئ، احترافي، ومؤسسي. أسعار شفافة بالشهر والسنة، فترة تجريبية فورية، توقيع رقمي UBL 2.1، نقاط بيع، مخزون ومحاسبة." />
+        <title>باقات وأسعار زاكود المحاسبي | نظام محاسبة سعودي معتمد ZATCA</title>
+        <meta name="description" content="باقات زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA: مبتدئ، احترافي، ومؤسسي. أسعار شفافة بالشهر والسنة، فترة تجريبية فورية بدون بطاقة دفع، توقيع رقمي UBL 2.1، نقاط بيع، مخزون، ومحاسبة." />
         <link rel="canonical" href={canonical} />
+        <meta name="keywords" content="باقات زاكود, أسعار زاكود المحاسبي, Zacoderp pricing, باقات نظام محاسبة سعودي, أسعار ZATCA, اشتراك فاتورة إلكترونية, خصم سنوي" />
+        <meta name="author" content="زاكود المحاسبي" />
+        <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+        <meta name="theme-color" content="#0d9488" />
         <meta property="og:type" content="website" />
-        <meta property="og:title" content="باقات وأسعار نظام الفاتورة الإلكترونية السعودية" />
-        <meta property="og:description" content="قارن الباقات واختر ما يناسب نشاطك — شهري أو سنوي، بأسعار شفافة بالريال السعودي." />
+        <meta property="og:site_name" content="زاكود المحاسبي" />
+        <meta property="og:title" content="باقات وأسعار زاكود المحاسبي | معتمد ZATCA" />
+        <meta property="og:description" content="قارن باقات زاكود المحاسبي واختر ما يناسب نشاطك — شهري أو سنوي، بأسعار شفافة بالريال السعودي." />
         <meta property="og:url" content={canonical} />
+        <meta property="og:image" content={`${origin}${BASE}/opengraph.jpg`} />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="باقات وأسعار زاكود المحاسبي" />
         <meta property="og:locale" content="ar_SA" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="robots" content="index,follow,max-image-preview:large" />
+        <meta name="twitter:title" content="باقات وأسعار زاكود المحاسبي | معتمد ZATCA" />
+        <meta name="twitter:description" content="باقات نظام محاسبة سعودي معتمد من ZATCA — أسعار شفافة وتجربة مجانية." />
+        <meta name="twitter:image" content={`${origin}${BASE}/opengraph.jpg`} />
+        <link rel="alternate" hrefLang="ar-SA" href={canonical} />
+        <link rel="alternate" hrefLang="ar" href={canonical} />
+        <link rel="alternate" hrefLang="x-default" href={canonical} />
       </Helmet>
       <PricingJsonLd schemas={[...productSchema, faqSchema]} />
 
@@ -207,7 +221,7 @@ export default function Pricing() {
             data-testid="pricing-home-link"
           >
             <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-            <span className="hidden sm:inline truncate">الفاتورة الإلكترونية السعودية</span>
+            <span className="hidden sm:inline truncate">زاكود المحاسبي</span>
           </button>
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} className="px-2 sm:px-3">
@@ -226,7 +240,7 @@ export default function Pricing() {
           <ShieldCheck className="h-3.5 w-3.5" /> معتمد ومتوافق مع ZATCA — المرحلة الثانية
         </div>
         <h1 className="text-3xl sm:text-5xl font-extrabold leading-tight text-foreground">
-          باقات شفافة لنظام الفاتورة الإلكترونية السعودية
+          باقات زاكود المحاسبي — نظام محاسبة سعودي معتمد ZATCA
         </h1>
         <p className="mt-4 text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto">
           اختر الباقة المناسبة لحجم نشاطك — تبدأ بفترة تجريبية فورية بدون بطاقة دفع.
@@ -516,7 +530,7 @@ export default function Pricing() {
       </section>
 
       <footer className="text-center text-xs text-muted-foreground pb-8">
-        © 2026 نظام الفاتورة الإلكترونية السعودية — جميع الحقوق محفوظة.
+        © 2026 زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. جميع الحقوق محفوظة.
         <span className="mx-2">•</span>
         <a href="/login" className="hover:underline">تسجيل الدخول</a>
         <span className="mx-2">•</span>

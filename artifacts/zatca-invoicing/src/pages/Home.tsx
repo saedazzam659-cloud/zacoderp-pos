@@ -474,7 +474,7 @@ export default function Home() {
       </section>
 
       <footer className="text-center text-xs text-muted-foreground pb-8 px-4">
-        © 2026 نظام محاسبة سعودي معتمد من ZATCA — جميع الحقوق محفوظة.
+        © 2026 زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. جميع الحقوق محفوظة.
         <span className="mx-2">•</span>
         <a href="/login" onClick={(e) => { e.preventDefault(); setLocation("/login"); }} className="hover:underline">تسجيل الدخول</a>
         <span className="mx-2">•</span>

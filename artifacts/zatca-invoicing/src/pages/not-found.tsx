@@ -37,7 +37,7 @@ export default function NotFound() {
 
   useEffect(() => {
     const prev = document.title;
-    document.title = "الصفحة غير موجودة (404) — نظام محاسبة سعودي معتمد من ZATCA";
+    document.title = "الصفحة غير موجودة (404) | زاكود المحاسبي";
     return () => { document.title = prev; };
   }, []);
 
@@ -45,7 +45,7 @@ export default function NotFound() {
     <div dir="rtl" className="min-h-screen flex items-center justify-center bg-gradient-to-b from-primary/5 via-background to-muted px-4 py-12">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>الصفحة غير موجودة (404) — نظام محاسبة سعودي معتمد من ZATCA</title>
+        <title>الصفحة غير موجودة (404) | زاكود المحاسبي</title>
         <meta name="robots" content="noindex,follow" />
         <meta name="description" content="عذراً، الصفحة المطلوبة غير موجودة. يمكنك العودة للرئيسية أو تصفّح الباقات المتاحة." />
       </Helmet>

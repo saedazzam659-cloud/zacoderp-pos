@@ -90,12 +90,14 @@ export default function BlogArticle() {
       "dateModified":  data.updatedAt,
       "inLanguage":    "ar-SA",
       "keywords":      data.targetKeyword || undefined,
-      "author":   { "@type": "Organization", "name": "نظام الفاتورة الإلكترونية السعودية" },
+      "author":   { "@type": "Organization", "name": "زاكود المحاسبي" },
       "publisher": {
         "@type": "Organization",
-        "name":  "نظام الفاتورة الإلكترونية السعودية",
-        "logo":  { "@type": "ImageObject", "url": `${origin}/favicon.svg` },
+        "name":  "زاكود المحاسبي",
+        "alternateName": ["Zacoderp", "زاكود"],
+        "logo":  { "@type": "ImageObject", "url": `${origin}${BASE}/favicon.svg` },
       },
+      "image":   `${origin}${BASE}/opengraph.jpg`,
       "mainEntityOfPage": { "@type": "WebPage", "@id": canonical },
     };
   }, [data, canonical, origin]);
@@ -118,7 +120,7 @@ export default function BlogArticle() {
   useEffect(() => {
     if (!data?.title) return;
     const prev = document.title;
-    document.title = `${data.title} — نظام الفاتورة الإلكترونية السعودية`;
+    document.title = `${data.title} | زاكود المحاسبي`;
     return () => { document.title = prev; };
   }, [data?.title]);
 
@@ -142,7 +144,7 @@ export default function BlogArticle() {
     return (
       <div dir="rtl" className="min-h-screen bg-muted/30">
         <Helmet>
-          <title>المقالة غير موجودة — نظام الفاتورة الإلكترونية السعودية</title>
+          <title>المقالة غير موجودة | زاكود المحاسبي</title>
           <meta name="robots" content="noindex,follow" />
         </Helmet>
         <PublicHeader setLocation={setLocation} />
@@ -174,19 +176,32 @@ export default function BlogArticle() {
     <div dir="rtl" className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-muted">
       <Helmet>
         <html lang="ar" dir="rtl" />
-        <title>{data.title} — نظام الفاتورة الإلكترونية السعودية</title>
+        <title>{data.title} | زاكود المحاسبي</title>
         <meta name="description" content={data.metaDescription || data.title} />
         <link rel="canonical" href={canonical} />
+        <meta name="author" content="زاكود المحاسبي" />
+        <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+        <meta name="theme-color" content="#0d9488" />
         <meta property="og:type" content="article" />
+        <meta property="og:site_name" content="زاكود المحاسبي" />
         <meta property="og:title" content={data.title} />
         <meta property="og:description" content={data.metaDescription || data.title} />
         <meta property="og:url" content={canonical} />
+        <meta property="og:image" content={`${origin}${BASE}/opengraph.jpg`} />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
         <meta property="og:locale" content="ar_SA" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="robots" content="index,follow,max-image-preview:large" />
+        <meta name="twitter:title" content={data.title} />
+        <meta name="twitter:description" content={data.metaDescription || data.title} />
+        <meta name="twitter:image" content={`${origin}${BASE}/opengraph.jpg`} />
         {data.targetKeyword ? <meta name="keywords" content={data.targetKeyword} /> : null}
         <meta property="article:published_time" content={data.createdAt} />
         <meta property="article:modified_time"  content={data.updatedAt} />
+        <meta property="article:author" content="زاكود المحاسبي" />
+        <link rel="alternate" hrefLang="ar-SA" href={canonical} />
+        <link rel="alternate" hrefLang="ar" href={canonical} />
+        <link rel="alternate" hrefLang="x-default" href={canonical} />
       </Helmet>
 
       <PublicHeader setLocation={setLocation} />
@@ -321,7 +336,7 @@ export default function BlogArticle() {
       </article>
 
       <footer className="text-center text-xs text-muted-foreground pb-8">
-        © 2026 نظام الفاتورة الإلكترونية السعودية — جميع الحقوق محفوظة.
+        © 2026 زاكود المحاسبي — نظام محاسبة سعودي معتمد من ZATCA. جميع الحقوق محفوظة.
       </footer>
     </div>
   );
@@ -340,7 +355,7 @@ function PublicHeader({ setLocation }: { setLocation: (p: string) => void }) {
           data-testid="blog-home-link"
         >
           <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow">Z</div>
-          نظام الفاتورة الإلكترونية السعودية
+          زاكود المحاسبي
         </button>
         <nav className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => setLocation("/login")} data-testid="blog-login-link">
