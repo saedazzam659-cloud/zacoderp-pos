@@ -9,26 +9,163 @@ import { Upload, FileSpreadsheet, Download, AlertTriangle, CheckCircle2 } from "
 import * as XLSX from "xlsx";
 import { trialBalancesApi, type ImportLine } from "@/lib/trialBalancesApi";
 
+// Header aliases — case-insensitive, whitespace/RTL-mark/NBSP-normalized
+// at lookup time. Any new variant we encounter from a real exported
+// file should be added here. Many Saudi/Egyptian ERP exports use
+// "رصيد مدين"/"رصيد دائن" or "إجمالي مدين"/"إجمالي دائن", and English
+// templates often use "Debit/Credit Amount" variants.
 const HEADER_MAP: Record<string, keyof ImportLine> = {
-  // Arabic
-  "كود الحساب":   "accountCode",
-  "كود":          "accountCode",
-  "الكود":        "accountCode",
-  "اسم الحساب":   "accountName",
-  "الحساب":       "accountName",
-  "البيان":       "accountName",
-  "مدين":         "debit",
-  "دائن":         "credit",
-  // English
-  "code":         "accountCode",
-  "accountCode":  "accountCode",
-  "account_code": "accountCode",
-  "name":         "accountName",
-  "accountName":  "accountName",
-  "account_name": "accountName",
-  "debit":        "debit",
-  "credit":       "credit",
+  // Arabic — code
+  "كود الحساب":     "accountCode",
+  "كود":            "accountCode",
+  "الكود":          "accountCode",
+  "رقم الحساب":     "accountCode",
+  "رمز الحساب":     "accountCode",
+  // Arabic — name
+  "اسم الحساب":     "accountName",
+  "الحساب":         "accountName",
+  "البيان":         "accountName",
+  "وصف الحساب":     "accountName",
+  "الوصف":          "accountName",
+  // Arabic — debit
+  "مدين":           "debit",
+  "رصيد مدين":      "debit",
+  "إجمالي مدين":    "debit",
+  "اجمالي مدين":    "debit",
+  "المدين":         "debit",
+  "مدين رصيد":      "debit",
+  // Arabic — credit
+  "دائن":           "credit",
+  "رصيد دائن":      "credit",
+  "إجمالي دائن":    "credit",
+  "اجمالي دائن":    "credit",
+  "الدائن":         "credit",
+  "دائن رصيد":      "credit",
+  // English — code
+  "code":           "accountCode",
+  "accountcode":    "accountCode",
+  "account code":   "accountCode",
+  "account_code":   "accountCode",
+  "account no":     "accountCode",
+  "account number": "accountCode",
+  // English — name
+  "name":           "accountName",
+  "accountname":    "accountName",
+  "account name":   "accountName",
+  "account_name":   "accountName",
+  "description":    "accountName",
+  // English — debit
+  "debit":          "debit",
+  "debit amount":   "debit",
+  "debit balance":  "debit",
+  "dr":             "debit",
+  // English — credit
+  "credit":         "credit",
+  "credit amount":  "credit",
+  "credit balance": "credit",
+  "cr":             "credit",
 };
+
+// Normalize a header cell: strip BOM/RTL/LTR marks, NBSP, collapse
+// whitespace, lowercase. Lets the same map entry match both
+// "رصيد مدين", "رصيد  مدين ", "Debit Amount", "DEBIT AMOUNT", etc.
+function normalizeHeader(s: string): string {
+  return s
+    .replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+const NORMALIZED_HEADER_MAP: Record<string, keyof ImportLine> =
+  Object.fromEntries(Object.entries(HEADER_MAP).map(([k, v]) => [normalizeHeader(k), v]));
+
+// Robust amount parser tuned for Saudi/Arabic XLSX trial-balance
+// exports while still tolerating other locales. Handles:
+//   • Native JS numbers (preferred path when xlsx returns numerics).
+//   • Arabic-Indic digits (٠-٩, U+0660–U+0669) and Eastern variants
+//     (۰-۹, U+06F0–U+06F9).
+//   • Arabic decimal separator ٫ (U+066B) and Arabic thousands ٬ (U+066C).
+//   • Western thousands/decimal "1,234.56" AND European "1.234,56" /
+//     "1234,56" via a "last-separator wins" decimal heuristic.
+//   • Whitespace-as-thousands ("1 234,56") and Swiss apostrophes ("1'234").
+//   • Currency labels in Arabic (ر.س, ج.م, د.إ, د.ك) and Latin (SAR, SR,
+//     EGP, AED, USD, $, €, £, ¥, ₹) anywhere in the cell, even when
+//     surrounding parenthesized accounting negatives like "(1,000) SAR".
+//   • Accounting-style negatives: "(1,000.00)" or trailing "-".
+//   • Scientific notation ("1E3" → 1000) and signed forms ("+12.34").
+//   • Bidi/format marks (LRM/RLM/PDF/NBSP/ZWNBSP) sprinkled by exports.
+function parseAmount(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  let s = String(v);
+  // 1. Strip bidi/format/zero-width marks and NBSP variants.
+  s = s.replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, "");
+  s = s.trim();
+  if (!s) return 0;
+  // 2. Normalize Arabic numerals & separators to ASCII equivalents
+  //    BEFORE we strip Arabic letters — otherwise digits would be lost.
+  s = s.replace(/[\u0660-\u0669]/g, ch => String(ch.charCodeAt(0) - 0x0660));
+  s = s.replace(/[\u06F0-\u06F9]/g, ch => String(ch.charCodeAt(0) - 0x06F0));
+  s = s.replace(/\u066B/g, ".").replace(/\u066C/g, ",");
+  // 3. Strip Arabic/Hebrew letter sequences AND any dots that sit
+  //    between them (so "ر.س", "ر.س.", "ج.م", "د.إ" disappear as a
+  //    whole unit — leaving the leading dot behind would be parsed as
+  //    a stray decimal point and would corrupt the real value).
+  //    Matches one-or-more "(letter)(optional .)" chunks; safe because
+  //    we already mapped Arabic-Indic digits to ASCII in step 2.
+  s = s.replace(/(?:[\u0600-\u06FF\u0750-\u077F\u0590-\u05FF]\.?)+/g, "");
+  s = s.replace(/\b(?:SAR|SR|EGP|USD|AED|KWD|EUR|GBP|JPY|QAR|BHD|OMR)\b/gi, "");
+  s = s.replace(/[$€£¥₹]/g, "");
+  // 4. Drop any residual non-numeric characters EXCEPT separators,
+  //    parens, signs, e-notation, whitespace, apostrophe.
+  s = s.replace(/[^\d.,\s'()+\-eE]/g, "").trim();
+  if (!s) return 0;
+  // 5. Parenthesized accounting negatives.
+  let sign = 1;
+  const paren = s.match(/^\(\s*(.+?)\s*\)$/);
+  if (paren) { sign = -1; s = paren[1].trim(); }
+  if (s.startsWith("-"))      { sign *= -1; s = s.slice(1).trim(); }
+  else if (s.endsWith("-"))   { sign *= -1; s = s.slice(0, -1).trim(); }
+  if (s.startsWith("+"))      { s = s.slice(1).trim(); }
+  // 6. Strip whitespace (French thousands) and apostrophe (Swiss thousands).
+  s = s.replace(/[\s']/g, "");
+  if (!s) return 0;
+  // 7. Pass scientific notation straight to Number().
+  if (/^\d+(?:\.\d+)?[eE][+-]?\d+$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) ? sign * n : 0;
+  }
+  // 8. Decide which separator is the decimal point.
+  //    • Both present → the LAST one is decimal ("1,234.56" vs "1.234,56").
+  //    • Single dot → decimal (Excel default; "1.234.567" with multiple
+  //      dots reverts to "all thousands").
+  //    • Single comma w/ exactly 3 digits after → English thousands
+  //      ("1,234"); otherwise European decimal ("1234,56").
+  const lastDot   = s.lastIndexOf(".");
+  const lastComma = s.lastIndexOf(",");
+  let decimalSep: "." | "," | null = null;
+  if (lastDot >= 0 && lastComma >= 0) {
+    decimalSep = lastDot > lastComma ? "." : ",";
+  } else if (lastDot >= 0) {
+    decimalSep = (s.match(/\./g) || []).length === 1 ? "." : null;
+  } else if (lastComma >= 0) {
+    const commas = (s.match(/,/g) || []).length;
+    if (commas === 1) {
+      const afterComma = s.length - lastComma - 1;
+      decimalSep = afterComma === 3 ? null : ",";
+    } else {
+      decimalSep = null;
+    }
+  }
+  if      (decimalSep === ".") s = s.replace(/,/g, "");
+  else if (decimalSep === ",") s = s.replace(/\./g, "").replace(/,/g, ".");
+  else                          s = s.replace(/[,.]/g, "");
+  if (!s || s === "." || s === "-" || s === "+") return 0;
+  const n = Number(s);
+  return Number.isFinite(n) ? sign * n : 0;
+}
 
 function parseFile(file: File): Promise<ImportLine[]> {
   return new Promise((resolve, reject) => {
@@ -38,17 +175,23 @@ function parseFile(file: File): Promise<ImportLine[]> {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+        // raw:true → keep native numbers as numbers (the parser handles
+        // both numeric and string forms). defval:"" → no missing keys.
+        const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
         const rows: ImportLine[] = json.map(row => {
           const out: any = {};
           for (const [k, v] of Object.entries(row)) {
-            const key = HEADER_MAP[String(k).trim()];
+            const key = NORMALIZED_HEADER_MAP[normalizeHeader(String(k))];
             if (key) out[key] = v;
           }
-          out.accountCode = String(out.accountCode ?? "").trim();
-          out.accountName = String(out.accountName ?? "").trim() || undefined;
-          out.debit  = Number(String(out.debit  ?? "0").replace(/,/g, "")) || 0;
-          out.credit = Number(String(out.credit ?? "0").replace(/,/g, "")) || 0;
+          out.accountCode = String(out.accountCode ?? "")
+            .replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, "")
+            .trim();
+          out.accountName = String(out.accountName ?? "")
+            .replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, "")
+            .trim() || undefined;
+          out.debit  = parseAmount(out.debit);
+          out.credit = parseAmount(out.credit);
           return out as ImportLine;
         }).filter(r => r.accountCode);
         resolve(rows);
