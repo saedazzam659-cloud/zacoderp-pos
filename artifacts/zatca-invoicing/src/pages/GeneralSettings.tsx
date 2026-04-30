@@ -323,40 +323,64 @@ export default function GeneralSettings() {
         </div>
       )}
 
-      {/* ─── Tabs Header (3 tabs aligned to top-right in RTL) ───────────────── */}
+      {/* ─── Tabs Header — modern wrap-pill layout (RTL-aware, no text overlap) ─ */}
       <Tabs defaultValue="general" dir="rtl" className="w-full">
-        <TabsList className="grid w-full grid-cols-8 h-11 bg-muted/50">
-          <TabsTrigger value="general" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Settings2 className="h-4 w-4" />
-            {t("pages.generalSettings.general")}
+        <TabsList className="flex flex-wrap h-auto w-full justify-start gap-1.5 bg-muted/40 border border-border/50 p-1.5 rounded-xl shadow-sm">
+          <TabsTrigger
+            value="general"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Settings2 className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.general")}</span>
           </TabsTrigger>
-          <TabsTrigger value="items" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Package className="h-4 w-4" />
-            {t("pages.generalSettings.importItems")}
+          <TabsTrigger
+            value="items"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Package className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.importItems")}</span>
           </TabsTrigger>
-          <TabsTrigger value="balances" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Boxes className="h-4 w-4" />
-            {t("pages.generalSettings.openingBalancesTab")}
+          <TabsTrigger
+            value="balances"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Boxes className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.openingBalancesTab")}</span>
           </TabsTrigger>
-          <TabsTrigger value="decimals" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Hash className="h-4 w-4" />
-            {t("pages.generalSettings.decimals")}
+          <TabsTrigger
+            value="decimals"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Hash className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.decimals")}</span>
           </TabsTrigger>
-          <TabsTrigger value="backupExport" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <DatabaseBackup className="h-4 w-4" />
-            {t("pages.generalSettings.backupExport")}
+          <TabsTrigger
+            value="backupExport"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <DatabaseBackup className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.backupExport")}</span>
           </TabsTrigger>
-          <TabsTrigger value="backupImport" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <DatabaseZap className="h-4 w-4" />
-            {t("pages.generalSettings.backupImport")}
+          <TabsTrigger
+            value="backupImport"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <DatabaseZap className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.backupImport")}</span>
           </TabsTrigger>
-          <TabsTrigger value="printText" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Printer className="h-4 w-4" />
-            {t("pages.generalSettings.printText")}
+          <TabsTrigger
+            value="printText"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Printer className="h-4 w-4 shrink-0" />
+            <span className="truncate">{t("pages.generalSettings.printText")}</span>
           </TabsTrigger>
-          <TabsTrigger value="printPrefs" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
-            <Printer className="h-4 w-4" />
-            إعدادات الطباعة
+          <TabsTrigger
+            value="printPrefs"
+            className="flex-1 min-w-[150px] h-10 gap-2 px-4 rounded-lg text-sm font-medium transition-all hover:bg-background/70 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md data-[state=active]:scale-[1.02]"
+          >
+            <Printer className="h-4 w-4 shrink-0" />
+            <span className="truncate">إعدادات الطباعة</span>
           </TabsTrigger>
         </TabsList>
 
