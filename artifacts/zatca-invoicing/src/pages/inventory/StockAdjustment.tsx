@@ -286,18 +286,18 @@ export default function StockAdjustment() {
 
           {/* ─── Two-column body: form on left, sticky JE preview on right ─ */}
           <div className="p-4 sm:p-5 pb-20">
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 items-start">
               {/* ── Left column: stacked sections ─────────────────────── */}
               <div className="space-y-4">
                 {/* Section 1: Adjustment header info — same layout idiom as سند القبض */}
                 <Card className="border-2">
                   <CardHeader className="py-3 px-4 border-b bg-muted/30">
-                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-amber-700" />
+                    <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                      <FileText className="h-3.5 w-3.5 text-amber-700" />
                       بيانات التسوية
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-4 pb-4 space-y-4">
+                  <CardContent className="pt-3 pb-3 space-y-3">
                     {/* Compact 4-col row for short fields (number + date) */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="space-y-1.5">
@@ -305,7 +305,7 @@ export default function StockAdjustment() {
                         <Input
                           placeholder={seqPeek.loading ? "…" : "ADJ-001 (تلقائي)"}
                           dir="ltr"
-                          className={cn("h-9 text-sm font-mono text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                          className={cn("h-7 text-xs font-mono text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
                           value={form.adjustmentNumber}
                           onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value })); }}
                           readOnly={seqPeek.hasSequence}
@@ -318,7 +318,7 @@ export default function StockAdjustment() {
                         </Label>
                         <Input
                           type="date"
-                          className="h-9 text-sm"
+                          className="h-7 text-xs"
                           value={form.adjustmentDate}
                           onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))}
                         />
@@ -336,6 +336,7 @@ export default function StockAdjustment() {
                           value={form.warehouseId}
                           onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
                           placeholder="— اختر مخزن —"
+                          className="h-7 text-xs"
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -345,6 +346,7 @@ export default function StockAdjustment() {
                           value={form.reason}
                           onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
                           placeholder="— اختر السبب —"
+                          className="h-7 text-xs"
                         />
                       </div>
                     </div>
@@ -353,7 +355,7 @@ export default function StockAdjustment() {
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium">ملاحظات</Label>
                       <Input
-                        className="h-9 text-sm"
+                        className="h-7 text-xs"
                         placeholder="ملاحظات اختيارية"
                         value={form.notes}
                         onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
@@ -366,8 +368,8 @@ export default function StockAdjustment() {
                 <Card className="border-2 border-blue-100">
                   <CardHeader className="py-3 px-4 border-b bg-blue-50/40">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
-                        <Settings2 className="h-4 w-4" />
+                      <CardTitle className="text-xs font-semibold flex items-center gap-2 text-blue-900">
+                        <Settings2 className="h-3.5 w-3.5" />
                         حسابات القيد المحاسبي
                       </CardTitle>
                       <Button
@@ -425,7 +427,7 @@ export default function StockAdjustment() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="pt-4 pb-4 space-y-3">
+                  <CardContent className="pt-3 pb-3 space-y-2.5">
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
                       سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل:
                       <b className="text-blue-700"> زيادة المخزون</b> = مدين حساب المخزون / دائن حساب التسوية،
@@ -433,10 +435,10 @@ export default function StockAdjustment() {
                     </p>
                     <FormGrid cols={2}>
                       <Field label="حساب المخزون (أصول)">
-                        <AccountCombobox value={form.inventoryAccountId} onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))} placeholder="— اختر حساب المخزون —" filterTypes={["asset"]} grouped={false} />
+                        <AccountCombobox value={form.inventoryAccountId} onValueChange={v => setForm((p: any) => ({ ...p, inventoryAccountId: v }))} placeholder="— اختر حساب المخزون —" filterTypes={["asset"]} grouped={false} className="h-7 text-xs" />
                       </Field>
                       <Field label="حساب التسوية (مصروف / إيراد)">
-                        <AccountCombobox value={form.adjustmentAccountId} onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))} placeholder="— اختر حساب التسوية —" filterTypes={["expense", "revenue", "income"]} grouped={false} />
+                        <AccountCombobox value={form.adjustmentAccountId} onValueChange={v => setForm((p: any) => ({ ...p, adjustmentAccountId: v }))} placeholder="— اختر حساب التسوية —" filterTypes={["expense", "revenue", "income"]} grouped={false} className="h-7 text-xs" />
                       </Field>
                     </FormGrid>
                     {aiReasoning && (
@@ -451,8 +453,8 @@ export default function StockAdjustment() {
                 <Card className="border-2 border-slate-100">
                   <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                        <Boxes className="h-4 w-4 text-slate-700" />
+                      <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                        <Boxes className="h-3.5 w-3.5 text-slate-700" />
                         أصناف التسوية
                         {lines.filter(l => l.itemId).length > 0 && (
                           <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
@@ -468,7 +470,7 @@ export default function StockAdjustment() {
                   <CardContent className="pt-3 pb-3 space-y-2">
                     {/* ── Items grid (نمط فواتير المبيعات) ─────────────── */}
                     {(() => {
-                      const gridCols = "240px 110px 160px 120px 140px 140px 180px 40px";
+                      const gridCols = "200px 90px 140px 100px 120px 120px 160px 36px";
                       const headers = ["الصنف", "كود الصنف", "الوحدة", "الكمية (+ / -)", "سعر التكلفة", "الإجمالي", "ملاحظة", ""];
                       const totalLabel = "الإجمالي";
                       return (
@@ -531,12 +533,12 @@ export default function StockAdjustment() {
                                         value={line.itemId}
                                         onValueChange={v => handleItemSelect(i, v)}
                                         placeholder="— اختر صنف —"
-                                        className="h-8 text-xs"
+                                        className="h-7 text-xs"
                                       />
 
                                       {/* كود الصنف (تلقائي) */}
                                       <Input
-                                        className="h-8 text-xs bg-muted/40 font-mono"
+                                        className="h-7 text-xs bg-muted/40 font-mono"
                                         readOnly
                                         placeholder="تلقائي"
                                         value={itemCode}
@@ -553,7 +555,7 @@ export default function StockAdjustment() {
                                           value={line.unitId}
                                           onValueChange={v => handleUnitSelect(i, v)}
                                           placeholder="وحدة أساسية"
-                                          className="h-8 text-xs"
+                                          className="h-7 text-xs"
                                         />
                                         {baseQtyHint && (
                                           <p className="text-[10px] text-purple-600 mt-0.5 font-medium leading-tight truncate" title={baseQtyHint}>
@@ -568,7 +570,7 @@ export default function StockAdjustment() {
                                           type="number"
                                           step="any"
                                           dir="ltr"
-                                          className="h-8 text-xs text-left"
+                                          className="h-7 text-xs text-left"
                                           value={line.qty}
                                           onChange={e => updateLine(i, "qty", e.target.value)}
                                           placeholder="+100 أو -50"
@@ -589,7 +591,7 @@ export default function StockAdjustment() {
                                           min="0"
                                           dir="ltr"
                                           className={cn(
-                                            "h-8 text-xs text-left",
+                                            "h-7 text-xs text-left",
                                             autoFilled && "border-amber-300 bg-amber-50/60"
                                           )}
                                           value={line.costPrice}
@@ -605,7 +607,7 @@ export default function StockAdjustment() {
                                       {/* الإجمالي */}
                                       <Input
                                         className={cn(
-                                          "h-8 text-xs font-semibold font-mono text-left",
+                                          "h-7 text-xs font-semibold font-mono text-left",
                                           lineTotal > 0 ? "bg-green-50 text-green-700"
                                             : lineTotal < 0 ? "bg-red-50 text-red-700"
                                             : "bg-primary/5 text-primary"
@@ -617,7 +619,7 @@ export default function StockAdjustment() {
 
                                       {/* ملاحظة */}
                                       <Input
-                                        className="h-8 text-xs"
+                                        className="h-7 text-xs"
                                         placeholder="ملاحظة"
                                         value={line.notes}
                                         onChange={e => updateLine(i, "notes", e.target.value)}
