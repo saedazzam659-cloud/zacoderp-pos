@@ -430,131 +430,173 @@ export default function StockTransfer() {
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="pt-3 pb-3">
-                    <div className="rounded-lg border overflow-hidden">
-                      <table className="w-full text-sm">
-                  <thead className="bg-muted/50 border-b">
-                    <tr>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">الصنف</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">الوحدة</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">الكمية</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-36">
-                        <span className="flex items-center gap-1">
-                          سعر التكلفة <Zap className="h-3 w-3 text-amber-500"><title>يُملأ تلقائياً</title></Zap>
-                        </span>
-                      </th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-28">الإجمالي</th>
-                      <th className="px-3 py-2 w-10" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {lines.map((line, i) => {
-                      const lineUnits = getLineUnits(line);
-                      const cf = Number(line.conversionFactor || "1");
-                      const baseQtyHint = cf !== 1 ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية` : null;
-                      const autoFilled = isAutoFilled(line);
-
+                  <CardContent className="pt-3 pb-3 space-y-2">
+                    {/* ── Items grid (سند نمط فواتير المبيعات) ─────────────── */}
+                    {(() => {
+                      const gridCols = "240px 110px 160px 90px 140px 140px 40px";
+                      const headers = ["الصنف", "كود الصنف", "الوحدة", "الكمية", "سعر التكلفة", "الإجمالي", ""];
+                      const totalLabel = "الإجمالي";
                       return (
-                        <tr key={i}>
-                          {/* Item selector */}
-                          <td className="px-3 py-2 min-w-[180px]">
-                            <SearchCombobox
-                              items={(items as any[]).filter((it: any) => it.itemType === "stock").map((it: any) => ({ value: String(it.id), code: it.code, label: it.nameAr, labelEn: it.nameEn }))}
-                              value={line.itemId}
-                              onValueChange={v => handleItemSelect(i, v)}
-                              placeholder="— اختر صنف —"
-                              className="h-8 text-xs"
-                            />
-                          </td>
-
-                          {/* Unit selector */}
-                          <td className="px-3 py-2 min-w-[120px]">
-                            <SearchCombobox
-                              items={[{ value: "", label: "وحدة أساسية" }, ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr }))]}
-                              value={line.unitId}
-                              onValueChange={v => handleUnitSelect(i, v)}
-                              placeholder="وحدة أساسية"
-                              className="h-8 text-xs"
-                            />
-                            {baseQtyHint && (
-                              <p className="text-[10px] text-purple-600 mt-0.5 font-medium leading-tight">
-                                {baseQtyHint}
-                              </p>
-                            )}
-                          </td>
-
-                          {/* Qty */}
-                          <td className="px-3 py-2">
-                            <Input
-                              type="number"
-                              step="any"
-                              min="0.001"
-                              dir="ltr"
-                              className="h-8 text-xs text-left"
-                              value={line.qty}
-                              onChange={e => updateLine(i, "qty", e.target.value)}
-                            />
-                          </td>
-
-                          {/* Cost price */}
-                          <td className="px-3 py-2">
-                            <div className="relative">
-                              <Input
-                                type="number"
-                                step="any"
-                                min="0"
-                                dir="ltr"
-                                className={cn(
-                                  "h-8 text-xs text-left",
-                                  autoFilled && "border-amber-300 bg-amber-50/60"
-                                )}
-                                value={line.costPrice}
-                                onChange={e => updateLine(i, "costPrice", e.target.value)}
-                              />
-                              {autoFilled && (
-                                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-600 bg-amber-100 rounded px-0.5">
-                                  تلقائي
-                                </span>
-                              )}
+                        <div className="rounded-xl border bg-card overflow-x-auto">
+                          <div className="min-w-max">
+                            {/* Sticky header */}
+                            <div
+                              className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0"
+                              style={{ gridTemplateColumns: gridCols }}
+                            >
+                              {headers.map((h, i) => (
+                                <p
+                                  key={i}
+                                  className={cn(
+                                    "text-[11px] font-medium truncate",
+                                    h === totalLabel ? "font-semibold text-primary" : "text-muted-foreground"
+                                  )}
+                                  title={h}
+                                >
+                                  {h}
+                                </p>
+                              ))}
                             </div>
-                          </td>
 
-                          {/* Total */}
-                          <td className="px-3 py-2 tabular-nums text-xs text-muted-foreground">
-                            {fmt(Number(line.qty) * Number(line.costPrice))}
-                          </td>
+                            {/* Rows */}
+                            <div className="divide-y">
+                              {lines.map((line, i) => {
+                                const lineUnits = getLineUnits(line);
+                                const cf = Number(line.conversionFactor || "1");
+                                const baseQtyHint = cf !== 1
+                                  ? `×${cf} = ${fmtQty(Number(line.qty || 0) * cf)} وحدة أساسية`
+                                  : null;
+                                const autoFilled = isAutoFilled(line);
+                                const selectedItem: any = (items as any[]).find(
+                                  (it: any) => String(it.id) === String(line.itemId)
+                                );
+                                const itemCode = selectedItem?.code ?? "";
+                                const lineTotal = Number(line.qty || 0) * Number(line.costPrice || 0);
 
-                          {/* Remove */}
-                          <td className="px-3 py-2">
-                            {lines.length > 1 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-destructive"
-                                onClick={() => removeLine(i)}
-                                aria-label="حذف الصنف"
-                                title="حذف الصنف"
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
+                                return (
+                                  <div
+                                    key={i}
+                                    className="px-3 py-2 hover:bg-muted/30 transition-colors"
+                                  >
+                                    <div
+                                      className="grid gap-2 items-center"
+                                      style={{ gridTemplateColumns: gridCols }}
+                                    >
+                                      {/* الصنف */}
+                                      <SearchCombobox
+                                        items={(items as any[])
+                                          .filter((it: any) => it.itemType === "stock")
+                                          .map((it: any) => ({
+                                            value: String(it.id),
+                                            code: it.code,
+                                            label: it.nameAr,
+                                            labelEn: it.nameEn,
+                                          }))}
+                                        value={line.itemId}
+                                        onValueChange={v => handleItemSelect(i, v)}
+                                        placeholder="— اختر صنف —"
+                                        className="h-8 text-xs"
+                                      />
+
+                                      {/* كود الصنف (تلقائي) */}
+                                      <Input
+                                        className="h-8 text-xs bg-muted/40 font-mono"
+                                        readOnly
+                                        placeholder="تلقائي"
+                                        value={itemCode}
+                                        title={itemCode}
+                                      />
+
+                                      {/* الوحدة */}
+                                      <div>
+                                        <SearchCombobox
+                                          items={[
+                                            { value: "", label: "وحدة أساسية" },
+                                            ...lineUnits.map(u => ({ value: String(u.id), label: u.nameAr })),
+                                          ]}
+                                          value={line.unitId}
+                                          onValueChange={v => handleUnitSelect(i, v)}
+                                          placeholder="وحدة أساسية"
+                                          className="h-8 text-xs"
+                                        />
+                                        {baseQtyHint && (
+                                          <p className="text-[10px] text-purple-600 mt-0.5 font-medium leading-tight truncate" title={baseQtyHint}>
+                                            {baseQtyHint}
+                                          </p>
+                                        )}
+                                      </div>
+
+                                      {/* الكمية */}
+                                      <Input
+                                        type="number"
+                                        step="any"
+                                        min="0.001"
+                                        dir="ltr"
+                                        className="h-8 text-xs text-left"
+                                        value={line.qty}
+                                        onChange={e => updateLine(i, "qty", e.target.value)}
+                                      />
+
+                                      {/* سعر التكلفة */}
+                                      <div className="relative">
+                                        <Input
+                                          type="number"
+                                          step="any"
+                                          min="0"
+                                          dir="ltr"
+                                          className={cn(
+                                            "h-8 text-xs text-left",
+                                            autoFilled && "border-amber-300 bg-amber-50/60"
+                                          )}
+                                          value={line.costPrice}
+                                          onChange={e => updateLine(i, "costPrice", e.target.value)}
+                                        />
+                                        {autoFilled && (
+                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] font-bold text-amber-600 bg-amber-100 rounded px-0.5">
+                                            تلقائي
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* الإجمالي */}
+                                      <Input
+                                        className="h-8 text-xs bg-primary/5 font-semibold text-primary font-mono text-left"
+                                        dir="ltr"
+                                        readOnly
+                                        value={fmt(lineTotal)}
+                                      />
+
+                                      {/* حذف */}
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive"
+                                        onClick={() => removeLine(i)}
+                                        disabled={lines.length <= 1}
+                                        aria-label="حذف الصنف"
+                                        title="حذف الصنف"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
                       );
-                    })}
-                  </tbody>
-                  <tfoot className="bg-muted/30 border-t">
-                    <tr>
-                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-left">إجمالي التحويل</td>
-                      <td className="px-3 py-2 text-xs font-bold tabular-nums">
-                        {fmt(lines.reduce((s, l) => s + Number(l.qty) * Number(l.costPrice), 0))} ر.س
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+                    })()}
+
+                    {/* ── إجمالي التحويل (تحت الجريد) ─────────────────────── */}
+                    <div className="flex items-center justify-end gap-3 px-3 py-2 rounded-lg bg-muted/30 border">
+                      <span className="text-xs font-semibold text-muted-foreground">إجمالي التحويل</span>
+                      <span className="text-sm font-bold tabular-nums font-mono text-primary">
+                        {fmt(lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0))} ر.س
+                      </span>
+                    </div>
+
                     <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
                       <Zap className="h-3 w-3 text-amber-500" />
                       عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
