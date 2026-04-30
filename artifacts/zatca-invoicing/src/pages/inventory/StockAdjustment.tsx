@@ -13,6 +13,7 @@ import {
   FileText, Settings2, Boxes,
 } from "lucide-react";
 import { Field, FormGrid } from "@/components/FormPanel";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
@@ -288,7 +289,7 @@ export default function StockAdjustment() {
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
               {/* ── Left column: stacked sections ─────────────────────── */}
               <div className="space-y-4">
-                {/* Section 1: Adjustment header info */}
+                {/* Section 1: Adjustment header info — same layout idiom as سند القبض */}
                 <Card className="border-2">
                   <CardHeader className="py-3 px-4 border-b bg-muted/30">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -296,32 +297,68 @@ export default function StockAdjustment() {
                       بيانات التسوية
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-4 pb-4">
-                    <FormGrid cols={2}>
-                      <Field label="رقم التسوية">
+                  <CardContent className="pt-4 pb-4 space-y-4">
+                    {/* Compact 4-col row for short fields (number + date) */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium">رقم التسوية</Label>
                         <Input
                           placeholder={seqPeek.loading ? "…" : "ADJ-001 (تلقائي)"}
                           dir="ltr"
-                          className={cn("text-left h-9 text-sm", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                          className={cn("h-9 text-sm font-mono text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
                           value={form.adjustmentNumber}
                           onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, adjustmentNumber: e.target.value })); }}
                           readOnly={seqPeek.hasSequence}
                           title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
                         />
-                      </Field>
-                      <Field label="التاريخ" required>
-                        <Input type="date" className="h-9 text-sm" value={form.adjustmentDate} onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))} />
-                      </Field>
-                      <Field label="المخزن" required>
-                        <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.warehouseId} onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))} placeholder="— اختر مخزن —" />
-                      </Field>
-                      <Field label="سبب التسوية">
-                        <SearchCombobox items={REASONS.map(r => ({ value: r, label: r }))} value={form.reason} onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))} placeholder="— اختر السبب —" />
-                      </Field>
-                      <Field label="ملاحظات" className="md:col-span-2">
-                        <Input className="h-9 text-sm" placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
-                      </Field>
-                    </FormGrid>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium">
+                          التاريخ <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          type="date"
+                          className="h-9 text-sm"
+                          value={form.adjustmentDate}
+                          onChange={e => setForm((p: any) => ({ ...p, adjustmentDate: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Warehouse + reason on a 2-col row (comboboxes need width) */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium">
+                          المخزن <span className="text-destructive">*</span>
+                        </Label>
+                        <SearchCombobox
+                          items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))}
+                          value={form.warehouseId}
+                          onValueChange={v => setForm((p: any) => ({ ...p, warehouseId: v }))}
+                          placeholder="— اختر مخزن —"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium">سبب التسوية</Label>
+                        <SearchCombobox
+                          items={REASONS.map(r => ({ value: r, label: r }))}
+                          value={form.reason}
+                          onValueChange={v => setForm((p: any) => ({ ...p, reason: v }))}
+                          placeholder="— اختر السبب —"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Notes on its own full-width row */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">ملاحظات</Label>
+                      <Input
+                        className="h-9 text-sm"
+                        placeholder="ملاحظات اختيارية"
+                        value={form.notes}
+                        onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))}
+                      />
+                    </div>
                   </CardContent>
                 </Card>
 
