@@ -35,12 +35,17 @@
         try {
           var h = window.location.hostname;
           var p = window.location.pathname;
-          if (
-            (h === "pos.zacoderp.com" ||
-              h === "www.pos.zacoderp.com" ||
-              h.indexOf("pos.") === 0) &&
-            p.indexOf("/pos/") !== 0
-          ) {
+          // Hosts whose root URL should serve the POS app instead of the
+          // main accounting site. We add the new dedicated POS domain
+          // (freepos.life) alongside the legacy pos.zacoderp.com subdomain.
+          // Any host that simply STARTS with "pos." also falls through.
+          var isPosHost =
+            h === "pos.zacoderp.com" ||
+            h === "www.pos.zacoderp.com" ||
+            h === "freepos.life" ||
+            h === "www.freepos.life" ||
+            h.indexOf("pos.") === 0;
+          if (isPosHost && p.indexOf("/pos/") !== 0) {
             window.location.replace(
               "/pos/" + window.location.search + window.location.hash,
             );
