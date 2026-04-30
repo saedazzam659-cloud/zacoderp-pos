@@ -4,16 +4,16 @@ import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useNextSequenceNumber } from "@/hooks/useNextSequenceNumber";
 import {
   Plus, Trash2, ArrowRightLeft, Search, X,
   CheckCircle2, Send, ChevronDown, ChevronUp, Zap, Sparkles, Loader2,
+  FileText, Save, Settings2, Boxes, Calculator,
 } from "lucide-react";
-import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Field, FormGrid } from "@/components/FormPanel";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
@@ -257,194 +257,182 @@ export default function StockTransfer() {
         </Button>
       </div>
 
-      {/* Form */}
+      {/* ─── Form (designed to match سند القبض pattern) ──────────────────── */}
       {showForm && (
-        <FormPanel
-          icon={ArrowRightLeft}
-          title="أمر تحويل جديد"
-          subtitle="نقل أصناف بين مخزنين مع تحديد الكميات وأسعار التكلفة"
-          width="6xl"
-          onClose={reset}
-          onSave={() => handleSubmit({ preventDefault() {} } as any)}
-          saving={createMut.isPending}
-          saveDisabled={!form.fromWarehouseId || !form.toWarehouseId || !form.transferDate}
-          saveLabel="حفظ كمسودة"
-        >
-          <Tabs defaultValue="info" className="w-full">
-            <TabsList className="w-full grid grid-cols-2 mb-4">
-              <TabsTrigger value="info">معلومات الحركة والقيد المحاسبي</TabsTrigger>
-              <TabsTrigger value="items">
-                الأصناف
-                {lines.filter(l => l.itemId).length > 0 && (
-                  <span className="mr-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
-                    {lines.filter(l => l.itemId).length}
-                  </span>
-                )}
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="info" className="space-y-5 mt-0">
-            <FormSection title="معلومات الحركة">
-              <FormGrid cols={2}>
-                <Field label="رقم الحركة"><Input
-                  placeholder={seqPeek.loading ? "…" : "TRF-001 (تلقائي)"}
-                  dir="ltr"
-                  className={cn("text-left", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
-                  value={form.transferNumber}
-                  onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
-                  readOnly={seqPeek.hasSequence}
-                  title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
-                /></Field>
-                <Field label="التاريخ" required><Input type="date" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} /></Field>
-                <Field label="من مخزن" required>
-                  <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder="— اختر مخزن المصدر —" />
-                </Field>
-                <Field label="إلى مخزن" required>
-                  <SearchCombobox items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.toWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))} placeholder="— اختر مخزن الوجهة —" />
-                </Field>
-                <Field label="ملاحظات" className="md:col-span-2"><Input placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} /></Field>
-              </FormGrid>
-            </FormSection>
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          {/* ─── Form header bar ────────────────────────────────────────── */}
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b bg-muted/30 flex-wrap">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <ArrowRightLeft className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-sm sm:text-base text-foreground truncate">أمر تحويل جديد</h2>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">نقل أصناف بين مخزنين مع تحديد الكميات وأسعار التكلفة</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border bg-amber-50 text-amber-700 border-amber-200">
+                مسودة
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={reset}
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                aria-label="إغلاق"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
-            <FormSection title="القيد المحاسبي التلقائي">
-              <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4 space-y-3">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل: <b className="text-blue-700">مدين</b> = حساب مخزن الوجهة، <b className="text-rose-700">دائن</b> = حساب مخزن المصدر.
-                    اختر الحسابات يدوياً أو دع الذكاء الاصطناعي يقترحها بناءً على الأصناف والمخازن.
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50 shrink-0"
-                    disabled={!form.fromWarehouseId || !form.toWarehouseId || aiLoading}
-                    onClick={async () => {
-                      setAiLoading(true);
-                      setAiReasoning("");
-                      try {
-                        const apiBase = import.meta.env.VITE_API_URL ?? "";
-                        const itemsPayload = lines
-                          .filter(l => l.itemId)
-                          .map(l => {
-                            const it: any = (items as any[]).find((x: any) => String(x.id) === String(l.itemId));
-                            return { nameAr: it?.nameAr ?? "", qty: Number(l.qty || 0) };
-                          });
-                        const r = await fetch(`${apiBase}/api/ai/suggest-transfer-accounts`, {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                          },
-                          body: JSON.stringify({
-                            fromWarehouseId: Number(form.fromWarehouseId),
-                            toWarehouseId:   Number(form.toWarehouseId),
-                            items: itemsPayload,
-                            notes: form.notes,
-                          }),
-                        });
-                        const j = await r.json();
-                        if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
-                        if (j.fromAccountId && j.toAccountId) {
-                          setForm((p: any) => ({
-                            ...p,
-                            fromAccountId: String(j.fromAccountId),
-                            toAccountId:   String(j.toAccountId),
-                          }));
-                          setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
-                          toast({ title: "تم اقتراح الحسابات", description: `${j.fromAccountLabel} ⇄ ${j.toAccountLabel}` });
-                        } else {
-                          throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
-                        }
-                      } catch (e: any) {
-                        toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
-                      } finally {
-                        setAiLoading(false);
-                      }
-                    }}
-                  >
-                    {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                    اقتراح بالذكاء الاصطناعي
-                  </Button>
-                </div>
+          {/* ─── Two-column body: form on left, sticky JE preview on right ─ */}
+          <div className="p-4 sm:p-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 items-start">
+              {/* ── Left column: stacked sections ─────────────────────── */}
+              <div className="space-y-4">
+                {/* Section 1: Transfer header info */}
+                <Card className="border-2">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/30">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-amber-700" />
+                      بيانات التحويل
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-4 pb-4">
+                    <FormGrid cols={2}>
+                      <Field label="رقم الحركة">
+                        <Input
+                          placeholder={seqPeek.loading ? "…" : "TRF-001 (تلقائي)"}
+                          dir="ltr"
+                          className={cn("text-left h-9 text-sm", seqPeek.hasSequence && "bg-muted/40 cursor-not-allowed")}
+                          value={form.transferNumber}
+                          onChange={e => { if (!seqPeek.hasSequence) setForm((p: any) => ({ ...p, transferNumber: e.target.value })); }}
+                          readOnly={seqPeek.hasSequence}
+                          title={seqPeek.hasSequence ? `مسلسل: ${seqPeek.sequenceCode ?? ""}` : undefined}
+                        />
+                      </Field>
+                      <Field label="التاريخ" required>
+                        <Input type="date" className="h-9 text-sm" value={form.transferDate} onChange={e => setForm((p: any) => ({ ...p, transferDate: e.target.value }))} />
+                      </Field>
+                      <Field label="من مخزن" required>
+                        <SearchCombobox items={(warehouses as any[]).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.fromWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, fromWarehouseId: v }))} placeholder="— اختر مخزن المصدر —" />
+                      </Field>
+                      <Field label="إلى مخزن" required>
+                        <SearchCombobox items={(warehouses as any[]).filter((w: any) => String(w.id) !== form.fromWarehouseId).map((w: any) => ({ value: String(w.id), code: w.code, label: w.nameAr }))} value={form.toWarehouseId} onValueChange={v => setForm((p: any) => ({ ...p, toWarehouseId: v }))} placeholder="— اختر مخزن الوجهة —" />
+                      </Field>
+                      <Field label="ملاحظات" className="md:col-span-2">
+                        <Input className="h-9 text-sm" placeholder="ملاحظات اختيارية" value={form.notes} onChange={e => setForm((p: any) => ({ ...p, notes: e.target.value }))} />
+                      </Field>
+                    </FormGrid>
+                  </CardContent>
+                </Card>
 
-                <FormGrid cols={2}>
-                  <Field label="حساب مخزن المصدر (دائن)">
-                    <AccountCombobox value={form.fromAccountId} onValueChange={v => setForm((p: any) => ({ ...p, fromAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
-                  </Field>
-                  <Field label="حساب مخزن الوجهة (مدين)">
-                    <AccountCombobox value={form.toAccountId} onValueChange={v => setForm((p: any) => ({ ...p, toAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
-                  </Field>
-                </FormGrid>
-
-                {aiReasoning && (
-                  <div className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 leading-relaxed">
-                    <Sparkles className="h-3 w-3 inline ml-1" />{aiReasoning}
-                  </div>
-                )}
-
-                {/* JE preview — reflects backend behavior: transfer-level overrides take priority,
-                    otherwise warehouse.accountId is used as fallback. */}
-                {(() => {
-                  const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0);
-                  if (total <= 0) return null;
-                  const fromWh: any = (warehouses as any[]).find((w: any) => String(w.id) === form.fromWarehouseId);
-                  const toWh:   any = (warehouses as any[]).find((w: any) => String(w.id) === form.toWarehouseId);
-                  const fromAcc = form.fromAccountId ? Number(form.fromAccountId) : (fromWh?.accountId ?? null);
-                  const toAcc   = form.toAccountId   ? Number(form.toAccountId)   : (toWh?.accountId   ?? null);
-                  const fromSrc = form.fromAccountId ? "اختيار يدوي" : (fromWh?.accountId ? "حساب المخزن الافتراضي" : null);
-                  const toSrc   = form.toAccountId   ? "اختيار يدوي" : (toWh?.accountId   ? "حساب المخزن الافتراضي" : null);
-                  if (!fromAcc || !toAcc) {
-                    return (
-                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                        لن يتم إنشاء قيد محاسبي — اختر الحسابين أو اربط المخازن بحسابات افتراضية (سيتم تحديث المخزون فقط).
-                      </div>
-                    );
-                  }
-                  if (fromAcc === toAcc) {
-                    return (
-                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                        الحسابان متطابقان — لن يتم إنشاء قيد (لا أثر محاسبي، يتم تحديث المخزون فقط).
-                      </div>
-                    );
-                  }
-                  return (
-                    <div className="rounded-md border border-blue-200 bg-white overflow-hidden">
-                      <div className="px-3 py-1.5 bg-blue-100/50 text-[11px] font-semibold text-blue-900">معاينة القيد المحاسبي</div>
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/30 border-b">
-                          <tr><th className="px-2 py-1 text-right font-medium">الحساب</th><th className="px-2 py-1 text-left font-medium w-28">مدين</th><th className="px-2 py-1 text-left font-medium w-28">دائن</th></tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          <tr>
-                            <td className="px-2 py-1.5 text-blue-700">حساب مخزن الوجهة {toSrc && <span className="text-[10px] text-muted-foreground">({toSrc})</span>}</td>
-                            <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(total)}</td>
-                            <td className="px-2 py-1.5 text-left tabular-nums">—</td>
-                          </tr>
-                          <tr>
-                            <td className="px-2 py-1.5 text-rose-700">حساب مخزن المصدر {fromSrc && <span className="text-[10px] text-muted-foreground">({fromSrc})</span>}</td>
-                            <td className="px-2 py-1.5 text-left tabular-nums">—</td>
-                            <td className="px-2 py-1.5 text-left tabular-nums font-medium">{fmt(total)}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                {/* Section 2: Accounting accounts (with AI suggest button) */}
+                <Card className="border-2 border-blue-100">
+                  <CardHeader className="py-3 px-4 border-b bg-blue-50/40">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
+                        <Settings2 className="h-4 w-4" />
+                        حسابات القيد المحاسبي
+                      </CardTitle>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 h-7 text-[11px] border-purple-300 text-purple-700 hover:bg-purple-50 shrink-0"
+                        disabled={!form.fromWarehouseId || !form.toWarehouseId || aiLoading}
+                        onClick={async () => {
+                          setAiLoading(true);
+                          setAiReasoning("");
+                          try {
+                            const apiBase = import.meta.env.VITE_API_URL ?? "";
+                            const itemsPayload = lines
+                              .filter(l => l.itemId)
+                              .map(l => {
+                                const it: any = (items as any[]).find((x: any) => String(x.id) === String(l.itemId));
+                                return { nameAr: it?.nameAr ?? "", qty: Number(l.qty || 0) };
+                              });
+                            const r = await fetch(`${apiBase}/api/ai/suggest-transfer-accounts`, {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                              },
+                              body: JSON.stringify({
+                                fromWarehouseId: Number(form.fromWarehouseId),
+                                toWarehouseId:   Number(form.toWarehouseId),
+                                items: itemsPayload,
+                                notes: form.notes,
+                              }),
+                            });
+                            const j = await r.json();
+                            if (!r.ok) throw new Error(j?.error || "تعذّر الاقتراح");
+                            if (j.fromAccountId && j.toAccountId) {
+                              setForm((p: any) => ({
+                                ...p,
+                                fromAccountId: String(j.fromAccountId),
+                                toAccountId:   String(j.toAccountId),
+                              }));
+                              setAiReasoning(`${j.reasoning || ""}${j.source === "ai" ? " (اقتراح AI)" : " (اقتراح آلي)"}`);
+                              toast({ title: "تم اقتراح الحسابات", description: `${j.fromAccountLabel} ⇄ ${j.toAccountLabel}` });
+                            } else {
+                              throw new Error(j?.reasoning || "لم يتم العثور على حسابات مناسبة");
+                            }
+                          } catch (e: any) {
+                            toast({ title: "تعذّر الاقتراح", description: e?.message || "خطأ غير معروف", variant: "destructive" });
+                          } finally {
+                            setAiLoading(false);
+                          }
+                        }}
+                      >
+                        {aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                        اقتراح بالذكاء الاصطناعي
+                      </Button>
                     </div>
-                  );
-                })()}
-              </div>
-            </FormSection>
-            </TabsContent>
+                  </CardHeader>
+                  <CardContent className="pt-4 pb-4 space-y-3">
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      سيتم إنشاء قيد محاسبي متوازن تلقائياً عند الترحيل: <b className="text-blue-700">مدين</b> = حساب مخزن الوجهة، <b className="text-rose-700">دائن</b> = حساب مخزن المصدر.
+                    </p>
+                    <FormGrid cols={2}>
+                      <Field label="حساب مخزن المصدر (دائن)">
+                        <AccountCombobox value={form.fromAccountId} onValueChange={v => setForm((p: any) => ({ ...p, fromAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                      </Field>
+                      <Field label="حساب مخزن الوجهة (مدين)">
+                        <AccountCombobox value={form.toAccountId} onValueChange={v => setForm((p: any) => ({ ...p, toAccountId: v }))} placeholder="— اختر الحساب —" filterTypes={["asset"]} grouped={false} />
+                      </Field>
+                    </FormGrid>
+                    {aiReasoning && (
+                      <div className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 leading-relaxed">
+                        <Sparkles className="h-3 w-3 inline ml-1" />{aiReasoning}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
 
-            <TabsContent value="items" className="space-y-3 mt-0">
-            {/* Line items */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">الأصناف</h3>
-                <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
-                  <Plus className="h-3 w-3" />إضافة صنف
-                </Button>
-              </div>
-              <div className="rounded-lg border overflow-hidden">
-                <table className="w-full text-sm">
+                {/* Section 3: Items table */}
+                <Card className="border-2 border-slate-100">
+                  <CardHeader className="py-3 px-4 border-b bg-slate-50/40">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                        <Boxes className="h-4 w-4 text-slate-700" />
+                        أصناف التحويل
+                        {lines.filter(l => l.itemId).length > 0 && (
+                          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
+                            {lines.filter(l => l.itemId).length}
+                          </span>
+                        )}
+                      </CardTitle>
+                      <Button type="button" size="sm" variant="outline" onClick={addLine} className="gap-1 h-7 text-xs">
+                        <Plus className="h-3 w-3" />إضافة صنف
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-3 pb-3">
+                    <div className="rounded-lg border overflow-hidden">
+                      <table className="w-full text-sm">
                   <thead className="bg-muted/50 border-b">
                     <tr>
                       <th className="px-3 py-2 text-right font-medium text-muted-foreground">الصنف</th>
@@ -545,6 +533,8 @@ export default function StockTransfer() {
                                 size="icon"
                                 className="h-7 w-7 text-destructive"
                                 onClick={() => removeLine(i)}
+                                aria-label="حذف الصنف"
+                                title="حذف الصنف"
                               >
                                 <X className="h-3 w-3" />
                               </Button>
@@ -565,14 +555,126 @@ export default function StockTransfer() {
                   </tfoot>
                 </table>
               </div>
-              <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
-                <Zap className="h-3 w-3 text-amber-500" />
-                عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
-              </p>
+                    <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                      <Zap className="h-3 w-3 text-amber-500" />
+                      عند اختيار الصنف تُملأ الوحدة الأساسية والتكلفة تلقائياً من وحدات التسعير
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* ── Right column: live JE preview (sticky on desktop) ── */}
+              <aside className="lg:sticky lg:top-4 space-y-4">
+                <Card className="border-2 border-blue-200 bg-blue-50/40">
+                  <CardHeader className="py-3 px-4 border-b border-blue-200/60">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
+                      <Calculator className="h-4 w-4" />
+                      معاينة القيد المحاسبي
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-3 pb-3">
+                    {(() => {
+                      const total = lines.reduce((s, l) => s + Number(l.qty || 0) * Number(l.costPrice || 0), 0);
+                      if (total <= 0) {
+                        return (
+                          <p className="text-xs text-muted-foreground text-center py-6">
+                            أضف الأصناف لمعاينة القيد المحاسبي
+                          </p>
+                        );
+                      }
+                      const fromWh: any = (warehouses as any[]).find((w: any) => String(w.id) === form.fromWarehouseId);
+                      const toWh:   any = (warehouses as any[]).find((w: any) => String(w.id) === form.toWarehouseId);
+                      const fromAcc = form.fromAccountId ? Number(form.fromAccountId) : (fromWh?.accountId ?? null);
+                      const toAcc   = form.toAccountId   ? Number(form.toAccountId)   : (toWh?.accountId   ?? null);
+                      const fromSrc = form.fromAccountId ? "اختيار يدوي" : (fromWh?.accountId ? "افتراضي للمخزن" : null);
+                      const toSrc   = form.toAccountId   ? "اختيار يدوي" : (toWh?.accountId   ? "افتراضي للمخزن" : null);
+                      if (!fromAcc || !toAcc) {
+                        return (
+                          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                            لن يتم إنشاء قيد محاسبي — اختر الحسابين أو اربط المخازن بحسابات افتراضية (سيتم تحديث المخزون فقط).
+                          </div>
+                        );
+                      }
+                      if (fromAcc === toAcc) {
+                        return (
+                          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                            الحسابان متطابقان — لن يتم إنشاء قيد (لا أثر محاسبي، يتم تحديث المخزون فقط).
+                          </div>
+                        );
+                      }
+                      return (
+                        <>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-blue-800/70 border-b border-blue-200/60">
+                                <th className="text-start pb-1.5 font-medium">الحساب</th>
+                                <th className="text-left pb-1.5 font-medium">مدين</th>
+                                <th className="text-left pb-1.5 font-medium">دائن</th>
+                              </tr>
+                            </thead>
+                            <tbody className="font-mono">
+                              <tr className="border-b border-blue-200/40">
+                                <td className="py-1.5 text-start text-[11px]">
+                                  مخزن الوجهة
+                                  {toSrc && <div className="text-[9px] text-muted-foreground font-sans">{toSrc}</div>}
+                                </td>
+                                <td className="text-left text-green-700 font-semibold tabular-nums">{fmt(total)}</td>
+                                <td className="text-left text-muted-foreground">—</td>
+                              </tr>
+                              <tr>
+                                <td className="py-1.5 text-start text-[11px]">
+                                  مخزن المصدر
+                                  {fromSrc && <div className="text-[9px] text-muted-foreground font-sans">{fromSrc}</div>}
+                                </td>
+                                <td className="text-left text-muted-foreground">—</td>
+                                <td className="text-left text-red-700 font-semibold tabular-nums">{fmt(total)}</td>
+                              </tr>
+                            </tbody>
+                            <tfoot className="border-t border-blue-200/60">
+                              <tr>
+                                <td className="pt-1.5 text-start text-[10px] font-semibold text-blue-900">الإجمالي</td>
+                                <td className="pt-1.5 text-left text-[11px] font-bold text-blue-900 tabular-nums">{fmt(total)}</td>
+                                <td className="pt-1.5 text-left text-[11px] font-bold text-blue-900 tabular-nums">{fmt(total)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                          <p className="text-[10px] text-blue-800/70 mt-2 leading-relaxed">
+                            القيد متوازن — سيتم إنشاؤه تلقائياً عند الترحيل.
+                          </p>
+                        </>
+                      );
+                    })()}
+                  </CardContent>
+                </Card>
+
+                <div className="text-[11px] text-muted-foreground leading-relaxed bg-muted/20 border rounded-lg p-3">
+                  <p className="font-semibold mb-1">اختصارات سريعة</p>
+                  <ul className="space-y-0.5 list-disc list-inside">
+                    <li>اختيار الصنف يملأ الوحدة الأساسية والتكلفة تلقائياً</li>
+                    <li>اضغط زر «اقتراح بالذكاء الاصطناعي» لاختيار الحسابات</li>
+                    <li>سيُنشأ قيد محاسبي متوازن تلقائياً عند الترحيل</li>
+                  </ul>
+                </div>
+              </aside>
             </div>
-            </TabsContent>
-          </Tabs>
-        </FormPanel>
+          </div>
+
+          {/* ─── Bottom action bar ──────────────────────────────────────── */}
+          <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t bg-muted/20 flex-wrap">
+            <Button variant="ghost" size="sm" onClick={reset} disabled={createMut.isPending}>
+              إلغاء
+            </Button>
+            <Button
+              size="sm"
+              className="gap-1.5 min-w-[140px]"
+              onClick={() => handleSubmit({ preventDefault() {} } as any)}
+              disabled={createMut.isPending || !form.fromWarehouseId || !form.toWarehouseId || !form.transferDate}
+            >
+              {createMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              حفظ كمسودة
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* Search */}
@@ -627,6 +729,9 @@ export default function StockTransfer() {
                           <button
                             onClick={() => setExpandedId(expandedId === tr.id ? null : tr.id)}
                             className="text-muted-foreground hover:text-foreground"
+                            aria-label={expandedId === tr.id ? "طيّ التفاصيل" : "عرض التفاصيل"}
+                            aria-expanded={expandedId === tr.id}
+                            title={expandedId === tr.id ? "طيّ التفاصيل" : "عرض التفاصيل"}
                           >
                             {expandedId === tr.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </button>
@@ -657,6 +762,8 @@ export default function StockTransfer() {
                                   size="icon"
                                   className="h-7 w-7 text-destructive"
                                   onClick={() => { if (confirm("حذف أمر التحويل؟")) deleteMut.mutate(tr.id); }}
+                                  aria-label="حذف أمر التحويل"
+                                  title="حذف أمر التحويل"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
