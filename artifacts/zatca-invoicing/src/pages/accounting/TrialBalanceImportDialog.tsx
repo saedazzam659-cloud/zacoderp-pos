@@ -27,13 +27,21 @@ const HEADER_MAP: Record<string, keyof ImportLine> = {
   "البيان":         "accountName",
   "وصف الحساب":     "accountName",
   "الوصف":          "accountName",
-  // Arabic — debit
+  // Arabic — debit (incl. our own export's "أصلي" / "معدل" variants)
   "مدين":           "debit",
   "رصيد مدين":      "debit",
   "إجمالي مدين":    "debit",
   "اجمالي مدين":    "debit",
   "المدين":         "debit",
   "مدين رصيد":      "debit",
+  "مدين اصلي":      "debit",
+  "مدين أصلي":      "debit",
+  "اصلي مدين":      "debit",
+  "أصلي مدين":      "debit",
+  "مدين معدل":      "debit",
+  "مدين معدّل":     "debit",
+  "معدل مدين":      "debit",
+  "مدين بعد التعديل": "debit",
   // Arabic — credit
   "دائن":           "credit",
   "رصيد دائن":      "credit",
@@ -41,6 +49,14 @@ const HEADER_MAP: Record<string, keyof ImportLine> = {
   "اجمالي دائن":    "credit",
   "الدائن":         "credit",
   "دائن رصيد":      "credit",
+  "دائن اصلي":      "credit",
+  "دائن أصلي":      "credit",
+  "اصلي دائن":      "credit",
+  "أصلي دائن":      "credit",
+  "دائن معدل":      "credit",
+  "دائن معدّل":     "credit",
+  "معدل دائن":      "credit",
+  "دائن بعد التعديل": "credit",
   // English — code
   "code":           "accountCode",
   "accountcode":    "accountCode",
@@ -66,12 +82,17 @@ const HEADER_MAP: Record<string, keyof ImportLine> = {
   "cr":             "credit",
 };
 
-// Normalize a header cell: strip BOM/RTL/LTR marks, NBSP, collapse
-// whitespace, lowercase. Lets the same map entry match both
-// "رصيد مدين", "رصيد  مدين ", "Debit Amount", "DEBIT AMOUNT", etc.
+// Normalize a header cell so the same map entry matches across
+// whitespace/diacritic variations: strip BOM/RTL/LTR marks + NBSP +
+// Arabic tashkeel (fatha/kasra/damma/sukun/shadda/tanween, U+064B–
+// U+065F and U+0670) + tatweel (ـ U+0640), collapse whitespace,
+// lowercase. So "رصيد مدين", "رصيد  مدين ", "مدين معدّل",
+// "مدين معدل", "Debit Amount", "DEBIT AMOUNT" all collapse to the
+// same canonical key.
 function normalizeHeader(s: string): string {
   return s
     .replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, " ")
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
@@ -180,9 +201,23 @@ function parseFile(file: File): Promise<ImportLine[]> {
         const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
         const rows: ImportLine[] = json.map(row => {
           const out: any = {};
+          // For amount columns we may see two synonyms in the same row
+          // (e.g. "مدين أصلي" + "مدين معدّل" — original AND adjusted).
+          // Don't let an empty/zero column overwrite a real non-zero
+          // value that an earlier column already supplied. For non-
+          // amount fields (code/name) plain last-wins is fine.
           for (const [k, v] of Object.entries(row)) {
             const key = NORMALIZED_HEADER_MAP[normalizeHeader(String(k))];
-            if (key) out[key] = v;
+            if (!key) continue;
+            if (key === "debit" || key === "credit") {
+              const incoming = parseAmount(v);
+              const existing = parseAmount(out[key]);
+              if (out[key] === undefined || incoming !== 0 || existing === 0) {
+                out[key] = v;
+              }
+            } else {
+              out[key] = v;
+            }
           }
           out.accountCode = String(out.accountCode ?? "")
             .replace(/[\uFEFF\u200B-\u200F\u202A-\u202E\u00A0]/g, "")
