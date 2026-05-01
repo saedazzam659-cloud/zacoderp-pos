@@ -267,17 +267,24 @@ router.delete("/units/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.get("/items", async (req, res) => {
   const cid = getCompanyId(req);
+  // PRO Extension #20 — by default the items list HIDES variants (rows
+  // where parent_item_id IS NOT NULL); they show under the parent's
+  // "المتغيّرات" tab instead. Pass ?includeVariants=1 to opt in (used by
+  // the audit timeline + reports that need a flat list of every item).
+  const includeVariants = req.query.includeVariants === "1" || req.query.includeVariants === "true";
+  const variantFilter = includeVariants ? sql`true` : sql`${itemsTable.parentItemId} IS NULL`;
   const rows = cid
     ? await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
-        .where(eq(itemsTable.companyId, cid))
+        .where(and(eq(itemsTable.companyId, cid), variantFilter))
         .orderBy(asc(itemsTable.code))
     : await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+        .where(variantFilter)
         .orderBy(asc(itemsTable.code));
   res.json(rows.map(r => ({ ...r.item, group: r.group, unit: r.unit })));
 });
@@ -311,6 +318,9 @@ const ITEM_AUDIT_FIELDS = [
   "discountType", "discountValue",
   // PRO Extension #2 — bundle flag
   "isBundle",
+  // PRO Extension #20 — variant link + free-form attributes blob.
+  // parentItemId is set-once at POST time; variantAttributes is editable.
+  "parentItemId", "variantAttributes",
 ] as const;
 
 function normAuditValue(v: unknown): unknown {
@@ -338,6 +348,44 @@ function snapshotItem(row: any): Record<string, unknown> {
   const snap: Record<string, unknown> = {};
   for (const f of ITEM_AUDIT_FIELDS) snap[f] = normAuditValue(row?.[f]);
   return snap;
+}
+
+// PRO Extension #20 — Validate the variantAttributes payload. We accept a
+// plain JSON object whose values are primitives (string/number/boolean) or
+// null. Reject arrays, nested objects, functions, and oversized payloads
+// (50 keys × 200 chars max) so the column can't be used as an arbitrary
+// document store. Returns either { ok: true, value } or { ok: false, error }.
+function validateVariantAttributes(input: unknown):
+  { ok: true; value: Record<string, string | number | boolean | null> | null }
+  | { ok: false; error: string }
+{
+  if (input === undefined || input === null) return { ok: true, value: null };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, error: "السمات يجب أن تكون كائناً (key: value)" };
+  }
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > 50) {
+    return { ok: false, error: "عدد السمات أكثر من المسموح (الحد 50 سمة)" };
+  }
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const [k, v] of entries) {
+    if (typeof k !== "string" || k.length === 0 || k.length > 60) {
+      return { ok: false, error: `اسم السمة "${k}" غير صالح` };
+    }
+    if (v === null) { out[k] = null; continue; }
+    if (typeof v === "string") {
+      if (v.length > 200) return { ok: false, error: `قيمة السمة "${k}" أطول من المسموح` };
+      out[k] = v;
+    } else if (typeof v === "number") {
+      if (!Number.isFinite(v)) return { ok: false, error: `قيمة السمة "${k}" ليست رقماً صالحاً` };
+      out[k] = v;
+    } else if (typeof v === "boolean") {
+      out[k] = v;
+    } else {
+      return { ok: false, error: `قيمة السمة "${k}" يجب أن تكون نص/رقم/منطقي` };
+    }
+  }
+  return { ok: true, value: out };
 }
 
 // Compact wrapper around `writeAudit` for sub-entity tables (item_documents,
@@ -417,7 +465,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -429,18 +477,47 @@ router.post("/items", async (req, res) => {
   if (barcode && existing.some(i => i.barcode?.trim() === String(barcode).trim())) {
     res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
   }
+  // PRO Extension #20 — variant validation. If the client wants to create
+  // this item as a variant of another item, validate the parent in this
+  // tenant: must exist, must NOT be a variant itself (no nesting), and
+  // must NOT be a bundle (variant/bundle are orthogonal). Variants also
+  // can't themselves be bundles.
+  let parentRowForVariant: any = null;
+  if (parentItemId !== undefined && parentItemId !== null) {
+    const pid = Number(parentItemId);
+    if (!Number.isFinite(pid)) { res.status(400).json({ error: "parentItemId غير صالح" }); return; }
+    parentRowForVariant = existing.find(i => i.id === pid);
+    if (!parentRowForVariant) { res.status(404).json({ error: "الصنف الأب غير موجود" }); return; }
+    if (parentRowForVariant.parentItemId) {
+      res.status(400).json({ error: "لا يمكن إنشاء متغيّر لمتغيّر آخر (المتغيّرات لا تتداخل)" }); return;
+    }
+    if (parentRowForVariant.isBundle) {
+      res.status(400).json({ error: "لا يمكن إضافة متغيّرات لصنف من نوع مركّب (Bundle)" }); return;
+    }
+    if (isBundle === true) {
+      res.status(400).json({ error: "المتغيّر لا يمكن أن يكون مركّباً (Bundle)" }); return;
+    }
+  }
+  const variantAttrsCheck = validateVariantAttributes(variantAttributes);
+  if (!variantAttrsCheck.ok) { res.status(400).json({ error: variantAttrsCheck.error }); return; }
   const normalizedTags = normalizeTags(tags);
   const disc = normalizeDiscount(discountType, discountValue);
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
-    itemType: itemType || "stock", groupId: groupId || null, unitId: unitId || null,
-    costPrice: costPrice || "0", salePrice: salePrice || "0", vatRate: vatRate || "15",
+    itemType: itemType || parentRowForVariant?.itemType || "stock",
+    groupId: groupId || parentRowForVariant?.groupId || null,
+    unitId: unitId || parentRowForVariant?.unitId || null,
+    costPrice: costPrice || parentRowForVariant?.costPrice || "0",
+    salePrice: salePrice || parentRowForVariant?.salePrice || "0",
+    vatRate:   vatRate   || parentRowForVariant?.vatRate   || "15",
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
     imageUrl: imageUrl || null,
     tags: normalizedTags === undefined ? null : normalizedTags,
     discountType: disc.type, discountValue: disc.value,
     isBundle: isBundle === true,
+    parentItemId: parentRowForVariant ? parentRowForVariant.id : null,
+    variantAttributes: variantAttrsCheck.value,
   }).returning();
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
@@ -464,7 +541,16 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes } = req.body;
+  // PRO Extension #20 — variantAttributes is editable; parentItemId is
+  // set-once at create time (re-parenting requires DELETE + recreate so
+  // we don't have to reason about stock-balance migration).
+  const variantAttrsCheck = (variantAttributes !== undefined)
+    ? validateVariantAttributes(variantAttributes)
+    : { ok: true as const, value: undefined };
+  if (variantAttrsCheck.ok === false) {
+    res.status(400).json({ error: variantAttrsCheck.error }); return;
+  }
   const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
@@ -477,6 +563,11 @@ router.put("/items/:id", async (req, res) => {
   }
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
+  // PRO Extension #20 — a variant (parentItemId IS NOT NULL) cannot also
+  // be a bundle. The bundle/variant axes are intentionally orthogonal.
+  if (isBundle === true && existing?.parentItemId) {
+    res.status(400).json({ error: "المتغيّر لا يمكن أن يكون مركّباً (Bundle)" }); return;
+  }
   const normalizedTags = normalizeTags(tags);
   // Only touch discount columns when the client actually sent them, so a
   // partial PUT (e.g. from an older client) doesn't accidentally reset the
@@ -494,8 +585,13 @@ router.put("/items/:id", async (req, res) => {
     tags: normalizedTags === undefined ? undefined : normalizedTags,
     ...discPatch,
     // Only touch isBundle when client explicitly sends it (so partial PUTs
-    // from older clients don't accidentally flip the bundle flag).
+    // from older clients don't accidentally flip the bundle flag). A variant
+    // (parent_item_id IS NOT NULL) is also blocked from becoming a bundle
+    // — checked below after we have `existing` in hand.
     ...(isBundle !== undefined ? { isBundle: isBundle === true } : {}),
+    // PRO Extension #20 — only touch variantAttributes if client sent it.
+    // `null` is a valid value (clears all attributes); `undefined` skips.
+    ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1799,6 +1895,93 @@ router.delete("/items/:id/bundle/components/:linkId", async (req, res) => {
 
   auditSubEntity(req, "item_bundle_components", linkId, "delete", existing, null);
   res.json({ ok: true });
+});
+
+// ─── PRO Extension #20 — Item Variants ──────────────────────────────────────
+// Variants of a parent item (e.g. "T-Shirt – Red – Large" under "T-Shirt").
+// A variant is just an item with `parentItemId` set; this route is sugar for
+// listing/creating variants without the client having to know to filter by
+// parent_item_id manually. Tenant-scoped via companyId on both parent and
+// variants. The general POST/PUT/DELETE /items routes already understand
+// `parentItemId` + `variantAttributes`, but this route enforces the
+// "must be a child of :id" contract for the dedicated UI tab.
+router.get("/items/:id/variants", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  // Confirm the parent exists in this tenant — gives a clean 404 instead
+  // of silently returning [] when the user types in a wrong URL.
+  const [parent] = await db.select({
+    id: itemsTable.id,
+    code: itemsTable.code,
+    nameAr: itemsTable.nameAr,
+    parentItemId: itemsTable.parentItemId,
+    isBundle: itemsTable.isBundle,
+  })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!parent) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  const variants = await db.select()
+    .from(itemsTable)
+    .where(and(
+      eq(itemsTable.parentItemId, id),
+      eq(itemsTable.companyId, cid),
+    ))
+    .orderBy(asc(itemsTable.code));
+  res.json({
+    parent: { id: parent.id, code: parent.code, nameAr: parent.nameAr,
+              isVariant: !!parent.parentItemId, isBundle: parent.isBundle },
+    variants,
+  });
+});
+
+router.post("/items/:id/variants", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const { code, nameAr, nameEn, barcode, costPrice, salePrice, vatRate,
+          variantAttributes, description, imageUrl } = req.body ?? {};
+  if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المتغيّر مطلوبان" }); return; }
+
+  const all = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
+  const parent = all.find(i => i.id === id);
+  if (!parent) { res.status(404).json({ error: "الصنف الأب غير موجود" }); return; }
+  if (parent.parentItemId) {
+    res.status(400).json({ error: "لا يمكن إنشاء متغيّر لمتغيّر آخر (المتغيّرات لا تتداخل)" }); return;
+  }
+  if (parent.isBundle) {
+    res.status(400).json({ error: "لا يمكن إضافة متغيّرات لصنف من نوع مركّب (Bundle)" }); return;
+  }
+  if (all.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
+    res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
+  }
+  if (all.some(i => i.nameAr?.trim().toLowerCase() === String(nameAr).trim().toLowerCase())) {
+    res.status(409).json({ error: `الاسم "${nameAr}" مسجَّل بالفعل لصنف آخر` }); return;
+  }
+  if (barcode && all.some(i => i.barcode?.trim() === String(barcode).trim())) {
+    res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
+  }
+  const attrsCheck = validateVariantAttributes(variantAttributes);
+  if (!attrsCheck.ok) { res.status(400).json({ error: attrsCheck.error }); return; }
+
+  const [row] = await db.insert(itemsTable).values({
+    companyId: cid, code, nameAr, nameEn: nameEn ?? null,
+    barcode: barcode ?? null,
+    itemType: parent.itemType,
+    groupId:  parent.groupId,
+    unitId:   parent.unitId,
+    costPrice: costPrice ?? parent.costPrice,
+    salePrice: salePrice ?? parent.salePrice,
+    vatRate:   vatRate   ?? parent.vatRate,
+    costMethod: parent.costMethod,
+    description: description ?? null,
+    imageUrl: imageUrl ?? null,
+    parentItemId: id,
+    variantAttributes: attrsCheck.value,
+    isBundle: false,
+  }).returning();
+  auditSubEntity(req, "item_variants", row.id, "create", null, row);
+  res.status(201).json(row);
 });
 
 // ─── PRO Extension #5 — Per-item Analytics ──────────────────────────────────

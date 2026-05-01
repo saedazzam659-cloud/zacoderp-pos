@@ -49,6 +49,30 @@ export interface ItemSupplier {
   supplierCode?: string | null;
 }
 
+// ─── PRO Extension #20 — Item Variants ──────────────────────────────────────
+// A variant is a full-fledged item whose `parentItemId` points to another
+// item in the same tenant (e.g. "T-Shirt – Red – L" under "T-Shirt"). The
+// `variantAttributes` JSON is a free-form `{ key: value }` blob so different
+// industries can model whatever attribute set fits (color/size/flavor/...).
+export interface ItemVariant {
+  id: number;
+  code: string;
+  nameAr: string;
+  nameEn: string | null;
+  barcode: string | null;
+  costPrice: string;
+  salePrice: string;
+  vatRate: string;
+  parentItemId: number;
+  variantAttributes: Record<string, string | number | boolean | null> | null;
+  status: "active" | "inactive";
+  createdAt: string;
+}
+export interface VariantsResponse {
+  parent: { id: number; code: string; nameAr: string; isVariant: boolean; isBundle: boolean };
+  variants: ItemVariant[];
+}
+
 // ─── PRO Extension #2 — Bundle Components ───────────────────────────────────
 export interface BundleComponent {
   id: number;
@@ -91,6 +115,12 @@ export const inventoryApi = {
   addBundleComponent:     (itemId: number, data: any)  => post<BundleComponent>(`/items/${itemId}/bundle/components`, data),
   updateBundleComponent:  (itemId: number, linkId: number, data: any) => put<BundleComponent>(`/items/${itemId}/bundle/components/${linkId}`, data),
   deleteBundleComponent:  (itemId: number, linkId: number) => del(`/items/${itemId}/bundle/components/${linkId}`),
+  // PRO Extension #20 — Item Variants
+  getItemVariants:    (itemId: number)            => get<VariantsResponse>(`/items/${itemId}/variants`),
+  addItemVariant:     (itemId: number, data: any) => post<ItemVariant>(`/items/${itemId}/variants`, data),
+  // Updating a variant goes through the general updateItem (variants ARE items),
+  // and deleting goes through deleteItem. We expose addItemVariant/getItemVariants
+  // as sugar so the UI doesn't have to construct the parent_item_id payload.
   // Item Groups
   getItemGroups:   (cid?: number) => get<any[]>(`/item-groups${cid ? `?companyId=${cid}` : ""}`),
   createItemGroup: (data: any)    => post<any>("/item-groups", data),

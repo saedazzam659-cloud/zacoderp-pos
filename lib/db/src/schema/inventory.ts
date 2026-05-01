@@ -1,6 +1,6 @@
 import {
   pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum,
-  uniqueIndex,
+  uniqueIndex, jsonb, AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
@@ -98,6 +98,17 @@ export const itemsTable = pgTable("items", {
   // composition is defined in `item_bundle_components`. Used by the UI to
   // show/hide the "المكونات" panel; future work: deduct child stock on sale.
   isBundle:         boolean("is_bundle").default(false).notNull(),
+  // PRO Extension #20 — Item Variants. A variant is an item whose
+  // `parentItemId` points to another item in the same tenant — for example
+  // a "T-Shirt – Red – Large" variant of the parent "T-Shirt" template.
+  // Variants are first-class items: they have their own code/barcode,
+  // their own stock balances, and they appear independently in stock
+  // movements. Routes enforce the rules: a variant cannot be a bundle,
+  // a bundle cannot be a variant parent, and variants cannot have variants
+  // (no nesting). The free-form JSON shape (e.g. `{"color":"red","size":"L"}`)
+  // is intentional — different industries need different attribute sets.
+  parentItemId:       integer("parent_item_id").references((): AnyPgColumn => itemsTable.id, { onDelete: "cascade" }),
+  variantAttributes:  jsonb("variant_attributes"),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),

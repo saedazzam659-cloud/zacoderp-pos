@@ -924,7 +924,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1408,6 +1408,18 @@ export default function Items() {
                                 <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-bold">{t("pages.items.bundle.kitBadge")}</span>
                               )}
                             </button>
+                            {/* PRO Extension #20 — Variants tab. Hidden when
+                                this row is a bundle parent (variants/bundles
+                                are orthogonal). */}
+                            {!it.isBundle && !it.parentItemId && (
+                              <button
+                                onClick={() => setExpandedTab("variants")}
+                                className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                  expandedTab === "variants" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                              >
+                                <Layers className="h-3.5 w-3.5" />{t("pages.items.variants.tabLabel")}
+                              </button>
+                            )}
                           </div>
 
                           {expandedTab === "balances" && (
@@ -1455,6 +1467,10 @@ export default function Items() {
 
                           {expandedTab === "bundle" && (
                             <ItemBundleComponentsPanel itemId={it.id} />
+                          )}
+
+                          {expandedTab === "variants" && (
+                            <ItemVariantsPanel itemId={it.id} parentName={it.nameAr} />
                           )}
                         </td>
                       </tr>
