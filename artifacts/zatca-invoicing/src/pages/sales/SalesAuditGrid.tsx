@@ -53,6 +53,35 @@ const HEADER_THEMES: Record<HeaderColor, {
 const HEADER_COLOR_KEYS: HeaderColor[] = ["white", "rose", "blue", "emerald", "amber", "purple", "slate", "teal"];
 const DEFAULT_HEADER_COLOR: HeaderColor = "white";
 
+// ── Footer (totals row) palette ───────────────────────────────────────────
+// Independent from the header palette so the user can mix-and-match (e.g.
+// white header + dark slate footer, or matching colors). Each entry styles
+// the sticky <tfoot> row at the bottom of the grid: background, text color,
+// border between cells, and the per-metric "tones" used to highlight
+// discount / VAT / commission totals.
+type FooterColor = "slate" | "white" | "rose" | "blue" | "emerald" | "amber" | "purple" | "teal";
+const FOOTER_THEMES: Record<FooterColor, {
+  label: string;
+  swatch: string;        // small preview swatch (used in picker)
+  bg: string;            // <tfoot tr> background classes
+  text: string;          // base text color on the row
+  border: string;        // border classes between cells
+  toneDiscount: string;  // accent color for the "خصم" total
+  toneVat: string;       // accent color for the "ضريبة" total
+  toneCommission: string;// accent color for the "عمولة" total
+}> = {
+  slate:   { label: "رمادي", swatch: "bg-slate-800",                              bg: "bg-slate-800",   text: "text-white",       border: "border-slate-700",   toneDiscount: "text-orange-300", toneVat: "text-amber-300",  toneCommission: "text-purple-300" },
+  white:   { label: "أبيض",  swatch: "bg-white border border-slate-300",          bg: "bg-white",       text: "text-slate-900",   border: "border-slate-300",   toneDiscount: "text-orange-700", toneVat: "text-amber-800",  toneCommission: "text-purple-800" },
+  rose:    { label: "وردي",  swatch: "bg-rose-800",                               bg: "bg-rose-800",    text: "text-white",       border: "border-rose-700",    toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-pink-200" },
+  blue:    { label: "أزرق",  swatch: "bg-blue-800",                               bg: "bg-blue-800",    text: "text-white",       border: "border-blue-700",    toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-purple-200" },
+  emerald: { label: "أخضر",  swatch: "bg-emerald-800",                            bg: "bg-emerald-800", text: "text-white",       border: "border-emerald-700", toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-purple-200" },
+  amber:   { label: "ذهبي",  swatch: "bg-amber-700",                              bg: "bg-amber-700",   text: "text-white",       border: "border-amber-600", toneDiscount: "text-orange-100", toneVat: "text-yellow-100", toneCommission: "text-purple-200" },
+  purple:  { label: "بنفسجي", swatch: "bg-purple-800",                            bg: "bg-purple-800",  text: "text-white",       border: "border-purple-700",  toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-pink-200" },
+  teal:    { label: "تركواز", swatch: "bg-teal-800",                              bg: "bg-teal-800",    text: "text-white",       border: "border-teal-700",    toneDiscount: "text-orange-200", toneVat: "text-amber-200",  toneCommission: "text-purple-200" },
+};
+const FOOTER_COLOR_KEYS: FooterColor[] = ["slate", "white", "rose", "blue", "emerald", "amber", "purple", "teal"];
+const DEFAULT_FOOTER_COLOR: FooterColor = "slate";
+
 // ── Page-size options for the audit grid ──────────────────────────────────
 // `0` means "show all" — useful when the user wants to scan/audit everything
 // at once or print without paging. Default is 25 — large enough to be useful,
@@ -335,6 +364,8 @@ export default function SalesAuditGrid() {
   };
   const sanitizeColor = (c: unknown): HeaderColor =>
     HEADER_COLOR_KEYS.includes(c as HeaderColor) ? (c as HeaderColor) : DEFAULT_HEADER_COLOR;
+  const sanitizeFooterColor = (c: unknown): FooterColor =>
+    FOOTER_COLOR_KEYS.includes(c as FooterColor) ? (c as FooterColor) : DEFAULT_FOOTER_COLOR;
   const sanitizePageSize = (n: unknown): PageSize =>
     (PAGE_SIZE_OPTIONS as readonly number[]).includes(n as number) ? (n as PageSize) : DEFAULT_PAGE_SIZE;
   // Per-column widths (Excel-style). Keep only known column keys + sane numeric
@@ -374,6 +405,19 @@ export default function SalesAuditGrid() {
     return DEFAULT_HEADER_COLOR;
   });
 
+  // Independent footer (totals row) color, persisted alongside the rest of the
+  // layout. Backwards-compatible: missing field in LS → DEFAULT_FOOTER_COLOR.
+  const [footerColor, setFooterColor] = useState<FooterColor>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return sanitizeFooterColor(parsed?.footerColor);
+      }
+    } catch { /* ignore corrupt LS */ }
+    return DEFAULT_FOOTER_COLOR;
+  });
+
   const [pageSize, setPageSize] = useState<PageSize>(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -403,28 +447,30 @@ export default function SalesAuditGrid() {
   const [page, setPage] = useState(1);
 
   const theme = HEADER_THEMES[headerColor];
+  const footerTheme = FOOTER_THEMES[footerColor];
 
   // True when user has any non-default customization saved.
   const hasCustomLayout = useMemo(() => {
     if (headerColor !== DEFAULT_HEADER_COLOR) return true;
+    if (footerColor !== DEFAULT_FOOTER_COLOR) return true;
     if (pageSize !== DEFAULT_PAGE_SIZE) return true;
     if (dataOrder.length !== DATA_KEYS.length) return true;
     if (Object.keys(colWidths).length > 0) return true;
     return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
-  }, [dataOrder, headerColor, pageSize, colWidths]);
+  }, [dataOrder, headerColor, footerColor, pageSize, colWidths]);
 
   // Persist layout on change.
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, pageSize, colWidths }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, footerColor, pageSize, colWidths }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota errors */ }
-  }, [dataOrder, headerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, headerColor, footerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
 
-  // Re-hydrate layout + color + pageSize + colWidths when the active company
+  // Re-hydrate layout + colors + pageSize + colWidths when the active company
   // changes (e.g. user logs into a different tenant in the same browser tab).
   useEffect(() => {
     try {
@@ -433,6 +479,7 @@ export default function SalesAuditGrid() {
         const parsed = JSON.parse(raw);
         setDataOrder(sanitizeOrder(parsed?.dataOrder));
         setHeaderColor(sanitizeColor(parsed?.headerColor));
+        setFooterColor(sanitizeFooterColor(parsed?.footerColor));
         setPageSize(sanitizePageSize(parsed?.pageSize));
         setColWidths(sanitizeColWidths(parsed?.colWidths));
         setPage(1);
@@ -440,6 +487,7 @@ export default function SalesAuditGrid() {
       }
       setDataOrder([...DATA_KEYS]);
       setHeaderColor(DEFAULT_HEADER_COLOR);
+      setFooterColor(DEFAULT_FOOTER_COLOR);
       setPageSize(DEFAULT_PAGE_SIZE);
       setColWidths({});
       setPage(1);
@@ -469,6 +517,7 @@ export default function SalesAuditGrid() {
   function resetLayout() {
     setDataOrder([...DATA_KEYS]);
     setHeaderColor(DEFAULT_HEADER_COLOR);
+    setFooterColor(DEFAULT_FOOTER_COLOR);
     setPageSize(DEFAULT_PAGE_SIZE);
     setColWidths({});
     setPage(1);
@@ -1187,6 +1236,90 @@ export default function SalesAuditGrid() {
                 </div>
               </PopoverContent>
             </Popover>
+            {/* ─── Footer (totals row) color picker ───────────────────── */}
+            {/* Sits next to "لون الرأس" so the user can independently style
+                the bottom totals strip ("الإجمالي"). Same Popover/swatch
+                pattern as the header picker for consistency. */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                  title={`لون القدم الحالي: ${footerTheme.label}`}
+                  aria-label="تغيير لون قدم الجدول (الإجمالي)"
+                >
+                  <Palette className="h-3.5 w-3.5" />
+                  لون القدم
+                  <span className={cn("ms-1 inline-block h-3 w-3 rounded-full", footerTheme.swatch)} />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="bottom"
+                align="end"
+                className="w-64 p-2"
+                dir={isRtl ? "rtl" : "ltr"}
+              >
+                <div className="flex items-center justify-between mb-2 pb-2 border-b">
+                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Palette className="h-3.5 w-3.5 text-emerald-600" />
+                    لون قدم الجدول (الإجمالي)
+                  </div>
+                  {footerColor !== DEFAULT_FOOTER_COLOR && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[11px] text-slate-600 gap-1"
+                      onClick={() => setFooterColor(DEFAULT_FOOTER_COLOR)}
+                      title="إعادة لون القدم الافتراضي (رمادي)"
+                    >
+                      <RotateCw className="h-3 w-3" />
+                      افتراضي
+                    </Button>
+                  )}
+                </div>
+                <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
+                  اختر لوناً لقدم شاشة الجرد (سطر الإجماليات). يُحفظ لكل شركة على حدة.
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {FOOTER_COLOR_KEYS.map(c => {
+                    const t = FOOTER_THEMES[c];
+                    const active = footerColor === c;
+                    return (
+                      <button
+                        type="button"
+                        key={c}
+                        onClick={() => setFooterColor(c)}
+                        data-testid={`footer-color-${c}`}
+                        className={cn(
+                          "group flex flex-col items-center gap-1 rounded-md p-1.5 border transition-all",
+                          active
+                            ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-300"
+                            : "border-slate-200 hover:border-slate-400 hover:bg-slate-50",
+                        )}
+                        aria-label={`اختر اللون ${t.label}`}
+                        aria-pressed={active}
+                        title={t.label}
+                      >
+                        <span className={cn("relative h-7 w-7 rounded-full shadow-sm", t.swatch)}>
+                          {active && (
+                            <Check className={cn(
+                              "absolute inset-0 m-auto h-4 w-4",
+                              c === "white" || c === "amber" ? "text-slate-700" : "text-white",
+                            )} />
+                          )}
+                        </span>
+                        <span className={cn("text-[10px]", active ? "text-emerald-700 font-bold" : "text-slate-600")}>
+                          {t.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
             {/* ─── Column reorder ─────────────────────────────────────── */}
             <Popover>
               <PopoverTrigger asChild>
@@ -1703,7 +1836,7 @@ export default function SalesAuditGrid() {
                 })}
               </tbody>
               <tfoot className="sticky bottom-0">
-                <tr className="bg-slate-800 text-white text-[11px] font-semibold">
+                <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
                   {visibleColumns.map((col, i) => {
                     // Numeric columns get their total; the very first cell holds the "الإجمالي:" label.
                     const totalByKey: Record<string, number | undefined> = {
@@ -1715,24 +1848,24 @@ export default function SalesAuditGrid() {
                     };
                     if (i === 0) {
                       return (
-                        <td key={col.key} className="px-2 py-2 border border-slate-700 text-end whitespace-nowrap">
+                        <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>
                           الإجمالي:
                         </td>
                       );
                     }
                     if (col.key in totalByKey) {
                       const tone =
-                        col.key === "discount" ? "text-orange-300" :
-                        col.key === "vatAmt"   ? "text-amber-300"  :
-                        col.key === "commission" ? "text-purple-300" :
+                        col.key === "discount"   ? footerTheme.toneDiscount   :
+                        col.key === "vatAmt"     ? footerTheme.toneVat        :
+                        col.key === "commission" ? footerTheme.toneCommission :
                         "";
                       return (
-                        <td key={col.key} className={cn("px-2 py-2 border border-slate-700 text-end font-mono", tone)}>
+                        <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border, tone)}>
                           {fmt(totalByKey[col.key]!)}
                         </td>
                       );
                     }
-                    return <td key={col.key} className="px-2 py-2 border border-slate-700" />;
+                    return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
                   })}
                 </tr>
               </tfoot>
