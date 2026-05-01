@@ -9,6 +9,7 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   accountsTable, auditLogTable,
   salesInvoicesTable, salesInvoiceLinesTable,
+  itemDocumentsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -1205,6 +1206,101 @@ async function upsertBalance(companyId: number, itemId: number, warehouseId: num
 // BULK IMPORT — Items
 // Body: { items: [{ code, nameAr, nameEn?, barcode?, groupCode?, unitCode?, itemType?, costPrice?, salePrice?, vatRate?, reorderLevel?, maxLevel?, description? }, ...] }
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// PRO Extension #10 — Item Documents (warranty / certificates / manuals)
+// ═══════════════════════════════════════════════════════════════════
+// All three routes are tenant-scoped on company_id and require the item to
+// belong to the same tenant. The actual file blob lives in object storage;
+// we store the /objects/... path returned by the existing presigned-URL
+// flow (POST /api/storage/uploads/request-url) so the storage proxy + ACL
+// rules apply uniformly.
+router.get("/items/:id/documents", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  // Confirm item belongs to this tenant before returning anything.
+  const [own] = await db.select({ id: itemsTable.id })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!own) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  const rows = await db.select()
+    .from(itemDocumentsTable)
+    .where(and(
+      eq(itemDocumentsTable.itemId, id),
+      eq(itemDocumentsTable.companyId, cid),
+    ))
+    .orderBy(desc(itemDocumentsTable.createdAt));
+  res.json(rows);
+});
+
+router.post("/items/:id/documents", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const { fileUrl, fileName, fileType, fileSize, category, notes } = req.body ?? {};
+  if (!fileUrl || !fileName) {
+    res.status(400).json({ error: "fileUrl و fileName مطلوبان" });
+    return;
+  }
+  // Defensive: only accept /objects/... paths produced by our storage layer.
+  // Rejects accidental absolute URLs to attacker-controlled hosts and caps
+  // the path length so a malicious / buggy client can't bloat the row with
+  // a multi-megabyte string. 1 KB is far more than any real GCS path.
+  if (typeof fileUrl !== "string" || !fileUrl.startsWith("/objects/") || fileUrl.length > 1000) {
+    res.status(400).json({ error: "مسار الملف غير صالح" });
+    return;
+  }
+
+  const [own] = await db.select({ id: itemsTable.id })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!own) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  const [row] = await db.insert(itemDocumentsTable).values({
+    companyId: cid,
+    itemId: id,
+    fileUrl,
+    fileName: String(fileName).slice(0, 500),
+    fileType: fileType ? String(fileType).slice(0, 200) : null,
+    fileSize: Number.isFinite(Number(fileSize)) ? Number(fileSize) : null,
+    category: category ? String(category).slice(0, 100) : "other",
+    notes: notes ? String(notes).slice(0, 1000) : null,
+    uploadedByUserId: req.authUser?.id ?? null,
+  }).returning();
+  await writeAudit(req, "item_documents", row.id, "create", null, row);
+  res.status(201).json(row);
+});
+
+router.delete("/items/:id/documents/:docId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const docId = Number(req.params.docId);
+  if (!Number.isFinite(id) || !Number.isFinite(docId)) {
+    res.status(400).json({ error: "معرّف غير صالح" });
+    return;
+  }
+  // Composite filter: must match BOTH the item and the tenant. Prevents
+  // cross-item / cross-tenant deletions even if the docId is guessed.
+  const [existing] = await db.select()
+    .from(itemDocumentsTable)
+    .where(and(
+      eq(itemDocumentsTable.id, docId),
+      eq(itemDocumentsTable.itemId, id),
+      eq(itemDocumentsTable.companyId, cid),
+    ));
+  if (!existing) { res.status(404).json({ error: "المستند غير موجود" }); return; }
+
+  await db.delete(itemDocumentsTable).where(eq(itemDocumentsTable.id, docId));
+  await writeAudit(req, "item_documents", docId, "delete", existing, null);
+  // Note: we intentionally don't delete the underlying object-storage blob
+  // here — the storage layer doesn't expose a deletion API at this level
+  // and orphaned blobs are negligible cost; we can sweep them later.
+  res.json({ ok: true });
+});
+
 // ─── PRO Extension #5 — Per-item Analytics ──────────────────────────────────
 // Aggregates posted-sales activity for a single item: last sold date, total
 // qty sold, total revenue, and average monthly sales (computed across the

@@ -20,8 +20,12 @@ import {
   AlertTriangle, BookMarked, Sparkles, Loader2,
   QrCode, Tag, Printer, History, ArrowRight,
   TrendingUp, Calendar, DollarSign, BarChart3,
+  ScanLine, FileText, Upload, ExternalLink,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import BulkLabelDialog from "@/components/BulkLabelDialog";
+import ScanToImageDialog from "@/components/ScanToImageDialog";
+import type { ItemDocument } from "@/lib/inventoryApi";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -915,10 +919,15 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
+  // PRO Extension #13 — bulk label printing: row selection + dialog state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  // PRO Extension #14 — scan-barcode-to-attach-image
+  const [scanOpen, setScanOpen] = useState(false);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["items", cid],
@@ -1027,7 +1036,29 @@ export default function Items() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><Package className="h-6 w-6 text-primary" />{t("pages.items.itemsTitle")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t("pages.items.itemsSubtitle")}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {selectedIds.size > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2 border-primary/40 text-primary"
+              onClick={() => setLabelsOpen(true)}
+              title={t("pages.items.bulkLabels.buttonHint")}
+            >
+              <Tag className="h-4 w-4" />
+              {t("pages.items.bulkLabels.button", { count: selectedIds.size })}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            onClick={() => setScanOpen(true)}
+            title={t("pages.items.scanToImage.buttonHint")}
+          >
+            <ScanLine className="h-4 w-4" />
+            {t("pages.items.scanToImage.button")}
+          </Button>
           <ExportButtons rows={exportRows} columns={ITEM_EXPORT_COLS} filename={`${t("pages.items.itemsTitle")}-${new Date().toISOString().slice(0,10)}`} title={t("pages.items.itemsTitle")} />
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
             <Plus className="h-4 w-4" />{t("pages.items.newItem")}
@@ -1206,6 +1237,23 @@ export default function Items() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
+              <th className="px-3 py-3 text-center font-semibold text-muted-foreground w-10">
+                <Checkbox
+                  checked={pager.pagedItems.length > 0 && pager.pagedItems.every((it: any) => selectedIds.has(it.id))}
+                  onCheckedChange={(v) => {
+                    setSelectedIds(prev => {
+                      const next = new Set(prev);
+                      if (v) {
+                        pager.pagedItems.forEach((it: any) => next.add(it.id));
+                      } else {
+                        pager.pagedItems.forEach((it: any) => next.delete(it.id));
+                      }
+                      return next;
+                    });
+                  }}
+                  aria-label={t("pages.items.bulkLabels.selectAll")}
+                />
+              </th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground w-8"></th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.code")}</th>
               <th className="px-4 py-3 text-right font-semibold text-muted-foreground">{t("pages.items.item")}</th>
@@ -1220,12 +1268,25 @@ export default function Items() {
           </thead>
           <tbody className="divide-y">
             {isLoading
-              ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={10} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
+              ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={11} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
-              ? <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
+              ? <tr><td colSpan={11} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
               : pager.pagedItems.map((it: any) => (
                   <Fragment key={it.id}>
                     <tr className="hover:bg-muted/30">
+                      <td className="px-3 py-3 text-center">
+                        <Checkbox
+                          checked={selectedIds.has(it.id)}
+                          onCheckedChange={(v) => {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (v) next.add(it.id); else next.delete(it.id);
+                              return next;
+                            });
+                          }}
+                          aria-label={t("pages.items.bulkLabels.selectRow")}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <button onClick={() => toggleExpand(it.id)} className="text-muted-foreground hover:text-foreground">
                           {expandedId === it.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -1294,7 +1355,7 @@ export default function Items() {
                     {/* Expanded row: tabs for balances + unit prices */}
                     {expandedId === it.id && (
                       <tr className="bg-muted/20">
-                        <td colSpan={10} className="px-6 py-4">
+                        <td colSpan={11} className="px-6 py-4">
                           {/* Tabs */}
                           <div className="flex gap-1 bg-muted/50 p-1 rounded-lg w-fit mb-4 border">
                             <button
@@ -1317,6 +1378,13 @@ export default function Items() {
                                 expandedTab === "analytics" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
                             >
                               <TrendingUp className="h-3.5 w-3.5" />{t("pages.items.analytics.tabLabel")}
+                            </button>
+                            <button
+                              onClick={() => setExpandedTab("documents")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "documents" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <FileText className="h-3.5 w-3.5" />{t("pages.items.documents.tabLabel")}
                             </button>
                           </div>
 
@@ -1354,6 +1422,10 @@ export default function Items() {
                           {expandedTab === "analytics" && (
                             <ItemAnalyticsPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
                           )}
+
+                          {expandedTab === "documents" && (
+                            <ItemDocumentsPanel itemId={it.id} />
+                          )}
                         </td>
                       </tr>
                     )}
@@ -1379,6 +1451,209 @@ export default function Items() {
 
       {/* Audit-log / history dialog (item-scoped, mounted once at top level) */}
       <ItemHistoryDialog open={historyItem !== null} onOpenChange={(v) => !v && setHistoryItem(null)} item={historyItem} />
+
+      {/* PRO Extension #13 — bulk label printing */}
+      <BulkLabelDialog
+        open={labelsOpen}
+        onOpenChange={setLabelsOpen}
+        items={(items as any[]).filter(i => selectedIds.has(i.id)).map(i => ({
+          id: i.id, code: i.code, nameAr: i.nameAr, nameEn: i.nameEn,
+          barcode: i.barcode, salePrice: i.salePrice,
+        }))}
+      />
+
+      {/* PRO Extension #14 — scan barcode → attach image */}
+      <ScanToImageDialog
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        items={(items as any[]).map(i => ({
+          id: i.id, code: i.code, nameAr: i.nameAr, nameEn: i.nameEn,
+          barcode: i.barcode, imageUrl: i.imageUrl,
+        }))}
+        onAttach={async (itemId, objectPath) => {
+          // Persist by patching just the imageUrl on the existing item.
+          await inventoryApi.updateItem(itemId, { imageUrl: objectPath });
+          // Refresh the items list so the new image shows in the table.
+          qc.invalidateQueries({ queryKey: ["items"] });
+        }}
+      />
+    </div>
+  );
+}
+
+// ─── Item Documents Panel (PRO Extension #10) ────────────────────────────────
+// Lists files attached to an item (warranties / certificates / manuals / etc.)
+// and provides upload + delete + download. The actual blob lives in object
+// storage; this panel just owns the metadata table and the per-file UI.
+const DOC_CATEGORIES = ["warranty", "certificate", "manual", "datasheet", "invoice", "other"] as const;
+type DocCategory = typeof DOC_CATEGORIES[number];
+
+function ItemDocumentsPanel({ itemId }: { itemId: number }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [uploading, setUploading] = useState(false);
+  const [pendingCategory, setPendingCategory] = useState<DocCategory>("warranty");
+
+  const { data: docs = [], isLoading, isError } = useQuery({
+    queryKey: ["item-documents", itemId],
+    queryFn: () => inventoryApi.getItemDocuments(itemId),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (docId: number) => inventoryApi.deleteItemDocument(itemId, docId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["item-documents", itemId] });
+      toast({ title: t("pages.items.documents.deleted") });
+    },
+    onError: (e: any) => toast({ title: t("pages.items.documents.deleteFailed"), description: parseError(e), variant: "destructive" }),
+  });
+
+  async function handleUpload(file: File) {
+    // Server caps document size at the same 10 MB limit our object-storage
+    // sidecar enforces; this client-side check just gives a faster error.
+    if (file.size > 10 * 1024 * 1024) {
+      toast({ title: t("pages.items.documents.tooLarge"), variant: "destructive" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const reqRes = await fetch("/api/storage/uploads/request-url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}`,
+        },
+        body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type || "application/octet-stream" }),
+      });
+      if (!reqRes.ok) throw new Error(await reqRes.text());
+      const { uploadURL, objectPath } = await reqRes.json();
+      const putRes = await fetch(uploadURL, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!putRes.ok) throw new Error("upload failed");
+      await inventoryApi.addItemDocument(itemId, {
+        fileUrl: objectPath,
+        fileName: file.name,
+        fileType: file.type || undefined,
+        fileSize: file.size,
+        category: pendingCategory,
+      });
+      qc.invalidateQueries({ queryKey: ["item-documents", itemId] });
+      toast({ title: t("pages.items.documents.uploaded") });
+    } catch (e: any) {
+      toast({ title: t("pages.items.documents.uploadFailed"), description: String(e?.message ?? e), variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function fileSize(bytes: number | null): string {
+    if (!bytes) return "—";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  }
+
+  function isImage(d: ItemDocument): boolean {
+    return !!d.fileType?.startsWith("image/");
+  }
+
+  if (isLoading) {
+    return <Skeleton className="h-24 w-full" />;
+  }
+  if (isError) {
+    return (
+      <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+        {t("pages.items.documents.loadError")}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Upload bar */}
+      <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg border bg-background/50">
+        <select
+          value={pendingCategory}
+          onChange={(e) => setPendingCategory(e.target.value as DocCategory)}
+          className="h-9 rounded-md border bg-background px-2 text-sm"
+          disabled={uploading}
+        >
+          {DOC_CATEGORIES.map(c => (
+            <option key={c} value={c}>{t(`pages.items.documents.cat.${c}`)}</option>
+          ))}
+        </select>
+        <label className="cursor-pointer">
+          <input
+            type="file"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = ""; }}
+          />
+          <span className="inline-flex items-center gap-1.5 text-xs h-9 px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition">
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {uploading ? t("pages.items.documents.uploading") : t("pages.items.documents.upload")}
+          </span>
+        </label>
+        <p className="text-[10px] text-muted-foreground">{t("pages.items.documents.maxSize")}</p>
+      </div>
+
+      {/* Documents grid */}
+      {(docs as ItemDocument[]).length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <FileText className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.documents.empty")}
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          {(docs as ItemDocument[]).map((d) => {
+            const url = d.fileUrl.startsWith("/objects/") ? `/api/storage${d.fileUrl}` : d.fileUrl;
+            return (
+              <div key={d.id} className="rounded-lg border bg-background p-3 flex gap-3">
+                <div className="w-12 h-12 rounded-md bg-muted grid place-items-center shrink-0 overflow-hidden">
+                  {isImage(d) ? (
+                    <img src={url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate" title={d.fileName}>{d.fileName}</p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                      {t(`pages.items.documents.cat.${d.category}`, { defaultValue: d.category })}
+                    </Badge>
+                    <span className="text-[10px] text-muted-foreground">{fileSize(d.fileSize)}</span>
+                  </div>
+                  <div className="flex gap-1 mt-2">
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+                    >
+                      <ExternalLink className="h-2.5 w-2.5" />
+                      {t("pages.items.documents.view")}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => { if (confirm(t("pages.items.documents.deleteConfirm"))) deleteMut.mutate(d.id); }}
+                      className="inline-flex items-center gap-1 text-[10px] text-destructive hover:underline ms-auto"
+                      disabled={deleteMut.isPending}
+                    >
+                      <Trash2 className="h-2.5 w-2.5" />
+                      {t("common.delete", { defaultValue: "حذف" })}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -104,4 +104,26 @@ export const inventoryApi = {
     lowStock: { itemId: number | null; code: string; nameAr: string; nameEn: string | null; totalQty: number; reorderLevel: number }[];
     idle:     { itemId: number; code: string; nameAr: string; nameEn: string | null; lastSoldDate: string; daysIdle: number }[];
   }>(`/alerts${idleDays ? `?idleDays=${idleDays}` : ""}`),
+  // PRO Extension #10 — item documents (warranty / certificates / manuals)
+  getItemDocuments: (itemId: number) =>
+    get<ItemDocument[]>(`/items/${itemId}/documents`),
+  addItemDocument: (itemId: number, data: {
+    fileUrl: string; fileName: string; fileType?: string; fileSize?: number; category?: string; notes?: string;
+  }) => post<ItemDocument>(`/items/${itemId}/documents`, data),
+  deleteItemDocument: (itemId: number, docId: number) =>
+    del(`/items/${itemId}/documents/${docId}`),
 };
+
+export interface ItemDocument {
+  id: number;
+  companyId: number;
+  itemId: number;
+  fileUrl: string;
+  fileName: string;
+  fileType: string | null;
+  fileSize: number | null;
+  category: string;
+  notes: string | null;
+  uploadedByUserId: number | null;
+  createdAt: string;
+}

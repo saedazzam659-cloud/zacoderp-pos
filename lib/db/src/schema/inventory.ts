@@ -97,6 +97,28 @@ export const itemsTable = pgTable("items", {
   updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ─── Item Documents (PRO Extension #10) ──────────────────────────────────────
+// Files attached to an item — typically warranty cards, certificates,
+// product manuals, datasheets, supplier invoices, photos of physical
+// receipts, etc. The actual blob lives in object storage; we store only
+// the /objects/... path so the existing storage proxy + ACL rules apply.
+export const itemDocumentsTable = pgTable("item_documents", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  fileUrl:          text("file_url").notNull(),         // /objects/... path
+  fileName:         text("file_name").notNull(),        // original filename for display + download
+  fileType:         text("file_type"),                  // MIME type
+  fileSize:         integer("file_size"),               // bytes
+  // Free-text category — kept as text (not enum) so users can add custom
+  // categories like "صيانة" or "موافقة هيئة الغذاء" without a migration.
+  // The UI offers preset values but doesn't enforce them.
+  category:         text("category").default("other").notNull(),
+  notes:            text("notes"),
+  uploadedByUserId: integer("uploaded_by_user_id"),     // soft FK; user might be deleted later
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+
 // ─── Item Unit Prices (multi-unit per item with conversion factor) ────────────
 // Example: Item "Sugar" — base unit واحدة (×1, cost 5, sale 10), unit كرتونة (×12, cost 60, sale 100)
 export const itemUnitPricesTable = pgTable("item_unit_prices", {
