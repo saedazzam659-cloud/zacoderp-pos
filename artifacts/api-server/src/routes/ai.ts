@@ -83,6 +83,157 @@ ${JSON.stringify(sample)}`;
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Suggest item-card fields from partial context.
+// Body: {
+//   nameAr?, nameEn?, code?, costPrice?, salePrice?, vatRate?, itemType?,
+//   description?, barcode?, group?, unit?,
+//   availableGroups?: string[], availableUnits?: string[]
+// }
+// Returns: {
+//   nameAr, nameEn, description, tags: string[],
+//   suggestedSalePrice, suggestedMargin, suggestedVatRate,
+//   suggestedGroup, suggestedUnit, suggestedItemType, reasoning
+// }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/suggest-item-fields", requireModulePermission("items"), async (req, res) => {
+  try {
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(500).json({ error: "خدمة الذكاء الاصطناعي غير مهيأة" });
+      return;
+    }
+    // Truncate every user-controlled string to bound prompt size and prevent abuse.
+    const clip = (v: any, max: number): string =>
+      typeof v === "string" ? v.slice(0, max) : (v === undefined || v === null ? "" : String(v).slice(0, max));
+    const ctx = {
+      nameAr:      clip(req.body?.nameAr,      200),
+      nameEn:      clip(req.body?.nameEn,      200),
+      code:        clip(req.body?.code,         60),
+      costPrice:   clip(req.body?.costPrice,    32),
+      salePrice:   clip(req.body?.salePrice,    32),
+      vatRate:     clip(req.body?.vatRate,      16),
+      itemType:    clip(req.body?.itemType,     16),
+      description: clip(req.body?.description, 500),
+      barcode:     clip(req.body?.barcode,      80),
+      group:       clip(req.body?.group,       120),
+      unit:        clip(req.body?.unit,         60),
+    };
+    const has = (v: string) => v.trim() !== "" && v !== "0";
+    if (!has(ctx.nameAr) && !has(ctx.nameEn) && !has(ctx.code) && !has(ctx.barcode) && !has(ctx.description)) {
+      res.status(400).json({ error: "أدخل اسم الصنف أو وصفه أولاً قبل طلب اقتراحات الذكاء الاصطناعي" });
+      return;
+    }
+
+    const cost = Number(ctx.costPrice || 0);
+    const trimList = (arr: any): string[] =>
+      Array.isArray(arr) ? arr.map(x => clip(x, 120)).filter(Boolean).slice(0, 60) : [];
+    const availableGroups: string[] = trimList(req.body?.availableGroups);
+    const availableUnits:  string[] = trimList(req.body?.availableUnits);
+
+    const userPrompt = `أنت مساعد لإثراء بطاقة صنف في نظام محاسبي سعودي (متوافق مع زاتكا، الضريبة الافتراضية 15%).
+البيانات الحالية المدخلة:
+- الاسم بالعربية: ${ctx.nameAr || "(فارغ)"}
+- الاسم بالإنجليزية: ${ctx.nameEn || "(فارغ)"}
+- الكود: ${ctx.code || "(فارغ)"}
+- الباركود: ${ctx.barcode || "(فارغ)"}
+- نوع الصنف: ${ctx.itemType || "(غير محدد)"} (stock أو service)
+- المجموعة الحالية: ${ctx.group || "(غير محددة)"}
+- الوحدة الحالية: ${ctx.unit || "(غير محددة)"}
+- سعر التكلفة: ${cost}
+- سعر البيع الحالي: ${ctx.salePrice || "(فارغ)"}
+- نسبة الضريبة الحالية: ${ctx.vatRate || "(فارغ)"}
+- الوصف الحالي: ${ctx.description || "(فارغ)"}
+
+المجموعات المتاحة في النظام (اختر منها فقط إذا كانت مناسبة، وإلا أعد null):
+${availableGroups.length ? availableGroups.map(g => `- ${g}`).join("\n") : "(لا توجد)"}
+
+الوحدات المتاحة في النظام (اختر منها فقط إذا كانت مناسبة، وإلا أعد null):
+${availableUnits.length ? availableUnits.map(u => `- ${u}`).join("\n") : "(لا توجد)"}
+
+المطلوب: أعد JSON فقط بهذا الشكل بالضبط (لا تكتب أي شرح خارج JSON):
+{
+  "nameAr": "اسم احترافي بالعربية (اقترح فقط إذا كان الحالي فارغاً أو يحتاج تحسين، وإلا أعد سلسلة فارغة)",
+  "nameEn": "Professional English name (suggest only if current is empty or needs improvement, otherwise empty string)",
+  "description": "وصف تسويقي قصير بالعربية (1-2 جملة) يصف الصنف ومميزاته",
+  "tags": ["كلمة1", "كلمة2", "..."],
+  "suggestedSalePrice": رقم أو null (سعر بيع مقترح بناءً على التكلفة وهامش ربح معقول لهذه الفئة من المنتجات. إذا كانت التكلفة صفر أعد null),
+  "suggestedMargin": رقم بين 0 و 100 أو null (نسبة هامش الربح المقترحة %),
+  "suggestedVatRate": 15 أو 0 (15 للسلع/الخدمات الخاضعة للضريبة، 0 للمعفاة كالأدوية والتعليم والتصدير),
+  "suggestedGroup": "اسم مجموعة من القائمة أعلاه" أو null,
+  "suggestedUnit": "اسم وحدة من القائمة أعلاه" أو null,
+  "suggestedItemType": "stock" أو "service",
+  "reasoning": "جملة قصيرة بالعربية تشرح المنطق وراء الاقتراحات"
+}`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 8192,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "أنت مساعد متخصص في إثراء بيانات الأصناف في الأنظمة المحاسبية السعودية. ترد بـ JSON فقط بدون أي شرح." },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(500).json({ error: `فشل استدعاء الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data = await r.json();
+    const content = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any;
+    try { parsed = JSON.parse(content); }
+    catch { res.status(500).json({ error: "تعذّر تحليل استجابة الذكاء الاصطناعي" }); return; }
+
+    const num = (v: any): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const str = (v: any, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const arr = (v: any): string[] =>
+      Array.isArray(v) ? v.map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 12) : [];
+    // Only echo back group/unit if AI picked one that actually exists in the user's list (case-insensitive).
+    const pickFromList = (v: any, list: string[]): string | null => {
+      const s = str(v, 120);
+      if (!s) return null;
+      const lower = s.toLowerCase();
+      const found = list.find(x => x.toLowerCase() === lower);
+      return found ?? null;
+    };
+    const sanitVat = (v: any): number | null => {
+      const n = num(v);
+      if (n === null) return null;
+      // VAT is a percentage in [0, 100]; KSA uses 0 or 15 in practice.
+      if (n < 0 || n > 100) return null;
+      return n;
+    };
+
+    res.json({
+      nameAr:             str(parsed.nameAr, 200),
+      nameEn:             str(parsed.nameEn, 200),
+      description:        str(parsed.description, 500),
+      tags:               arr(parsed.tags),
+      suggestedSalePrice: num(parsed.suggestedSalePrice),
+      suggestedMargin:    num(parsed.suggestedMargin),
+      suggestedVatRate:   sanitVat(parsed.suggestedVatRate),
+      suggestedGroup:     pickFromList(parsed.suggestedGroup, availableGroups),
+      suggestedUnit:      pickFromList(parsed.suggestedUnit, availableUnits),
+      suggestedItemType:  parsed.suggestedItemType === "service" ? "service" : (parsed.suggestedItemType === "stock" ? "stock" : null),
+      reasoning:          str(parsed.reasoning, 500),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "خطأ غير معروف" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Explain a ZATCA rejection in plain Arabic + suggest concrete fixes.
 // Body: { invoice: {docNumber, totalAmount, vatAmount, status, customer:{...}, lines:[...]}, errors: [{code, message}] }
 // Returns: { explanation, fixes: string[], summary }

@@ -1,7 +1,8 @@
-import { useState, Fragment } from "react";
+import { useState, Fragment, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { inventoryApi } from "@/lib/inventoryApi";
+import { aiApi, type ItemFieldsSuggestion } from "@/lib/aiApi";
 import { parseError } from "@/lib/parseError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,10 +17,13 @@ import { useFmt, trimTrailingZeros } from "@/hooks/use-fmt";
 import {
   Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
-  AlertTriangle, BookMarked,
+  AlertTriangle, BookMarked, Sparkles, Loader2,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
@@ -260,6 +264,203 @@ function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   );
 }
 
+// ─── AI Assist Dialog ────────────────────────────────────────────────────────
+type AIDraft = ItemFieldsSuggestion & { suggestedGroupId?: string; suggestedUnitId?: string };
+
+function AIAssistDialog({
+  open, onOpenChange, form, groups, units, onApply,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  form: any;
+  groups: any[];
+  units: any[];
+  onApply: (patch: Record<string, any>) => void;
+}) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [draft, setDraft] = useState<AIDraft | null>(null);
+  const [picks, setPicks] = useState<Record<string, boolean>>({});
+  // Sequence id to ignore stale responses (StrictMode double-effects + slow networks)
+  const reqIdRef = useRef(0);
+
+  async function load() {
+    const myId = ++reqIdRef.current;
+    setLoading(true);
+    setDraft(null);
+    try {
+      const groupName = (groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameAr ?? "";
+      const unitName  = (units as any[]).find((u: any) => String(u.id) === String(form.unitId))?.nameAr ?? "";
+      const res = await aiApi.suggestItemFields({
+        nameAr: form.nameAr, nameEn: form.nameEn, code: form.code,
+        costPrice: form.costPrice, salePrice: form.salePrice, vatRate: form.vatRate,
+        itemType: form.itemType, description: form.description, barcode: form.barcode,
+        group: groupName, unit: unitName,
+        availableGroups: (groups as any[]).map((g: any) => g.nameAr).filter(Boolean),
+        availableUnits:  (units  as any[]).map((u: any) => u.nameAr).filter(Boolean),
+      });
+
+      const matchGroup = (name: string | null) => {
+        if (!name) return undefined;
+        const g = (groups as any[]).find((x: any) => x.nameAr === name || x.nameEn === name);
+        return g ? String(g.id) : undefined;
+      };
+      const matchUnit = (name: string | null) => {
+        if (!name) return undefined;
+        const u = (units as any[]).find((x: any) => x.nameAr === name || x.nameEn === name);
+        return u ? String(u.id) : undefined;
+      };
+      // Drop stale response (a newer load() has superseded this one)
+      if (myId !== reqIdRef.current) return;
+
+      const enriched: AIDraft = {
+        ...res,
+        suggestedGroupId: matchGroup(res.suggestedGroup),
+        suggestedUnitId:  matchUnit(res.suggestedUnit),
+      };
+      setDraft(enriched);
+
+      // Default selection: only check fields that are currently empty/zero in the form
+      const isEmpty = (v: any) => v === undefined || v === null || String(v).trim() === "";
+      const isZeroish = (v: any) => isEmpty(v) || String(v) === "0";
+      setPicks({
+        nameAr:      Boolean(enriched.nameAr) && isEmpty(form.nameAr),
+        nameEn:      Boolean(enriched.nameEn) && isEmpty(form.nameEn),
+        description: Boolean(enriched.description) && isEmpty(form.description),
+        salePrice:   enriched.suggestedSalePrice !== null && isZeroish(form.salePrice),
+        vatRate:     enriched.suggestedVatRate !== null && isZeroish(form.vatRate),
+        groupId:     Boolean(enriched.suggestedGroupId) && isEmpty(form.groupId),
+        unitId:      Boolean(enriched.suggestedUnitId) && isEmpty(form.unitId),
+        itemType:    Boolean(enriched.suggestedItemType) && enriched.suggestedItemType !== form.itemType,
+      });
+    } catch (e: any) {
+      if (myId !== reqIdRef.current) return;
+      toast({ title: t("pages.items.aiAssist.errorTitle"), description: parseError(e), variant: "destructive" });
+    } finally {
+      if (myId === reqIdRef.current) setLoading(false);
+    }
+  }
+
+  function apply() {
+    if (!draft) return;
+    const patch: Record<string, any> = {};
+    if (picks.nameAr      && draft.nameAr)            patch.nameAr      = draft.nameAr;
+    if (picks.nameEn      && draft.nameEn)            patch.nameEn      = draft.nameEn;
+    if (picks.description && draft.description)       patch.description = draft.description;
+    if (picks.salePrice   && draft.suggestedSalePrice !== null) patch.salePrice = String(draft.suggestedSalePrice);
+    if (picks.vatRate     && draft.suggestedVatRate   !== null) patch.vatRate   = String(draft.suggestedVatRate);
+    if (picks.groupId     && draft.suggestedGroupId)  patch.groupId  = draft.suggestedGroupId;
+    if (picks.unitId      && draft.suggestedUnitId)   patch.unitId   = draft.suggestedUnitId;
+    if (picks.itemType    && draft.suggestedItemType) patch.itemType = draft.suggestedItemType;
+    onApply(patch);
+    toast({ title: t("pages.items.aiAssist.applied") });
+    onOpenChange(false);
+  }
+
+  // Auto-load suggestions when dialog opens; reset on close.
+  // The reqIdRef sequence id ensures only the latest in-flight request can update state,
+  // so React StrictMode's double-mount or rapid open/close cycles cannot cause races.
+  useEffect(() => {
+    if (open) {
+      void load();
+    } else {
+      reqIdRef.current++; // Invalidate any in-flight load
+      setDraft(null);
+      setPicks({});
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const Row = ({ keyName, label, current, suggested, badge }: any) => {
+    const has = suggested !== undefined && suggested !== null && String(suggested).trim() !== "";
+    if (!has) return null;
+    const checked = !!picks[keyName];
+    return (
+      <div className="flex items-start gap-3 rounded-lg border bg-card p-3">
+        <Checkbox
+          checked={checked}
+          onCheckedChange={(v) => setPicks(p => ({ ...p, [keyName]: !!v }))}
+          className="mt-0.5"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-semibold text-foreground">{label}</span>
+            {badge && <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{badge}</Badge>}
+          </div>
+          {current !== undefined && String(current).trim() !== "" && String(current) !== "0" && (
+            <p className="text-[11px] text-muted-foreground line-through truncate">{String(current)}</p>
+          )}
+          <p className="text-xs text-foreground break-words">{String(suggested)}</p>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            {t("pages.items.aiAssist.title")}
+          </DialogTitle>
+        </DialogHeader>
+
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-10 gap-3 text-muted-foreground">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm">{t("pages.items.aiAssist.loading")}</p>
+          </div>
+        )}
+
+        {!loading && draft && (
+          <div className="space-y-3">
+            {draft.reasoning && (
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-xs text-foreground">
+                <span className="font-semibold text-primary">{t("pages.items.aiAssist.reasoning")}: </span>
+                {draft.reasoning}
+              </div>
+            )}
+
+            <Row keyName="nameAr"      label={t("pages.items.nameAr")}      current={form.nameAr}      suggested={draft.nameAr} />
+            <Row keyName="nameEn"      label={t("pages.items.nameEn")}      current={form.nameEn}      suggested={draft.nameEn} />
+            <Row keyName="description" label={t("pages.items.notesDescription")} current={form.description} suggested={draft.description} />
+            <Row keyName="salePrice"   label={t("pages.items.salePriceLabel")}   current={form.salePrice}
+                 suggested={draft.suggestedSalePrice}
+                 badge={draft.suggestedMargin !== null ? t("pages.items.aiAssist.marginBadge", { pct: draft.suggestedMargin }) : undefined} />
+            <Row keyName="vatRate"     label={t("pages.items.vatRate")}          current={form.vatRate}    suggested={draft.suggestedVatRate !== null ? `${draft.suggestedVatRate}%` : null} />
+            <Row keyName="groupId"     label={t("pages.items.group")}            current={(groups as any[]).find((g: any) => String(g.id) === String(form.groupId))?.nameAr} suggested={draft.suggestedGroup} />
+            <Row keyName="unitId"      label={t("pages.items.baseUnit")}         current={(units  as any[]).find((u: any) => String(u.id) === String(form.unitId))?.nameAr}  suggested={draft.suggestedUnit} />
+            <Row keyName="itemType"    label={t("pages.items.itemType")}         current={form.itemType === "stock" ? t("pages.items.stock") : t("pages.items.service")}
+                 suggested={draft.suggestedItemType === "stock" ? t("pages.items.stock") : draft.suggestedItemType === "service" ? t("pages.items.service") : null} />
+
+            {draft.tags && draft.tags.length > 0 && (
+              <div className="rounded-lg border bg-card p-3">
+                <p className="text-xs font-semibold text-foreground mb-2">{t("pages.items.aiAssist.tags")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {draft.tags.map((tag, i) => (
+                    <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button onClick={apply} disabled={loading || !draft} className="gap-2">
+            <Sparkles className="h-4 w-4" />
+            {t("pages.items.aiAssist.apply")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function Items() {
   const { t } = useTranslation();
@@ -276,6 +477,7 @@ export default function Items() {
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedTab, setExpandedTab] = useState<"balances" | "units">("balances");
+  const [aiOpen, setAiOpen] = useState(false);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["items", cid],
@@ -396,6 +598,20 @@ export default function Items() {
           saveDisabled={!form.code || !form.nameAr}
           saveLabel={editId ? t("pages.items.saveEdit") : t("pages.items.addItem")}
         >
+          <div className="flex justify-end mb-3">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setAiOpen(true)}
+              className="gap-1.5 h-8 text-xs border-primary/40 text-primary hover:bg-primary/10"
+              disabled={!form.nameAr && !form.nameEn && !form.code && !form.barcode && !form.description}
+              title={t("pages.items.aiAssist.buttonHint")}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {t("pages.items.aiAssist.button")}
+            </Button>
+          </div>
           <Tabs value={activeItemTab} onValueChange={setActiveItemTab} className="w-full">
             <TabsList className="w-full h-9 mb-5">
               <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
@@ -457,6 +673,14 @@ export default function Items() {
               </FormGrid>
             </TabsContent>
           </Tabs>
+          <AIAssistDialog
+            open={aiOpen}
+            onOpenChange={setAiOpen}
+            form={form}
+            groups={groups as any[]}
+            units={units as any[]}
+            onApply={(patch) => setForm((p: any) => ({ ...p, ...patch }))}
+          />
         </FormPanel>
       )}
 

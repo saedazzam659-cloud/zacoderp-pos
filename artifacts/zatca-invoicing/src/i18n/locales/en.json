@@ -1115,6 +1115,18 @@
       "deleteErrorDesc": "Deletion failed — please try again."
     },
     "items": {
+      "aiAssist": {
+        "button": "AI Assist",
+        "buttonHint": "Fill in some fields first, then click for suggestions",
+        "title": "AI Suggestions for Item",
+        "loading": "Analyzing item data and generating suggestions...",
+        "reasoning": "Assistant notes",
+        "tags": "Suggested tags (for smart search)",
+        "marginBadge": "{{pct}}% margin",
+        "apply": "Apply selected",
+        "applied": "Suggestions applied to the form",
+        "errorTitle": "AI request failed"
+      },
       "unitAdded": "Unit added",
       "updated": "Updated",
       "deleted": "Deleted",
