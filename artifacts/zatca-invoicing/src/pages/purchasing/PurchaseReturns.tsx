@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp, TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy } from "lucide-react";
+import {
+  Plus, Trash2, RotateCcw, CheckCircle2, Printer, Wallet, CreditCard, TrendingUp,
+  TrendingDown, Undo2, Pencil, FileText, ListOrdered, Copy,
+  FileSpreadsheet, FileDown, X, Loader2,
+} from "lucide-react";
+import * as XLSX from "xlsx";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { DocNavigator } from "@/components/DocNavigator";
@@ -19,6 +24,14 @@ import { DocStatusBadge } from "@/components/DocStatusBadge";
 import { DiscountRow } from "@/components/DiscountRow";
 import { SupplierVatControl } from "@/components/SupplierVatControl";
 import { cn } from "@/lib/utils";
+import {
+  downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
+} from "@/lib/auditGridLayout";
+import {
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
+} from "@/components/auditGrid/AuditGridControls";
+import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -616,18 +629,400 @@ export default function PurchaseReturns() {
     tr("lineCols.notes"),
     "",
   ];
-  const listColHeaders = [
-    tr("listCols.number"),
-    tr("listCols.date"),
-    tr("listCols.supplier"),
-    tr("listCols.currency"),
-    tr("listCols.subtotal"),
-    tr("listCols.vat"),
-    tr("listCols.total"),
-    tr("listCols.journal"),
-    tr("listCols.status"),
-    tr("listCols.actions"),
+  // ── Audit-grid scaffolding ──────────────────────────────────────────────
+  const [tableSearch, setTableSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted">("all");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
+
+  const statusLabel = (s: string) =>
+    s === "all" ? t("common.all") : s === "posted" ? tr("postedM") : tr("draft");
+
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
+  const COLUMNS: ColDef[] = [
+    { key: "_sel",     label: "",                     type: "none", valueOf: () => "" },
+    { key: "_idx",     label: "#",                    type: "none", valueOf: () => "" },
+    { key: "doc",      label: tr("listCols.number"),  type: "text", valueOf: (r) => r.docNumber ?? `PR-${r.id}` },
+    { key: "date",     label: tr("listCols.date"),    type: "text", valueOf: (r) => r.returnDate ?? "" },
+    { key: "supplier", label: tr("listCols.supplier"),type: "text", valueOf: (r) => supMap[r.supplierId] ?? "" },
+    { key: "currency", label: tr("listCols.currency"),type: "text", valueOf: (r) => r.currencyCode ?? "" },
+    { key: "subtotal", label: tr("listCols.subtotal"),type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
+    { key: "vat",      label: tr("listCols.vat"),     type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },
+    { key: "total",    label: tr("listCols.total"),   type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
+    { key: "journal",  label: tr("listCols.journal"), type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
+    { key: "status",   label: tr("listCols.status"),  type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "_act",     label: tr("listCols.actions"), type: "none", valueOf: () => "" },
   ];
+  const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
+  const ALL_KEYS  = COLUMNS.map(c => c.key);
+
+  const layout = useAuditGridLayout({
+    screenSlug: "purchaseReturnsAuditGrid",
+    cid,
+    dataKeys: DATA_KEYS,
+    allColKeys: ALL_KEYS,
+  });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection } = layout;
+
+  const filteredReturns = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    return (returns_ as any[]).filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (q) {
+        const hay = [
+          r.docNumber, `PR-${r.id}`, r.returnDate, supMap[r.supplierId],
+          r.currencyCode, r.notes, r.supplierInvoiceNumber,
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      for (const col of COLUMNS) {
+        const f = colFilters[col.key];
+        if (!f) continue;
+        if (!matchCol(col.valueOf(r), f, col.type)) return false;
+      }
+      return true;
+    });
+  }, [returns_, tableSearch, statusFilter, colFilters, supMap]);
+
+  const { pageSize, page, setPage } = layout;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredReturns.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  useEffect(() => { if (safePage !== page) setPage(safePage); }, [safePage, page, setPage]);
+  const pagedReturns = useMemo(
+    () => pageSize === 0 ? filteredReturns : filteredReturns.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredReturns, pageSize, safePage],
+  );
+  const pageStart = filteredReturns.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd   = pageSize === 0 ? filteredReturns.length : Math.min(safePage * pageSize, filteredReturns.length);
+
+  const totals = useMemo(() => filteredReturns.reduce(
+    (a, r: any) => {
+      a.subtotal += Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
+      a.vat      += Number(r.vatAmount ?? 0);
+      a.total    += Number(r.totalAmount ?? 0);
+      return a;
+    },
+    { subtotal: 0, vat: 0, total: 0 },
+  ), [filteredReturns]);
+
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder
+      .map((k) => COLUMNS.find((c) => c.key === k))
+      .filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find((c) => c.key === "_sel")!;
+    const idx = COLUMNS.find((c) => c.key === "_idx")!;
+    const act = COLUMNS.find((c) => c.key === "_act")!;
+    return [sel, idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(
+    () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
+    [DATA_KEYS, COLUMNS],
+  );
+
+  const escapeHtml = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const safeLogo = safeLogoSrc((user?.company as any)?.logo) ?? "";
+  const openPrintWindow = (html: string) => {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) {
+      toast({ title: "تم حظر النافذة المنبثقة", description: "الرجاء السماح بفتح النوافذ المنبثقة من المتصفح للطباعة", variant: "destructive" });
+      return;
+    }
+    w.document.open(); w.document.write(html); w.document.close();
+  };
+
+  const buildListHtml = (source: any[] = filteredReturns) => {
+    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const sumSub = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
+    const sumVat = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
+    const sumTot = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>` : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>` : "";
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(tr("title"))}</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:8px; }
+.h h1 { margin:0 0 4px; font-size:18px; }
+.h .meta { font-size:11px; color:#555; }
+.totals { display:flex; gap:16px; justify-content:center; margin:8px 0 12px; font-size:12px; }
+.totals span b { color:#1e3a8a; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:right; }
+tbody tr:nth-child(even) td { background:#f5f7fb; }
+tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
+.num { font-family:"Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(tr("title"))}</h1>
+<div class="meta">تاريخ التقرير: ${reportDate} — عدد المردودات: ${source.length}</div></div>
+<div class="totals">
+  <span>إجمالي المجموع: <b>${sumSub.toFixed(2)}</b></span>
+  <span>إجمالي الضريبة: <b>${sumVat.toFixed(2)}</b></span>
+  <span>الإجمالي: <b>${sumTot.toFixed(2)}</b></span>
+</div>
+<table><thead><tr>
+  <th>#</th><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>العملة</th>
+  <th>المجموع</th><th>الضريبة</th><th>الإجمالي</th><th>القيد</th><th>الحالة</th>
+</tr></thead><tbody>
+${source.map((r: any, i: number) => `<tr>
+  <td>${i + 1}</td>
+  <td>${escapeHtml(r.docNumber ?? `PR-${r.id}`)}</td>
+  <td>${escapeHtml(r.returnDate ?? "")}</td>
+  <td>${escapeHtml(supMap[r.supplierId] ?? "")}</td>
+  <td>${escapeHtml(r.currencyCode ?? "")}</td>
+  <td class="num">${(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2)}</td>
+  <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
+  <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+  <td>${r.journalEntryId ? `JE-${escapeHtml(r.journalEntryId)}` : ""}</td>
+  <td>${escapeHtml(statusLabel(r.status))}</td>
+</tr>`).join("")}
+</tbody><tfoot><tr>
+  <td colspan="5">الإجمالي العام</td>
+  <td class="num">${sumSub.toFixed(2)}</td>
+  <td class="num">${sumVat.toFixed(2)}</td>
+  <td class="num">${sumTot.toFixed(2)}</td>
+  <td colspan="2"></td>
+</tr></tfoot></table>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  const buildBulkHtml = (docs: any[]) => {
+    const reportDate = new Date().toLocaleDateString("ar-SA");
+    const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
+    const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
+    const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>` : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(user.company.nameAr)}</div>` : "";
+    const sections = docs.map((d: any) => {
+      const lns: any[] = Array.isArray(d.lines) ? d.lines : [];
+      const docNo  = d.docNumber ?? `PR-${d.id}`;
+      const linesHtml = lns.length === 0
+        ? `<tr><td colspan="6" style="text-align:center;color:#6b7280;padding:14px;">لا توجد بنود لهذا المردود.</td></tr>`
+        : lns.map((l: any, i: number) => {
+            const itemLabel = l.itemName ?? l.description ?? `#${l.itemId ?? ""}`;
+            const qty = Number(l.qty ?? l.quantity ?? 0);
+            const up  = Number(l.unitPrice ?? 0);
+            const vat = Number(l.vatAmount ?? 0);
+            const ttl = Number(l.lineTotal ?? l.totalAmount ?? 0);
+            return `<tr>
+              <td style="text-align:center;">${i + 1}</td>
+              <td>${escapeHtml(itemLabel)}</td>
+              <td class="num">${qty.toFixed(2)}</td>
+              <td class="num">${up.toFixed(2)}</td>
+              <td class="num">${vat.toFixed(2)}</td>
+              <td class="num">${ttl.toFixed(2)}</td>
+            </tr>`;
+          }).join("");
+      return `<section class="doc">
+        <div class="doc-head">
+          <span class="badge b-doc">رقم المردود: ${escapeHtml(docNo)}</span>
+          <span class="badge b-date">التاريخ: ${escapeHtml(d.returnDate ?? "")}</span>
+          <span class="badge b-cust">المورد: ${escapeHtml(supMap[d.supplierId] ?? "")}</span>
+          <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(statusLabel(d.status))}</span>
+        </div>
+        ${d.notes ? `<div class="desc">${escapeHtml(d.notes)}</div>` : ""}
+        <table>
+          <thead><tr>
+            <th style="width:30px;">#</th><th>الصنف</th>
+            <th style="width:70px;">الكمية</th><th style="width:80px;">السعر</th>
+            <th style="width:75px;">الضريبة</th><th style="width:90px;">الإجمالي</th>
+          </tr></thead>
+          <tbody>${linesHtml}</tbody>
+          <tfoot><tr>
+            <td colspan="4" style="text-align:left;">المجموع</td>
+            <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
+            <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+          </tr></tfoot>
+        </table>
+      </section>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة مردودات الشراء المحدّدة</title>
+<style>
+@page { size: A4 portrait; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:10px; }
+.h h1 { margin:0 0 4px; font-size:17px; }
+.h .meta { font-size:11px; color:#555; }
+.grand { display:flex; gap:14px; justify-content:center; margin:6px 0 14px; font-size:12px; }
+.grand span b { color:#0f766e; }
+section.doc { margin:0 0 14px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; page-break-inside:avoid; background:#fff; }
+.doc-head { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600; border:1px solid; }
+.b-doc{background:#eef2ff;border-color:#a5b4fc;color:#3730a3;}
+.b-date{background:#fef9c3;border-color:#fde047;color:#713f12;}
+.b-cust{background:#ecfeff;border-color:#67e8f9;color:#155e75;}
+.b-status.s-posted{background:#d1fae5;border-color:#34d399;color:#065f46;}
+.b-status.s-draft{background:#fef3c7;border-color:#fbbf24;color:#78350f;}
+.desc { font-size:11px; color:#475569; padding:4px 6px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:4px; margin-bottom:6px; }
+table { width:100%; border-collapse:collapse; font-size:10.5px; }
+thead th { background:#1e3a8a; color:#fff; padding:5px 6px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:4px 6px; border:1px solid #d1d5db; text-align:right; }
+tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
+.num { font-family:"Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>مردودات الشراء المحدّدة</h1>
+<div class="meta">تاريخ التقرير: ${reportDate} — عدد المردودات: ${docs.length}</div></div>
+<div class="grand">
+  <span>إجمالي المجموع: <b>${grandSub.toFixed(2)}</b></span>
+  <span>إجمالي الضريبة: <b>${grandVat.toFixed(2)}</b></span>
+  <span>الإجمالي العام: <b>${grandTot.toFixed(2)}</b></span>
+</div>
+${sections}
+<script>setTimeout(()=>window.print(),350);</script></body></html>`;
+  };
+
+  const handleExportPDF = () => openPrintWindow(buildListHtml());
+  const handlePrint    = () => openPrintWindow(buildListHtml());
+  const handleExportExcel = () => {
+    if (filteredReturns.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
+    const rows = filteredReturns.map((r: any) => ({
+      "رقم المستند": r.docNumber ?? `PR-${r.id}`,
+      "التاريخ": r.returnDate ?? "",
+      "المورد": supMap[r.supplierId] ?? "",
+      "العملة": r.currencyCode ?? "",
+      "المجموع": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
+      "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
+      "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
+      "القيد": r.journalEntryId ? `JE-${r.journalEntryId}` : "",
+      "الحالة": statusLabel(r.status),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "مردودات الشراء");
+    XLSX.writeFile(wb, `purchase-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  async function bulkRun(
+    ids: number[],
+    perId: (id: number) => Promise<void>,
+  ): Promise<{ ok: number; failed: Array<{ id: number; error: string }> }> {
+    let ok = 0;
+    const failed: Array<{ id: number; error: string }> = [];
+    for (const id of ids) {
+      try { await perId(id); ok++; }
+      catch (e: any) { failed.push({ id, error: e?.message ?? "خطأ" }); }
+    }
+    return { ok, failed };
+  }
+
+  async function handleBulkPrint() {
+    const ids = Array.from(layout.selected);
+    if (ids.length === 0) return;
+    setBulkPrintBusy(true);
+    try {
+      const idSet = new Set(ids.map(Number));
+      const ordered = (filteredReturns as any[]).filter((r) => idSet.has(Number(r.id)));
+      let failed = 0;
+      const docs = await Promise.all(
+        ordered.map(async (row: any) => {
+          try {
+            const res = await fetch(`${API}/api/purchasing/purchase-returns/${row.id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+          } catch { failed += 1; return { ...row, lines: [] }; }
+        }),
+      );
+      openPrintWindow(buildBulkHtml(docs));
+      if (failed > 0) {
+        toast({ title: "تعذّر تحميل تفاصيل بعض المردودات", description: `تمت طباعة ${docs.length} مع ${failed} بدون بنود تفصيلية`, variant: "destructive" });
+      }
+    } finally { setBulkPrintBusy(false); }
+  }
+
+  function exportCsv() {
+    if (filteredReturns.length === 0) { toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" }); return; }
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const rows = filteredReturns.map((r: any, i: number) => [
+      i + 1,
+      ...visibleColumns
+        .filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act")
+        .map((c) => {
+          const v = c.valueOf(r);
+          return c.type === "num" ? Number(v).toFixed(2) : String(v);
+        }),
+    ]);
+    downloadCsv(`purchase-returns-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+    toast({ title: "تم تصدير ملف CSV بنجاح" });
+  }
+
+  const allFilteredIds: number[] = useMemo(
+    () => filteredReturns.map((r: any) => Number(r.id)),
+    [filteredReturns],
+  );
+  const selectedRows = useMemo(
+    () => (returns_ as any[]).filter((r) => isSelected(Number(r.id))),
+    [returns_, isSelected],
+  );
+  const selectedPostable    = selectedRows.filter((r) => r.status === "draft");
+  const selectedUnpostable  = selectedRows.filter((r) => r.status === "posted");
+  const selectedDeletable   = selectedRows.filter((r) => r.status === "draft");
+
+  async function bulkPost() {
+    const ids = selectedPostable.map((r) => Number(r.id));
+    if (ids.length === 0) { toast({ title: "لا توجد مسوّدات ضمن المحدَّد", variant: "destructive" }); return; }
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/post`, { method: "PATCH", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      qc.invalidateQueries({ queryKey: ["purchase-returns"] });
+      if (failed.length === 0) toast({ title: `تم ترحيل ${ok} مردود` });
+      else toast({ title: `ترحيل: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function bulkUnpost() {
+    const ids = selectedUnpostable.map((r) => Number(r.id));
+    if (ids.length === 0) { toast({ title: "لا توجد مردودات مرحَّلة ضمن المحدَّد", variant: "destructive" }); return; }
+    if (!window.confirm(`إلغاء ترحيل ${ids.length} مردود؟`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}/unpost`, { method: "PATCH", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      qc.invalidateQueries({ queryKey: ["purchase-returns"] });
+      if (failed.length === 0) toast({ title: `تم إلغاء ترحيل ${ok} مردود` });
+      else toast({ title: `إلغاء: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function bulkDelete() {
+    const ids = selectedDeletable.map((r) => Number(r.id));
+    if (ids.length === 0) { toast({ title: "لا يمكن حذف المردودات المرحَّلة", variant: "destructive" }); return; }
+    if (!window.confirm(`حذف ${ids.length} مردود نهائياً؟ لا يمكن التراجع.`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/purchasing/purchase-returns/${id}`, { method: "DELETE", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      qc.invalidateQueries({ queryKey: ["purchase-returns"] });
+      if (failed.length === 0) toast({ title: `تم حذف ${ok} مردود` });
+      else toast({ title: `حذف: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
 
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -639,9 +1034,31 @@ export default function PurchaseReturns() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{tr("subtitle")}</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />{tr("newReturn")}
-        </Button>
+        <div className="flex items-center gap-2 print:hidden">
+          <Button
+            onClick={() => { reset(); setShowForm(true); }}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
+            <Plus className="h-4 w-4" />
+            {tr("newReturn")}
+          </Button>
+          <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
+            <Button variant="ghost" size="sm" onClick={handleExportPDF}
+              className="h-9 rounded-none gap-1.5 text-red-700 hover:bg-red-50 hover:text-red-700 px-3">
+              <FileDown className="h-4 w-4" /> PDF
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button variant="ghost" size="sm" onClick={handleExportExcel}
+              className="h-9 rounded-none gap-1.5 text-green-700 hover:bg-green-50 hover:text-green-700 px-3">
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button variant="ghost" size="sm" onClick={handlePrint}
+              className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3">
+              <Printer className="h-4 w-4" /> طباعة
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* ── Form ────────────────────────────────────────── */}
@@ -1106,104 +1523,311 @@ export default function PurchaseReturns() {
         );
       })()}
 
+      {/* ── Audit-grid toolbar ────────────────────────────── */}
+      <div className={cn("rounded-t-lg overflow-hidden border shadow-sm transition-colors", theme.border)}>
+        <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
+          <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+            <RotateCcw className="h-4 w-4 opacity-90" />
+            جرد مردودات الشراء
+          </div>
+          <div className="flex items-center gap-1.5">
+            <HeaderColorPicker layout={layout} isRtl={isRtl} />
+            <FooterColorPicker layout={layout} isRtl={isRtl} />
+            <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportCsv}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              تصدير CSV
+            </Button>
+          </div>
+        </div>
+
+        <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
+          <Input
+            placeholder="بحث (مستند، مورد، عملة)…"
+            value={tableSearch}
+            onChange={(e) => setTableSearch(e.target.value)}
+            className="h-7 text-xs w-56"
+          />
+          <div className="flex gap-1">
+            {(["all", "draft", "posted"] as const).map((s) => (
+              <button key={s} type="button" onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "px-2 py-1 rounded text-[11px] font-medium border transition-colors",
+                  statusFilter === s
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
+                )}>
+                {statusLabel(s)}
+              </button>
+            ))}
+          </div>
+          {Object.values(colFilters).some((v) => v) && (
+            <Button type="button" size="sm" variant="ghost"
+              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              <X className="h-3.5 w-3.5 me-1" />
+              مسح فلاتر الأعمدة
+            </Button>
+          )}
+          <div className="flex-1" />
+          <span className="text-slate-700 font-medium">
+            {filteredReturns.length} مردود
+            {filteredReturns.length !== returns_.length && <span className="text-slate-400"> / {returns_.length}</span>}
+          </span>
+        </div>
+        <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection} busy={bulkBusy}>
+          <Button type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
+            onClick={handleBulkPrint}
+            disabled={layout.selected.size === 0 || bulkPrintBusy}
+            title={`طباعة (${layout.selected.size})`}>
+            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+            طباعة ({layout.selected.size})
+          </Button>
+          <Button type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
+            onClick={bulkPost}
+            disabled={bulkBusy || selectedPostable.length === 0}
+            title={selectedPostable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedPostable.length} مردود`}>
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            ترحيل ({selectedPostable.length})
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
+            onClick={bulkUnpost}
+            disabled={bulkBusy || selectedUnpostable.length === 0}
+            title={selectedUnpostable.length === 0 ? "لا توجد مردودات مرحَّلة ضمن المحدَّد" : `إلغاء ترحيل ${selectedUnpostable.length} مردود`}>
+            <Undo2 className="h-3.5 w-3.5" />
+            إلغاء الترحيل ({selectedUnpostable.length})
+          </Button>
+          <Button type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
+            onClick={bulkDelete}
+            disabled={bulkBusy || selectedDeletable.length === 0}
+            title={selectedDeletable.length === 0
+              ? "لا يمكن حذف المردودات المرحَّلة"
+              : `حذف ${selectedDeletable.length} مردود`}>
+            <Trash2 className="h-3.5 w-3.5" />
+            حذف ({selectedDeletable.length})
+          </Button>
+        </AuditGridBulkBar>
+      </div>
+
       {/* ── List ─────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-        {isLoading ? (
-          <div className="p-12 text-center text-muted-foreground text-sm">{tr("loading")}</div>
-        ) : returns_.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground text-sm">{tr("noReturns")}</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/50 border-b">
-                {listColHeaders.map(h => (
-                  <th key={h} className={cn("px-3 py-3 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{h}</th>
+      <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
+        <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
+          {isLoading ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">{tr("loading")}</div>
+          ) : filteredReturns.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">
+              {returns_.length === 0 ? tr("noReturns") : "لا توجد مردودات ضمن التصفية الحالية"}
+            </div>
+          ) : (
+            <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+              <colgroup>
+                {visibleColumns.map((col) => (
+                  <col key={col.key} data-col-key={col.key}
+                    style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {returns_.map(r => (
-                <tr key={r.id} className="border-b hover:bg-muted/30 transition-colors cursor-pointer"
-                  onDoubleClick={() => startEdit(r.id)}
-                  title={r.status === "draft" ? tr("rowDoubleClickEdit") : tr("rowDoubleClickView")}>
-                  <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber ?? `PR-${r.id}`}</td>
-                  <td className="px-3 py-2.5">{r.returnDate}</td>
-                  <td className="px-3 py-2.5">{supMap[r.supplierId] ?? "—"}</td>
-                  <td className="px-3 py-2.5">{r.currencyCode}</td>
-                  <td className="px-3 py-2.5 font-mono">{fmt(Number(r.totalAmount) - Number(r.vatAmount))}</td>
-                  <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
-                  <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
-                  <td className="px-3 py-2.5 font-mono text-xs">
-                    {r.journalEntryId ? (
-                      <button
-                        type="button"
-                        className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
-                        title={tr("viewJournalTip")}
-                        onClick={() => { window.location.href = `/accounting/journals/${r.journalEntryId}?tab=lines`; }}>
-                        JE-{r.journalEntryId}
-                      </button>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
-                      r.status === "posted"
-                        ? "bg-green-50 text-green-700 border-green-200"
-                        : "bg-amber-50 text-amber-700 border-amber-200"
-                    )}>
-                      {r.status === "posted" ? tr("postedM") : tr("draft")}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10"
-                        title={tr("printTip")} onClick={() => openPrint(r)}>
-                        <Printer className="h-3.5 w-3.5" />
-                      </Button>
-                      {r.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-700 hover:bg-blue-50"
-                          title={tr("editTip")} onClick={() => startEdit(r.id)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
+              </colgroup>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                  {visibleColumns.map((col, idx) => (
+                    <th key={col.key} data-col-key={col.key}
+                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]">
+                      {col.key === "_sel" ? (
+                        <HeaderSelectCheckbox
+                          allSelected={isAllSelected(allFilteredIds)}
+                          someSelected={isSomeSelected(allFilteredIds)}
+                          onToggle={() => toggleAll(allFilteredIds)}
+                          disabled={allFilteredIds.length === 0 || bulkBusy}
+                        />
+                      ) : col.label}
+                      {col.key !== "_sel" && (
+                        <span {...gripProps(col.key, idx)}
+                          className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                          style={{ insetInlineEnd: -4 }}
+                        />
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                        title={tr("duplicateTip")} onClick={() => duplicateReturn(r.id)}>
-                        <Copy className="h-3.5 w-3.5" />
-                      </Button>
-                      {r.status === "draft" && (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-7 text-xs gap-1 text-green-700 border-green-300 hover:bg-green-50"
-                          disabled={postMut.isPending}
-                          onClick={() => postMut.mutate(r.id)}
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" />{tr("postShort")}
-                        </Button>
-                      )}
-                      {r.status === "posted" && (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-7 text-xs gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
-                          disabled={unpostMut.isPending}
-                          onClick={() => { if (confirm(tr("confirmUnpost"))) unpostMut.mutate(r.id); }}
-                        >
-                          <Undo2 className="h-3.5 w-3.5" />{tr("unpostShort")}
-                        </Button>
-                      )}
-                      {r.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={() => { if (confirm(tr("confirmDelete"))) deleteMut.mutate(r.id); }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </td>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+                <tr className="bg-amber-50/80 border-b border-amber-200">
+                  {visibleColumns.map((col) => (
+                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
+                      {col.type === "none" ? null : (
+                        <Input
+                          value={colFilters[col.key] ?? ""}
+                          onChange={(e) => setColFilter(col.key, e.target.value)}
+                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
+                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
+                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
+                        />
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pagedReturns.map((r: any, idx: number) => {
+                  const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
+                  const rid = Number(r.id);
+                  const isSel = isSelected(rid);
+                  const renderCell = (col: ColDef) => {
+                    switch (col.key) {
+                      case "_sel":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <RowSelectCheckbox
+                              checked={isSel}
+                              onToggle={() => toggleRow(rid)}
+                              ariaLabel={`تحديد المردود ${r.docNumber ?? `PR-${rid}`}`}
+                            />
+                          </td>
+                        );
+                      case "_idx":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
+                      case "doc":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-primary text-center">{r.docNumber ?? `PR-${r.id}`}</td>;
+                      case "date":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap text-slate-600">{r.returnDate}</td>;
+                      case "supplier":
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate", colWidths.supplier ? "" : "max-w-[200px]")} title={supMap[r.supplierId] ?? ""}>{supMap[r.supplierId] ?? "—"}</td>;
+                      case "currency":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{r.currencyCode}</td>;
+                      case "subtotal":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-slate-800">{fmt(Number(r.totalAmount) - Number(r.vatAmount))}</td>;
+                      case "vat":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(r.vatAmount)}</td>;
+                      case "total":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(r.totalAmount)}</td>;
+                      case "journal":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center font-mono text-[10px]">
+                            {r.journalEntryId ? (
+                              <button type="button"
+                                className="text-blue-700 hover:text-blue-900 hover:underline font-semibold"
+                                title={tr("viewJournalTip")}
+                                onClick={(e) => { e.stopPropagation(); window.location.href = `/accounting/journals/${r.journalEntryId}?tab=lines`; }}>
+                                JE-{r.journalEntryId}
+                              </button>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                        );
+                      case "status":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border",
+                              r.status === "posted"
+                                ? "bg-green-50 text-green-700 border-green-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            )}>
+                              {r.status === "posted" ? tr("postedM") : tr("draft")}
+                            </span>
+                          </td>
+                        );
+                      case "_act":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-primary hover:bg-primary/10"
+                                title={tr("printTip")} onClick={(e) => { e.stopPropagation(); openPrint(r); }}>
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-700 hover:bg-blue-50"
+                                  title={tr("editTip")} onClick={(e) => { e.stopPropagation(); startEdit(r.id); }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                title={tr("duplicateTip")} onClick={(e) => { e.stopPropagation(); duplicateReturn(r.id); }}>
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-green-700 hover:bg-green-50"
+                                  title={tr("postShort")}
+                                  disabled={postMut.isPending}
+                                  onClick={(e) => { e.stopPropagation(); postMut.mutate(r.id); }}>
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {r.status === "posted" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-50"
+                                  title={tr("unpostShort")}
+                                  disabled={unpostMut.isPending}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(tr("confirmUnpost"))) unpostMut.mutate(r.id); }}>
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(tr("confirmDelete"))) deleteMut.mutate(r.id); }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      default:
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
+                    }
+                  };
+                  return (
+                    <tr key={r.id}
+                      className={cn(
+                        "transition-colors cursor-pointer",
+                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                      )}
+                      onClick={(e) => {
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
+                        toggleRow(rid);
+                      }}
+                      onDoubleClick={() => startEdit(r.id)}
+                      title={r.status === "draft" ? tr("rowDoubleClickEdit") : tr("rowDoubleClickView")}
+                    >
+                      {visibleColumns.map(renderCell)}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="sticky bottom-0">
+                <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
+                  {visibleColumns.map((col, i) => {
+                    if (col.key === "_sel") {
+                      return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                    }
+                    if (i === 1) {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
+                    }
+                    if (col.key === "subtotal") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.subtotal)}</td>;
+                    }
+                    if (col.key === "vat") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.vat)}</td>;
+                    }
+                    if (col.key === "total") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.total)}</td>;
+                    }
+                    return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                  })}
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filteredReturns.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel="مردود"
+        />
       </div>
 
       <PurchasePrintModal
