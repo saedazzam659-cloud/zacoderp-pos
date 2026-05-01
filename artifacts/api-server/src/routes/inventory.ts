@@ -10,6 +10,8 @@ import {
   accountsTable, auditLogTable,
   salesInvoicesTable, salesInvoiceLinesTable,
   itemDocumentsTable,
+  itemSuppliersTable,
+  suppliersTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -1298,6 +1300,250 @@ router.delete("/items/:id/documents/:docId", async (req, res) => {
   // Note: we intentionally don't delete the underlying object-storage blob
   // here — the storage layer doesn't expose a deletion API at this level
   // and orphaned blobs are negligible cost; we can sweep them later.
+  res.json({ ok: true });
+});
+
+// ─── PRO Extension #17 — Item Suppliers ─────────────────────────────────────
+// Manages the many-to-many link between items and suppliers, plus per-link
+// metadata: last purchase price, supplier's own SKU, lead time, preferred
+// flag. All routes are tenant-scoped: the item AND the supplier must both
+// belong to the caller's company before any row is touched.
+//
+// "Preferred supplier" invariant: at most ONE preferred row per item. When
+// a POST/PUT sets preferredSupplier=true, we first clear the flag on every
+// other row for the same (companyId, itemId) inside a single transaction.
+
+router.get("/items/:id/suppliers", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  // Confirm item belongs to this tenant before returning anything.
+  const [own] = await db.select({ id: itemsTable.id })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!own) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Join supplier name/code so the UI can render rows without a second fetch.
+  const rows = await db.select({
+    id:                 itemSuppliersTable.id,
+    companyId:          itemSuppliersTable.companyId,
+    itemId:             itemSuppliersTable.itemId,
+    supplierId:         itemSuppliersTable.supplierId,
+    supplierItemCode:   itemSuppliersTable.supplierItemCode,
+    lastPurchasePrice:  itemSuppliersTable.lastPurchasePrice,
+    lastPurchaseDate:   itemSuppliersTable.lastPurchaseDate,
+    leadTimeDays:       itemSuppliersTable.leadTimeDays,
+    preferredSupplier:  itemSuppliersTable.preferredSupplier,
+    notes:              itemSuppliersTable.notes,
+    createdAt:          itemSuppliersTable.createdAt,
+    supplierName:       suppliersTable.nameAr,
+    supplierNameEn:     suppliersTable.nameEn,
+    supplierCode:       suppliersTable.code,
+  })
+    .from(itemSuppliersTable)
+    .leftJoin(suppliersTable, eq(suppliersTable.id, itemSuppliersTable.supplierId))
+    // Preferred row first, then most-recently-updated.
+    .where(and(
+      eq(itemSuppliersTable.itemId, id),
+      eq(itemSuppliersTable.companyId, cid),
+    ))
+    .orderBy(desc(itemSuppliersTable.preferredSupplier), desc(itemSuppliersTable.createdAt));
+  res.json(rows);
+});
+
+router.post("/items/:id/suppliers", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const {
+    supplierId, supplierItemCode, lastPurchasePrice, lastPurchaseDate,
+    leadTimeDays, preferredSupplier, notes,
+  } = req.body ?? {};
+  const sid = Number(supplierId);
+  if (!Number.isFinite(sid)) { res.status(400).json({ error: "معرّف المورد مطلوب" }); return; }
+
+  // Validate BOTH item and supplier belong to this tenant in parallel
+  // before doing any writes (cheap defense against cross-tenant linking).
+  const [[ownItem], [ownSup]] = await Promise.all([
+    db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))),
+    db.select({ id: suppliersTable.id }).from(suppliersTable)
+      .where(and(eq(suppliersTable.id, sid), eq(suppliersTable.companyId, cid))),
+  ]);
+  if (!ownItem) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  if (!ownSup)  { res.status(404).json({ error: "المورد غير موجود" }); return; }
+
+  // Application-level uniqueness: one row per (item, supplier).
+  const [dup] = await db.select({ id: itemSuppliersTable.id })
+    .from(itemSuppliersTable)
+    .where(and(
+      eq(itemSuppliersTable.itemId, id),
+      eq(itemSuppliersTable.supplierId, sid),
+      eq(itemSuppliersTable.companyId, cid),
+    ));
+  if (dup) { res.status(409).json({ error: "هذا المورد مرتبط بالفعل بالصنف" }); return; }
+
+  const wantsPreferred = !!preferredSupplier;
+  const lastPx = lastPurchasePrice != null && lastPurchasePrice !== ""
+    ? String(lastPurchasePrice) : null;
+  const leadDays = Number.isFinite(Number(leadTimeDays)) ? Number(leadTimeDays) : null;
+
+  // Run the optional "clear all preferred" + insert in one transaction so
+  // we never leave the table in a state with two preferred rows for one item.
+  // The DB-level partial unique index `item_suppliers_one_preferred_per_item_uniq`
+  // is the actual safety net under concurrency — if two requests race past
+  // the in-app clear, the index will reject the second commit and we 409.
+  let row;
+  try {
+    row = await db.transaction(async (tx) => {
+      if (wantsPreferred) {
+        await tx.update(itemSuppliersTable)
+          .set({ preferredSupplier: false })
+          .where(and(
+            eq(itemSuppliersTable.itemId, id),
+            eq(itemSuppliersTable.companyId, cid),
+          ));
+      }
+      const [inserted] = await tx.insert(itemSuppliersTable).values({
+        companyId: cid,
+        itemId: id,
+        supplierId: sid,
+        supplierItemCode: supplierItemCode ? String(supplierItemCode).slice(0, 100) : null,
+        lastPurchasePrice: lastPx,
+        lastPurchaseDate: lastPurchaseDate || null,
+        leadTimeDays: leadDays,
+        preferredSupplier: wantsPreferred,
+        notes: notes ? String(notes).slice(0, 1000) : null,
+      }).returning();
+      return inserted;
+    });
+  } catch (err: any) {
+    // Postgres unique-violation = 23505. Map to 409 with a friendly message
+    // so the client can show the right toast even on the rare race-condition path.
+    if (err?.code === "23505") {
+      const which = String(err?.constraint ?? "").includes("preferred")
+        ? "هناك بالفعل مورد مفضل لهذا الصنف — يرجى المحاولة مرة أخرى"
+        : "هذا المورد مرتبط بالفعل بالصنف";
+      res.status(409).json({ error: which });
+      return;
+    }
+    throw err;
+  }
+
+  await writeAudit(req, "item_suppliers", row.id, "create", null, row);
+  res.status(201).json(row);
+});
+
+router.put("/items/:id/suppliers/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isFinite(id) || !Number.isFinite(linkId)) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+
+  // Tenant + item ownership check on the existing row.
+  const [existing] = await db.select()
+    .from(itemSuppliersTable)
+    .where(and(
+      eq(itemSuppliersTable.id, linkId),
+      eq(itemSuppliersTable.itemId, id),
+      eq(itemSuppliersTable.companyId, cid),
+    ));
+  if (!existing) { res.status(404).json({ error: "الارتباط غير موجود" }); return; }
+
+  const {
+    supplierItemCode, lastPurchasePrice, lastPurchaseDate,
+    leadTimeDays, preferredSupplier, notes,
+  } = req.body ?? {};
+
+  const patch: Record<string, unknown> = {};
+  if (supplierItemCode !== undefined) {
+    patch.supplierItemCode = supplierItemCode ? String(supplierItemCode).slice(0, 100) : null;
+  }
+  if (lastPurchasePrice !== undefined) {
+    patch.lastPurchasePrice = (lastPurchasePrice == null || lastPurchasePrice === "")
+      ? null : String(lastPurchasePrice);
+  }
+  if (lastPurchaseDate !== undefined) {
+    patch.lastPurchaseDate = lastPurchaseDate || null;
+  }
+  if (leadTimeDays !== undefined) {
+    patch.leadTimeDays = Number.isFinite(Number(leadTimeDays)) ? Number(leadTimeDays) : null;
+  }
+  if (notes !== undefined) {
+    patch.notes = notes ? String(notes).slice(0, 1000) : null;
+  }
+
+  const wantsPreferred = preferredSupplier === true;
+  const wantsUnpreferred = preferredSupplier === false;
+
+  // Same partial-unique-index safety net applies on UPDATE: if two requests
+  // race to flip preferred=true on different rows for the same item, the
+  // second commit gets a unique-violation and we 409.
+  let updated;
+  try {
+    updated = await db.transaction(async (tx) => {
+      if (wantsPreferred) {
+        // Clear other preferred rows first (will also unset the current row,
+        // which we then re-set to true via patch — the unique index lets us
+        // do this within a single transaction since both writes commit atomically).
+        await tx.update(itemSuppliersTable)
+          .set({ preferredSupplier: false })
+          .where(and(
+            eq(itemSuppliersTable.itemId, id),
+            eq(itemSuppliersTable.companyId, cid),
+          ));
+        patch.preferredSupplier = true;
+      } else if (wantsUnpreferred) {
+        patch.preferredSupplier = false;
+      }
+      if (Object.keys(patch).length === 0) return existing;
+      const [r] = await tx.update(itemSuppliersTable)
+        .set(patch)
+        .where(eq(itemSuppliersTable.id, linkId))
+        .returning();
+      return r;
+    });
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      res.status(409).json({ error: "هناك بالفعل مورد مفضل لهذا الصنف — يرجى المحاولة مرة أخرى" });
+      return;
+    }
+    throw err;
+  }
+
+  await writeAudit(req, "item_suppliers", linkId, "update", existing, updated);
+  res.json(updated);
+});
+
+router.delete("/items/:id/suppliers/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isFinite(id) || !Number.isFinite(linkId)) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+  // Composite filter — must match item AND tenant before deletion.
+  const [existing] = await db.select()
+    .from(itemSuppliersTable)
+    .where(and(
+      eq(itemSuppliersTable.id, linkId),
+      eq(itemSuppliersTable.itemId, id),
+      eq(itemSuppliersTable.companyId, cid),
+    ));
+  if (!existing) { res.status(404).json({ error: "الارتباط غير موجود" }); return; }
+
+  // Defense in depth: scope the actual delete by tenant too, even though
+  // the preceding ownership check already guarantees safety. Cheap insurance
+  // against future refactors that might lose the ownership check above.
+  await db.delete(itemSuppliersTable).where(and(
+    eq(itemSuppliersTable.id, linkId),
+    eq(itemSuppliersTable.companyId, cid),
+  ));
+  await writeAudit(req, "item_suppliers", linkId, "delete", existing, null);
   res.json({ ok: true });
 });
 

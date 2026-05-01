@@ -1,8 +1,11 @@
 import {
   pgTable, serial, text, integer, numeric, boolean, timestamp, date, pgEnum,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
+import { suppliersTable } from "./suppliers";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service"]);
@@ -118,6 +121,50 @@ export const itemDocumentsTable = pgTable("item_documents", {
   uploadedByUserId: integer("uploaded_by_user_id"),     // soft FK; user might be deleted later
   createdAt:        timestamp("created_at").defaultNow().notNull(),
 });
+
+// ─── Item Suppliers (PRO Extension #17) ───────────────────────────────────────
+// Many-to-many link between items and suppliers, with per-link metadata:
+// the last-known purchase price from this supplier, an optional supplier-
+// specific item code (the supplier's own SKU for the part), an optional
+// lead-time-in-days, and a single "preferred supplier" flag per item that
+// the schema enforces (only one preferred row per (companyId, itemId))
+// via a partial unique index — this makes the invariant concurrency-safe
+// instead of relying on application-level checks alone.
+export const itemSuppliersTable = pgTable("item_suppliers", {
+  id:                 serial("id").primaryKey(),
+  companyId:          integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:             integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  supplierId:         integer("supplier_id").notNull().references(() => suppliersTable.id, { onDelete: "cascade" }),
+  // Supplier's own SKU for this item (e.g. their internal part number).
+  // Useful when reordering — the user can quote the supplier's own code.
+  supplierItemCode:   text("supplier_item_code"),
+  // Last known unit purchase price from this supplier. Manually editable
+  // for now; in a future batch a hook on the purchase-invoice posting flow
+  // can auto-update this when a new purchase line for the same item lands.
+  lastPurchasePrice:  numeric("last_purchase_price", { precision: 14, scale: 4 }),
+  lastPurchaseDate:   date("last_purchase_date"),
+  // Quoted lead time in days — surfaced in low-stock reorder suggestions.
+  leadTimeDays:       integer("lead_time_days"),
+  // Schema-enforced invariant via partial unique index below: at most ONE
+  // preferred supplier per (companyId, itemId). The route layer also unsets
+  // others before flipping a new one to true so the typical happy-path UX
+  // is "click and it just works", but the partial index is the truth-keeper
+  // under concurrent requests.
+  preferredSupplier:  boolean("preferred_supplier").notNull().default(false),
+  notes:              text("notes"),
+  createdAt:          timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  // Prevent duplicate rows per (tenant, item, supplier) under concurrency.
+  // The route layer still does an app-level 409 check first for nicer UX;
+  // this index is the safety net when two POSTs race past that check.
+  itemSupplierUnique: uniqueIndex("item_suppliers_company_item_supplier_uniq")
+    .on(t.companyId, t.itemId, t.supplierId),
+  // Postgres partial unique index: at most ONE row per (companyId, itemId)
+  // with preferred_supplier = true. Multiple non-preferred rows are fine.
+  preferredOnePerItem: uniqueIndex("item_suppliers_one_preferred_per_item_uniq")
+    .on(t.companyId, t.itemId)
+    .where(sql`preferred_supplier = true`),
+}));
 
 // ─── Item Unit Prices (multi-unit per item with conversion factor) ────────────
 // Example: Item "Sugar" — base unit واحدة (×1, cost 5, sale 10), unit كرتونة (×12, cost 60, sale 100)

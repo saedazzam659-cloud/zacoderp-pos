@@ -28,6 +28,27 @@ async function del(path: string): Promise<void> {
   if (!r.ok) throw new Error(await r.text());
 }
 
+// ─── PRO Extension #17 — Item Suppliers ─────────────────────────────────────
+// Per-link metadata between an item and one of the company's suppliers.
+// `supplierName`/`supplierCode` come from the LEFT JOIN on the GET endpoint.
+export interface ItemSupplier {
+  id: number;
+  companyId: number;
+  itemId: number;
+  supplierId: number;
+  supplierItemCode: string | null;
+  lastPurchasePrice: string | null;
+  lastPurchaseDate: string | null;
+  leadTimeDays: number | null;
+  preferredSupplier: boolean;
+  notes: string | null;
+  createdAt: string;
+  // Joined from suppliers table (read-only):
+  supplierName?: string | null;
+  supplierNameEn?: string | null;
+  supplierCode?: string | null;
+}
+
 export const inventoryApi = {
   // Warehouse Groups
   getWarehouseGroups:   (cid?: number) => get<any[]>(`/warehouse-groups${cid ? `?companyId=${cid}` : ""}`),
@@ -39,6 +60,11 @@ export const inventoryApi = {
   createWarehouse: (data: any)    => post<any>("/warehouses", data),
   updateWarehouse: (id: number, data: any) => put<any>(`/warehouses/${id}`, data),
   deleteWarehouse: (id: number)   => del(`/warehouses/${id}`),
+  // PRO Extension #17 — Item Suppliers
+  getItemSuppliers:    (itemId: number)             => get<ItemSupplier[]>(`/items/${itemId}/suppliers`),
+  addItemSupplier:     (itemId: number, data: any)  => post<ItemSupplier>(`/items/${itemId}/suppliers`, data),
+  updateItemSupplier:  (itemId: number, linkId: number, data: any) => put<ItemSupplier>(`/items/${itemId}/suppliers/${linkId}`, data),
+  deleteItemSupplier:  (itemId: number, linkId: number) => del(`/items/${itemId}/suppliers/${linkId}`),
   // Item Groups
   getItemGroups:   (cid?: number) => get<any[]>(`/item-groups${cid ? `?companyId=${cid}` : ""}`),
   createItemGroup: (data: any)    => post<any>("/item-groups", data),

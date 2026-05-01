@@ -21,11 +21,12 @@ import {
   QrCode, Tag, Printer, History, ArrowRight,
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
+  Truck, Check,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
 import ScanToImageDialog from "@/components/ScanToImageDialog";
-import type { ItemDocument } from "@/lib/inventoryApi";
+import type { ItemDocument, ItemSupplier } from "@/lib/inventoryApi";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -919,7 +920,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1386,6 +1387,13 @@ export default function Items() {
                             >
                               <FileText className="h-3.5 w-3.5" />{t("pages.items.documents.tabLabel")}
                             </button>
+                            <button
+                              onClick={() => setExpandedTab("suppliers")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "suppliers" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <Truck className="h-3.5 w-3.5" />{t("pages.items.suppliers.tabLabel")}
+                            </button>
                           </div>
 
                           {expandedTab === "balances" && (
@@ -1425,6 +1433,10 @@ export default function Items() {
 
                           {expandedTab === "documents" && (
                             <ItemDocumentsPanel itemId={it.id} />
+                          )}
+
+                          {expandedTab === "suppliers" && (
+                            <ItemSuppliersPanel itemId={it.id} />
                           )}
                         </td>
                       </tr>
@@ -1477,6 +1489,301 @@ export default function Items() {
           qc.invalidateQueries({ queryKey: ["items"] });
         }}
       />
+    </div>
+  );
+}
+
+// ─── Item Suppliers Panel (PRO Extension #17) ────────────────────────────────
+// Per-item supplier directory: links suppliers to items, tracks last
+// purchase price + supplier-side SKU + lead time + notes, and lets the
+// user mark a single "preferred" supplier per item. The backend enforces
+// the "only one preferred" invariant in a single transaction.
+function ItemSuppliersPanel({ itemId }: { itemId: number }) {
+  const { t, i18n } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const isAr = i18n.language?.startsWith("ar");
+
+  const { data: links = [], isLoading, isError } = useQuery({
+    queryKey: ["item-suppliers", itemId],
+    queryFn: () => inventoryApi.getItemSuppliers(itemId),
+  });
+
+  // Fetch the company's full supplier directory so the "Add" form can
+  // show a dropdown filtered to suppliers not yet linked.
+  const { data: allSuppliers = [] } = useQuery({
+    queryKey: ["suppliers", cid],
+    queryFn: async () => {
+      const r = await fetch(`/api/suppliers${cid ? `?companyId=${cid}` : ""}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}` },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<Array<{ id: number; nameAr: string; nameEn?: string; code?: string }>>;
+    },
+  });
+
+  const linkedSupplierIds = new Set(links.map(l => l.supplierId));
+  const availableSuppliers = allSuppliers.filter(s => !linkedSupplierIds.has(s.id));
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    supplierId: "",
+    supplierItemCode: "",
+    lastPurchasePrice: "",
+    lastPurchaseDate: "",
+    leadTimeDays: "",
+    preferredSupplier: false,
+    notes: "",
+  });
+  const resetForm = () => setForm({
+    supplierId: "", supplierItemCode: "", lastPurchasePrice: "",
+    lastPurchaseDate: "", leadTimeDays: "", preferredSupplier: false, notes: "",
+  });
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["item-suppliers", itemId] });
+
+  const addMut = useMutation({
+    mutationFn: () => inventoryApi.addItemSupplier(itemId, {
+      supplierId: Number(form.supplierId),
+      supplierItemCode: form.supplierItemCode || null,
+      lastPurchasePrice: form.lastPurchasePrice || null,
+      lastPurchaseDate: form.lastPurchaseDate || null,
+      leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : null,
+      preferredSupplier: form.preferredSupplier,
+      notes: form.notes || null,
+    }),
+    onSuccess: () => {
+      inv();
+      resetForm();
+      setShowForm(false);
+      toast({ title: t("pages.items.suppliers.added") });
+    },
+    onError: (e: any) => toast({
+      title: t("pages.items.suppliers.addFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  const togglePreferredMut = useMutation({
+    mutationFn: (link: ItemSupplier) => inventoryApi.updateItemSupplier(itemId, link.id, {
+      preferredSupplier: !link.preferredSupplier,
+    }),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.suppliers.updated") }); },
+    onError: (e: any) => toast({
+      title: t("pages.items.suppliers.updateFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (linkId: number) => inventoryApi.deleteItemSupplier(itemId, linkId),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.suppliers.deleted") }); },
+    onError: (e: any) => toast({
+      title: t("pages.items.suppliers.deleteFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError) {
+    return (
+      <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+        {t("pages.items.suppliers.loadError")}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Add bar */}
+      {!showForm && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">{t("pages.items.suppliers.description")}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => setShowForm(true)}
+            disabled={availableSuppliers.length === 0}
+            title={availableSuppliers.length === 0 ? t("pages.items.suppliers.noMoreToAdd") : ""}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("pages.items.suppliers.addButton")}
+          </Button>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.supplier")} *</label>
+              <select
+                value={form.supplierId}
+                onChange={(e) => setForm(f => ({ ...f, supplierId: e.target.value }))}
+                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="">— {t("pages.items.suppliers.chooseSupplier")} —</option>
+                {availableSuppliers.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {(isAr ? s.nameAr : (s.nameEn || s.nameAr)) + (s.code ? ` (${s.code})` : "")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.supplierItemCode")}</label>
+              <Input
+                value={form.supplierItemCode}
+                onChange={(e) => setForm(f => ({ ...f, supplierItemCode: e.target.value }))}
+                placeholder={t("pages.items.suppliers.supplierItemCodeHint")}
+                className="h-9"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.lastPurchasePrice")}</label>
+              <Input
+                type="number"
+                step="0.0001"
+                min="0"
+                value={form.lastPurchasePrice}
+                onChange={(e) => setForm(f => ({ ...f, lastPurchasePrice: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.lastPurchaseDate")}</label>
+              <Input
+                type="date"
+                value={form.lastPurchaseDate}
+                onChange={(e) => setForm(f => ({ ...f, lastPurchaseDate: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.leadTimeDays")}</label>
+              <Input
+                type="number"
+                min="0"
+                value={form.leadTimeDays}
+                onChange={(e) => setForm(f => ({ ...f, leadTimeDays: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <Checkbox
+                  checked={form.preferredSupplier}
+                  onCheckedChange={(v) => setForm(f => ({ ...f, preferredSupplier: !!v }))}
+                />
+                <span>{t("pages.items.suppliers.preferred")}</span>
+              </label>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1">{t("pages.items.suppliers.notes")}</label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
+              className="h-9"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>
+              {t("common.cancel", { defaultValue: "إلغاء" })}
+            </Button>
+            <Button
+              size="sm"
+              disabled={!form.supplierId || addMut.isPending}
+              onClick={() => addMut.mutate()}
+              className="gap-1.5"
+            >
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t("pages.items.suppliers.save")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Linked suppliers list */}
+      {links.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <Truck className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.suppliers.empty")}
+        </p>
+      ) : (
+        <div className="rounded-lg border overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 border-b">
+              <tr>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground w-10"></th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground">{t("pages.items.suppliers.supplier")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("pages.items.suppliers.supplierItemCode")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground">{t("pages.items.suppliers.lastPurchasePrice")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.items.suppliers.lastPurchaseDate")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden lg:table-cell">{t("pages.items.suppliers.leadTimeDays")}</th>
+                <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-32"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {links.map((l) => (
+                <tr key={l.id} className={cn("hover:bg-muted/30", l.preferredSupplier && "bg-primary/5")}>
+                  <td className="px-3 py-2 text-center">
+                    {l.preferredSupplier && (
+                      <Star className="h-4 w-4 text-amber-500 fill-amber-500 mx-auto" aria-label={t("pages.items.suppliers.preferred")} />
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{isAr ? (l.supplierName || l.supplierNameEn) : (l.supplierNameEn || l.supplierName)}</div>
+                    {l.supplierCode && <div className="text-[10px] text-muted-foreground font-mono">{l.supplierCode}</div>}
+                  </td>
+                  <td className="px-3 py-2 hidden sm:table-cell font-mono text-[11px]">{l.supplierItemCode ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    {l.lastPurchasePrice
+                      ? <span className="font-semibold">{trimTrailingZeros(l.lastPurchasePrice)} <span className="text-[10px] text-muted-foreground">{t("pages.items.sar")}</span></span>
+                      : "—"}
+                  </td>
+                  <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">{l.lastPurchaseDate ?? "—"}</td>
+                  <td className="px-3 py-2 hidden lg:table-cell text-muted-foreground">
+                    {l.leadTimeDays != null ? `${l.leadTimeDays} ${t("pages.items.suppliers.days")}` : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        onClick={() => togglePreferredMut.mutate(l)}
+                        disabled={togglePreferredMut.isPending}
+                        title={l.preferredSupplier ? t("pages.items.suppliers.unsetPreferred") : t("pages.items.suppliers.setPreferred")}
+                      >
+                        {l.preferredSupplier
+                          ? <Check className="h-3.5 w-3.5 text-amber-600" />
+                          : <Star className="h-3.5 w-3.5" />
+                        }
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                        onClick={() => { if (confirm(t("pages.items.suppliers.deleteConfirm"))) deleteMut.mutate(l.id); }}
+                        disabled={deleteMut.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
