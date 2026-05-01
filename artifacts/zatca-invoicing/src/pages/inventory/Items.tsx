@@ -21,12 +21,12 @@ import {
   QrCode, Tag, Printer, History, ArrowRight,
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
-  Truck, Check, Boxes,
+  Truck, Check, Boxes, Layers,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
 import ScanToImageDialog from "@/components/ScanToImageDialog";
-import type { ItemDocument, ItemSupplier, BundleComponent } from "@/lib/inventoryApi";
+import type { ItemDocument, ItemSupplier, BundleComponent, ItemVariant } from "@/lib/inventoryApi";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -993,6 +993,12 @@ export default function Items() {
   }
 
   const filtered = items.filter((it: any) => {
+    // PRO Extension #20 — variants are stand-alone SKUs in the backend
+    // (so they show up in sales/purchase/transfer/scan flows just like
+    // any other item), but the Items master page only shows PARENTS in
+    // the catalog list. Variants are reachable through the parent's
+    // "المتغيّرات" tab in the expanded row.
+    if (it.parentItemId != null) return false;
     const s = search.toLowerCase();
     const matchText = it.nameAr.includes(search)
       || it.code.includes(search)
@@ -2253,6 +2259,260 @@ function ItemDocumentsPanel({ itemId }: { itemId: number }) {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Item Variants Panel (PRO Extension #20) ─────────────────────────────────
+// Shows the variants of a parent item (e.g. "T-Shirt – Red – L" rows under
+// the parent "T-Shirt"). The variants ARE items themselves (separate stock,
+// separate code, separate barcode), so create-variant uses the dedicated
+// /variants endpoint that auto-sets parent_item_id and inherits group/unit/
+// vatRate from the parent, while edit/delete go through the standard items
+// PUT/DELETE (which the panel doesn't expose here — users edit a variant by
+// going to its own row in the items list once the includeVariants filter is
+// flipped on, or via a future "open variant" link).
+function ItemVariantsPanel({ itemId, parentName }: { itemId: number; parentName: string }) {
+  const { t, i18n } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  // useFmt() returns a bag of formatters; pull `fmt` (monetary) for the
+  // cost/price columns. (Not destructuring crashed the panel render.)
+  const { fmt } = useFmt();
+  const isAr = i18n.language?.startsWith("ar");
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-variants", itemId],
+    queryFn: () => inventoryApi.getItemVariants(itemId),
+  });
+
+  const variants = data?.variants ?? [];
+
+  // Form state for "add variant". Attributes are entered as ad-hoc rows
+  // ({ key, value }) so the user can model whatever attribute set fits
+  // (color/size/flavor/...). Empty rows are skipped on submit.
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    code: "", nameAr: "", nameEn: "", barcode: "",
+    costPrice: "", salePrice: "",
+  });
+  const [attrs, setAttrs] = useState<Array<{ k: string; v: string }>>([{ k: "", v: "" }]);
+
+  const resetForm = () => {
+    setForm({ code: "", nameAr: "", nameEn: "", barcode: "", costPrice: "", salePrice: "" });
+    setAttrs([{ k: "", v: "" }]);
+    setShowForm(false);
+  };
+
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["item-variants", itemId] });
+    // Variants opt out of the items list (parent_item_id IS NOT NULL),
+    // but we still nudge the items query in case some panels render counts.
+    qc.invalidateQueries({ queryKey: ["items"] });
+  };
+
+  const errToast = (title: string) => (e: any) => toast({
+    title, description: parseError(e), variant: "destructive",
+  });
+
+  const addMut = useMutation({
+    mutationFn: (data: any) => inventoryApi.addItemVariant(itemId, data),
+    onSuccess: () => { inv(); resetForm(); toast({ title: t("pages.items.variants.added") }); },
+    onError: errToast(t("pages.items.variants.addFailed")),
+  });
+
+  const submit = () => {
+    if (!form.code.trim() || !form.nameAr.trim()) {
+      toast({ title: t("pages.items.variants.codeAndNameRequired"), variant: "destructive" });
+      return;
+    }
+    // Build the variantAttributes object from the attribute rows, skipping
+    // empty pairs and trimming whitespace. Backend will validate the shape.
+    const variantAttributes: Record<string, string> = {};
+    for (const { k, v } of attrs) {
+      const key = k.trim();
+      if (key) variantAttributes[key] = (v ?? "").trim();
+    }
+    addMut.mutate({
+      code: form.code.trim(),
+      nameAr: form.nameAr.trim(),
+      nameEn: form.nameEn.trim() || null,
+      barcode: form.barcode.trim() || null,
+      costPrice: form.costPrice.trim() || undefined,  // backend falls back to parent
+      salePrice: form.salePrice.trim() || undefined,  // backend falls back to parent
+      variantAttributes: Object.keys(variantAttributes).length > 0 ? variantAttributes : null,
+    });
+  };
+
+  if (isLoading) return <p className="text-xs text-muted-foreground py-4 text-center">{t("common.loading", { defaultValue: "..." })}</p>;
+  if (isError) return <p className="text-xs text-destructive py-4 text-center">{t("pages.items.variants.loadFailed")}</p>;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {t("pages.items.variants.description", { name: parentName })}
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowForm(s => !s)}
+          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {showForm ? t("common.cancel", { defaultValue: "إلغاء" }) : t("pages.items.variants.addButton")}
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.code")} *</span>
+              <input
+                type="text" value={form.code}
+                onChange={e => setForm(f => ({ ...f, code: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.nameAr")} *</span>
+              <input
+                type="text" value={form.nameAr}
+                onChange={e => setForm(f => ({ ...f, nameAr: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.nameEn")}</span>
+              <input
+                type="text" value={form.nameEn}
+                onChange={e => setForm(f => ({ ...f, nameEn: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.barcode")}</span>
+              <input
+                type="text" value={form.barcode}
+                onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.costPrice")}</span>
+              <input
+                type="text" value={form.costPrice} placeholder={t("pages.items.variants.inheritFromParent")}
+                onChange={e => setForm(f => ({ ...f, costPrice: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+            <label className="text-xs">
+              <span className="block mb-1 text-muted-foreground">{t("pages.items.variants.salePrice")}</span>
+              <input
+                type="text" value={form.salePrice} placeholder={t("pages.items.variants.inheritFromParent")}
+                onChange={e => setForm(f => ({ ...f, salePrice: e.target.value }))}
+                className="w-full px-2 py-1 rounded border bg-background text-xs"
+              />
+            </label>
+          </div>
+
+          {/* Variant attributes — free-form key/value rows. */}
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">{t("pages.items.variants.attributes")}</p>
+            {attrs.map((a, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-1 items-center">
+                <input
+                  type="text" value={a.k}
+                  placeholder={t("pages.items.variants.attrKeyPlaceholder")}
+                  onChange={e => setAttrs(arr => arr.map((row, i) => i === idx ? { ...row, k: e.target.value } : row))}
+                  className="px-2 py-1 rounded border bg-background text-xs"
+                />
+                <input
+                  type="text" value={a.v}
+                  placeholder={t("pages.items.variants.attrValPlaceholder")}
+                  onChange={e => setAttrs(arr => arr.map((row, i) => i === idx ? { ...row, v: e.target.value } : row))}
+                  className="px-2 py-1 rounded border bg-background text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setAttrs(arr => arr.length > 1 ? arr.filter((_, i) => i !== idx) : [{ k: "", v: "" }])}
+                  className="p-1 rounded hover:bg-destructive/10 text-destructive"
+                  aria-label="remove"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAttrs(arr => [...arr, { k: "", v: "" }])}
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-3 w-3" />{t("pages.items.variants.addAttribute")}
+            </button>
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button" onClick={resetForm}
+              className="px-3 py-1.5 rounded-md border text-xs hover:bg-muted"
+            >
+              {t("common.cancel", { defaultValue: "إلغاء" })}
+            </button>
+            <button
+              type="button" onClick={submit} disabled={addMut.isPending}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-xs disabled:opacity-50"
+            >
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t("pages.items.variants.save")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {variants.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <Layers className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.variants.empty")}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/40 text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 text-start font-medium">{t("pages.items.variants.code")}</th>
+                <th className="px-2 py-1.5 text-start font-medium">{isAr ? t("pages.items.variants.nameAr") : t("pages.items.variants.nameEn")}</th>
+                <th className="px-2 py-1.5 text-start font-medium">{t("pages.items.variants.attributes")}</th>
+                <th className="px-2 py-1.5 text-end font-medium">{t("pages.items.variants.costPrice")}</th>
+                <th className="px-2 py-1.5 text-end font-medium">{t("pages.items.variants.salePrice")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {variants.map((v: ItemVariant) => (
+                <tr key={v.id} className="border-t hover:bg-muted/20">
+                  <td className="px-2 py-1.5 font-mono">{v.code}</td>
+                  <td className="px-2 py-1.5">{isAr ? v.nameAr : (v.nameEn ?? v.nameAr)}</td>
+                  <td className="px-2 py-1.5">
+                    {v.variantAttributes && Object.keys(v.variantAttributes).length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(v.variantAttributes).map(([k, val]) => (
+                          <span key={k} className="px-1.5 py-0.5 rounded-full bg-muted text-[10px]">
+                            <span className="text-muted-foreground">{k}:</span> {String(val ?? "")}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-end tabular-nums">{fmt(v.costPrice)}</td>
+                  <td className="px-2 py-1.5 text-end tabular-nums">{fmt(v.salePrice)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

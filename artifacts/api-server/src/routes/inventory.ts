@@ -267,24 +267,23 @@ router.delete("/units/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.get("/items", async (req, res) => {
   const cid = getCompanyId(req);
-  // PRO Extension #20 — by default the items list HIDES variants (rows
-  // where parent_item_id IS NOT NULL); they show under the parent's
-  // "المتغيّرات" tab instead. Pass ?includeVariants=1 to opt in (used by
-  // the audit timeline + reports that need a flat list of every item).
-  const includeVariants = req.query.includeVariants === "1" || req.query.includeVariants === "true";
-  const variantFilter = includeVariants ? sql`true` : sql`${itemsTable.parentItemId} IS NULL`;
+  // PRO Extension #20 — note: variants ARE returned here. Variants are
+  // stand-alone SKUs (own code, barcode, stock balance) so every "pick an
+  // item" surface (sales/purchase/transfer/adjustment forms, scan-to-image,
+  // bulk labels, bundle-component child dropdown, ...) needs to see them.
+  // Hiding variants from the catalog list is a UI-only concern handled by
+  // the Items master page client-side via `it.parentItemId == null`.
   const rows = cid
     ? await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
-        .where(and(eq(itemsTable.companyId, cid), variantFilter))
+        .where(eq(itemsTable.companyId, cid))
         .orderBy(asc(itemsTable.code))
     : await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
-        .where(variantFilter)
         .orderBy(asc(itemsTable.code));
   res.json(rows.map(r => ({ ...r.item, group: r.group, unit: r.unit })));
 });
@@ -1743,15 +1742,27 @@ router.post("/items/:id/bundle/components", async (req, res) => {
     res.status(400).json({ error: "الكمية يجب أن تكون رقماً موجباً" }); return;
   }
 
-  // Validate BOTH parent and child belong to this tenant in parallel.
+  // Validate BOTH parent and child belong to this tenant in parallel. We
+  // also pull `parentItemId` so we can enforce the variant/bundle
+  // orthogonality invariant (PRO Extension #20): a row that is itself a
+  // variant cannot become a bundle, and a variant cannot be used as a
+  // bundle component (variants ARE intended to be sold/picked directly,
+  // and the recursive expansion isn't variant-aware).
   const [[ownParent], [ownChild]] = await Promise.all([
-    db.select({ id: itemsTable.id }).from(itemsTable)
+    db.select({ id: itemsTable.id, parentItemId: itemsTable.parentItemId }).from(itemsTable)
       .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))),
-    db.select({ id: itemsTable.id, isBundle: itemsTable.isBundle }).from(itemsTable)
+    db.select({ id: itemsTable.id, isBundle: itemsTable.isBundle, parentItemId: itemsTable.parentItemId }).from(itemsTable)
       .where(and(eq(itemsTable.id, childId), eq(itemsTable.companyId, cid))),
   ]);
   if (!ownParent) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
   if (!ownChild)  { res.status(404).json({ error: "الصنف الفرعي غير موجود" }); return; }
+  // PRO Extension #20 — variant/bundle axes are intentionally orthogonal.
+  if (ownParent.parentItemId) {
+    res.status(400).json({ error: "لا يمكن تحويل المتغيّر إلى صنف مركّب (Bundle)" }); return;
+  }
+  if (ownChild.parentItemId) {
+    res.status(400).json({ error: "لا يمكن استخدام متغيّر كمكوّن داخل صنف مركّب" }); return;
+  }
   // Defensive: don't allow nesting bundles inside bundles in this batch.
   // The "deduct on sale" expansion isn't recursive yet, so a bundle-of-bundles
   // would silently misbehave. Keep this guard until that work lands.
@@ -1980,7 +1991,11 @@ router.post("/items/:id/variants", async (req, res) => {
     variantAttributes: attrsCheck.value,
     isBundle: false,
   }).returning();
-  auditSubEntity(req, "item_variants", row.id, "create", null, row);
+  // Audit under module="inventory_items" (not a separate "item_variants"
+  // module) so the variant-create event shows up in the parent item's
+  // history dialog AND the variant's own history dialog — they share
+  // the same module the rest of the items lifecycle uses.
+  auditSubEntity(req, "inventory_items", row.id, "create", null, row);
   res.status(201).json(row);
 });
 

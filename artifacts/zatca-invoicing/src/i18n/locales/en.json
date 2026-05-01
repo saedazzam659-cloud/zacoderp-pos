@@ -1293,6 +1293,28 @@
         "uploadFailed": "Image upload failed",
         "success": "Image attached to {{name}}"
       },
+      "variants": {
+        "tabLabel": "Variants",
+        "description": "Variants of \"{{name}}\" (e.g. color, size). Each variant is a stand-alone item with its own code, barcode and stock.",
+        "addButton": "Add variant",
+        "code": "Code",
+        "nameAr": "Name (Arabic)",
+        "nameEn": "Name (English)",
+        "barcode": "Barcode",
+        "costPrice": "Cost",
+        "salePrice": "Price",
+        "inheritFromParent": "Leave empty to inherit from parent",
+        "attributes": "Attributes (color / size / ...)",
+        "attrKeyPlaceholder": "Attribute name (e.g. color)",
+        "attrValPlaceholder": "Value (e.g. red)",
+        "addAttribute": "Add attribute",
+        "save": "Save variant",
+        "added": "Variant added",
+        "addFailed": "Failed to add variant",
+        "loadFailed": "Failed to load variants",
+        "empty": "No variants for this item yet",
+        "codeAndNameRequired": "Variant code and name are required"
+      },
       "bundle": {
         "tabLabel": "Components",
         "kitBadge": "Kit",
