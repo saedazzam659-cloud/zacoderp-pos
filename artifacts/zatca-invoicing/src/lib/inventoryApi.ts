@@ -89,4 +89,19 @@ export const inventoryApi = {
   getLastMovements: (cid?: number) => get<{ itemId: number; lastDate: string }[]>(`/last-movements${cid ? `?companyId=${cid}` : ""}`),
   // Dashboard
   getDashboard: (cid?: number) => get<any>(`/dashboard${cid ? `?companyId=${cid}` : ""}`),
+  // PRO Extension #5 — per-item analytics (last sold, qty, revenue, avg monthly)
+  getItemAnalytics: (id: number) => get<{
+    itemId: number;
+    lastSoldDate: string | null;
+    totalSalesQty: number;
+    totalRevenue: number;
+    averageMonthlySales: number;
+    invoiceCount: number;
+  }>(`/items/${id}/analytics`),
+  // PRO Extension #6 — unified inventory smart alerts (low-stock + idle items)
+  getInventoryAlerts: (idleDays?: number) => get<{
+    idleDays: number;
+    lowStock: { itemId: number | null; code: string; nameAr: string; nameEn: string | null; totalQty: number; reorderLevel: number }[];
+    idle:     { itemId: number; code: string; nameAr: string; nameEn: string | null; lastSoldDate: string; daysIdle: number }[];
+  }>(`/alerts${idleDays ? `?idleDays=${idleDays}` : ""}`),
 };

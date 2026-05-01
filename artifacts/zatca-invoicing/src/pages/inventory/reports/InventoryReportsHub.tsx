@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import {
-  BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft,
+  BarChart2, BookOpen, IdCard, AlertTriangle, Wallet, Hourglass, ChevronLeft, Bell,
 } from "lucide-react";
 
 const REPORTS = [
@@ -45,6 +45,13 @@ const REPORTS = [
     desc: "الأصناف التي لم تشهد حركة خلال فترة محددة",
     icon: Hourglass,
     color: "from-rose-50 to-rose-100/40 text-rose-700 border-rose-200",
+  },
+  {
+    href: "/inventory/alerts",
+    title: "تنبيهات الأصناف الذكية",
+    desc: "أصناف تحت حد إعادة الطلب وأصناف لم تُبَع منذ مدة طويلة في عرض موحَّد",
+    icon: Bell,
+    color: "from-orange-50 to-orange-100/40 text-orange-700 border-orange-200",
   },
 ];
 

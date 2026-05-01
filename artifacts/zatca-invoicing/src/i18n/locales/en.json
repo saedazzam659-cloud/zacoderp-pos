@@ -1144,6 +1144,16 @@
         "percent": "Percentage (%)",
         "amount": "Fixed amount"
       },
+      "analytics": {
+        "tabLabel": "Performance",
+        "lastSold": "Last sold date",
+        "totalQty": "Total qty sold",
+        "totalRevenue": "Total revenue",
+        "avgMonthly": "Avg monthly sales",
+        "empty": "No posted sales yet for this item",
+        "error": "Failed to load analytics",
+        "basedOn": "Based on {{count}} posted invoice(s) — monthly avg over trailing 12 months"
+      },
       "history": {
         "label": "Audit log",
         "title": "Item audit log",
@@ -1263,6 +1273,23 @@
       "chooseGroup": "— Choose group —",
       "noGroup": "No group",
       "baseUnitHint": "Reference unit used for stock balances"
+    },
+    "alerts": {
+      "title": "Smart Inventory Alerts",
+      "subtitle": "A unified view of low-stock and idle items for faster purchase decisions",
+      "idleDaysLabel": "Idle days threshold",
+      "lowStockCount": "Items at/below reorder level",
+      "idleCount": "Idle items",
+      "lowStockTitle": "Items at or below reorder level",
+      "lowStockEmpty": "No low-stock items right now",
+      "idleTitle": "Items not sold for over {{days}} days",
+      "idleEmpty": "No idle items for this period",
+      "currentQty": "Current qty",
+      "reorderLevel": "Reorder level",
+      "shortfall": "Shortfall",
+      "lastSold": "Last sold",
+      "daysIdle": "Days idle",
+      "error": "Failed to load alerts"
     },
     "suppliers": {
       "nameArHeader": "Name (Arabic)",

@@ -19,6 +19,7 @@ import {
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
   AlertTriangle, BookMarked, Sparkles, Loader2,
   QrCode, Tag, Printer, History, ArrowRight,
+  TrendingUp, Calendar, DollarSign, BarChart3,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
@@ -461,6 +462,70 @@ function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: str
 const UNIT_EMPTY = { unitId: "", conversionFactor: "1", costPrice: "0", salePrice: "0", isBase: false };
 
 // ─── Item Unit Prices Panel ──────────────────────────────────────────────────
+// PRO Extension #5 — Per-item Analytics panel.
+// Renders 4 KPI tiles (last sold date, total qty sold, total revenue, avg
+// monthly sales) by lazy-fetching the analytics endpoint when the parent
+// expands this tab. Self-contained so the surrounding loop stays clean.
+function ItemAnalyticsPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
+  const { t, i18n } = useTranslation();
+  const { fmt, fmtQty } = useFmt();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-analytics", itemId],
+    queryFn: () => inventoryApi.getItemAnalytics(itemId),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-20 w-full rounded-lg" />)}
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return <p className="text-xs text-destructive py-4 text-center">{t("pages.items.analytics.error")}</p>;
+  }
+  // No posted sales yet — show a neutral empty state instead of zeros.
+  if (data.invoiceCount === 0) {
+    return (
+      <p className="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-lg">
+        <BarChart3 className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+        {t("pages.items.analytics.empty")}
+      </p>
+    );
+  }
+
+  const formatDate = (iso: string) => {
+    try { return new Date(iso).toLocaleDateString(i18n.language === "ar" ? "ar-EG" : "en-US"); }
+    catch { return iso; }
+  };
+
+  const tiles = [
+    { icon: Calendar,    label: t("pages.items.analytics.lastSold"),     value: data.lastSoldDate ? formatDate(data.lastSoldDate) : "—", color: "text-sky-600" },
+    { icon: TrendingUp,  label: t("pages.items.analytics.totalQty"),     value: `${fmtQty(data.totalSalesQty)} ${unitCode}`,             color: "text-emerald-600" },
+    { icon: DollarSign,  label: t("pages.items.analytics.totalRevenue"), value: `${fmt(data.totalRevenue)} ${t("pages.items.sar")}`,    color: "text-purple-600" },
+    { icon: BarChart3,   label: t("pages.items.analytics.avgMonthly"),   value: `${fmtQty(data.averageMonthlySales)} ${unitCode}`,      color: "text-amber-600" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+        {tiles.map((tile, i) => (
+          <div key={i} className="rounded-lg border bg-background p-3">
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-1.5">
+              <tile.icon className={cn("h-3.5 w-3.5", tile.color)} />
+              <span>{tile.label}</span>
+            </div>
+            <div className="text-base font-bold tabular-nums">{tile.value}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground text-center">
+        {t("pages.items.analytics.basedOn", { count: data.invoiceCount })}
+      </p>
+    </div>
+  );
+}
+
 function ItemUnitPricesPanel({ itemId }: { itemId: number }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -850,7 +915,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1246,6 +1311,13 @@ export default function Items() {
                             >
                               <Ruler className="h-3.5 w-3.5" />{t("pages.items.unitPrices")}
                             </button>
+                            <button
+                              onClick={() => setExpandedTab("analytics")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "analytics" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <TrendingUp className="h-3.5 w-3.5" />{t("pages.items.analytics.tabLabel")}
+                            </button>
                           </div>
 
                           {expandedTab === "balances" && (
@@ -1277,6 +1349,10 @@ export default function Items() {
 
                           {expandedTab === "units" && (
                             <ItemUnitPricesPanel itemId={it.id} />
+                          )}
+
+                          {expandedTab === "analytics" && (
+                            <ItemAnalyticsPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
                           )}
                         </td>
                       </tr>

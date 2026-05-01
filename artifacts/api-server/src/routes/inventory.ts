@@ -8,6 +8,7 @@ import {
   stockCountsTable, stockCountItemsTable,
   journalEntriesTable, journalEntryLinesTable,
   accountsTable, auditLogTable,
+  salesInvoicesTable, salesInvoiceLinesTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
@@ -32,6 +33,9 @@ router.use(pathRbac([
   ["/stock-balance",            "items"],
   ["/last-movements",           "items"],
   ["/dashboard",                "items"],
+  // PRO Extension #6 — Smart Alerts: gate on "items" module like other
+  // read-only inventory views.
+  ["/alerts",                   "items"],
   // Import endpoints — gate as "items" (item rows) and "stock_adjustments"
   // (opening balances become posted adjustment movements).
   ["/import/items",             "items"],
@@ -1201,6 +1205,154 @@ async function upsertBalance(companyId: number, itemId: number, warehouseId: num
 // BULK IMPORT — Items
 // Body: { items: [{ code, nameAr, nameEn?, barcode?, groupCode?, unitCode?, itemType?, costPrice?, salePrice?, vatRate?, reorderLevel?, maxLevel?, description? }, ...] }
 // ═══════════════════════════════════════════════════════════════════
+// ─── PRO Extension #5 — Per-item Analytics ──────────────────────────────────
+// Aggregates posted-sales activity for a single item: last sold date, total
+// qty sold, total revenue, and average monthly sales (computed across the
+// trailing 12 months — even months with zero sales count as "0", so the avg
+// reflects steady velocity, not just the months that happened to have sales).
+router.get("/items/:id/analytics", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  // Trailing-12-month cutoff for the monthly-velocity calculation. We compute
+  // it once here in app code so the SQL only has to do a string compare.
+  const trailing12Cutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+
+  // Single SQL aggregation across all posted invoice lines for this item.
+  // Tenant-scoped via BOTH tables to defend against any future cross-tenant
+  // line leakage (defense in depth — both tables carry company_id).
+  // Note: `lastSoldDate`, lifetime totals, and invoiceCount are LIFETIME;
+  // only `qtyLast12` is filtered to the trailing 12 months so the average
+  // monthly velocity actually reflects "the last 12 months", not lifetime/12.
+  const [agg] = await db
+    .select({
+      lastSoldDate: sql<string | null>`max(${salesInvoicesTable.invoiceDate})`,
+      totalQty:     sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}), 0)`,
+      totalRevenue: sql<string>`coalesce(sum(${salesInvoiceLinesTable.lineTotal}), 0)`,
+      invoiceCount: sql<number>`count(distinct ${salesInvoiceLinesTable.invoiceId})::int`,
+      qtyLast12:    sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}) filter (where ${salesInvoicesTable.invoiceDate} >= ${trailing12Cutoff}), 0)`,
+    })
+    .from(salesInvoiceLinesTable)
+    .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+    .where(and(
+      eq(salesInvoiceLinesTable.companyId, cid),
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.status, "posted"),
+      eq(salesInvoiceLinesTable.itemId, id),
+    ));
+
+  const totalQty = Number(agg?.totalQty ?? 0);
+  const totalRevenue = Number(agg?.totalRevenue ?? 0);
+  // True trailing-12-month average: qty in the last 12 months / 12.
+  // Months with zero sales count as zero — gives steady-velocity reading.
+  const averageMonthlySales = Number(agg?.qtyLast12 ?? 0) / 12;
+
+  res.json({
+    itemId: id,
+    lastSoldDate: agg?.lastSoldDate ?? null,
+    totalSalesQty: totalQty,
+    totalRevenue,
+    averageMonthlySales,
+    invoiceCount: agg?.invoiceCount ?? 0,
+  });
+});
+
+// ─── PRO Extension #6 — Smart Alerts ─────────────────────────────────────────
+// Returns two parallel alert lists in a single request:
+//   - lowStock: items whose summed warehouse qty is at-or-below their
+//     reorderLevel (only items with a positive reorderLevel are checked,
+//     since reorderLevel=0 means "no threshold configured").
+//   - idle:     items that haven't been sold (posted invoice) within the
+//     last `idleDays` days. Items that have *never* sold are intentionally
+//     excluded — they're new/unestablished, not "idle".
+//
+// Warranty-expiry and abnormal-price-change alerts are intentionally NOT
+// implemented in this batch — both require schema additions (warranty
+// tracking + price-change history) that are out of scope here.
+router.get("/alerts", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const idleDays = Math.max(1, Math.min(3650, Number(req.query.idleDays ?? 90) || 90));
+  const cutoff = new Date(Date.now() - idleDays * 86400000).toISOString().slice(0, 10);
+
+  // ── Low stock: aggregate stock_balance per item then filter ───────────────
+  // Key fix: select itemId from itemsTable.id (not stockBalanceTable.itemId),
+  // because items with NO stock_balance rows yet still need a real itemId
+  // for the UI deep-link.
+  const balRows = await db
+    .select({
+      itemId:        itemsTable.id,
+      totalQty:      sql<string>`coalesce(sum(${stockBalanceTable.qty}), 0)`,
+      code:          itemsTable.code,
+      nameAr:        itemsTable.nameAr,
+      nameEn:        itemsTable.nameEn,
+      reorderLevel:  itemsTable.reorderLevel,
+      itemType:      itemsTable.itemType,
+    })
+    .from(itemsTable)
+    .leftJoin(stockBalanceTable, and(
+      eq(stockBalanceTable.itemId, itemsTable.id),
+      eq(stockBalanceTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+    ))
+    .groupBy(itemsTable.id, itemsTable.code, itemsTable.nameAr, itemsTable.nameEn, itemsTable.reorderLevel, itemsTable.itemType);
+
+  const lowStock = balRows
+    .filter(r => r.itemType !== "service")
+    .map(r => ({
+      itemId:       Number(r.itemId),
+      code:         r.code,
+      nameAr:       r.nameAr,
+      nameEn:       r.nameEn,
+      totalQty:     Number(r.totalQty),
+      reorderLevel: Number(r.reorderLevel ?? 0),
+    }))
+    .filter(r => r.reorderLevel > 0 && r.totalQty <= r.reorderLevel)
+    .sort((a, b) => (a.totalQty - a.reorderLevel) - (b.totalQty - b.reorderLevel));
+
+  // ── Idle: items whose latest posted-sale date is older than cutoff ────────
+  const lastSold = await db
+    .select({
+      itemId:   salesInvoiceLinesTable.itemId,
+      lastDate: sql<string>`max(${salesInvoicesTable.invoiceDate})`,
+    })
+    .from(salesInvoiceLinesTable)
+    .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+    .where(and(
+      eq(salesInvoiceLinesTable.companyId, cid),
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.status, "posted"),
+    ))
+    .groupBy(salesInvoiceLinesTable.itemId);
+
+  // Re-use balRows for the id→meta lookup (already tenant-scoped + active).
+  // Avoids a second round-trip and the prior dead `itemMeta` block.
+  const itemById = new Map(balRows.map(r => [Number(r.itemId), r]));
+
+  const today = new Date();
+  const idle = lastSold
+    .filter(r => r.lastDate && r.lastDate < cutoff)
+    .map(r => {
+      const meta = itemById.get(Number(r.itemId));
+      const days = Math.floor((today.getTime() - new Date(r.lastDate).getTime()) / 86400000);
+      return {
+        itemId:       Number(r.itemId),
+        code:         meta?.code ?? "",
+        nameAr:       meta?.nameAr ?? "",
+        nameEn:       meta?.nameEn ?? "",
+        lastSoldDate: r.lastDate,
+        daysIdle:     days,
+      };
+    })
+    .filter(r => r.code) // drop items whose row was deleted but still appears in line history
+    .sort((a, b) => b.daysIdle - a.daysIdle);
+
+  res.json({ idleDays, lowStock, idle });
+});
+
 router.post("/import/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const rows: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
