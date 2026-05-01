@@ -11,7 +11,7 @@
  * ZATCA rejections, abnormally large totals, old drafts, open receivables)
  * and AI-generated recommendations. The result opens in a side Sheet.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -337,6 +337,20 @@ export default function SalesAuditGrid() {
     HEADER_COLOR_KEYS.includes(c as HeaderColor) ? (c as HeaderColor) : DEFAULT_HEADER_COLOR;
   const sanitizePageSize = (n: unknown): PageSize =>
     (PAGE_SIZE_OPTIONS as readonly number[]).includes(n as number) ? (n as PageSize) : DEFAULT_PAGE_SIZE;
+  // Per-column widths (Excel-style). Keep only known column keys + sane numeric
+  // bounds, so a corrupt/forward-incompatible LS payload can't blow up layout.
+  const ALL_COL_KEYS = useMemo(() => COLUMNS.map(c => c.key), []);
+  const sanitizeColWidths = (w: unknown): Record<string, number> => {
+    if (!w || typeof w !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(w as Record<string, unknown>)) {
+      if (!ALL_COL_KEYS.includes(k)) continue;
+      const n = typeof v === "number" ? v : Number(v);
+      if (!Number.isFinite(n)) continue;
+      out[k] = Math.max(36, Math.min(800, Math.round(n)));
+    }
+    return out;
+  };
 
   const [dataOrder, setDataOrder] = useState<string[]>(() => {
     try {
@@ -370,6 +384,21 @@ export default function SalesAuditGrid() {
     } catch { /* ignore corrupt LS */ }
     return DEFAULT_PAGE_SIZE;
   });
+
+  // Per-column pixel widths set by the user via drag/double-click. Only keys
+  // present here override the column's natural width; everything else stays
+  // auto-sized. Hydrated from LS on mount and on tenant switch.
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return sanitizeColWidths(parsed?.colWidths);
+      }
+    } catch { /* ignore corrupt LS */ }
+    return {};
+  });
+
   // Current page is ephemeral (not persisted) — always start at 1 on mount.
   const [page, setPage] = useState(1);
 
@@ -380,22 +409,23 @@ export default function SalesAuditGrid() {
     if (headerColor !== DEFAULT_HEADER_COLOR) return true;
     if (pageSize !== DEFAULT_PAGE_SIZE) return true;
     if (dataOrder.length !== DATA_KEYS.length) return true;
+    if (Object.keys(colWidths).length > 0) return true;
     return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
-  }, [dataOrder, headerColor, pageSize]);
+  }, [dataOrder, headerColor, pageSize, colWidths]);
 
   // Persist layout on change.
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, pageSize }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, pageSize, colWidths }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota errors */ }
-  }, [dataOrder, headerColor, pageSize, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, headerColor, pageSize, colWidths, hasCustomLayout, LS_KEY]);
 
-  // Re-hydrate layout + color + pageSize when the active company changes
-  // (e.g. user logs into a different tenant in the same browser tab).
+  // Re-hydrate layout + color + pageSize + colWidths when the active company
+  // changes (e.g. user logs into a different tenant in the same browser tab).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -404,12 +434,14 @@ export default function SalesAuditGrid() {
         setDataOrder(sanitizeOrder(parsed?.dataOrder));
         setHeaderColor(sanitizeColor(parsed?.headerColor));
         setPageSize(sanitizePageSize(parsed?.pageSize));
+        setColWidths(sanitizeColWidths(parsed?.colWidths));
         setPage(1);
         return;
       }
       setDataOrder([...DATA_KEYS]);
       setHeaderColor(DEFAULT_HEADER_COLOR);
       setPageSize(DEFAULT_PAGE_SIZE);
+      setColWidths({});
       setPage(1);
     } catch { /* ignore corrupt LS */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -438,7 +470,83 @@ export default function SalesAuditGrid() {
     setDataOrder([...DATA_KEYS]);
     setHeaderColor(DEFAULT_HEADER_COLOR);
     setPageSize(DEFAULT_PAGE_SIZE);
+    setColWidths({});
     setPage(1);
+  }
+
+  // ── Excel-style column resize ─────────────────────────────────────────
+  // The user can drag the inline-end edge of any column header to resize it,
+  // or double-click that edge to auto-fit the column to the widest cell in
+  // the column. Widths persist in `colWidths` (and therefore in localStorage).
+  const tableRef = useRef<HTMLTableElement | null>(null);
+
+  // Defensive teardown — if the component unmounts mid-drag (e.g. user
+  // navigates away while still dragging), make sure we don't leave the page
+  // body cursor stuck on `col-resize` or text selection disabled.
+  useEffect(() => () => {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, []);
+
+  // Drag-resize: use Pointer Events with setPointerCapture so subsequent
+  // pointermove / pointerup events go to the grip element regardless of where
+  // the cursor travels. This works reliably under both real users and
+  // automation (Playwright dispatches real DOM pointer events).
+  // RTL-aware: in RTL the inline-end edge is visually on the LEFT, so
+  // dragging LEFT increases width.
+  function startColResize(e: React.PointerEvent, colKey: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const grip = e.currentTarget as HTMLElement;
+    const th = grip.closest("th") as HTMLElement | null;
+    const startWidth = th?.getBoundingClientRect().width ?? 80;
+    const startX = e.clientX;
+    const isRtl = (document.documentElement.dir || "ltr").toLowerCase() === "rtl";
+    try { grip.setPointerCapture(e.pointerId); } catch { /* older browsers */ }
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = isRtl ? (startX - ev.clientX) : (ev.clientX - startX);
+      const next = Math.max(36, Math.min(800, Math.round(startWidth + delta)));
+      setColWidths(prev => (prev[colKey] === next ? prev : { ...prev, [colKey]: next }));
+    };
+    const onUp = (ev: PointerEvent) => {
+      try { grip.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onUp);
+      grip.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onUp);
+    grip.addEventListener("pointercancel", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  // Double-click auto-fit: scan all rendered rows in this column index, find
+  // the widest content (using scrollWidth on a temporary nowrap clone), then
+  // set that as the column's stored width.
+  function autoFitColumn(colIndex: number, colKey: string) {
+    const table = tableRef.current;
+    if (!table) return;
+    const cells = table.querySelectorAll<HTMLTableCellElement>(`tr > *:nth-child(${colIndex + 1})`);
+    let max = 36;
+    cells.forEach(cell => {
+      // Temporarily allow the cell's content to expand to its natural width.
+      const prevWhite = cell.style.whiteSpace;
+      const prevMax = cell.style.maxWidth;
+      cell.style.whiteSpace = "nowrap";
+      cell.style.maxWidth = "none";
+      // scrollWidth includes children's natural width even when truncated.
+      const w = cell.scrollWidth;
+      cell.style.whiteSpace = prevWhite;
+      cell.style.maxWidth = prevMax;
+      if (w > max) max = w;
+    });
+    // Add a small visual padding so content doesn't kiss the right border.
+    const next = Math.max(36, Math.min(800, Math.ceil(max + 18)));
+    setColWidths(prev => ({ ...prev, [colKey]: next }));
   }
 
   // ── Selection ─────────────────────────────────────────────────────────
@@ -1381,13 +1489,27 @@ export default function SalesAuditGrid() {
               <p className="text-muted-foreground text-sm">لا توجد فواتير ضمن التصفية الحالية</p>
             </div>
           ) : (
-            <table className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+            <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+              {/* Per-column widths drive Excel-style column resizing. A <col>
+                  is emitted for every visible column; only those the user has
+                  resized get an explicit width — the rest stay browser-auto. */}
+              <colgroup>
+                {visibleColumns.map(col => (
+                  <col
+                    key={col.key}
+                    data-col-key={col.key}
+                    style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined}
+                  />
+                ))}
+              </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {visibleColumns.map(col => (
+                  {visibleColumns.map((col, colIdx) => (
                     <th
                       key={col.key}
-                      className="px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                      data-col-key={col.key}
+                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
                     >
                       {col.key === "_sel" ? (
                         <input
@@ -1399,6 +1521,22 @@ export default function SalesAuditGrid() {
                           className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
                         />
                       ) : col.label}
+                      {/* Resize grip — sits on the column's trailing edge.
+                          Drag to resize, double-click to auto-fit. Hidden in
+                          print so it doesn't show up on paper. We use Pointer
+                          Events + setPointerCapture inside startColResize so
+                          the drag tracks even when the cursor leaves the grip. */}
+                      <span
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`تغيير عرض العمود: ${col.label || col.key}`}
+                        title="اسحب لتغيير العرض، أو ضغطة مزدوجة للضبط التلقائي"
+                        data-testid={`col-resize-${col.key}`}
+                        onPointerDown={e => startColResize(e, col.key)}
+                        onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); autoFitColumn(colIdx, col.key); }}
+                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                        style={{ insetInlineEnd: -4 }}
+                      />
                     </th>
                   ))}
                 </tr>
@@ -1456,13 +1594,13 @@ export default function SalesAuditGrid() {
                       case "date":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">{inv.invoiceDate}</td>;
                       case "customer":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 max-w-[180px] truncate" title={cus?.name ?? ""}>{cus?.name ?? "—"}</td>;
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate", colWidths.customer ? "" : "max-w-[180px]")} title={cus?.name ?? ""}>{cus?.name ?? "—"}</td>;
                       case "vat":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono text-[10px] text-slate-600 text-center">{cus?.vat ?? "—"}</td>;
                       case "branch":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{branchMap[inv.branchId] ?? "—"}</td>;
                       case "rep":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600 max-w-[120px] truncate" title={repMap[inv.salesRepId] ?? ""}>{repMap[inv.salesRepId] ?? "—"}</td>;
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 text-center text-slate-600 truncate", colWidths.rep ? "" : "max-w-[120px]")} title={repMap[inv.salesRepId] ?? ""}>{repMap[inv.salesRepId] ?? "—"}</td>;
                       case "payment":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{payLabel}</td>;
                       case "currency":
@@ -1510,7 +1648,7 @@ export default function SalesAuditGrid() {
                           </td>
                         );
                       case "notes":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-slate-600 max-w-[140px] truncate" title={inv.notes ?? ""}>{inv.notes ?? "—"}</td>;
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 text-slate-600 truncate", colWidths.notes ? "" : "max-w-[140px]")} title={inv.notes ?? ""}>{inv.notes ?? "—"}</td>;
                       case "_act":
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
