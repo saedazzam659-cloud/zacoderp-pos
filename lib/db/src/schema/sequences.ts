@@ -16,6 +16,7 @@ export const SEQUENCE_TX_TYPES = [
   "purchase_order",
   "purchase_return",
   "goods_receipt",
+  "goods_delivery",
   "journal_entry",
   "stock_transfer",
   "stock_adjustment",

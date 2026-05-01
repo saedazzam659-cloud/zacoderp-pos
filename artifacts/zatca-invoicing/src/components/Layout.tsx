@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
   LayoutDashboard, Building2, FileText, Users, Settings,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
-  Package, PackagePlus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
+  Package, PackagePlus, PackageMinus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
   Tag, Layers, BookMarked, MapPin, Building2 as BranchIcon, DollarSign,
   TrendingUp, Scale, PieChart, ShoppingCart, CreditCard, RotateCcw, Banknote, Wrench,
@@ -311,6 +311,7 @@ const inventorySubNav: NavDef[] = [
   { nameKey: "nav.warehouses",        href: "/inventory/warehouses",       icon: Warehouse,         permKey: "warehouses" },
   { nameKey: "nav.warehouseGroups",   href: "/inventory/warehouse-groups", icon: Layers,            permKey: "warehouses" },
   { nameKey: "nav.goodsReceipts",     href: "/inventory/goods-receipts",   icon: PackagePlus,       permKey: "warehouses" },
+  { nameKey: "nav.goodsDeliveries",   href: "/inventory/goods-deliveries", icon: PackageMinus,      permKey: "warehouses" },
   { nameKey: "nav.stockTransfers",    href: "/inventory/transfers",        icon: ArrowRightLeft,    permKey: "stock_transfers" },
   { nameKey: "nav.stockAdjustments",  href: "/inventory/adjustments",      icon: SlidersHorizontal, permKey: "stock_adjustments" },
   { nameKey: "nav.stockCounts",       href: "/inventory/counts",           icon: ClipboardList,     permKey: "stock_counts" },

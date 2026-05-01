@@ -166,6 +166,7 @@ import PurchaseOrders       from "@/pages/purchasing/PurchaseOrders";
 import PurchaseOrderForm    from "@/pages/purchasing/PurchaseOrderForm";
 import PurchaseReturns      from "@/pages/purchasing/PurchaseReturns";
 import GoodsReceipts        from "@/pages/inventory/GoodsReceipts";
+import GoodsDeliveries      from "@/pages/inventory/GoodsDeliveries";
 import SupplierSettlement   from "@/pages/purchasing/SupplierSettlement";
 // Sales Reports
 import SalesReportsHub      from "@/pages/sales/reports/SalesReportsHub";
@@ -555,6 +556,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/purchasing/orders"          module="purchase_invoices"     component={PurchaseOrders} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/returns"         module="purchase_returns"      component={PurchaseReturns} />}
             {!isSuperAdmin && <PermRoute path="/inventory/goods-receipts"   module="warehouses"            component={GoodsReceipts} />}
+            {!isSuperAdmin && <PermRoute path="/inventory/goods-deliveries" module="warehouses"            component={GoodsDeliveries} />}
             {!isSuperAdmin && <PermRoute path="/purchasing/settlements"     module="supplier_settlements"  component={SupplierSettlement} />}
 
             {/* Sales routes */}

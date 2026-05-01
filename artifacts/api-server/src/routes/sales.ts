@@ -10,7 +10,9 @@ import {
   journalEntriesTable, journalEntryLinesTable,
   receiptVouchersTable, paymentVouchersTable,
   salesRepsTable, offersTable,
+  goodsDeliveriesTable,
 } from "@workspace/db";
+import { getDeliveryClearingAccountId } from "./goodsDeliveries.js";
 import { eq, and, asc, desc, sql, inArray, isNull } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, pushBranchScope, branchScopeSpread, branchScopeFilter } from "../middleware/auth.js";
 import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
@@ -679,61 +681,75 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       .where(eq(salesInvoiceLinesTable.invoiceId, id));
     if (!lines.length) { res.status(400).json({ error: "لا توجد أصناف في الفاتورة" }); return; }
 
+    // When this invoice was created from a Goods Delivery Note (GDN), the
+    // stock movement (and inventory credit) already happened at GDN-post
+    // time. SKIP the stock loop entirely so we don't double-count, and
+    // CREDIT Delivery Clearing (instead of revenue/inventory) so it nets
+    // out against the GDN's debit to that same clearing account.
+    const gdnSourced = !!(inv as any).sourceGdnId;
+
     // Guard: every stock-affecting (item-bearing) line must specify a warehouse.
-    const noWh = lines.filter(l => l.itemId && !l.warehouseId);
+    // (Skip when GDN-sourced — the GDN already validated this.)
+    const noWh = gdnSourced ? [] : lines.filter(l => l.itemId && !l.warehouseId);
     if (noWh.length) {
       res.status(400).json({ error: `لا يمكن الترحيل: الأصناف التالية بدون مخزن محدد — ${noWh.map(l => l.itemName).join("، ")}` });
       return;
     }
 
-    // Load warehouse info (account + allow-negative) for every distinct warehouse used
-    const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
+    // Load warehouse info (account + allow-negative) for every distinct warehouse used.
+    // (Not needed when GDN-sourced — no stock loop and no per-warehouse inventory credits.)
+    const whInfo = gdnSourced ? {} : await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
 
     // Validate stock availability first (qty * conversionFactor = base-unit qty)
     // Skip the check for warehouses that explicitly allow negative stock.
-    for (const line of lines) {
-      if (!line.itemId || !line.warehouseId) continue;
-      const wh = whInfo[line.warehouseId];
-      if (wh?.allowNegative) continue;
-      const factor = Number(line.conversionFactor || "1") || 1;
-      const qty = Number(line.qty) * factor;
-      const cur = await getBalance(cid, line.itemId, line.warehouseId);
-      if (cur < qty) {
-        res.status(400).json({
-          error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
-        });
-        return;
+    if (!gdnSourced) {
+      for (const line of lines) {
+        if (!line.itemId || !line.warehouseId) continue;
+        const wh = whInfo[line.warehouseId];
+        if (wh?.allowNegative) continue;
+        const factor = Number(line.conversionFactor || "1") || 1;
+        const qty = Number(line.qty) * factor;
+        const cur = await getBalance(cid, line.itemId, line.warehouseId);
+        if (cur < qty) {
+          res.status(400).json({
+            error: `رصيد الصنف "${line.itemName}" غير كافٍ في مخزن "${wh?.nameAr ?? line.warehouseId}" — المتاح ${cur} والمطلوب ${qty}. فعّل خاصية "السماح بالسالب" على المخزن إن كنت ترغب بتجاوز الرصيد.`,
+          });
+          return;
+        }
       }
     }
 
-    // Decrease stock for each stockable line (in base units) + accumulate COGS per warehouse
+    // Decrease stock for each stockable line (in base units) + accumulate COGS per warehouse.
+    // GDN-sourced invoices: skip stock + skip COGS (already recognised at GDN-post time).
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
-    for (const line of lines) {
-      if (!line.itemId || !line.warehouseId) continue;
-      const factor  = Number(line.conversionFactor || "1") || 1;
-      const qty     = Number(line.qty) * factor;
-      const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
-      const lineCogs = qty * avgCost;
-      totalCogs += lineCogs;
-      cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
+    if (!gdnSourced) {
+      for (const line of lines) {
+        if (!line.itemId || !line.warehouseId) continue;
+        const factor  = Number(line.conversionFactor || "1") || 1;
+        const qty     = Number(line.qty) * factor;
+        const avgCost = await getAvgCost(cid, line.itemId, line.warehouseId);
+        const lineCogs = qty * avgCost;
+        totalCogs += lineCogs;
+        cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
 
-      await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
-      const newBal = await getBalance(cid, line.itemId, line.warehouseId);
-      await addStockLedgerEntry({
-        companyId:   cid,
-        itemId:      line.itemId,
-        warehouseId: line.warehouseId,
-        txDate:      inv.invoiceDate,
-        txType:      "sale",
-        qty:         String(-qty),
-        costPrice:   String(avgCost.toFixed(4)),
-        totalCost:   String((-qty * avgCost).toFixed(2)),
-        balanceQty:  String(newBal),
-        refId:       id,
-        refType:     "sales_invoice",
-        notes:       line.notes ?? undefined,
-      });
+        await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
+        const newBal = await getBalance(cid, line.itemId, line.warehouseId);
+        await addStockLedgerEntry({
+          companyId:   cid,
+          itemId:      line.itemId,
+          warehouseId: line.warehouseId,
+          txDate:      inv.invoiceDate,
+          txType:      "sale",
+          qty:         String(-qty),
+          costPrice:   String(avgCost.toFixed(4)),
+          totalCost:   String((-qty * avgCost).toFixed(2)),
+          balanceQty:  String(newBal),
+          refId:       id,
+          refType:     "sales_invoice",
+          notes:       line.notes ?? undefined,
+        });
+      }
     }
 
     // ── Build journal entry ──
@@ -748,18 +764,31 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const cogsAccId     = pickAccount(inv.cogsAccountId,     mapSi("sales_invoice", "cogs"));
     const taxAccId      = pickAccount(inv.taxAccountId,      mapSi("sales_invoice", "vat_output"));
     const discountAccId = pickAccount(inv.discountAccountId, mapSi("sales_invoice", "discount"));
-    if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
-    if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
-    // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
-    const missingWh: string[] = [];
-    for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
-      if (amt <= 0) continue;
-      const wid = Number(widStr);
-      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+    // Revenue / COGS / per-warehouse inventory accounts are NOT required for
+    // GDN-sourced invoices — they post against Delivery Clearing instead.
+    if (!gdnSourced) {
+      if (!salesAccId) { res.status(400).json({ error: "لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)" }); return; }
+      if (!cogsAccId)  { res.status(400).json({ error: "لم يتم تحديد حساب تكلفة البضاعة المباعة (اضبطه من ربط القيود المحاسبية)" }); return; }
+      // Inventory account is taken from each warehouse, not the invoice. Verify every used warehouse has one.
+      const missingWh: string[] = [];
+      for (const [widStr, amt] of Object.entries(cogsByWarehouse)) {
+        if (amt <= 0) continue;
+        const wid = Number(widStr);
+        if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+      }
+      if (missingWh.length) {
+        res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}. اضبط حساب المخزون من شاشة المخازن.` });
+        return;
+      }
     }
-    if (missingWh.length) {
-      res.status(400).json({ error: `لم يتم ربط حساب محاسبي للمخزن/المخازن التالية: ${missingWh.join("، ")}. اضبط حساب المخزون من شاشة المخازن.` });
-      return;
+    // Resolve Delivery Clearing for GDN-sourced invoices (auto-provisioning).
+    let deliveryClearingAccId: number | null = null;
+    if (gdnSourced) {
+      deliveryClearingAccId = await getDeliveryClearingAccountId(cid);
+      if (!deliveryClearingAccId) {
+        res.status(400).json({ error: "حساب وسيط التسليم (1110/11101) غير موجود — يرجى استيراد دليل الحسابات الافتراضي أولاً" });
+        return;
+      }
     }
 
     const subtotalAmt = Number(inv.subtotal || 0);
@@ -817,6 +846,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
 
+    // GDN-sourced invoices: replace the revenue + inventory credits with a
+    // single CREDIT to Delivery Clearing. The clearing account was DEBITED
+    // at GDN-post time (Dr Clearing / Cr Inventory), so this credit unwinds
+    // it. Goods value = totalAmt − vatAmt + headerDiscAmt = pre-discount,
+    // VAT-exclusive sale price.
     const journalId = await createJournalEntry({
       companyId: cid,
       branchId: inv.branchId,
@@ -825,26 +859,35 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       entryType: "sales_invoice",
       exchangeRate: inv.exchangeRate,
       description: `قيد فاتورة مبيعات رقم ${inv.docNumber || inv.id}`,
-      lines: [
-        // Debits
-        { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
-        { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
-        { accountId: cogsAccId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
-        // Credits
-        { accountId: salesAccId,     credit: grossSubtotalAmt, description: "إيراد المبيعات" },
-        { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
-        // Inventory: one credit line per warehouse using its own GL account
-        ...Object.entries(cogsByWarehouse)
-          .filter(([, amt]) => amt > 0)
-          .map(([widStr, amt]) => {
-            const wid = Number(widStr);
-            return {
-              accountId: whInfo[wid]!.accountId!,
-              credit: amt,
-              description: `إنقاص المخزون — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
-            };
-          }),
-      ],
+      lines: gdnSourced
+        ? [
+            // Dr Customer/Cash/Bank @ total
+            { accountId: partyAccountId,         debit: totalAmt,                              description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+            // Cr VAT Output (still booked separately — operator can claim it)
+            { accountId: taxAccId,               credit: vatAmt,                               description: "ضريبة القيمة المضافة (مخرجات)" },
+            // Cr Delivery Clearing (replaces revenue + inventory credits)
+            { accountId: deliveryClearingAccId!, credit: totalAmt - vatAmt,                    description: "تسوية وسيط تسليم البضاعة" },
+          ]
+        : [
+            // Debits
+            { accountId: partyAccountId,        debit: totalAmt,    description: inv.paymentType === "cash" ? "تحصيل نقدي" : inv.paymentType === "bank" ? "تحصيل بنكي" : "ذمم العميل" },
+            { accountId: discountAccId, debit: discountAmt, description: "خصم مسموح به" },
+            { accountId: cogsAccId,     debit: totalCogs,   description: "تكلفة البضاعة المباعة" },
+            // Credits
+            { accountId: salesAccId,     credit: grossSubtotalAmt, description: "إيراد المبيعات" },
+            { accountId: taxAccId,       credit: vatAmt,      description: "ضريبة القيمة المضافة (مخرجات)" },
+            // Inventory: one credit line per warehouse using its own GL account
+            ...Object.entries(cogsByWarehouse)
+              .filter(([, amt]) => amt > 0)
+              .map(([widStr, amt]) => {
+                const wid = Number(widStr);
+                return {
+                  accountId: whInfo[wid]!.accountId!,
+                  credit: amt,
+                  description: `إنقاص المخزون — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+                };
+              }),
+          ],
     });
 
     const [updated] = await db.update(salesInvoicesTable)
@@ -870,8 +913,12 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
 
+    // GDN-sourced invoices never touched stock (the GDN did), so the stock
+    // loop below would be a no-op anyway — short-circuit for clarity.
+    const gdnSourced = !!(inv as any).sourceGdnId;
+
     // Reverse stock movements (sales reduced stock; unpost adds back)
-    const ledger = await db.select().from(stockLedgerTable)
+    const ledger = gdnSourced ? [] : await db.select().from(stockLedgerTable)
       .where(and(
         eq(stockLedgerTable.companyId, cid),
         eq(stockLedgerTable.refType, "sales_invoice"),
@@ -891,12 +938,14 @@ router.patch("/sales-invoices/:id/unpost", requireAdminRole, async (req, res) =>
           .where(eq(stockBalanceTable.id, bal.id));
       }
     }
-    await db.delete(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "sales_invoice"),
-        eq(stockLedgerTable.refId, id),
-      ));
+    if (!gdnSourced) {
+      await db.delete(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.refType, "sales_invoice"),
+          eq(stockLedgerTable.refId, id),
+        ));
+    }
 
     if (inv.journalEntryId) {
       await db.update(journalEntryLinesTable)
@@ -954,7 +1003,36 @@ router.delete("/sales-invoices/:id", async (req, res) => {
       return;
     }
     await cleanupDocArtifacts({ companyId: cid, refType: "sales_invoice", refId: id, journalEntryId: inv.journalEntryId });
-    await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+
+    // If this draft invoice was created from a GDN, atomically restore the
+    // GDN to posted (un-link it) and delete the invoice in one transaction
+    // so a partial failure can't leave the GDN permanently stuck in
+    // "invoiced" status. The GDN revert is guarded by status='invoiced' AND
+    // linked_invoice_id = this invoice.id so concurrent state changes (e.g.
+    // someone re-linking the GDN to a different invoice) can't be silently
+    // overwritten.
+    const gdnId = (inv as any).sourceGdnId as number | null | undefined;
+    if (gdnId) {
+      await db.transaction(async (tx) => {
+        const reverted = await tx.update(goodsDeliveriesTable)
+          .set({ status: "posted", linkedInvoiceId: null, updatedAt: new Date() })
+          .where(and(
+            eq(goodsDeliveriesTable.id, gdnId),
+            eq(goodsDeliveriesTable.companyId, cid),
+            eq(goodsDeliveriesTable.status, "invoiced"),
+            eq(goodsDeliveriesTable.linkedInvoiceId, id),
+          ))
+          .returning({ id: goodsDeliveriesTable.id });
+        if (reverted.length === 0) {
+          // GDN was already unposted/deleted/re-linked — log but proceed
+          // with the invoice delete since the link is already broken.
+          req.log?.warn({ gdnId, invoiceId: id }, "sales-invoice delete: GDN revert affected 0 rows (already unlinked or in different state)");
+        }
+        await tx.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+      });
+    } else {
+      await db.delete(salesInvoicesTable).where(and(eq(salesInvoicesTable.id, id), eq(salesInvoicesTable.companyId, cid)));
+    }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

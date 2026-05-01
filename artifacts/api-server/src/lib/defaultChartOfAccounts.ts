@@ -136,6 +136,17 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "reportDirection": "balance_sheet"
   },
   {
+    "code": "1110",
+    "nameAr": "وسيط تسليم البضاعة",
+    "nameEn": "Goods Delivery Clearing",
+    "accountType": "asset",
+    "parentCode": "11",
+    "level": 3,
+    "isPosting": false,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
     "code": "12",
     "nameAr": "الأصول غير المتداولة",
     "nameEn": "Non-current Assets",
@@ -493,6 +504,17 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultCoaRow[] = [
     "nameEn": "Receiving Clearing",
     "accountType": "asset",
     "parentCode": "1109",
+    "level": 4,
+    "isPosting": true,
+    "isActive": true,
+    "reportDirection": "balance_sheet"
+  },
+  {
+    "code": "11101",
+    "nameAr": "وسيط التسليم",
+    "nameEn": "Delivery Clearing",
+    "accountType": "asset",
+    "parentCode": "1110",
     "level": 4,
     "isPosting": true,
     "isActive": true,

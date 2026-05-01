@@ -38,6 +38,11 @@ export const salesInvoicesTable = pgTable("sales_invoices", {
   taxAccountId:       integer("tax_account_id").references(() => accountsTable.id),
   discountAccountId:  integer("discount_account_id").references(() => accountsTable.id),
   journalEntryId:     integer("journal_entry_id"),
+  // When this invoice was created from a Goods Delivery Note (GDN), the
+  // stock movement already happened at GDN-post time. The /post handler
+  // skips the stock loop and books a CREDIT to Delivery Clearing instead
+  // of revenue, so it nets out against the GDN's debit to that clearing.
+  sourceGdnId:        integer("source_gdn_id"),
   // ZATCA submission tracking ("pending" | "approved" | "rejected")
   zatcaStatus:           text("zatca_status").default("pending"),
   zatcaSubmittedAt:      timestamp("zatca_submitted_at"),
