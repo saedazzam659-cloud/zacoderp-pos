@@ -1082,7 +1082,7 @@ ${sections}
                   {(() => {
                     const GRID_COLS_GD = "220px 110px 160px 120px 90px 110px 80px 80px 130px 180px 40px";
                     return (
-                  <div className="rounded-xl border bg-card overflow-x-auto">
+                  <div className="rounded-xl border bg-card overflow-x-auto" dir={isRtl ? "rtl" : "ltr"}>
                     <div className="min-w-max">
                   <div className="grid gap-2 px-3 py-2 border-b bg-muted/40 sticky top-0" style={{ gridTemplateColumns: GRID_COLS_GD }}>
                     {lineColHeaders.map((h, i) => (
