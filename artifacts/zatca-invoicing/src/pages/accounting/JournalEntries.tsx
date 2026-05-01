@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Plus, Pencil, Trash2, BookOpen, ArrowUpDown, CheckCircle2, FileText, Printer,
-  FileSpreadsheet, FileDown, X, Calendar,
+  FileSpreadsheet, FileDown, X, Calendar, Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,8 @@ import {
   downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
 import {
-  AuditGridPagination, ColumnReorderPopover, FooterColorPicker, HeaderColorPicker,
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
@@ -97,6 +98,7 @@ export default function JournalEntries() {
   const COL_STATUS_L = t("journalEntries.status");
 
   const COLUMNS: ColDef[] = [
+    { key: "_sel",   label: "",           type: "none", valueOf: () => "" },
     { key: "_idx",   label: "#",          type: "none", valueOf: () => "" },
     { key: "doc",    label: COL_DOC_L,    type: "text", valueOf: (e) => e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}` },
     { key: "date",   label: COL_DATE_L,   type: "text", valueOf: (e) => e.entryDate ?? "" },
@@ -107,7 +109,7 @@ export default function JournalEntries() {
     { key: "status", label: COL_STATUS_L, type: "text", valueOf: (e, c) => c.statusLabels[e.status] ?? e.status ?? "" },
     { key: "_act",   label: t("journalEntries.actions"), type: "none", valueOf: () => "" },
   ];
-  const DATA_KEYS = useMemo(() => COLUMNS.filter(c => c.key !== "_idx" && c.key !== "_act").map(c => c.key), [COLUMNS]);
+  const DATA_KEYS = useMemo(() => COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key), [COLUMNS]);
   const ALL_KEYS  = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
 
   const ctx: Ctx = useMemo(() => ({
@@ -140,6 +142,51 @@ export default function JournalEntries() {
       setDeleteId(null);
     },
   });
+
+  /* ── Bulk-action helpers ─────────────────────────────────────────────── */
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  // Entry deletes are subject to multiple server-side guards (already-posted,
+  // referenced from a source doc, period-locked). We run them sequentially and
+  // surface a per-row failure summary so the user knows which rows survived.
+  async function bulkRun(
+    ids: number[],
+    fn: (id: number) => Promise<any>,
+  ): Promise<{ ok: number; failures: string[] }> {
+    setBulkBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const id of ids) {
+      try { await fn(id); ok++; } catch (e: any) { failures.push(e?.message || String(e)); }
+    }
+    setBulkBusy(false);
+    qc.invalidateQueries({ queryKey: ["journal-entries", cid] });
+    layout.clearSelection();
+    return { ok, failures };
+  }
+
+  const selectedIds = useMemo(
+    () => Array.from(layout.selected).map((x) => Number(x)).filter((n) => Number.isFinite(n)),
+    [layout.selected],
+  );
+
+  async function confirmBulkDelete() {
+    setBulkDeleteOpen(false);
+    if (selectedIds.length === 0) return;
+    const { ok, failures } = await bulkRun(
+      selectedIds,
+      async (id) => { await journalEntriesApi.remove(id); },
+    );
+    // Lightweight in-app feedback — the page already lacks a toast hook here,
+    // so we surface the result via a non-blocking alert when something failed.
+    if (failures.length > 0) {
+      window.alert(
+        `${t("journalEntries.delete")}: ${ok}/${selectedIds.length}\n` +
+        `${failures.length} عنصر فشل:\n• ${failures.slice(0, 5).join("\n• ")}`,
+      );
+    }
+  }
 
   /* ── Filtering ── */
   const filtered = useMemo(() => {
@@ -195,9 +242,10 @@ export default function JournalEntries() {
     const dataCols = layout.dataOrder
       .map((k) => COLUMNS.find((c) => c.key === k))
       .filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find((c) => c.key === "_sel")!;
     const idx = COLUMNS.find((c) => c.key === "_idx")!;
     const act = COLUMNS.find((c) => c.key === "_act")!;
-    return [idx, ...dataCols, act];
+    return [sel, idx, ...dataCols, act];
   }, [layout.dataOrder, COLUMNS]);
   const reorderableCols = useMemo(
     () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
@@ -287,11 +335,11 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
   function exportCsv() {
     if (filtered.length === 0) return;
-    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filtered.map((e: any, i: number) => [
       i + 1,
       ...visibleColumns
-        .filter((c) => c.key !== "_idx" && c.key !== "_act")
+        .filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act")
         .map((c) => {
           const v = c.valueOf(e, ctx);
           return c.type === "num" ? Number(v).toFixed(2) : String(v);
@@ -426,6 +474,23 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
             {filtered.length !== entries.length && <span className="text-slate-400"> / {entries.length}</span>}
           </span>
         </div>
+        {/* ── Bulk-action bar (visible only when one or more rows selected) ── */}
+        <AuditGridBulkBar
+          count={layout.selected.size}
+          onClear={layout.clearSelection}
+          busy={bulkBusy}
+        >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
+            onClick={() => setBulkDeleteOpen(true)}
+            disabled={bulkBusy || selectedIds.length === 0}
+            title={`${t("journalEntries.delete")} (${selectedIds.length})`}
+          >
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {t("journalEntries.delete")} ({selectedIds.length})
+          </Button>
+        </AuditGridBulkBar>
       </div>
 
       {/* ── Audit-grid table ─────────────────────────────────────────────── */}
@@ -452,21 +517,41 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
               </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {visibleColumns.map((col, idx) => (
-                    <th
-                      key={col.key}
-                      data-col-key={col.key}
-                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
-                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
-                    >
-                      {col.label}
-                      <span
-                        {...gripProps(col.key, idx)}
-                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
-                        style={{ insetInlineEnd: -4 }}
-                      />
-                    </th>
-                  ))}
+                  {visibleColumns.map((col, idx) => {
+                    if (col.key === "_sel") {
+                      const visibleIds = paged.map((e: any) => Number(e.id));
+                      return (
+                        <th
+                          key={col.key}
+                          data-col-key={col.key}
+                          style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                          className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px] w-9"
+                        >
+                          <HeaderSelectCheckbox
+                            allSelected={layout.isAllSelected(visibleIds)}
+                            someSelected={layout.isSomeSelected(visibleIds)}
+                            onToggle={() => layout.toggleAll(visibleIds)}
+                            disabled={visibleIds.length === 0 || bulkBusy}
+                          />
+                        </th>
+                      );
+                    }
+                    return (
+                      <th
+                        key={col.key}
+                        data-col-key={col.key}
+                        style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                        className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                      >
+                        {col.label}
+                        <span
+                          {...gripProps(col.key, idx)}
+                          className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                          style={{ insetInlineEnd: -4 }}
+                        />
+                      </th>
+                    );
+                  })}
                 </tr>
                 <tr className="bg-amber-50/80 border-b border-amber-200">
                   {visibleColumns.map((col) => (
@@ -490,8 +575,20 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                   const st = STATUS_MAP[entry.status] ?? STATUS_MAP.posted;
                   const docLabel = entry.docNumber ?? `QYD-${String(entry.id).padStart(4, "0")}`;
                   const sourceUrl = sourceUrlFor(entry.entryType, entry.sourceId);
+                  const rid = Number(entry.id);
+                  const isSel = layout.isSelected(rid);
                   const renderCell = (col: ColDef) => {
                     switch (col.key) {
+                      case "_sel":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <RowSelectCheckbox
+                              checked={isSel}
+                              onToggle={() => layout.toggleRow(rid)}
+                              ariaLabel={`تحديد القيد ${docLabel}`}
+                            />
+                          </td>
+                        );
                       case "_idx":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
                       case "doc":
@@ -563,7 +660,15 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
                   return (
                     <tr
                       key={entry.id}
-                      className="hover:bg-amber-50/60 transition-colors cursor-pointer"
+                      className={cn(
+                        "transition-colors cursor-pointer",
+                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                      )}
+                      onClick={(e) => {
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
+                        layout.toggleRow(rid);
+                      }}
                       onDoubleClick={() => navigate(`/accounting/journals/${entry.id}?tab=lines`)}
                       title={t("journalEntries.doubleClickHint")}
                     >
@@ -575,7 +680,11 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
               <tfoot className="sticky bottom-0">
                 <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
                   {visibleColumns.map((col, i) => {
-                    if (i === 0) {
+                    // _sel sits at index 0; the "الإجمالي:" label belongs in the next cell.
+                    if (col.key === "_sel") {
+                      return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                    }
+                    if (i === 1) {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
                     }
                     if (col.key === "debit") {
@@ -616,6 +725,27 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
             >
               {t("journalEntries.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk-delete confirm */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent dir={isRtl ? "rtl" : "ltr"}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("journalEntries.confirmDelete")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`سيتم محاولة حذف ${selectedIds.length} قيد. القيود المرحَّلة أو المرتبطة بمستند مصدر سيتم تجاوزها.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row-reverse gap-2">
+            <AlertDialogCancel>{t("journalEntries.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmBulkDelete}
+            >
+              {`${t("journalEntries.delete")} (${selectedIds.length})`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import {
   Plus, Trash2, ArrowDownCircle, CheckCircle, Printer, FileSpreadsheet, X,
+  Loader2, Send,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,8 @@ import {
   downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
 import {
-  AuditGridPagination, ColumnReorderPopover, FooterColorPicker, HeaderColorPicker,
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -40,6 +42,7 @@ const PAYMENT_LABEL: Record<string, string> = {
 };
 
 const COLUMNS: ColDef[] = [
+  { key: "_sel",     label: "",             type: "none", valueOf: () => "" },
   { key: "_idx",     label: "#",            type: "none", valueOf: () => "" },
   { key: "doc",      label: "رقم المستند",  type: "text", valueOf: (s) => s.docNumber ?? `CR-${s.id}` },
   { key: "date",     label: "التاريخ",      type: "text", valueOf: (s) => s.settlementDate ?? "" },
@@ -52,7 +55,7 @@ const COLUMNS: ColDef[] = [
   { key: "status",   label: "الحالة",       type: "text", valueOf: (s) => s.status === "posted" ? "مرحّلة" : "مسودة" },
   { key: "_act",     label: "إجراءات",      type: "none", valueOf: () => "" },
 ];
-const DATA_KEYS = COLUMNS.filter(c => c.key !== "_idx" && c.key !== "_act").map(c => c.key);
+const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
 const ALL_KEYS  = COLUMNS.map(c => c.key);
 
 export default function CustomerSettlement() {
@@ -160,6 +163,85 @@ export default function CustomerSettlement() {
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
 
+  /* ── Bulk-action helpers ─────────────────────────────────────────────── */
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Run a one-by-one bulk operation against the selected ids and surface
+  // an aggregated success/failure toast. We deliberately avoid Promise.all
+  // because the backend posts each settlement transactionally and racing
+  // multiple identical companies can hit ledger conflicts.
+  async function bulkRun(
+    ids: number[],
+    fn: (id: number) => Promise<any>,
+    successMsg: (ok: number) => string,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    for (const id of ids) {
+      try { await fn(id); ok++; } catch (e: any) { failures.push(e?.message || String(e)); }
+    }
+    setBulkBusy(false);
+    invalidate();
+    layout.clearSelection();
+    if (ok > 0) toast({ title: successMsg(ok) });
+    if (failures.length > 0) {
+      toast({
+        title: `فشل ${failures.length} عنصر`,
+        description: failures.slice(0, 3).join(" • "),
+        variant: "destructive",
+      });
+    }
+  }
+
+  // Settlements API only supports POST and DELETE on draft rows. We surface
+  // the available subset so the toolbar buttons can show the actionable count.
+  const selectedIds = useMemo(
+    () => Array.from(layout.selected).map((x) => Number(x)).filter((n) => Number.isFinite(n)),
+    [layout.selected],
+  );
+  const { selectedDrafts, selectedDeletable } = useMemo(() => {
+    const drafts: number[] = [];
+    const deletable: number[] = [];
+    const sset = new Set(selectedIds);
+    for (const s of (settlements as any[])) {
+      const id = Number(s.id);
+      if (!sset.has(id)) continue;
+      if (s.status === "draft") { drafts.push(id); deletable.push(id); }
+    }
+    return { selectedDrafts: drafts, selectedDeletable: deletable };
+  }, [selectedIds, settlements]);
+
+  async function bulkPost() {
+    if (selectedDrafts.length === 0) return;
+    if (!confirm(`ترحيل ${selectedDrafts.length} تحصيل؟`)) return;
+    await bulkRun(
+      selectedDrafts,
+      async (id) => {
+        const res = await fetch(`${API}/api/sales/customer-settlements/${id}/post`, { method: "PATCH", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `HTTP ${res.status}`); }
+      },
+      (ok) => `تم ترحيل ${ok} تحصيل`,
+    );
+  }
+  async function bulkDelete() {
+    if (selectedDeletable.length === 0) return;
+    const skipped = selectedIds.length - selectedDeletable.length;
+    const msg = skipped > 0
+      ? `حذف ${selectedDeletable.length} تحصيل (مسوّدة)؟ سيتم تجاهل ${skipped} تحصيل مرحَّل.`
+      : `حذف ${selectedDeletable.length} تحصيل؟`;
+    if (!confirm(msg)) return;
+    await bulkRun(
+      selectedDeletable,
+      async (id) => {
+        const res = await fetch(`${API}/api/sales/customer-settlements/${id}`, { method: "DELETE", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `HTTP ${res.status}`); }
+      },
+      (ok) => `تم حذف ${ok} تحصيل`,
+    );
+  }
+
   function reset() { setForm(EMPTY); setShowForm(false); }
 
   function handleSubmit(e: React.FormEvent) {
@@ -226,9 +308,10 @@ export default function CustomerSettlement() {
     const dataCols = layout.dataOrder
       .map((k) => COLUMNS.find((c) => c.key === k))
       .filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find((c) => c.key === "_sel")!;
     const idx = COLUMNS.find((c) => c.key === "_idx")!;
     const act = COLUMNS.find((c) => c.key === "_act")!;
-    return [idx, ...dataCols, act];
+    return [sel, idx, ...dataCols, act];
   }, [layout.dataOrder]);
   const reorderableCols = useMemo(
     () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
@@ -241,11 +324,11 @@ export default function CustomerSettlement() {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
     }
-    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filtered.map((s: any, i: number) => [
       i + 1,
       ...visibleColumns
-        .filter((c) => c.key !== "_idx" && c.key !== "_act")
+        .filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act")
         .map((c) => {
           const v = c.valueOf(s, ctx);
           return c.type === "num" ? Number(v).toFixed(2) : String(v);
@@ -396,6 +479,35 @@ export default function CustomerSettlement() {
             {filtered.length !== settlements.length && <span className="text-slate-400"> / {settlements.length}</span>}
           </span>
         </div>
+        {/* ── Bulk-action bar (visible only when one or more rows selected) ── */}
+        <AuditGridBulkBar
+          count={layout.selected.size}
+          onClear={layout.clearSelection}
+          busy={bulkBusy}
+        >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
+            onClick={bulkPost}
+            disabled={bulkBusy || selectedDrafts.length === 0}
+            title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} تحصيل`}
+          >
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            ترحيل ({selectedDrafts.length})
+          </Button>
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
+            onClick={bulkDelete}
+            disabled={bulkBusy || selectedDeletable.length === 0}
+            title={selectedDeletable.length === 0
+              ? "لا يمكن حذف التحصيلات المرحَّلة. التراجع غير مدعوم لهذه الشاشة."
+              : `حذف ${selectedDeletable.length} تحصيل (مسوّدة فقط)`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            حذف ({selectedDeletable.length})
+          </Button>
+        </AuditGridBulkBar>
       </div>
 
       {/* ── Audit-grid table ─────────────────────────────────────────────── */}
@@ -415,21 +527,41 @@ export default function CustomerSettlement() {
               </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {visibleColumns.map((col, idx) => (
-                    <th
-                      key={col.key}
-                      data-col-key={col.key}
-                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
-                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
-                    >
-                      {col.label}
-                      <span
-                        {...gripProps(col.key, idx)}
-                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
-                        style={{ insetInlineEnd: -4 }}
-                      />
-                    </th>
-                  ))}
+                  {visibleColumns.map((col, idx) => {
+                    if (col.key === "_sel") {
+                      const visibleIds = paged.map((s: any) => Number(s.id));
+                      return (
+                        <th
+                          key={col.key}
+                          data-col-key={col.key}
+                          style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                          className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px] w-9"
+                        >
+                          <HeaderSelectCheckbox
+                            allSelected={layout.isAllSelected(visibleIds)}
+                            someSelected={layout.isSomeSelected(visibleIds)}
+                            onToggle={() => layout.toggleAll(visibleIds)}
+                            disabled={visibleIds.length === 0 || bulkBusy}
+                          />
+                        </th>
+                      );
+                    }
+                    return (
+                      <th
+                        key={col.key}
+                        data-col-key={col.key}
+                        style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                        className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                      >
+                        {col.label}
+                        <span
+                          {...gripProps(col.key, idx)}
+                          className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                          style={{ insetInlineEnd: -4 }}
+                        />
+                      </th>
+                    );
+                  })}
                 </tr>
                 <tr className="bg-amber-50/80 border-b border-amber-200">
                   {visibleColumns.map((col) => (
@@ -450,8 +582,20 @@ export default function CustomerSettlement() {
               <tbody>
                 {paged.map((s: any, idx: number) => {
                   const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
+                  const rid = Number(s.id);
+                  const isSel = layout.isSelected(rid);
                   const renderCell = (col: ColDef) => {
                     switch (col.key) {
+                      case "_sel":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <RowSelectCheckbox
+                              checked={isSel}
+                              onToggle={() => layout.toggleRow(rid)}
+                              ariaLabel={`تحديد التحصيل ${s.docNumber ?? `CR-${rid}`}`}
+                            />
+                          </td>
+                        );
                       case "_idx":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
                       case "doc":
@@ -510,7 +654,19 @@ export default function CustomerSettlement() {
                     }
                   };
                   return (
-                    <tr key={s.id} className="hover:bg-amber-50/60 transition-colors">
+                    <tr
+                      key={s.id}
+                      className={cn(
+                        "transition-colors cursor-pointer",
+                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                      )}
+                      onClick={(e) => {
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
+                        layout.toggleRow(rid);
+                      }}
+                      title="اضغط لتحديد الصف"
+                    >
                       {visibleColumns.map(renderCell)}
                     </tr>
                   );
@@ -519,7 +675,11 @@ export default function CustomerSettlement() {
               <tfoot className="sticky bottom-0">
                 <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
                   {visibleColumns.map((col, i) => {
-                    if (i === 0) {
+                    // _sel sits at index 0 now; the "الإجمالي:" label belongs in the next cell.
+                    if (col.key === "_sel") {
+                      return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                    }
+                    if (i === 1) {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
                     }
                     if (col.key === "amount") {

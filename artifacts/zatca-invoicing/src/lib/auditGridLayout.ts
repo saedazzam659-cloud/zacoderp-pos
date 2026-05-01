@@ -138,6 +138,9 @@ export function downloadCsv(filename: string, header: string[], rows: (string | 
 }
 
 /* ─────────────────────────── Layout hook ───────────────────────────────── */
+/** A row id we'll track for selection. Numeric or string PKs both work. */
+export type RowId = number | string;
+
 export interface AuditGridLayout {
   /** Ordered list of "data" column keys (excluding fixed lead/tail). */
   dataOrder: string[];
@@ -169,6 +172,21 @@ export interface AuditGridLayout {
   resetLayout: () => void;
   /** Coerce an arbitrary number to the closest valid PageSize. */
   sanitizePageSize: (n: unknown) => PageSize;
+  /* ── Row selection (non-persistent) ──
+     Tracked as a Set so toggle/has() are O(1). NOT persisted to LS — a fresh
+     visit (or tenant switch) starts with an empty selection, matching how
+     SalesAuditGrid behaves. */
+  selected: Set<RowId>;
+  setSelected: (next: Set<RowId> | ((prev: Set<RowId>) => Set<RowId>)) => void;
+  isSelected: (id: RowId) => boolean;
+  toggleRow: (id: RowId) => void;
+  /** Toggle every id in `ids` (typically the FILTERED set). */
+  toggleAll: (ids: readonly RowId[]) => void;
+  /** True iff every id in `ids` is currently selected (and `ids` is non-empty). */
+  isAllSelected: (ids: readonly RowId[]) => boolean;
+  /** True iff some-but-not-all of `ids` are selected (indeterminate state). */
+  isSomeSelected: (ids: readonly RowId[]) => boolean;
+  clearSelection: () => void;
 }
 
 export interface AuditGridLayoutOpts {
@@ -262,6 +280,8 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
   /** colFilters are intentionally NOT persisted — they reset every visit. */
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
+  /** Selection: non-persistent, cleared on tenant switch. */
+  const [selected, setSelected] = useState<Set<RowId>>(() => new Set());
 
   const theme = HEADER_THEMES[headerColor];
   const footerTheme = FOOTER_THEMES[footerColor];
@@ -301,6 +321,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
         setPageSize(sanitizePageSize(parsed?.pageSize));
         setColWidths(sanitizeColWidths(parsed?.colWidths));
         setColFilters({});
+        setSelected(new Set());
         setPage(1);
         return;
       }
@@ -310,6 +331,7 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
       setPageSize(DEFAULT_PAGE_SIZE);
       setColWidths({});
       setColFilters({});
+      setSelected(new Set());
       setPage(1);
     } catch { /* ignore corrupt LS */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -337,8 +359,39 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     setPageSize(DEFAULT_PAGE_SIZE);
     setColWidths({});
     setColFilters({});
+    setSelected(new Set());
     setPage(1);
   }
+
+  /* ── Selection helpers ── */
+  const isSelected = (id: RowId) => selected.has(id);
+  function toggleRow(id: RowId) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  /** Toggle a *batch* of ids: if every id is already selected, deselect them
+      all; otherwise add the missing ones. Mirrors Excel-style "select-all". */
+  function toggleAll(ids: readonly RowId[]) {
+    if (ids.length === 0) return;
+    setSelected((prev) => {
+      const allHave = ids.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allHave) {
+        for (const id of ids) next.delete(id);
+      } else {
+        for (const id of ids) next.add(id);
+      }
+      return next;
+    });
+  }
+  const isAllSelected = (ids: readonly RowId[]) =>
+    ids.length > 0 && ids.every((id) => selected.has(id));
+  const isSomeSelected = (ids: readonly RowId[]) =>
+    ids.some((id) => selected.has(id)) && !isAllSelected(ids);
+  function clearSelection() { setSelected(new Set()); }
 
   return {
     dataOrder, setDataOrder, moveCol,
@@ -349,6 +402,8 @@ export function useAuditGridLayout(opts: AuditGridLayoutOpts): AuditGridLayout {
     colFilters, setColFilter, clearColFilters,
     hasCustomLayout, resetLayout,
     sanitizePageSize,
+    selected, setSelected, isSelected, toggleRow, toggleAll,
+    isAllSelected, isSomeSelected, clearSelection,
   };
 }
 

@@ -7,7 +7,9 @@
  * Keep these visually identical to the originals in SalesAuditGrid so the
  * cross-screen UX stays consistent.
  */
-import { ArrowDown, ArrowUp, Check, CheckCircle2, Palette, RotateCw, Settings2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { useEffect, useRef } from "react";
+import { ArrowDown, ArrowUp, Check, CheckCircle2, Palette, RotateCw, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -349,6 +351,106 @@ export function AuditGridPagination({
             onClick={() => setPage(totalPages)} disabled={page >= totalPages} aria-label="آخر صفحة" title="آخر صفحة">»</Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── Selection helpers ────────────────────────── */
+
+interface RowSelectCheckboxProps {
+  checked: boolean;
+  onToggle: () => void;
+  ariaLabel: string;
+}
+
+/** Single-row checkbox cell content. Stops click bubbling so clicking the
+    checkbox does NOT also fire the row's onClick toggle (which would
+    immediately undo the change). */
+export function RowSelectCheckbox({ checked, onToggle, ariaLabel }: RowSelectCheckboxProps) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onToggle}
+      onClick={(e) => e.stopPropagation()}
+      className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
+      aria-label={ariaLabel}
+    />
+  );
+}
+
+interface HeaderSelectCheckboxProps {
+  allSelected: boolean;
+  someSelected: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+}
+
+/** Header checkbox supporting the indeterminate "some-selected" state.
+    HTMLInputElement.indeterminate is a property — not a React prop — so we
+    sync it via a ref every render. */
+export function HeaderSelectCheckbox({
+  allSelected, someSelected, onToggle, disabled, ariaLabel = "تحديد كل الأسطر",
+}: HeaderSelectCheckboxProps) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = someSelected;
+  }, [someSelected]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={allSelected}
+      onChange={onToggle}
+      onClick={(e) => e.stopPropagation()}
+      disabled={disabled}
+      className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
+      aria-label={ariaLabel}
+      title={allSelected ? "إلغاء تحديد الكل" : "تحديد الكل"}
+    />
+  );
+}
+
+interface BulkBarProps {
+  /** Number of currently selected rows. The bar hides itself when 0. */
+  count: number;
+  /** Action buttons (post / unpost / delete / etc). Rendered before the spacer. */
+  children: ReactNode;
+  /** Called when the user clicks "إلغاء التحديد". */
+  onClear: () => void;
+  /** When true, the clear button is disabled (e.g. mid-bulk-mutation). */
+  busy?: boolean;
+}
+
+/** Green action bar shown above the grid when one or more rows are selected.
+    Mirrors the bar in SalesAuditGrid. Action buttons are passed in by each
+    screen so the available operations match what the backend supports. */
+export function AuditGridBulkBar({ count, children, onClear, busy }: BulkBarProps) {
+  if (count === 0) return null;
+  return (
+    <div
+      className="bg-emerald-50 border-t border-emerald-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs animate-in fade-in slide-in-from-top-1"
+      data-testid="audit-grid-bulk-bar"
+    >
+      <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+        <CheckCircle2 className="h-4 w-4" />
+        {count} محدَّد
+      </span>
+      <div className="h-5 w-px bg-emerald-300 mx-1" />
+      {children}
+      <div className="flex-1" />
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 text-xs text-slate-600 hover:bg-slate-100"
+        onClick={onClear}
+        disabled={busy}
+      >
+        <X className="h-3.5 w-3.5 me-1" />
+        إلغاء التحديد
+      </Button>
     </div>
   );
 }

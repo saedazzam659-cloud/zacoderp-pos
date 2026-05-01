@@ -14,12 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, X } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, X, Loader2, Send } from "lucide-react";
 import {
   downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
 import {
-  AuditGridPagination, ColumnReorderPopover, FooterColorPicker, HeaderColorPicker,
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
 import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -299,6 +300,24 @@ export default function SalesReturns() {
     onSuccess: () => { invalidate(); toast({ title: t("salesReturns.toastDeleted") }); },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
   });
+
+  /* ── Bulk action helpers ──
+     Iterate sequentially and partition successes from failures so we can
+     show ONE toast at the end ("ok of N succeeded") instead of N toasts. */
+  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const [bulkBusy, setBulkBusy] = useState(false);
+  async function bulkRun(
+    ids: number[],
+    perId: (id: number) => Promise<void>,
+  ): Promise<{ ok: number; failed: Array<{ id: number; error: string }> }> {
+    let ok = 0;
+    const failed: Array<{ id: number; error: string }> = [];
+    for (const id of ids) {
+      try { await perId(id); ok++; }
+      catch (e: any) { failed.push({ id, error: e?.message ?? "خطأ" }); }
+    }
+    return { ok, failed };
+  }
 
   const acctPrefsKey = `sales-return-accts:${cid ?? "all"}`;
   function loadAcctDefaults() {
@@ -636,6 +655,7 @@ export default function SalesReturns() {
   type ColType = "text" | "num" | "none";
   interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
   const COLUMNS: ColDef[] = [
+    { key: "_sel",     label: "",                                type: "none", valueOf: () => "" },
     { key: "_idx",     label: "#",                              type: "none", valueOf: () => "" },
     { key: "doc",      label: t("salesReturns.colReturnNumber"), type: "text", valueOf: (r) => r.docNumber ?? `SR-${r.id}` },
     { key: "date",     label: t("salesReturns.date"),            type: "text", valueOf: (r) => r.returnDate ?? "" },
@@ -649,7 +669,7 @@ export default function SalesReturns() {
     { key: "status",   label: t("salesReturns.colStatus"),       type: "text", valueOf: (r) => statusLabel(r.status) },
     { key: "_act",     label: t("salesReturns.colActions"),      type: "none", valueOf: () => "" },
   ];
-  const DATA_KEYS = COLUMNS.filter(c => c.key !== "_idx" && c.key !== "_act").map(c => c.key);
+  const DATA_KEYS = COLUMNS.filter(c => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map(c => c.key);
   const ALL_KEYS  = COLUMNS.map(c => c.key);
 
   const [tableSearch, setTableSearch] = useState("");
@@ -713,9 +733,10 @@ export default function SalesReturns() {
     const dataCols = layout.dataOrder
       .map((k) => COLUMNS.find((c) => c.key === k))
       .filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find((c) => c.key === "_sel")!;
     const idx = COLUMNS.find((c) => c.key === "_idx")!;
     const act = COLUMNS.find((c) => c.key === "_act")!;
-    return [idx, ...dataCols, act];
+    return [sel, idx, ...dataCols, act];
   }, [layout.dataOrder, COLUMNS]);
   const reorderableCols = useMemo(
     () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
@@ -727,11 +748,11 @@ export default function SalesReturns() {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
       return;
     }
-    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
     const rows = filteredReturns.map((r: any, i: number) => [
       i + 1,
       ...visibleColumns
-        .filter((c) => c.key !== "_idx" && c.key !== "_act")
+        .filter((c) => c.key !== "_sel" && c.key !== "_idx" && c.key !== "_act")
         .map((c) => {
           const v = c.valueOf(r);
           return c.type === "num" ? Number(v).toFixed(2) : String(v);
@@ -741,7 +762,83 @@ export default function SalesReturns() {
     toast({ title: "تم تصدير ملف CSV بنجاح" });
   }
 
-  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters } = layout;
+  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection } = layout;
+
+  /* ── Bulk action handlers (post / unpost / delete) ──
+     Partition selected rows by status because not every action applies to
+     every row (e.g. you can only post drafts, can only unpost posted ones,
+     can't delete posted ones — same business rules as SalesAuditGrid). */
+  const allFilteredIds: number[] = useMemo(
+    () => filteredReturns.map((r: any) => Number(r.id)),
+    [filteredReturns],
+  );
+  const selectedReturns = useMemo(
+    () => (returns_ as any[]).filter((r) => isSelected(Number(r.id))),
+    [returns_, isSelected],
+  );
+  const selectedDrafts   = selectedReturns.filter((r) => r.status !== "posted");
+  const selectedPosted   = selectedReturns.filter((r) => r.status === "posted");
+  const selectedDeletable = selectedReturns.filter((r) => r.status !== "posted");
+
+  async function bulkPost() {
+    const ids = selectedDrafts.map((r) => Number(r.id));
+    if (ids.length === 0) {
+      toast({ title: "لا توجد مسوّدات ضمن المحدَّد", variant: "destructive" });
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/sales/sales-returns/${id}/post`, { method: "PATCH", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      invalidate();
+      if (failed.length === 0) toast({ title: `تم ترحيل ${ok} مرتجع بنجاح` });
+      else toast({ title: `ترحيل: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function bulkUnpost() {
+    const ids = selectedPosted.map((r) => Number(r.id));
+    if (ids.length === 0) {
+      toast({ title: "لا توجد مرتجعات مرحَّلة ضمن المحدَّد", variant: "destructive" });
+      return;
+    }
+    if (!window.confirm(`فك ترحيل ${ids.length} مرتجع؟ سيتم حذف القيود المحاسبية المرتبطة.`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/sales/sales-returns/${id}/unpost`, { method: "PATCH", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      invalidate();
+      if (failed.length === 0) toast({ title: `تم فك ترحيل ${ok} مرتجع` });
+      else toast({ title: `فك الترحيل: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function bulkDelete() {
+    const ids = selectedDeletable.map((r) => Number(r.id));
+    if (ids.length === 0) {
+      toast({ title: "لا يمكن حذف المرتجعات المرحَّلة. فك الترحيل أولاً.", variant: "destructive" });
+      return;
+    }
+    if (!window.confirm(`حذف ${ids.length} مرتجع نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setBulkBusy(true);
+    try {
+      const { ok, failed } = await bulkRun(ids, async (id) => {
+        const res = await fetch(`${API}/api/sales/sales-returns/${id}`, { method: "DELETE", headers });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.error ?? `HTTP ${res.status}`); }
+      });
+      invalidate();
+      if (failed.length === 0) toast({ title: `تم حذف ${ok} مرتجع` });
+      else toast({ title: `حذف: ${ok} نجح، ${failed.length} فشل`, description: failed.slice(0, 3).map(f => f.error).join("\n"), variant: "destructive" });
+      clearSelection();
+    } finally { setBulkBusy(false); }
+  }
 
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6">
@@ -1115,6 +1212,49 @@ export default function SalesReturns() {
             {filteredReturns.length !== returns_.length && <span className="text-slate-400"> / {returns_.length}</span>}
           </span>
         </div>
+        {/* ── Bulk-action bar (visible only when one or more rows selected) ── */}
+        <AuditGridBulkBar
+          count={layout.selected.size}
+          onClear={clearSelection}
+          busy={bulkBusy}
+        >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
+            onClick={bulkPost}
+            disabled={bulkBusy || selectedDrafts.length === 0}
+            title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} مرتجع`}
+          >
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            ترحيل ({selectedDrafts.length})
+          </Button>
+          <Button
+            type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
+            onClick={bulkUnpost}
+            disabled={bulkBusy || selectedPosted.length === 0 || !isAdmin}
+            title={!isAdmin
+              ? "فك الترحيل متاح للمدير فقط"
+              : selectedPosted.length === 0
+                ? "لا توجد مرتجعات مرحَّلة ضمن المحدَّد"
+                : `فك ترحيل ${selectedPosted.length} مرتجع`}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            فك الترحيل ({selectedPosted.length})
+          </Button>
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
+            onClick={bulkDelete}
+            disabled={bulkBusy || selectedDeletable.length === 0}
+            title={selectedDeletable.length === 0
+              ? "لا يمكن حذف المرتجعات المرحَّلة. فك الترحيل أولاً."
+              : `حذف ${selectedDeletable.length} مرتجع (مسوّدة فقط)`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            حذف ({selectedDeletable.length})
+          </Button>
+        </AuditGridBulkBar>
       </div>
 
       {/* ── Audit-grid table ─────────────────────────────────────────────── */}
@@ -1143,12 +1283,21 @@ export default function SalesReturns() {
                       style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
                       className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
                     >
-                      {col.label}
-                      <span
-                        {...gripProps(col.key, idx)}
-                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
-                        style={{ insetInlineEnd: -4 }}
-                      />
+                      {col.key === "_sel" ? (
+                        <HeaderSelectCheckbox
+                          allSelected={isAllSelected(allFilteredIds)}
+                          someSelected={isSomeSelected(allFilteredIds)}
+                          onToggle={() => toggleAll(allFilteredIds)}
+                          disabled={allFilteredIds.length === 0 || bulkBusy}
+                        />
+                      ) : col.label}
+                      {col.key !== "_sel" && (
+                        <span
+                          {...gripProps(col.key, idx)}
+                          className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                          style={{ insetInlineEnd: -4 }}
+                        />
+                      )}
                     </th>
                   ))}
                 </tr>
@@ -1172,8 +1321,20 @@ export default function SalesReturns() {
                 {pagedReturns.map((r: any, idx: number) => {
                   const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
                   const stCls = STATUS_CLS[r.status] ?? STATUS_CLS.draft;
+                  const rid = Number(r.id);
+                  const isSel = isSelected(rid);
                   const renderCell = (col: ColDef) => {
                     switch (col.key) {
+                      case "_sel":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <RowSelectCheckbox
+                              checked={isSel}
+                              onToggle={() => toggleRow(rid)}
+                              ariaLabel={`تحديد المرتجع ${r.docNumber ?? `SR-${rid}`}`}
+                            />
+                          </td>
+                        );
                       case "_idx":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
                       case "doc":
@@ -1262,9 +1423,18 @@ export default function SalesReturns() {
                   return (
                     <tr
                       key={r.id}
-                      className="hover:bg-amber-50/60 transition-colors cursor-pointer"
+                      className={cn(
+                        "transition-colors cursor-pointer",
+                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                      )}
+                      onClick={(e) => {
+                        // Skip toggle when the click landed on an interactive child.
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
+                        toggleRow(rid);
+                      }}
                       onDoubleClick={() => editReturn(r.id)}
-                      title={r.status === "draft" ? t("salesReturns.doubleClickEdit") : t("salesReturns.doubleClickView")}
+                      title="اضغط لتحديد الصف، أو مرتين لفتح المرتجع"
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>
@@ -1274,7 +1444,12 @@ export default function SalesReturns() {
               <tfoot className="sticky bottom-0">
                 <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
                   {visibleColumns.map((col, i) => {
-                    if (i === 0) {
+                    // The "الإجمالي:" label sits in the FIRST non-checkbox cell.
+                    // We added _sel as the new column 0, so the label now belongs at i === 1.
+                    if (col.key === "_sel") {
+                      return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                    }
+                    if (i === 1) {
                       return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
                     }
                     if (col.key === "subtotal") {
