@@ -253,7 +253,7 @@ export default function JournalEntries() {
   );
 
   /* ── Existing exports (kept verbatim so PDF / print look identical) ── */
-  const buildRows = () => filtered.map((e: any) => ({
+  const buildRows = (source: any[] = filtered) => source.map((e: any) => ({
     [COL_DOC_L]:    e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`,
     [COL_DATE_L]:   e.entryDate ?? "",
     [COL_TYPE_L]:   ENTRY_TYPES[e.entryType] ?? e.entryType ?? "",
@@ -275,8 +275,10 @@ export default function JournalEntries() {
   const escapeHtml = (s: any) =>
     String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
-  const buildPrintHtml = () => {
-    const rows = buildRows();
+  const buildPrintHtml = (source: any[] = filtered) => {
+    const rows = buildRows(source);
+    const totalDebitOfRows  = source.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
+    const totalCreditOfRows = source.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
     const cols = Object.keys(rows[0] ?? { [COL_DOC_L]: "", [COL_DATE_L]: "", [COL_TYPE_L]: "", [COL_DESC_L]: "", [COL_DEBIT_L]: "", [COL_CREDIT_L]: "", [COL_STATUS_L]: "" });
     const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
     const dir = isRtl ? "rtl" : "ltr";
@@ -312,8 +314,8 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 <div class="h">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
 <div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${today} — ${escapeHtml(t("journalEntries.entriesCount", { count: rows.length }))}</div></div>
 <div class="totals">
-  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${totalDebitAll.toFixed(2)}</b></span>
-  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${totalCreditAll.toFixed(2)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${totalDebitOfRows.toFixed(2)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${totalCreditOfRows.toFixed(2)}</b></span>
 </div>
 <table><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
 <tbody>${rows.map(r => `<tr>${cols.map(c => {
@@ -331,6 +333,17 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
 
   const handleExportPDF = () => openPrintWindow(buildPrintHtml());
   const handlePrint    = () => openPrintWindow(buildPrintHtml());
+
+  /* ── Print only the rows the user has selected via checkboxes ── */
+  const handleBulkPrint = () => {
+    const ids = Array.from(layout.selected);
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    // Preserve the on-screen order so the printout matches what the user sees.
+    const selectedRows = (entries as any[]).filter((e: any) => idSet.has(e.id));
+    if (selectedRows.length === 0) return;
+    openPrintWindow(buildPrintHtml(selectedRows));
+  };
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
   function exportCsv() {
@@ -480,6 +493,16 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
           onClear={layout.clearSelection}
           busy={bulkBusy}
         >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
+            onClick={handleBulkPrint}
+            disabled={selectedIds.length === 0}
+            title={`${t("accountingReports.print")} (${selectedIds.length})`}
+          >
+            <Printer className="h-3.5 w-3.5" />
+            {t("accountingReports.print")} ({selectedIds.length})
+          </Button>
           <Button
             type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
