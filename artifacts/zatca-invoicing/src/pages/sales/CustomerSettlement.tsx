@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -9,10 +9,18 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, ArrowDownCircle, CheckCircle, Printer } from "lucide-react";
+import {
+  Plus, Trash2, ArrowDownCircle, CheckCircle, Printer, FileSpreadsheet, X,
+} from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
+import {
+  downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
+} from "@/lib/auditGridLayout";
+import {
+  AuditGridPagination, ColumnReorderPopover, FooterColorPicker, HeaderColorPicker,
+} from "@/components/auditGrid/AuditGridControls";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -20,10 +28,38 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const EMPTY = { docNumber: "", settlementDate: today(), customerId: "", paymentMethod: "bank", accountId: "", amount: "", currencyCode: "SAR", exchangeRate: "1", notes: "" };
 
+/* Column descriptors for the audit-grid table. `_idx` and `_act` are pinned
+   at the start/end and are not part of the reorderable data set. */
+type ColDef = { key: string; label: string; type: "text" | "num" | "none"; valueOf: (s: any, ctx: Ctx) => string | number };
+type Ctx = { cusMap: Record<number, string>; accMap: Record<number, string> };
+
+const PAYMENT_LABEL: Record<string, string> = {
+  bank:  "تحويل بنكي",
+  cash:  "نقدي",
+  check: "شيك",
+};
+
+const COLUMNS: ColDef[] = [
+  { key: "_idx",     label: "#",            type: "none", valueOf: () => "" },
+  { key: "doc",      label: "رقم المستند",  type: "text", valueOf: (s) => s.docNumber ?? `CR-${s.id}` },
+  { key: "date",     label: "التاريخ",      type: "text", valueOf: (s) => s.settlementDate ?? "" },
+  { key: "customer", label: "العميل",       type: "text", valueOf: (s, c) => c.cusMap[s.customerId] ?? "" },
+  { key: "payment",  label: "طريقة الدفع",  type: "text", valueOf: (s) => PAYMENT_LABEL[s.paymentMethod] ?? s.paymentMethod ?? "" },
+  { key: "account",  label: "الحساب",       type: "text", valueOf: (s, c) => c.accMap[s.accountId] ?? "" },
+  { key: "amount",   label: "المبلغ",       type: "num",  valueOf: (s) => Number(s.amount ?? 0) },
+  { key: "currency", label: "العملة",       type: "text", valueOf: (s) => s.currencyCode ?? "" },
+  { key: "notes",    label: "ملاحظات",      type: "text", valueOf: (s) => s.notes ?? "" },
+  { key: "status",   label: "الحالة",       type: "text", valueOf: (s) => s.status === "posted" ? "مرحّلة" : "مسودة" },
+  { key: "_act",     label: "إجراءات",      type: "none", valueOf: () => "" },
+];
+const DATA_KEYS = COLUMNS.filter(c => c.key !== "_idx" && c.key !== "_act").map(c => c.key);
+const ALL_KEYS  = COLUMNS.map(c => c.key);
+
 export default function CustomerSettlement() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
   const qc = useQueryClient();
   const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
   const authH   = { Authorization: `Bearer ${token}` };
@@ -31,6 +67,16 @@ export default function CustomerSettlement() {
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState<any>(EMPTY);
+  const [search, setSearch]     = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted">("all");
+
+  const layout = useAuditGridLayout({
+    screenSlug: "customerSettlementAuditGrid",
+    cid,
+    dataKeys: DATA_KEYS,
+    allColKeys: ALL_KEYS,
+  });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
 
   const { data: settlements = [], isLoading } = useQuery<any[]>({
     queryKey: ["customer-settlements", cid],
@@ -90,9 +136,6 @@ export default function CustomerSettlement() {
         try { printOne(saved, receiptTemplate); } catch { /* ignore popup-blocker noise */ }
       }
       reset();
-      // Reflect whether the auto-print preference actually fired in the
-      // toast wording. Posting is a separate row action here, so we
-      // never set `posted: true` on the save toast.
       toast({ title: getSaveToastTitle(t, { posted: false, printed: autoPrintReceipt && !!saved }) });
     },
     onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
@@ -126,10 +169,93 @@ export default function CustomerSettlement() {
 
   const customerItems = [{ value: "", label: "— اختر العميل —" }, ...customers.map((c: any) => ({ value: String(c.id), label: c.nameAr ?? c.nameEn ?? `#${c.id}` }))];
   const accountItems  = [{ value: "", label: "— حساب البنك/الخزنة —" }, ...accounts.filter((a: any) => a.isPosting).map((a: any) => ({ value: String(a.id), label: `${a.code} — ${a.nameAr}` }))];
-  const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
-  const accMap = Object.fromEntries(accounts.map((a: any) => [a.id, `${a.code} — ${a.nameAr}`]));
+  const cusMap: Record<number, string> = useMemo(
+    () => Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn ?? ""])),
+    [customers],
+  );
+  const accMap: Record<number, string> = useMemo(
+    () => Object.fromEntries(accounts.map((a: any) => [a.id, `${a.code} — ${a.nameAr}`])),
+    [accounts],
+  );
+  const ctx: Ctx = { cusMap, accMap };
 
-  const totalPosted = settlements.filter((s: any) => s.status === "posted").reduce((t: number, s: any) => t + Number(s.amount || 0), 0);
+  /* ── Filtering ── */
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (settlements as any[]).filter((s) => {
+      if (statusFilter !== "all" && s.status !== statusFilter) return false;
+      if (q) {
+        const hay = [
+          s.docNumber, `CR-${s.id}`, s.settlementDate, cusMap[s.customerId],
+          accMap[s.accountId], s.notes,
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      // Per-column filters.
+      for (const col of COLUMNS) {
+        const f = layout.colFilters[col.key];
+        if (!f) continue;
+        if (!matchCol(col.valueOf(s, ctx), f, col.type)) return false;
+      }
+      return true;
+    });
+  }, [settlements, search, statusFilter, layout.colFilters, cusMap, accMap, ctx]);
+
+  /* ── Pagination ── */
+  const { pageSize, page, setPage } = layout;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  if (safePage !== page) setPage(safePage);
+  const paged = useMemo(
+    () => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filtered, pageSize, safePage],
+  );
+  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd   = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+
+  /* ── Totals ── */
+  const totals = useMemo(() => {
+    return filtered.reduce(
+      (a, s: any) => { a.amount += Number(s.amount ?? 0); return a; },
+      { amount: 0 },
+    );
+  }, [filtered]);
+
+  /* ── Visible columns in the user's saved order ── */
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder
+      .map((k) => COLUMNS.find((c) => c.key === k))
+      .filter((c): c is ColDef => !!c);
+    const idx = COLUMNS.find((c) => c.key === "_idx")!;
+    const act = COLUMNS.find((c) => c.key === "_act")!;
+    return [idx, ...dataCols, act];
+  }, [layout.dataOrder]);
+  const reorderableCols = useMemo(
+    () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
+    [],
+  );
+
+  /* ── CSV export ── */
+  function exportCsv() {
+    if (filtered.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const rows = filtered.map((s: any, i: number) => [
+      i + 1,
+      ...visibleColumns
+        .filter((c) => c.key !== "_idx" && c.key !== "_act")
+        .map((c) => {
+          const v = c.valueOf(s, ctx);
+          return c.type === "num" ? Number(v).toFixed(2) : String(v);
+        }),
+    ]);
+    downloadCsv(`customer-settlements-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+    toast({ title: "تم تصدير ملف CSV بنجاح" });
+  }
+
+  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters } = layout;
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -208,61 +334,213 @@ export default function CustomerSettlement() {
         </div>
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <p className="text-xs text-muted-foreground mb-1">إجمالي المُحصَّل</p>
-          <p className="text-xl font-bold font-mono text-primary">{fmt(totalPosted)}</p>
+          <p className="text-xl font-bold font-mono text-primary">{fmt(totals.amount)}</p>
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-        {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل...</div>
-          : settlements.length === 0 ? <div className="p-12 text-center text-muted-foreground text-sm">لا توجد تحصيلات بعد</div>
-          : (
-          <table className="w-full text-sm">
-            <thead><tr className="bg-muted/50 border-b">
-              {["رقم المستند","التاريخ","العميل","طريقة الدفع","الحساب","المبلغ","العملة","الحالة","إجراءات"].map(h =>
-                <th key={h} className="text-right px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {settlements.map((s: any) => (
-                <tr key={s.id} className="border-b hover:bg-muted/30">
-                  <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{s.docNumber ?? `CR-${s.id}`}</td>
-                  <td className="px-3 py-2.5">{s.settlementDate}</td>
-                  <td className="px-3 py-2.5">{cusMap[s.customerId] ?? "—"}</td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {s.paymentMethod === "bank" ? "تحويل بنكي" : s.paymentMethod === "cash" ? "نقدي" : "شيك"}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{accMap[s.accountId] ?? "—"}</td>
-                  <td className="px-3 py-2.5 font-mono font-semibold">{fmt(s.amount)}</td>
-                  <td className="px-3 py-2.5">{s.currencyCode}</td>
-                  <td className="px-3 py-2.5">
-                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
-                      s.status === "posted" ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200"
-                    )}>{s.status === "posted" ? "مرحّلة" : "مسودة"}</span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="طباعة سند القبض"
-                        onClick={() => printOne(s)}>
-                        <Printer className="h-3.5 w-3.5" />
-                      </Button>
-                      {s.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title="ترحيل"
-                          onClick={() => { if (confirm("ترحيل التحصيل؟")) postMut.mutate(s.id); }}>
-                          <CheckCircle className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {s.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={() => { if (confirm("حذف التحصيل؟")) deleteMut.mutate(s.id); }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </td>
+      {/* ── Audit-grid toolbar ───────────────────────────────────────────── */}
+      <div className={cn("rounded-t-lg overflow-hidden border shadow-sm transition-colors", theme.border)}>
+        <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)}>
+          <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+            <FileSpreadsheet className="h-4 w-4 opacity-90" />
+            جرد سندات تحصيل العملاء
+          </div>
+          <div className="flex items-center gap-1.5">
+            <HeaderColorPicker layout={layout} isRtl={isRtl} />
+            <FooterColorPicker layout={layout} isRtl={isRtl} />
+            <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportCsv}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              تصدير CSV
+            </Button>
+          </div>
+        </div>
+
+        {/* Filter strip */}
+        <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+          <Input
+            placeholder="بحث (مستند، عميل، حساب، ملاحظات)…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 text-xs w-56"
+          />
+          <div className="flex gap-1">
+            {(["all", "draft", "posted"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "px-2 py-1 rounded text-[11px] font-medium border transition-colors",
+                  statusFilter === s
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
+                )}
+              >
+                {s === "all" ? "الكل" : s === "draft" ? "مسودة" : "مرحّلة"}
+              </button>
+            ))}
+          </div>
+          {Object.values(colFilters).some((v) => v) && (
+            <Button type="button" size="sm" variant="ghost"
+              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              <X className="h-3.5 w-3.5 me-1" />
+              مسح فلاتر الأعمدة
+            </Button>
+          )}
+          <div className="flex-1" />
+          <span className="text-slate-700 font-medium">
+            {filtered.length} سند
+            {filtered.length !== settlements.length && <span className="text-slate-400"> / {settlements.length}</span>}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Audit-grid table ─────────────────────────────────────────────── */}
+      <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
+        <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
+          {isLoading ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">جاري التحميل…</div>
+          ) : filtered.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">لا توجد تحصيلات ضمن التصفية الحالية</div>
+          ) : (
+            <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+              <colgroup>
+                {visibleColumns.map((col) => (
+                  <col key={col.key} data-col-key={col.key}
+                    style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined} />
+                ))}
+              </colgroup>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                  {visibleColumns.map((col, idx) => (
+                    <th
+                      key={col.key}
+                      data-col-key={col.key}
+                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                    >
+                      {col.label}
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                        style={{ insetInlineEnd: -4 }}
+                      />
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+                <tr className="bg-amber-50/80 border-b border-amber-200">
+                  {visibleColumns.map((col) => (
+                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
+                      {col.type === "none" ? null : (
+                        <Input
+                          value={colFilters[col.key] ?? ""}
+                          onChange={(e) => setColFilter(col.key, e.target.value)}
+                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
+                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
+                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
+                        />
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((s: any, idx: number) => {
+                  const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
+                  const renderCell = (col: ColDef) => {
+                    switch (col.key) {
+                      case "_idx":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
+                      case "doc":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-primary text-center">{s.docNumber ?? `CR-${s.id}`}</td>;
+                      case "date":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">{s.settlementDate}</td>;
+                      case "customer":
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate", colWidths.customer ? "" : "max-w-[200px]")} title={cusMap[s.customerId] ?? ""}>{cusMap[s.customerId] ?? "—"}</td>;
+                      case "payment":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{PAYMENT_LABEL[s.paymentMethod] ?? s.paymentMethod}</td>;
+                      case "account":
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate text-slate-600", colWidths.account ? "" : "max-w-[200px]")} title={accMap[s.accountId] ?? ""}>{accMap[s.accountId] ?? "—"}</td>;
+                      case "amount":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(s.amount)}</td>;
+                      case "currency":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{s.currencyCode}</td>;
+                      case "notes":
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 text-slate-600 truncate", colWidths.notes ? "" : "max-w-[160px]")} title={s.notes ?? ""}>{s.notes ?? "—"}</td>;
+                      case "status":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border",
+                              s.status === "posted"
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                : "bg-amber-100 text-amber-800 border-amber-300",
+                            )}>
+                              {s.status === "posted" ? "مرحّلة" : "مسودة"}
+                            </span>
+                          </td>
+                        );
+                      case "_act":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" title="طباعة سند القبض"
+                                onClick={(e) => { e.stopPropagation(); printOne(s); }}>
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              {s.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50" title="ترحيل"
+                                  onClick={(e) => { e.stopPropagation(); if (confirm("ترحيل التحصيل؟")) postMut.mutate(s.id); }}>
+                                  <CheckCircle className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {s.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                                  onClick={(e) => { e.stopPropagation(); if (confirm("حذف التحصيل؟")) deleteMut.mutate(s.id); }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      default:
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
+                    }
+                  };
+                  return (
+                    <tr key={s.id} className="hover:bg-amber-50/60 transition-colors">
+                      {visibleColumns.map(renderCell)}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="sticky bottom-0">
+                <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
+                  {visibleColumns.map((col, i) => {
+                    if (i === 0) {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
+                    }
+                    if (col.key === "amount") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.amount)}</td>;
+                    }
+                    return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                  })}
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filtered.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel="سند"
+        />
       </div>
     </div>
   );

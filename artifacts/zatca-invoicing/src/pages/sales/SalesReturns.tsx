@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useAutoFocusOnMount } from "@/hooks/useAutoFocusOnMount";
 import { useEnterNavContainer } from "@/lib/enterNav";
 import { useEnterNavigation } from "@/hooks/useEnterNavigation";
@@ -14,7 +14,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, X } from "lucide-react";
+import {
+  downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
+} from "@/lib/auditGridLayout";
+import {
+  AuditGridPagination, ColumnReorderPopover, FooterColorPicker, HeaderColorPicker,
+} from "@/components/auditGrid/AuditGridControls";
 import SalesPrintModal from "./SalesPrintModal";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
@@ -618,9 +624,124 @@ export default function SalesReturns() {
   ];
   const itemComboItems = [{ value: "", label: t("salesReturns.selectItem") }, ...inventoryItems.map((i: any) => ({ value: String(i.id), label: i.code ? `${i.code} — ${i.nameAr}` : i.nameAr }))];
   const cusMap = Object.fromEntries(customers.map((c: any) => [c.id, c.nameAr ?? c.nameEn]));
+  const invMap = useMemo(
+    () => Object.fromEntries((invoices as any[]).map((i: any) => [i.id, i.docNumber ?? `SI-${i.id}`])),
+    [invoices],
+  );
 
   const statusLabel = (s: string) =>
     s === "posted" ? t("status.posted") : t("status.draft");
+
+  /* ── Audit-grid column model ────────────────────────────────────────── */
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number; }
+  const COLUMNS: ColDef[] = [
+    { key: "_idx",     label: "#",                              type: "none", valueOf: () => "" },
+    { key: "doc",      label: t("salesReturns.colReturnNumber"), type: "text", valueOf: (r) => r.docNumber ?? `SR-${r.id}` },
+    { key: "date",     label: t("salesReturns.date"),            type: "text", valueOf: (r) => r.returnDate ?? "" },
+    { key: "customer", label: t("salesReturns.customer"),        type: "text", valueOf: (r) => cusMap[r.customerId] ?? "" },
+    { key: "invoice",  label: t("salesReturns.colInvoice"),      type: "text", valueOf: (r) => r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : "" },
+    { key: "currency", label: t("salesReturns.currency"),        type: "text", valueOf: (r) => r.currencyCode ?? "" },
+    { key: "subtotal", label: "المجموع",                          type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0) },
+    { key: "vat",      label: t("salesReturns.vatLabel"),        type: "num",  valueOf: (r) => Number(r.vatAmount ?? 0) },
+    { key: "total",    label: t("salesReturns.totalLabel"),      type: "num",  valueOf: (r) => Number(r.totalAmount ?? 0) },
+    { key: "journal",  label: t("salesReturns.colJournal"),      type: "text", valueOf: (r) => r.journalEntryId ? `JE-${r.journalEntryId}` : "" },
+    { key: "status",   label: t("salesReturns.colStatus"),       type: "text", valueOf: (r) => statusLabel(r.status) },
+    { key: "_act",     label: t("salesReturns.colActions"),      type: "none", valueOf: () => "" },
+  ];
+  const DATA_KEYS = COLUMNS.filter(c => c.key !== "_idx" && c.key !== "_act").map(c => c.key);
+  const ALL_KEYS  = COLUMNS.map(c => c.key);
+
+  const [tableSearch, setTableSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "posted">("all");
+
+  const layout = useAuditGridLayout({
+    screenSlug: "salesReturnsAuditGrid",
+    cid,
+    dataKeys: DATA_KEYS,
+    allColKeys: ALL_KEYS,
+  });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+
+  /* ── Filtering ── */
+  const filteredReturns = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    return (returns_ as any[]).filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (q) {
+        const hay = [
+          r.docNumber, `SR-${r.id}`, r.returnDate, cusMap[r.customerId],
+          invMap[r.invoiceId], r.currencyCode, r.notes,
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      for (const col of COLUMNS) {
+        const f = layout.colFilters[col.key];
+        if (!f) continue;
+        if (!matchCol(col.valueOf(r), f, col.type)) return false;
+      }
+      return true;
+    });
+  }, [returns_, tableSearch, statusFilter, layout.colFilters, cusMap, invMap]);
+
+  /* ── Pagination ── */
+  const { pageSize, page, setPage } = layout;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredReturns.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  if (safePage !== page) setPage(safePage);
+  const pagedReturns = useMemo(
+    () => pageSize === 0 ? filteredReturns : filteredReturns.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredReturns, pageSize, safePage],
+  );
+  const pageStart = filteredReturns.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd   = pageSize === 0 ? filteredReturns.length : Math.min(safePage * pageSize, filteredReturns.length);
+
+  /* ── Totals ── */
+  const totals = useMemo(() => filteredReturns.reduce(
+    (a, r: any) => {
+      const sub = Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
+      a.subtotal += sub;
+      a.vat      += Number(r.vatAmount ?? 0);
+      a.total    += Number(r.totalAmount ?? 0);
+      return a;
+    },
+    { subtotal: 0, vat: 0, total: 0 },
+  ), [filteredReturns]);
+
+  /* ── Visible columns in user's saved order ── */
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder
+      .map((k) => COLUMNS.find((c) => c.key === k))
+      .filter((c): c is ColDef => !!c);
+    const idx = COLUMNS.find((c) => c.key === "_idx")!;
+    const act = COLUMNS.find((c) => c.key === "_act")!;
+    return [idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(
+    () => DATA_KEYS.map((k) => COLUMNS.find((c) => c.key === k)!).map((c) => ({ key: c.key, label: c.label })),
+    [DATA_KEYS, COLUMNS],
+  );
+
+  function exportCsv() {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    const header = ["#", ...visibleColumns.filter((c) => c.key !== "_idx" && c.key !== "_act").map((c) => c.label)];
+    const rows = filteredReturns.map((r: any, i: number) => [
+      i + 1,
+      ...visibleColumns
+        .filter((c) => c.key !== "_idx" && c.key !== "_act")
+        .map((c) => {
+          const v = c.valueOf(r);
+          return c.type === "num" ? Number(v).toFixed(2) : String(v);
+        }),
+    ]);
+    downloadCsv(`sales-returns-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+    toast({ title: "تم تصدير ملف CSV بنجاح" });
+  }
+
+  const { theme, footerTheme, colWidths, colFilters, setColFilter, clearColFilters } = layout;
 
   return (
     <div ref={enterNavRef} onKeyDown={enterNavKey} className="space-y-6">
@@ -937,98 +1058,250 @@ export default function SalesReturns() {
         );
       })()}
 
-      <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-        {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
-          : returns_.length === 0 ? <div className="p-12 text-center text-muted-foreground text-sm">{t("salesReturns.noReturns")}</div>
-          : (
-          <table className="w-full text-sm">
-            <thead><tr className="bg-muted/50 border-b">
-              {[
-                t("salesReturns.colReturnNumber"),
-                t("salesReturns.date"),
-                t("salesReturns.customer"),
-                t("salesReturns.colInvoice"),
-                t("salesReturns.currency"),
-                "المجموع",
-                t("salesReturns.vatLabel"),
-                t("salesReturns.totalLabel"),
-                t("salesReturns.colJournal"),
-                t("salesReturns.colStatus"),
-                t("salesReturns.colActions"),
-              ].map(h =>
-                <th key={h} className="text-start px-3 py-3 font-semibold text-muted-foreground text-xs">{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {returns_.map((r: any) => {
-                const stCls = STATUS_CLS[r.status] ?? STATUS_CLS.draft;
-                const inv = invoices.find((i: any) => i.id === r.invoiceId);
-                return (
-                  <tr key={r.id} className="border-b hover:bg-muted/30 cursor-pointer"
-                    onDoubleClick={() => editReturn(r.id)}
-                    title={r.status === "draft" ? t("salesReturns.doubleClickEdit") : t("salesReturns.doubleClickView")}>
-                    <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{r.docNumber ?? `SR-${r.id}`}</td>
-                    <td className="px-3 py-2.5">{r.returnDate}</td>
-                    <td className="px-3 py-2.5">{cusMap[r.customerId] ?? t("common.none")}</td>
-                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{inv?.docNumber ?? (r.invoiceId ? `SI-${r.invoiceId}` : t("common.none"))}</td>
-                    <td className="px-3 py-2.5">{r.currencyCode}</td>
-                    <td className="px-3 py-2.5 font-mono">{fmt(Number(r.totalAmount) - Number(r.vatAmount))}</td>
-                    <td className="px-3 py-2.5 font-mono text-amber-700">{fmt(r.vatAmount)}</td>
-                    <td className="px-3 py-2.5 font-mono font-semibold">{fmt(r.totalAmount)}</td>
-                    <td className="px-3 py-2.5">
-                      {r.journalEntryId ? (
-                        <button onClick={() => navigate(`/accounting/journals/${r.journalEntryId}?tab=lines`)}
-                          className="font-mono text-xs text-blue-600 hover:underline">
-                          JE-{r.journalEntryId}
-                        </button>
-                      ) : <span className="text-muted-foreground text-xs">{t("common.none")}</span>}
-                    </td>
-                    <td className="px-3 py-2.5"><span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border", stCls)}>{statusLabel(r.status)}</span></td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex gap-1">
-                        {r.status === "draft" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                            title={t("salesReturns.actionEdit")}
-                            onClick={() => editReturn(r.id)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:text-primary hover:bg-muted"
-                          title="طباعة"
-                          onClick={() => openPrint(r)}>
-                          <Printer className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                          title={t("salesReturns.actionDuplicate")}
-                          onClick={() => duplicateReturn(r.id)}>
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                        {r.status === "draft" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title={t("salesReturns.actionPost")}
-                            onClick={() => { if (confirm(t("salesReturns.confirmPost"))) postMut.mutate(r.id); }}>
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        {r.status === "posted" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                            title={t("salesReturns.actionUnpost")}
-                            onClick={() => { if (confirm(t("salesReturns.confirmUnpost"))) unpostMut.mutate(r.id); }}>
-                            <Undo2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                        {r.status === "draft" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                            onClick={() => { if (confirm(t("salesReturns.confirmDelete"))) deleteMut.mutate(r.id); }}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+      {/* ── Audit-grid toolbar ───────────────────────────────────────────── */}
+      <div className={cn("rounded-t-lg overflow-hidden border shadow-sm transition-colors", theme.border)}>
+        <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
+          <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+            <RotateCcw className="h-4 w-4 opacity-90" />
+            جرد مرتجعات المبيعات
+          </div>
+          <div className="flex items-center gap-1.5">
+            <HeaderColorPicker layout={layout} isRtl={isRtl} />
+            <FooterColorPicker layout={layout} isRtl={isRtl} />
+            <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+            <Button type="button" size="sm" variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)} onClick={exportCsv}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              تصدير CSV
+            </Button>
+          </div>
+        </div>
+
+        <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
+          <Input
+            placeholder="بحث (مستند، عميل، فاتورة، عملة)…"
+            value={tableSearch}
+            onChange={(e) => setTableSearch(e.target.value)}
+            className="h-7 text-xs w-56"
+          />
+          <div className="flex gap-1">
+            {(["all", "draft", "posted"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "px-2 py-1 rounded text-[11px] font-medium border transition-colors",
+                  statusFilter === s
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
+                )}
+              >
+                {s === "all" ? "الكل" : statusLabel(s)}
+              </button>
+            ))}
+          </div>
+          {Object.values(colFilters).some((v) => v) && (
+            <Button type="button" size="sm" variant="ghost"
+              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+              onClick={clearColFilters} title="مسح فلاتر الأعمدة">
+              <X className="h-3.5 w-3.5 me-1" />
+              مسح فلاتر الأعمدة
+            </Button>
+          )}
+          <div className="flex-1" />
+          <span className="text-slate-700 font-medium">
+            {filteredReturns.length} مرتجع
+            {filteredReturns.length !== returns_.length && <span className="text-slate-400"> / {returns_.length}</span>}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Audit-grid table ─────────────────────────────────────────────── */}
+      <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
+        <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
+          {isLoading ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">{t("common.loading")}</div>
+          ) : filteredReturns.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground text-sm">
+              {returns_.length === 0 ? t("salesReturns.noReturns") : "لا توجد مرتجعات ضمن التصفية الحالية"}
+            </div>
+          ) : (
+            <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+              <colgroup>
+                {visibleColumns.map((col) => (
+                  <col key={col.key} data-col-key={col.key}
+                    style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined} />
+                ))}
+              </colgroup>
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                  {visibleColumns.map((col, idx) => (
+                    <th
+                      key={col.key}
+                      data-col-key={col.key}
+                      style={colWidths[col.key] ? { width: `${colWidths[col.key]}px`, minWidth: `${colWidths[col.key]}px` } : undefined}
+                      className="relative px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
+                    >
+                      {col.label}
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="print:hidden absolute top-0 bottom-0 w-2 cursor-col-resize select-none touch-none hover:bg-blue-400/60 active:bg-blue-500/80 z-20"
+                        style={{ insetInlineEnd: -4 }}
+                      />
+                    </th>
+                  ))}
+                </tr>
+                <tr className="bg-amber-50/80 border-b border-amber-200">
+                  {visibleColumns.map((col) => (
+                    <th key={col.key} className="px-1 py-1 border border-slate-200 text-center">
+                      {col.type === "none" ? null : (
+                        <Input
+                          value={colFilters[col.key] ?? ""}
+                          onChange={(e) => setColFilter(col.key, e.target.value)}
+                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
+                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
+                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
+                        />
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pagedReturns.map((r: any, idx: number) => {
+                  const absIdx = pageSize === 0 ? idx : (safePage - 1) * pageSize + idx;
+                  const stCls = STATUS_CLS[r.status] ?? STATUS_CLS.draft;
+                  const renderCell = (col: ColDef) => {
+                    switch (col.key) {
+                      case "_idx":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
+                      case "doc":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-primary text-center">{r.docNumber ?? `SR-${r.id}`}</td>;
+                      case "date":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap text-slate-600">{r.returnDate}</td>;
+                      case "customer":
+                        return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate", colWidths.customer ? "" : "max-w-[200px]")} title={cusMap[r.customerId] ?? ""}>{cusMap[r.customerId] ?? t("common.none")}</td>;
+                      case "invoice":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : <span className="text-muted-foreground">{t("common.none")}</span>}</td>;
+                      case "currency":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{r.currencyCode}</td>;
+                      case "subtotal":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-slate-800">{fmt(Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0))}</td>;
+                      case "vat":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(r.vatAmount)}</td>;
+                      case "total":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(r.totalAmount)}</td>;
+                      case "journal":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {r.journalEntryId ? (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${r.journalEntryId}?tab=lines`); }}
+                                className="font-mono text-[10px] text-blue-600 hover:underline"
+                              >
+                                JE-{r.journalEntryId}
+                              </button>
+                            ) : <span className="text-muted-foreground text-[10px]">{t("common.none")}</span>}
+                          </td>
+                        );
+                      case "status":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", stCls)}>{statusLabel(r.status)}</span>
+                          </td>
+                        );
+                      case "_act":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <div className="flex items-center justify-center gap-0.5">
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  title={t("salesReturns.actionEdit")}
+                                  onClick={(e) => { e.stopPropagation(); editReturn(r.id); }}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
+                                title="طباعة"
+                                onClick={(e) => { e.stopPropagation(); openPrint(r); }}>
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                title={t("salesReturns.actionDuplicate")}
+                                onClick={(e) => { e.stopPropagation(); duplicateReturn(r.id); }}>
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50" title={t("salesReturns.actionPost")}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmPost"))) postMut.mutate(r.id); }}>
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {r.status === "posted" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                  title={t("salesReturns.actionUnpost")}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmUnpost"))) unpostMut.mutate(r.id); }}>
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {r.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmDelete"))) deleteMut.mutate(r.id); }}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      default:
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
+                    }
+                  };
+                  return (
+                    <tr
+                      key={r.id}
+                      className="hover:bg-amber-50/60 transition-colors cursor-pointer"
+                      onDoubleClick={() => editReturn(r.id)}
+                      title={r.status === "draft" ? t("salesReturns.doubleClickEdit") : t("salesReturns.doubleClickView")}
+                    >
+                      {visibleColumns.map(renderCell)}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="sticky bottom-0">
+                <tr className={cn("text-[11px] font-semibold", footerTheme.bg, footerTheme.text)}>
+                  {visibleColumns.map((col, i) => {
+                    if (i === 0) {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end whitespace-nowrap", footerTheme.border)}>الإجمالي:</td>;
+                    }
+                    if (col.key === "subtotal") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.subtotal)}</td>;
+                    }
+                    if (col.key === "vat") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.vat)}</td>;
+                    }
+                    if (col.key === "total") {
+                      return <td key={col.key} className={cn("px-2 py-2 border text-end font-mono", footerTheme.border)}>{fmt(totals.total)}</td>;
+                    }
+                    return <td key={col.key} className={cn("px-2 py-2 border", footerTheme.border)} />;
+                  })}
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filteredReturns.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel="مرتجع"
+        />
       </div>
       <SalesPrintModal open={!!printData} onClose={() => setPrintData(null)} data={printData} />
     </div>
