@@ -11,9 +11,11 @@ import {
   salesInvoicesTable, salesInvoiceLinesTable,
   itemDocumentsTable,
   itemSuppliersTable,
+  itemBundleComponentsTable,
   suppliersTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
+import { aliasedTable } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
@@ -307,6 +309,8 @@ const ITEM_AUDIT_FIELDS = [
   "status", "imageUrl", "tags",
   // PRO Extension #3 — per-item default discount
   "discountType", "discountValue",
+  // PRO Extension #2 — bundle flag
+  "isBundle",
 ] as const;
 
 function normAuditValue(v: unknown): unknown {
@@ -334,6 +338,36 @@ function snapshotItem(row: any): Record<string, unknown> {
   const snap: Record<string, unknown> = {};
   for (const f of ITEM_AUDIT_FIELDS) snap[f] = normAuditValue(row?.[f]);
   return snap;
+}
+
+// Compact wrapper around `writeAudit` for sub-entity tables (item_documents,
+// item_suppliers, item_bundle_components, etc). Pulls the auth context off
+// `req` and writes a row with before/after snapshots in `metadata`. The
+// underlying `writeAudit` is fire-and-forget so this returns void quickly.
+function auditSubEntity(
+  req: any,
+  module: string,
+  entityId: number,
+  action: "create" | "edit" | "delete",
+  before: any,
+  after: any,
+): void {
+  void writeAudit({
+    userId:     req.authUser?.id ?? null,
+    username:   req.authUser?.username ?? null,
+    role:       req.authUser?.role ?? null,
+    companyId:  req.authUser?.companyId ?? null,
+    module,
+    action,
+    method:     req.method,
+    path:       req.originalUrl ?? req.path,
+    entityType: module,
+    entityId:   String(entityId),
+    statusCode: action === "create" ? 201 : 200,
+    ip:         ipFromReq(req),
+    userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+    metadata:   { before, after },
+  });
 }
 
 function ipFromReq(req: any): string | null {
@@ -383,7 +417,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -406,6 +440,7 @@ router.post("/items", async (req, res) => {
     imageUrl: imageUrl || null,
     tags: normalizedTags === undefined ? null : normalizedTags,
     discountType: disc.type, discountValue: disc.value,
+    isBundle: isBundle === true,
   }).returning();
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
@@ -429,7 +464,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle } = req.body;
   const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
@@ -458,6 +493,9 @@ router.put("/items/:id", async (req, res) => {
     imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
     tags: normalizedTags === undefined ? undefined : normalizedTags,
     ...discPatch,
+    // Only touch isBundle when client explicitly sends it (so partial PUTs
+    // from older clients don't accidentally flip the bundle flag).
+    ...(isBundle !== undefined ? { isBundle: isBundle === true } : {}),
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1272,7 +1310,7 @@ router.post("/items/:id/documents", async (req, res) => {
     notes: notes ? String(notes).slice(0, 1000) : null,
     uploadedByUserId: req.authUser?.id ?? null,
   }).returning();
-  await writeAudit(req, "item_documents", row.id, "create", null, row);
+  auditSubEntity(req, "item_documents", row.id, "create", null, row);
   res.status(201).json(row);
 });
 
@@ -1296,7 +1334,7 @@ router.delete("/items/:id/documents/:docId", async (req, res) => {
   if (!existing) { res.status(404).json({ error: "المستند غير موجود" }); return; }
 
   await db.delete(itemDocumentsTable).where(eq(itemDocumentsTable.id, docId));
-  await writeAudit(req, "item_documents", docId, "delete", existing, null);
+  auditSubEntity(req, "item_documents", docId, "delete", existing, null);
   // Note: we intentionally don't delete the underlying object-storage blob
   // here — the storage layer doesn't expose a deletion API at this level
   // and orphaned blobs are negligible cost; we can sweep them later.
@@ -1432,7 +1470,7 @@ router.post("/items/:id/suppliers", async (req, res) => {
     throw err;
   }
 
-  await writeAudit(req, "item_suppliers", row.id, "create", null, row);
+  auditSubEntity(req, "item_suppliers", row.id, "create", null, row);
   res.status(201).json(row);
 });
 
@@ -1515,7 +1553,7 @@ router.put("/items/:id/suppliers/:linkId", async (req, res) => {
     throw err;
   }
 
-  await writeAudit(req, "item_suppliers", linkId, "update", existing, updated);
+  auditSubEntity(req, "item_suppliers", linkId, "edit", existing, updated);
   res.json(updated);
 });
 
@@ -1543,7 +1581,223 @@ router.delete("/items/:id/suppliers/:linkId", async (req, res) => {
     eq(itemSuppliersTable.id, linkId),
     eq(itemSuppliersTable.companyId, cid),
   ));
-  await writeAudit(req, "item_suppliers", linkId, "delete", existing, null);
+  auditSubEntity(req, "item_suppliers", linkId, "delete", existing, null);
+  res.json({ ok: true });
+});
+
+// ─── PRO Extension #2 — Bundle Components ───────────────────────────────────
+// CRUD for the child composition of a "bundle" parent item. Auto-flips the
+// parent's `isBundle` flag: TRUE when the first component is added, FALSE
+// when the last one is removed (so the UI doesn't have to micro-manage it).
+//
+// All routes are tenant-scoped: the parent item AND the child item must
+// both belong to the caller's company before any row is touched, and a
+// child cannot reference its own parent (no self-component).
+
+router.get("/items/:id/bundle/components", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  // Confirm parent belongs to this tenant before returning anything.
+  const [own] = await db.select({ id: itemsTable.id, isBundle: itemsTable.isBundle })
+    .from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!own) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Self-join to fetch child name/code/sale price for the table view in one round-trip.
+  const childAlias = aliasedTable(itemsTable, "child");
+  const rows = await db.select({
+    id:           itemBundleComponentsTable.id,
+    parentItemId: itemBundleComponentsTable.parentItemId,
+    childItemId:  itemBundleComponentsTable.childItemId,
+    qty:          itemBundleComponentsTable.qty,
+    notes:        itemBundleComponentsTable.notes,
+    createdAt:    itemBundleComponentsTable.createdAt,
+    childCode:    childAlias.code,
+    childNameAr:  childAlias.nameAr,
+    childNameEn:  childAlias.nameEn,
+    childSalePrice: childAlias.salePrice,
+    childCostPrice: childAlias.costPrice,
+    childIsBundle:  childAlias.isBundle,
+  })
+    .from(itemBundleComponentsTable)
+    .leftJoin(childAlias, eq(childAlias.id, itemBundleComponentsTable.childItemId))
+    .where(and(
+      eq(itemBundleComponentsTable.parentItemId, id),
+      eq(itemBundleComponentsTable.companyId, cid),
+    ))
+    .orderBy(asc(itemBundleComponentsTable.createdAt));
+
+  res.json({ isBundle: own.isBundle, components: rows });
+});
+
+router.post("/items/:id/bundle/components", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const { childItemId, qty, notes } = req.body ?? {};
+  const childId = Number(childItemId);
+  if (!Number.isFinite(childId)) { res.status(400).json({ error: "معرّف الصنف الفرعي مطلوب" }); return; }
+  if (childId === id) { res.status(400).json({ error: "لا يمكن إضافة الصنف كمكوّن لنفسه" }); return; }
+
+  const qtyNum = Number(qty);
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+    res.status(400).json({ error: "الكمية يجب أن تكون رقماً موجباً" }); return;
+  }
+
+  // Validate BOTH parent and child belong to this tenant in parallel.
+  const [[ownParent], [ownChild]] = await Promise.all([
+    db.select({ id: itemsTable.id }).from(itemsTable)
+      .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))),
+    db.select({ id: itemsTable.id, isBundle: itemsTable.isBundle }).from(itemsTable)
+      .where(and(eq(itemsTable.id, childId), eq(itemsTable.companyId, cid))),
+  ]);
+  if (!ownParent) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  if (!ownChild)  { res.status(404).json({ error: "الصنف الفرعي غير موجود" }); return; }
+  // Defensive: don't allow nesting bundles inside bundles in this batch.
+  // The "deduct on sale" expansion isn't recursive yet, so a bundle-of-bundles
+  // would silently misbehave. Keep this guard until that work lands.
+  if (ownChild.isBundle) {
+    res.status(400).json({ error: "لا يمكن استخدام صنف مركّب كمكوّن داخل صنف مركّب آخر" }); return;
+  }
+
+  // App-level dup check (the unique index is the concurrency safety net below).
+  const [dup] = await db.select({ id: itemBundleComponentsTable.id })
+    .from(itemBundleComponentsTable)
+    .where(and(
+      eq(itemBundleComponentsTable.parentItemId, id),
+      eq(itemBundleComponentsTable.childItemId, childId),
+      eq(itemBundleComponentsTable.companyId, cid),
+    ));
+  if (dup) { res.status(409).json({ error: "هذا المكوّن مضاف بالفعل للصنف المركّب" }); return; }
+
+  // Auto-flip parent.isBundle = true on first insert. We lock the parent
+  // items row with SELECT ... FOR UPDATE at the start of the transaction
+  // so any concurrent insert/delete on the same parent must wait until we
+  // commit. Without this lock, a concurrent DELETE-last + INSERT-first
+  // could race and leave the invariant `count(components)>0 ⇔ isBundle=true`
+  // broken (e.g. parent has rows but isBundle=false).
+  let row;
+  try {
+    row = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM ${itemsTable}
+        WHERE id = ${id} AND company_id = ${cid} FOR UPDATE`);
+      const [inserted] = await tx.insert(itemBundleComponentsTable).values({
+        companyId: cid,
+        parentItemId: id,
+        childItemId: childId,
+        qty: String(qtyNum),
+        notes: notes ? String(notes).slice(0, 1000) : null,
+      }).returning();
+      // Set parent.isBundle=true (idempotent — no-op if already true).
+      await tx.update(itemsTable)
+        .set({ isBundle: true, updatedAt: new Date() })
+        .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+      return inserted;
+    });
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      res.status(409).json({ error: "هذا المكوّن مضاف بالفعل للصنف المركّب" });
+      return;
+    }
+    throw err;
+  }
+
+  auditSubEntity(req, "item_bundle_components", row.id, "create", null, row);
+  res.status(201).json(row);
+});
+
+router.put("/items/:id/bundle/components/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isFinite(id) || !Number.isFinite(linkId)) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+
+  // Tenant + parent ownership check on the existing row.
+  const [existing] = await db.select()
+    .from(itemBundleComponentsTable)
+    .where(and(
+      eq(itemBundleComponentsTable.id, linkId),
+      eq(itemBundleComponentsTable.parentItemId, id),
+      eq(itemBundleComponentsTable.companyId, cid),
+    ));
+  if (!existing) { res.status(404).json({ error: "المكوّن غير موجود" }); return; }
+
+  const { qty, notes } = req.body ?? {};
+  const patch: Record<string, unknown> = {};
+  if (qty !== undefined) {
+    const qtyNum = Number(qty);
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      res.status(400).json({ error: "الكمية يجب أن تكون رقماً موجباً" }); return;
+    }
+    patch.qty = String(qtyNum);
+  }
+  if (notes !== undefined) {
+    patch.notes = notes ? String(notes).slice(0, 1000) : null;
+  }
+  if (Object.keys(patch).length === 0) {
+    res.json(existing); return;
+  }
+
+  const [updated] = await db.update(itemBundleComponentsTable)
+    .set(patch)
+    .where(eq(itemBundleComponentsTable.id, linkId))
+    .returning();
+
+  auditSubEntity(req, "item_bundle_components", linkId, "edit", existing, updated);
+  res.json(updated);
+});
+
+router.delete("/items/:id/bundle/components/:linkId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const linkId = Number(req.params.linkId);
+  if (!Number.isFinite(id) || !Number.isFinite(linkId)) {
+    res.status(400).json({ error: "معرّف غير صالح" }); return;
+  }
+
+  const [existing] = await db.select()
+    .from(itemBundleComponentsTable)
+    .where(and(
+      eq(itemBundleComponentsTable.id, linkId),
+      eq(itemBundleComponentsTable.parentItemId, id),
+      eq(itemBundleComponentsTable.companyId, cid),
+    ));
+  if (!existing) { res.status(404).json({ error: "المكوّن غير موجود" }); return; }
+
+  // Auto-flip parent.isBundle=false when removing the LAST component.
+  // Lock the parent items row up-front (SELECT ... FOR UPDATE) so that any
+  // concurrent INSERT on the same parent must wait until we commit —
+  // otherwise we could observe `remaining=0` while another tx has already
+  // inserted a fresh component and set isBundle=true, then we'd overwrite
+  // it back to false and leave a parent with components + isBundle=false.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM ${itemsTable}
+      WHERE id = ${id} AND company_id = ${cid} FOR UPDATE`);
+    await tx.delete(itemBundleComponentsTable).where(and(
+      eq(itemBundleComponentsTable.id, linkId),
+      eq(itemBundleComponentsTable.companyId, cid),
+    ));
+    const [{ remaining }] = await tx.select({
+      remaining: sql<number>`count(*)::int`,
+    })
+      .from(itemBundleComponentsTable)
+      .where(and(
+        eq(itemBundleComponentsTable.parentItemId, id),
+        eq(itemBundleComponentsTable.companyId, cid),
+      ));
+    if (remaining === 0) {
+      await tx.update(itemsTable)
+        .set({ isBundle: false, updatedAt: new Date() })
+        .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+    }
+  });
+
+  auditSubEntity(req, "item_bundle_components", linkId, "delete", existing, null);
   res.json({ ok: true });
 });
 

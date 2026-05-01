@@ -94,6 +94,10 @@ export const itemsTable = pgTable("items", {
   //   - "amount"  → discountValue is an absolute currency amount per line
   discountType:     text("discount_type").default("none").notNull(),
   discountValue:    numeric("discount_value", { precision: 14, scale: 4 }).default("0").notNull(),
+  // PRO Extension #2 — Bundles / Kits. When true, this item's child
+  // composition is defined in `item_bundle_components`. Used by the UI to
+  // show/hide the "المكونات" panel; future work: deduct child stock on sale.
+  isBundle:         boolean("is_bundle").default(false).notNull(),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
@@ -164,6 +168,32 @@ export const itemSuppliersTable = pgTable("item_suppliers", {
   preferredOnePerItem: uniqueIndex("item_suppliers_one_preferred_per_item_uniq")
     .on(t.companyId, t.itemId)
     .where(sql`preferred_supplier = true`),
+}));
+
+// ─── Item Bundle Components (PRO Extension #2 — Bundles / Kits) ──────────────
+// When a parent item is a "bundle" (`items.is_bundle = true`), its child
+// composition lives here: each row says "this many units of <child item>
+// per 1 unit of <parent>". A unique index prevents the same child being
+// listed twice on one parent. We do NOT enforce parent.is_bundle = true
+// at the DB level — the route layer keeps the flag in sync (auto-flips
+// to true when the first component is added, auto-flips to false when
+// the last one is removed).
+//
+// Future work (deferred to a later batch): on sales-invoice posting,
+// expand each bundle line into stock-deduction entries for its components.
+// Kept out of this batch to avoid touching the sales posting code path.
+export const itemBundleComponentsTable = pgTable("item_bundle_components", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  parentItemId: integer("parent_item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  childItemId:  integer("child_item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  qty:          numeric("qty", { precision: 14, scale: 4 }).notNull().default("1"),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  // No duplicate child rows per (tenant, parent).
+  parentChildUnique: uniqueIndex("item_bundle_components_parent_child_uniq")
+    .on(t.companyId, t.parentItemId, t.childItemId),
 }));
 
 // ─── Item Unit Prices (multi-unit per item with conversion factor) ────────────

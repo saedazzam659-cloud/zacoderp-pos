@@ -49,6 +49,27 @@ export interface ItemSupplier {
   supplierCode?: string | null;
 }
 
+// ─── PRO Extension #2 — Bundle Components ───────────────────────────────────
+export interface BundleComponent {
+  id: number;
+  parentItemId: number;
+  childItemId: number;
+  qty: string;
+  notes: string | null;
+  createdAt: string;
+  // Joined from items table (read-only):
+  childCode?: string | null;
+  childNameAr?: string | null;
+  childNameEn?: string | null;
+  childSalePrice?: string | null;
+  childCostPrice?: string | null;
+  childIsBundle?: boolean | null;
+}
+export interface BundleResponse {
+  isBundle: boolean;
+  components: BundleComponent[];
+}
+
 export const inventoryApi = {
   // Warehouse Groups
   getWarehouseGroups:   (cid?: number) => get<any[]>(`/warehouse-groups${cid ? `?companyId=${cid}` : ""}`),
@@ -65,6 +86,11 @@ export const inventoryApi = {
   addItemSupplier:     (itemId: number, data: any)  => post<ItemSupplier>(`/items/${itemId}/suppliers`, data),
   updateItemSupplier:  (itemId: number, linkId: number, data: any) => put<ItemSupplier>(`/items/${itemId}/suppliers/${linkId}`, data),
   deleteItemSupplier:  (itemId: number, linkId: number) => del(`/items/${itemId}/suppliers/${linkId}`),
+  // PRO Extension #2 — Bundle Components
+  getBundleComponents:    (itemId: number)             => get<BundleResponse>(`/items/${itemId}/bundle/components`),
+  addBundleComponent:     (itemId: number, data: any)  => post<BundleComponent>(`/items/${itemId}/bundle/components`, data),
+  updateBundleComponent:  (itemId: number, linkId: number, data: any) => put<BundleComponent>(`/items/${itemId}/bundle/components/${linkId}`, data),
+  deleteBundleComponent:  (itemId: number, linkId: number) => del(`/items/${itemId}/bundle/components/${linkId}`),
   // Item Groups
   getItemGroups:   (cid?: number) => get<any[]>(`/item-groups${cid ? `?companyId=${cid}` : ""}`),
   createItemGroup: (data: any)    => post<any>("/item-groups", data),

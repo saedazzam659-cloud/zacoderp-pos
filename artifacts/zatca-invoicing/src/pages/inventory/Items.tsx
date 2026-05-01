@@ -21,12 +21,12 @@ import {
   QrCode, Tag, Printer, History, ArrowRight,
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
-  Truck, Check,
+  Truck, Check, Boxes,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
 import ScanToImageDialog from "@/components/ScanToImageDialog";
-import type { ItemDocument, ItemSupplier } from "@/lib/inventoryApi";
+import type { ItemDocument, ItemSupplier, BundleComponent } from "@/lib/inventoryApi";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -43,6 +43,10 @@ const EMPTY = {
   // PRO Extension #3 — per-item default discount auto-applied on sales lines.
   discountType: "none" as "none" | "percent" | "amount", discountValue: "0",
   tags: "" as string, // comma-separated
+  // PRO Extension #2 — bundle (kit) flag. Auto-flips when components
+  // are added/removed via the Components panel, but can also be ticked
+  // manually here so the panel becomes visible before the first add.
+  isBundle: false as boolean,
 };
 
 // ─── Helpers: tags as array ↔ string ─────────────────────────────────────────
@@ -920,7 +924,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -1394,6 +1398,16 @@ export default function Items() {
                             >
                               <Truck className="h-3.5 w-3.5" />{t("pages.items.suppliers.tabLabel")}
                             </button>
+                            <button
+                              onClick={() => setExpandedTab("bundle")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "bundle" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <Boxes className="h-3.5 w-3.5" />{t("pages.items.bundle.tabLabel")}
+                              {it.isBundle && (
+                                <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-bold">{t("pages.items.bundle.kitBadge")}</span>
+                              )}
+                            </button>
                           </div>
 
                           {expandedTab === "balances" && (
@@ -1437,6 +1451,10 @@ export default function Items() {
 
                           {expandedTab === "suppliers" && (
                             <ItemSuppliersPanel itemId={it.id} />
+                          )}
+
+                          {expandedTab === "bundle" && (
+                            <ItemBundleComponentsPanel itemId={it.id} />
                           )}
                         </td>
                       </tr>
@@ -1489,6 +1507,266 @@ export default function Items() {
           qc.invalidateQueries({ queryKey: ["items"] });
         }}
       />
+    </div>
+  );
+}
+
+// ─── Item Bundle Components Panel (PRO Extension #2) ─────────────────────────
+// Manages the "kit composition" of a parent item: child item, qty per parent,
+// optional notes. The backend auto-flips `items.is_bundle` to true when the
+// first child is added and back to false when the last is removed, so the
+// user doesn't have to touch the checkbox separately.
+function ItemBundleComponentsPanel({ itemId }: { itemId: number }) {
+  const { t, i18n } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const isAr = i18n.language?.startsWith("ar");
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-bundle", itemId],
+    queryFn: () => inventoryApi.getBundleComponents(itemId),
+  });
+
+  const components = data?.components ?? [];
+
+  // Pull the full items list (already cached by the page) to populate the
+  // child dropdown. Filter out: this item itself, items already added as
+  // components, and other bundles (no nested bundles in this batch).
+  const { data: allItems = [] } = useQuery({
+    queryKey: ["items"],
+    queryFn: () => inventoryApi.getItems(),
+  });
+  const linkedChildIds = new Set(components.map(c => c.childItemId));
+  const availableChildren = (allItems as any[]).filter((it: any) =>
+    it.id !== itemId && !linkedChildIds.has(it.id) && !it.isBundle
+  );
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ childItemId: "", qty: "1", notes: "" });
+  const resetForm = () => setForm({ childItemId: "", qty: "1", notes: "" });
+
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["item-bundle", itemId] });
+    // Items list may have updated `isBundle` flags after add/delete.
+    qc.invalidateQueries({ queryKey: ["items"] });
+  };
+
+  const addMut = useMutation({
+    mutationFn: () => inventoryApi.addBundleComponent(itemId, {
+      childItemId: Number(form.childItemId),
+      qty: form.qty,
+      notes: form.notes || null,
+    }),
+    onSuccess: () => {
+      inv(); resetForm(); setShowForm(false);
+      toast({ title: t("pages.items.bundle.added") });
+    },
+    onError: (e: any) => toast({
+      title: t("pages.items.bundle.addFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ linkId, qty }: { linkId: number; qty: string }) =>
+      inventoryApi.updateBundleComponent(itemId, linkId, { qty }),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.bundle.updated") }); },
+    onError: (e: any) => toast({
+      title: t("pages.items.bundle.updateFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (linkId: number) => inventoryApi.deleteBundleComponent(itemId, linkId),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.bundle.deleted") }); },
+    onError: (e: any) => toast({
+      title: t("pages.items.bundle.deleteFailed"),
+      description: parseError(e),
+      variant: "destructive",
+    }),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError) {
+    return (
+      <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+        {t("pages.items.bundle.loadError")}
+      </div>
+    );
+  }
+
+  // Compute total cost / sale price from components for the summary footer.
+  const totalCost = components.reduce((s, c) =>
+    s + (Number(c.childCostPrice) || 0) * (Number(c.qty) || 0), 0);
+  const totalSale = components.reduce((s, c) =>
+    s + (Number(c.childSalePrice) || 0) * (Number(c.qty) || 0), 0);
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      {!showForm && (
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-xs text-muted-foreground">{t("pages.items.bundle.description")}</p>
+            {data?.isBundle && components.length > 0 && (
+              <p className="text-[11px] text-primary font-medium mt-0.5">
+                <Package className="h-3 w-3 inline-block ml-1" />
+                {t("pages.items.bundle.kitActive")}
+              </p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 shrink-0"
+            onClick={() => setShowForm(true)}
+            disabled={availableChildren.length === 0}
+            title={availableChildren.length === 0 ? t("pages.items.bundle.noMoreToAdd") : ""}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("pages.items.bundle.addButton")}
+          </Button>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2">
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.childItem")} *</label>
+              <select
+                value={form.childItemId}
+                onChange={(e) => setForm(f => ({ ...f, childItemId: e.target.value }))}
+                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="">— {t("pages.items.bundle.chooseChild")} —</option>
+                {availableChildren.map((c: any) => (
+                  <option key={c.id} value={c.id}>
+                    {(isAr ? c.nameAr : (c.nameEn || c.nameAr))} {c.code ? `(${c.code})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.qty")} *</label>
+              <Input
+                type="number"
+                step="0.0001"
+                min="0.0001"
+                value={form.qty}
+                onChange={(e) => setForm(f => ({ ...f, qty: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium block mb-1">{t("pages.items.bundle.notes")}</label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
+              className="h-9"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>
+              {t("common.cancel", { defaultValue: "إلغاء" })}
+            </Button>
+            <Button
+              size="sm"
+              disabled={!form.childItemId || !form.qty || addMut.isPending}
+              onClick={() => addMut.mutate()}
+              className="gap-1.5"
+            >
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t("pages.items.bundle.save")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {components.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <Boxes className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.bundle.empty")}
+        </p>
+      ) : (
+        <div className="rounded-lg border overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 border-b">
+              <tr>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground">{t("pages.items.bundle.childItem")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden sm:table-cell">{t("pages.items.bundle.code")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground w-32">{t("pages.items.bundle.qty")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.items.bundle.unitCost")}</th>
+                <th className="px-3 py-2 text-right font-semibold text-muted-foreground hidden md:table-cell">{t("pages.items.bundle.subtotal")}</th>
+                <th className="px-3 py-2 text-center font-semibold text-muted-foreground w-16"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {components.map((c) => {
+                const subTotal = (Number(c.childCostPrice) || 0) * (Number(c.qty) || 0);
+                return (
+                  <tr key={c.id} className="hover:bg-muted/30">
+                    <td className="px-3 py-2 font-medium">
+                      {isAr ? (c.childNameAr || c.childNameEn) : (c.childNameEn || c.childNameAr)}
+                    </td>
+                    <td className="px-3 py-2 hidden sm:table-cell font-mono text-[11px] text-muted-foreground">{c.childCode ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        min="0.0001"
+                        defaultValue={trimTrailingZeros(c.qty)}
+                        onBlur={(e) => {
+                          const v = e.target.value;
+                          if (v && Number(v) > 0 && v !== trimTrailingZeros(c.qty)) {
+                            updateMut.mutate({ linkId: c.id, qty: v });
+                          }
+                        }}
+                        className="h-7 text-xs w-24"
+                      />
+                    </td>
+                    <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                      {c.childCostPrice ? trimTrailingZeros(c.childCostPrice) : "—"}
+                    </td>
+                    <td className="px-3 py-2 hidden md:table-cell font-semibold">
+                      {subTotal > 0 ? subTotal.toFixed(2) : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive mx-auto block"
+                        onClick={() => { if (confirm(t("pages.items.bundle.deleteConfirm"))) deleteMut.mutate(c.id); }}
+                        disabled={deleteMut.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {components.length > 0 && (totalCost > 0 || totalSale > 0) && (
+              <tfoot className="bg-muted/30 border-t font-semibold">
+                <tr>
+                  <td colSpan={3} className="px-3 py-2 text-right">{t("pages.items.bundle.totals")}</td>
+                  <td className="px-3 py-2 hidden md:table-cell text-muted-foreground">
+                    {totalCost > 0 ? `${t("pages.items.bundle.totalCost")}: ${totalCost.toFixed(2)}` : "—"}
+                  </td>
+                  <td className="px-3 py-2 hidden md:table-cell">
+                    {totalSale > 0 ? `${t("pages.items.bundle.totalSale")}: ${totalSale.toFixed(2)}` : "—"}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
     </div>
   );
 }
