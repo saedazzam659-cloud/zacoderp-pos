@@ -25,8 +25,33 @@ import {
   ArrowRight, RefreshCw, Sparkles, Printer, FileSpreadsheet,
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
-  Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff,
+  Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff, Palette, Check,
 } from "lucide-react";
+
+// ── Header color theme palette ────────────────────────────────────────────
+// Default is "white" (light header with dark text). Selecting any other color
+// switches to a dark gradient toolbar. Theme is persisted per-tenant in
+// localStorage alongside the column order.
+type HeaderColor = "white" | "rose" | "blue" | "emerald" | "amber" | "purple" | "slate" | "teal";
+const HEADER_THEMES: Record<HeaderColor, {
+  label: string;
+  swatch: string;       // small preview swatch (used in picker)
+  bar: string;          // <div> classes for the top bar
+  text: string;         // text/heading color on bar
+  btn: string;          // ghost button text+hover on bar
+  border: string;       // outer border around the toolbar wrapper
+}> = {
+  white:   { label: "أبيض",  swatch: "bg-white border border-slate-300",          bar: "bg-white",                                                              text: "text-slate-800", btn: "text-slate-700 hover:bg-slate-100 hover:text-slate-900", border: "border-slate-300" },
+  rose:    { label: "وردي",  swatch: "bg-gradient-to-br from-rose-700 to-rose-900",     bar: "bg-gradient-to-l from-rose-900 via-rose-800 to-rose-900",         text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-rose-900/30" },
+  blue:    { label: "أزرق",  swatch: "bg-gradient-to-br from-blue-700 to-blue-900",     bar: "bg-gradient-to-l from-blue-900 via-blue-800 to-blue-900",         text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-blue-900/30" },
+  emerald: { label: "أخضر",  swatch: "bg-gradient-to-br from-emerald-700 to-emerald-900", bar: "bg-gradient-to-l from-emerald-900 via-emerald-800 to-emerald-900", text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-emerald-900/30" },
+  amber:   { label: "ذهبي",  swatch: "bg-gradient-to-br from-amber-500 to-amber-700",   bar: "bg-gradient-to-l from-amber-700 via-amber-600 to-amber-700",      text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-amber-700/30" },
+  purple:  { label: "بنفسجي", swatch: "bg-gradient-to-br from-purple-700 to-purple-900", bar: "bg-gradient-to-l from-purple-900 via-purple-800 to-purple-900",   text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-purple-900/30" },
+  slate:   { label: "رمادي", swatch: "bg-gradient-to-br from-slate-700 to-slate-900",   bar: "bg-gradient-to-l from-slate-900 via-slate-800 to-slate-900",      text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-slate-900/30" },
+  teal:    { label: "تركواز", swatch: "bg-gradient-to-br from-teal-700 to-teal-900",     bar: "bg-gradient-to-l from-teal-900 via-teal-800 to-teal-900",         text: "text-white",     btn: "text-white hover:bg-white/15 hover:text-white",          border: "border-teal-900/30" },
+};
+const HEADER_COLOR_KEYS: HeaderColor[] = ["white", "rose", "blue", "emerald", "amber", "purple", "slate", "teal"];
+const DEFAULT_HEADER_COLOR: HeaderColor = "white";
 import { cn } from "@/lib/utils";
 
 // ── Column descriptor ─────────────────────────────────────────────────────
@@ -109,6 +134,160 @@ type AuditResponse = {
   source: "ai+rules" | "rules";
 };
 
+// ── Print helpers ──────────────────────────────────────────────────────────
+// Lightweight HTML escaper for user-supplied strings interpolated into the
+// print template (customer names, notes, etc.). Avoids any XSS surface in the
+// new window we open with document.write().
+function escHtml(s: unknown): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function fmtNum(n: unknown, dp = 2): string {
+  const v = Number(n ?? 0);
+  return Number.isFinite(v) ? v.toFixed(dp) : "0.00";
+}
+type LookupMaps = {
+  cusMap: Record<string | number, { name?: string; vat?: string; phone?: string } | undefined>;
+  branchMap: Record<string | number, string | undefined>;
+  repMap: Record<string | number, string | undefined>;
+};
+
+// Build a self-contained printable HTML document for the selected invoices.
+// Each invoice fits on its own page (page-break-after: always) and shows the
+// header info (number/date/customer/branch/rep/payment) plus a line-items
+// table and totals block — the actual INVOICE CONTENTS, not the grid view.
+function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
+  const { cusMap, branchMap, repMap } = maps;
+  const today = new Date().toLocaleString("ar-SA");
+  const sections = invoices.map((inv: any, idx: number) => {
+    const cus = cusMap[inv.customerId] ?? {};
+    const branch = branchMap[inv.branchId] ?? "";
+    const rep = repMap[inv.salesRepId] ?? "";
+    const lines: any[] = Array.isArray(inv.lines) ? inv.lines : [];
+    const payment =
+      inv.paymentType === "cash" ? "نقدي" :
+      inv.paymentType === "bank" ? "بنكي" : "آجل";
+    const status =
+      inv.status === "draft" ? "مسودة" :
+      inv.status === "posted" ? "مُرحَّلة" :
+      inv.status === "cancelled" ? "ملغاة" : escHtml(inv.status);
+    const linesHtml = lines.length === 0
+      ? `<tr><td colspan="7" class="empty">لا توجد بنود في هذه الفاتورة</td></tr>`
+      : lines.map((l: any, i: number) => `
+        <tr>
+          <td class="c">${i + 1}</td>
+          <td>${escHtml(l.descriptionAr ?? l.descriptionEn ?? l.itemName ?? l.itemCode ?? "—")}</td>
+          <td class="c">${escHtml(l.itemCode ?? "—")}</td>
+          <td class="c">${fmtNum(l.quantity, 3)}</td>
+          <td class="c">${fmtNum(l.unitPrice)}</td>
+          <td class="c">${fmtNum(l.discountAmount ?? 0)}</td>
+          <td class="c">${fmtNum(l.lineTotal ?? l.totalAmount ?? 0)}</td>
+        </tr>`).join("");
+    return `
+      <section class="invoice ${idx === invoices.length - 1 ? "last" : ""}">
+        <header class="head">
+          <div class="title">
+            <h1>فاتورة مبيعات</h1>
+            <div class="docno">${escHtml(inv.docNumber ?? `SI-${inv.id}`)}</div>
+          </div>
+          <div class="meta">
+            <div><span>التاريخ:</span> ${escHtml(inv.invoiceDate ?? "")}</div>
+            <div><span>الحالة:</span> ${status}</div>
+            <div><span>طريقة الدفع:</span> ${payment}</div>
+            <div><span>العملة:</span> ${escHtml(inv.currencyCode ?? "SAR")}</div>
+          </div>
+        </header>
+        <div class="parties">
+          <div class="party">
+            <div class="ph">العميل</div>
+            <div class="pname">${escHtml(cus.name ?? "—")}</div>
+            <div class="pmeta">الرقم الضريبي: ${escHtml(cus.vat ?? "—")}</div>
+            <div class="pmeta">الهاتف: ${escHtml(cus.phone ?? "—")}</div>
+          </div>
+          <div class="party">
+            <div class="ph">الفرع / المندوب</div>
+            <div class="pname">${escHtml(branch || "—")}</div>
+            <div class="pmeta">المندوب: ${escHtml(rep || "—")}</div>
+            ${inv.journalEntryId ? `<div class="pmeta">رقم القيد: JE-${escHtml(inv.journalEntryId)}</div>` : ""}
+          </div>
+        </div>
+        <table class="lines">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>الوصف</th>
+              <th style="width:90px">الكود</th>
+              <th style="width:70px">الكمية</th>
+              <th style="width:80px">السعر</th>
+              <th style="width:80px">الخصم</th>
+              <th style="width:90px">الإجمالي</th>
+            </tr>
+          </thead>
+          <tbody>${linesHtml}</tbody>
+        </table>
+        <div class="totals">
+          <table>
+            <tr><th>المجموع</th><td>${fmtNum(inv.subtotal)}</td></tr>
+            <tr><th>الخصم</th><td>${fmtNum(inv.discountAmount)}</td></tr>
+            <tr><th>ضريبة القيمة المضافة</th><td>${fmtNum(inv.vatAmount)}</td></tr>
+            <tr class="grand"><th>الإجمالي النهائي</th><td>${fmtNum(inv.totalAmount)} ${escHtml(inv.currencyCode ?? "SAR")}</td></tr>
+          </table>
+        </div>
+        ${inv.notes ? `<div class="notes"><strong>ملاحظات:</strong> ${escHtml(inv.notes)}</div>` : ""}
+        <footer class="foot">طُبع بواسطة "زاكود المحاسبي" — ${escHtml(today)} — صفحة ${idx + 1} / ${invoices.length}</footer>
+      </section>`;
+  }).join("\n");
+
+  return `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>طباعة الفواتير المحدَّدة (${invoices.length})</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { font-family: "Tahoma", "Arial", sans-serif; color: #1f2937; margin: 0; padding: 0; font-size: 12px; }
+    .invoice { padding: 6mm 0; page-break-after: always; }
+    .invoice.last { page-break-after: auto; }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 10px; }
+    .title h1 { margin: 0; font-size: 20px; color: #0f172a; }
+    .title .docno { font-size: 14px; font-weight: 700; color: #0369a1; margin-top: 2px; }
+    .meta { font-size: 11px; line-height: 1.6; text-align: left; }
+    .meta span { color: #64748b; margin-inline-end: 4px; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .party { border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: #f8fafc; }
+    .party .ph { font-size: 10px; color: #64748b; margin-bottom: 2px; }
+    .party .pname { font-weight: 700; font-size: 13px; color: #0f172a; }
+    .party .pmeta { font-size: 11px; color: #475569; }
+    table.lines { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    table.lines th, table.lines td { border: 1px solid #cbd5e1; padding: 4px 6px; font-size: 11px; }
+    table.lines th { background: #e2e8f0; color: #0f172a; font-weight: 700; }
+    table.lines td.c { text-align: center; }
+    table.lines td.empty { text-align: center; color: #94a3b8; padding: 12px; }
+    .totals { display: flex; justify-content: flex-start; }
+    .totals table { border-collapse: collapse; min-width: 240px; }
+    .totals th, .totals td { border: 1px solid #cbd5e1; padding: 4px 8px; font-size: 12px; }
+    .totals th { background: #f1f5f9; text-align: start; color: #334155; font-weight: 600; }
+    .totals td { text-align: end; font-family: "Courier New", monospace; }
+    .totals tr.grand th, .totals tr.grand td { background: #0f172a; color: #fff; font-weight: 800; font-size: 13px; }
+    .notes { margin-top: 8px; padding: 6px 8px; border: 1px dashed #cbd5e1; border-radius: 6px; background: #fffbeb; font-size: 11px; }
+    .foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; text-align: center; }
+    @media print {
+      .no-print { display: none !important; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  ${sections}
+</body>
+</html>`;
+}
+
 export default function SalesAuditGrid() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
@@ -135,58 +314,76 @@ export default function SalesAuditGrid() {
   // Scope per-company so a shared browser doesn't leak layouts across tenants.
   const LS_KEY = `salesAuditGrid.layout.v1.c${cid ?? "anon"}`;
 
+  // Helper — sanitize a stored dataOrder against the current column set
+  // (drop unknown keys, dedupe, append missing). Forward-compatible.
+  const sanitizeOrder = (input: unknown): string[] => {
+    if (!Array.isArray(input)) return [...DATA_KEYS];
+    const seen = new Set<string>();
+    const valid = (input as string[]).filter(
+      k => typeof k === "string" && DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true)
+    );
+    for (const k of DATA_KEYS) if (!seen.has(k)) valid.push(k);
+    return valid;
+  };
+  const sanitizeColor = (c: unknown): HeaderColor =>
+    HEADER_COLOR_KEYS.includes(c as HeaderColor) ? (c as HeaderColor) : DEFAULT_HEADER_COLOR;
+
   const [dataOrder, setDataOrder] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed?.dataOrder)) {
-          // Sanitize against current column set (drop unknown keys, append missing)
-          const seen = new Set<string>();
-          const valid = (parsed.dataOrder as string[]).filter(k => DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true));
-          for (const k of DATA_KEYS) if (!seen.has(k)) valid.push(k);
-          return valid;
-        }
+        return sanitizeOrder(parsed?.dataOrder);
       }
     } catch { /* ignore corrupt LS */ }
     return [...DATA_KEYS];
   });
 
-  // True when user has saved a non-default layout — header turns blue.
+  const [headerColor, setHeaderColor] = useState<HeaderColor>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return sanitizeColor(parsed?.headerColor);
+      }
+    } catch { /* ignore corrupt LS */ }
+    return DEFAULT_HEADER_COLOR;
+  });
+
+  const theme = HEADER_THEMES[headerColor];
+
+  // True when user has any non-default customization saved.
   const hasCustomLayout = useMemo(() => {
+    if (headerColor !== DEFAULT_HEADER_COLOR) return true;
     if (dataOrder.length !== DATA_KEYS.length) return true;
     return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
-  }, [dataOrder]);
+  }, [dataOrder, headerColor]);
 
-  // Persist layout on change. Skip the very first render (which already
-  // matches localStorage) — but useEffect with [dataOrder] handles it cleanly.
+  // Persist layout on change.
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota errors */ }
-  }, [dataOrder, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, headerColor, hasCustomLayout, LS_KEY]);
 
-  // Re-hydrate layout when the active company changes (e.g. user logs into a
-  // different tenant in the same browser tab). useState's lazy initializer
-  // only runs once at mount, so this guarantees the right layout follows cid.
+  // Re-hydrate layout + color when the active company changes (e.g. user logs
+  // into a different tenant in the same browser tab). useState's lazy
+  // initializer only runs once at mount, so this keeps tenant scoping correct.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed?.dataOrder)) {
-          const seen = new Set<string>();
-          const valid = (parsed.dataOrder as string[]).filter(k => DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true));
-          for (const k of DATA_KEYS) if (!seen.has(k)) valid.push(k);
-          setDataOrder(valid);
-          return;
-        }
+        setDataOrder(sanitizeOrder(parsed?.dataOrder));
+        setHeaderColor(sanitizeColor(parsed?.headerColor));
+        return;
       }
       setDataOrder([...DATA_KEYS]);
+      setHeaderColor(DEFAULT_HEADER_COLOR);
     } catch { /* ignore corrupt LS */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cid]);
@@ -210,7 +407,10 @@ export default function SalesAuditGrid() {
       return next;
     });
   }
-  function resetLayout() { setDataOrder([...DATA_KEYS]); }
+  function resetLayout() {
+    setDataOrder([...DATA_KEYS]);
+    setHeaderColor(DEFAULT_HEADER_COLOR);
+  }
 
   // ── Selection ─────────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -605,6 +805,73 @@ export default function SalesAuditGrid() {
     toast({ title: "تم تصدير ملف CSV بنجاح" });
   }
 
+  // ── Bulk print (selected invoices' CONTENTS) ─────────────────────────
+  // When user has selected one or more rows and clicks "طباعة", we fetch the
+  // full invoice + line items for each selection and render them in a new
+  // window as a print-friendly Arabic/RTL document, then call window.print().
+  // When no rows are selected, fall back to printing the audit screen itself.
+  const [printing, setPrinting] = useState(false);
+
+  async function printSelected() {
+    if (selected.size === 0) {
+      window.print();
+      return;
+    }
+    setPrinting(true);
+    try {
+      const ids = Array.from(selected);
+      const results = await Promise.all(
+        ids.map(async id => {
+          try {
+            const r = await fetch(`${API}/api/sales/sales-invoices/${id}`, { headers: authH });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return await r.json();
+          } catch (err) {
+            return { __error: true, id, message: (err as Error).message };
+          }
+        })
+      );
+      const ok = results.filter((x: any) => !x?.__error);
+      const failed = results.filter((x: any) => x?.__error);
+      if (ok.length === 0) {
+        toast({
+          title: "تعذَّر تحميل الفواتير المحدَّدة للطباعة",
+          description: failed.map((f: any) => `#${f.id}: ${f.message}`).join("، "),
+          variant: "destructive",
+        });
+        return;
+      }
+      if (failed.length > 0) {
+        toast({
+          title: `طباعة جزئية: ${ok.length} من ${ids.length}`,
+          description: `تعذَّر تحميل ${failed.length} فاتورة.`,
+        });
+      }
+      const html = buildBulkPrintHtml(ok, { cusMap, branchMap, repMap });
+      const w = window.open("", "_blank", "width=900,height=700");
+      if (!w) {
+        toast({
+          title: "تم منع النوافذ المنبثقة",
+          description: "اسمح بالنوافذ المنبثقة لهذا الموقع لتفعيل الطباعة المجمَّعة.",
+          variant: "destructive",
+        });
+        return;
+      }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      // Wait for fonts/layout, then print. The new window closes itself
+      // afterwards (or stays if the user cancels — that's a browser choice).
+      w.onload = () => {
+        setTimeout(() => {
+          try { w.focus(); w.print(); } catch { /* noop */ }
+        }, 250);
+      };
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   // ── Status & ZATCA pills ──────────────────────────────────────────────
   const STATUS: Record<string, { label: string; cls: string }> = {
     draft:     { label: "مسودة",   cls: "bg-amber-100 text-amber-800 border-amber-300" },
@@ -623,22 +890,21 @@ export default function SalesAuditGrid() {
 
   return (
     <div className="space-y-3" dir={isRtl ? "rtl" : "ltr"}>
-      {/* ─── Top dark toolbar (legacy ERP look) ───────────────────────── */}
+      {/* ─── Top toolbar — theme-driven (default white, palette swatches) ── */}
       <div className={cn(
         "rounded-t-lg overflow-hidden border shadow-sm transition-colors",
-        hasCustomLayout ? "border-blue-900/30" : "border-rose-900/30",
+        theme.border,
       )}>
         <div className={cn(
-          "text-white px-3 py-2 flex items-center gap-2 flex-wrap transition-colors bg-gradient-to-l",
-          hasCustomLayout
-            ? "from-blue-900 via-blue-800 to-blue-900"
-            : "from-rose-900 via-rose-800 to-rose-900",
+          "px-3 py-2 flex items-center gap-2 flex-wrap transition-colors",
+          theme.bar,
+          theme.text,
         )}>
           <Button
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1"
+            className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
             onClick={() => navigate("/sales/invoices")}
           >
             <ArrowRight className="h-3.5 w-3.5" />
@@ -654,11 +920,92 @@ export default function SalesAuditGrid() {
             <Plus className="h-3.5 w-3.5" />
             فاتورة جديدة
           </Button>
-          <div className="flex-1 text-center text-sm font-bold tracking-wide flex items-center justify-center gap-2">
+          <div className={cn("flex-1 text-center text-sm font-bold tracking-wide flex items-center justify-center gap-2", theme.text)}>
             <FileSpreadsheet className="h-4 w-4 opacity-90" />
             الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل
           </div>
           <div className="flex items-center gap-1.5">
+            {/* ─── Color palette picker ─────────────────────────────── */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                  title={`لون الرأس الحالي: ${theme.label}`}
+                  aria-label="تغيير لون رأس الجدول"
+                >
+                  <Palette className="h-3.5 w-3.5" />
+                  لون الرأس
+                  <span className={cn("ms-1 inline-block h-3 w-3 rounded-full", theme.swatch)} />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="bottom"
+                align="end"
+                className="w-64 p-2"
+                dir={isRtl ? "rtl" : "ltr"}
+              >
+                <div className="flex items-center justify-between mb-2 pb-2 border-b">
+                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Palette className="h-3.5 w-3.5 text-blue-600" />
+                    لون رأس الجدول
+                  </div>
+                  {headerColor !== DEFAULT_HEADER_COLOR && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[11px] text-slate-600 gap-1"
+                      onClick={() => setHeaderColor(DEFAULT_HEADER_COLOR)}
+                      title="إعادة لون الرأس الافتراضي (أبيض)"
+                    >
+                      <RotateCw className="h-3 w-3" />
+                      افتراضي
+                    </Button>
+                  )}
+                </div>
+                <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
+                  اختر لوناً لرأس شاشة الجرد. يُحفظ لكل شركة على حدة.
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {HEADER_COLOR_KEYS.map(c => {
+                    const t = HEADER_THEMES[c];
+                    const active = headerColor === c;
+                    return (
+                      <button
+                        type="button"
+                        key={c}
+                        onClick={() => setHeaderColor(c)}
+                        className={cn(
+                          "group flex flex-col items-center gap-1 rounded-md p-1.5 border transition-all",
+                          active
+                            ? "border-blue-500 bg-blue-50 ring-1 ring-blue-300"
+                            : "border-slate-200 hover:border-slate-400 hover:bg-slate-50",
+                        )}
+                        aria-label={`اختر اللون ${t.label}`}
+                        aria-pressed={active}
+                        title={t.label}
+                      >
+                        <span className={cn("relative h-7 w-7 rounded-full shadow-sm", t.swatch)}>
+                          {active && (
+                            <Check className={cn(
+                              "absolute inset-0 m-auto h-4 w-4",
+                              c === "white" || c === "amber" ? "text-slate-700" : "text-white",
+                            )} />
+                          )}
+                        </span>
+                        <span className={cn("text-[10px]", active ? "text-blue-700 font-bold" : "text-slate-600")}>
+                          {t.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
+            {/* ─── Column reorder ─────────────────────────────────────── */}
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -666,14 +1013,15 @@ export default function SalesAuditGrid() {
                   size="sm"
                   variant="ghost"
                   className={cn(
-                    "h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1",
-                    hasCustomLayout && "bg-white/20",
+                    "h-7 px-2 text-xs gap-1",
+                    theme.btn,
+                    hasCustomLayout && (headerColor === "white" ? "bg-blue-50 ring-1 ring-blue-200" : "bg-white/20"),
                   )}
                   title="إعادة ترتيب الأعمدة"
                 >
                   <Settings2 className="h-3.5 w-3.5" />
                   ترتيب الأعمدة
-                  {hasCustomLayout && <span className="ms-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" title="ترتيب مخصّص محفوظ" />}
+                  {hasCustomLayout && <span className="ms-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title="تخصيص محفوظ" />}
                 </Button>
               </PopoverTrigger>
               <PopoverContent
@@ -755,7 +1103,7 @@ export default function SalesAuditGrid() {
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
               onClick={() => refetch()}
               disabled={isFetching}
             >
@@ -766,7 +1114,7 @@ export default function SalesAuditGrid() {
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
               onClick={exportCsv}
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
@@ -776,11 +1124,15 @@ export default function SalesAuditGrid() {
               type="button"
               size="sm"
               variant="ghost"
-              className="h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1"
-              onClick={() => window.print()}
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+              onClick={printSelected}
+              disabled={printing}
+              title={selected.size > 0
+                ? `طباعة محتوى ${selected.size} فاتورة محدَّدة`
+                : "طباعة شاشة الجرد كاملةً (حدِّد سطوراً لطباعة محتوى الفواتير)"}
             >
-              <Printer className="h-3.5 w-3.5" />
-              طباعة
+              {printing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              طباعة{selected.size > 0 ? ` (${selected.size})` : ""}
             </Button>
             <Button
               type="button"
