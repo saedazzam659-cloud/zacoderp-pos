@@ -9,12 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
+import * as XLSX from "xlsx";
 import {
-  Plus, Trash2, ArrowDownCircle, CheckCircle, Printer, FileSpreadsheet, X,
+  Plus, Trash2, ArrowDownCircle, CheckCircle, Printer, FileSpreadsheet, FileDown, X,
   Loader2, Send,
 } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
+import { safeLogoSrc } from "@/lib/export";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import {
   downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
@@ -165,6 +167,7 @@ export default function CustomerSettlement() {
 
   /* ── Bulk-action helpers ─────────────────────────────────────────────── */
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
 
   // Run a one-by-one bulk operation against the selected ids and surface
   // an aggregated success/failure toast. We deliberately avoid Promise.all
@@ -318,6 +321,209 @@ export default function CustomerSettlement() {
     [],
   );
 
+  /* ──────────────────────────────────────────────────────────────────
+     Page-level Print / PDF / Excel helpers (toolbar buttons in header)
+     ────────────────────────────────────────────────────────────────── */
+  const escapeHtml = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const safeLogo = safeLogoSrc((user?.company as any)?.logo) ?? "";
+  const openPrintWindow = (html: string) => {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) {
+      toast({
+        title: "تم حظر النافذة المنبثقة",
+        description: "الرجاء السماح بفتح النوافذ المنبثقة من المتصفح للطباعة",
+        variant: "destructive",
+      });
+      return;
+    }
+    w.document.open(); w.document.write(html); w.document.close();
+  };
+
+  // Page-level summary print: one row per settlement.
+  const buildSettlementsListHtml = (source: any[] = filtered) => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const sumAmount = source.reduce((a, s: any) => a + Number(s.amount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>تحصيل العملاء</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:8px; }
+.h h1 { margin:0 0 4px; font-size:18px; }
+.h .meta { font-size:11px; color:#555; }
+.totals { display:flex; gap:16px; justify-content:center; margin:8px 0 12px; font-size:12px; }
+.totals span b { color:#1e3a8a; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:right; }
+tbody tr:nth-child(even) td { background:#f5f7fb; }
+tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
+.num { font-family:"Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>تحصيل العملاء</h1>
+<div class="meta">تاريخ التقرير: ${today} — عدد التحصيلات: ${source.length}</div></div>
+<div class="totals"><span>إجمالي المبالغ: <b>${sumAmount.toFixed(2)}</b></span></div>
+<table><thead><tr>
+  <th>#</th><th>رقم المستند</th><th>التاريخ</th><th>العميل</th>
+  <th>طريقة الدفع</th><th>الحساب</th><th>المبلغ</th>
+  <th>العملة</th><th>الحالة</th><th>ملاحظات</th>
+</tr></thead><tbody>
+${source.map((s: any, i: number) => {
+  const status = s.status === "posted" ? "مرحّلة" : "مسودة";
+  return `<tr>
+    <td>${i + 1}</td>
+    <td>${escapeHtml(s.docNumber ?? `CR-${s.id}`)}</td>
+    <td>${escapeHtml(s.settlementDate ?? "")}</td>
+    <td>${escapeHtml(cusMap[s.customerId] ?? "")}</td>
+    <td>${escapeHtml(PAYMENT_LABEL[s.paymentMethod] ?? s.paymentMethod ?? "")}</td>
+    <td>${escapeHtml(accMap[s.accountId] ?? "")}</td>
+    <td class="num">${Number(s.amount ?? 0).toFixed(2)}</td>
+    <td>${escapeHtml(s.currencyCode ?? "")}</td>
+    <td>${status}</td>
+    <td>${escapeHtml(s.notes ?? "")}</td>
+  </tr>`;
+}).join("")}
+</tbody><tfoot><tr>
+  <td colspan="6">الإجمالي العام</td>
+  <td class="num">${sumAmount.toFixed(2)}</td>
+  <td colspan="3"></td>
+</tr></tfoot></table>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  // Bulk-print: one full A4 portrait card per selected settlement showing
+  // customer / account / amount / payment method / status / notes.
+  const buildBulkSettlementsHtml = (docs: any[]) => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const grand = docs.reduce((a, d: any) => a + Number(d.amount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
+    const sections = docs.map((d: any) => {
+      const docNo  = d.docNumber ?? `CR-${d.id}`;
+      const status = d.status === "posted" ? "مرحّلة" : "مسودة";
+      return `
+<section class="doc">
+  <div class="doc-head">
+    <span class="badge b-doc">رقم السند: ${escapeHtml(docNo)}</span>
+    <span class="badge b-date">التاريخ: ${escapeHtml(d.settlementDate ?? "")}</span>
+    <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(status)}</span>
+  </div>
+  <table class="kv">
+    <tr><th>العميل</th><td>${escapeHtml(cusMap[d.customerId] ?? "")}</td>
+        <th>طريقة الدفع</th><td>${escapeHtml(PAYMENT_LABEL[d.paymentMethod] ?? d.paymentMethod ?? "")}</td></tr>
+    <tr><th>الحساب البنكي / الخزنة</th><td>${escapeHtml(accMap[d.accountId] ?? "")}</td>
+        <th>العملة</th><td>${escapeHtml(d.currencyCode ?? "")}</td></tr>
+    <tr><th>المبلغ</th><td class="amount" colspan="3">${Number(d.amount ?? 0).toFixed(2)}</td></tr>
+    ${d.notes ? `<tr><th>ملاحظات</th><td colspan="3">${escapeHtml(d.notes)}</td></tr>` : ""}
+  </table>
+</section>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة سندات القبض المحدّدة</title>
+<style>
+@page { size: A4 portrait; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:10px; }
+.h h1 { margin:0 0 4px; font-size:17px; }
+.h .meta { font-size:11px; color:#555; }
+.grand { display:flex; gap:14px; justify-content:center; margin:6px 0 14px; font-size:12px; }
+.grand span b { color:#0f766e; }
+section.doc { margin:0 0 14px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; page-break-inside:avoid; background:#fff; }
+.doc-head { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600; border:1px solid; }
+.b-doc{background:#eef2ff;border-color:#a5b4fc;color:#3730a3;}
+.b-date{background:#fef9c3;border-color:#fde047;color:#713f12;}
+.b-status.s-posted{background:#d1fae5;border-color:#34d399;color:#065f46;}
+.b-status.s-draft{background:#f1f5f9;border-color:#94a3b8;color:#334155;}
+table.kv { width:100%; border-collapse:collapse; font-size:11px; }
+table.kv th { background:#f1f5f9; color:#334155; padding:5px 8px; border:1px solid #cbd5e1; text-align:right; font-weight:600; width:25%; }
+table.kv td { padding:5px 8px; border:1px solid #cbd5e1; text-align:right; }
+table.kv td.amount { font-family:"Consolas",monospace; font-size:14px; font-weight:700; color:#0f766e; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>سندات القبض المحدّدة</h1>
+<div class="meta">تاريخ التقرير: ${today} — عدد السندات: ${docs.length}</div></div>
+<div class="grand"><span>إجمالي المبالغ: <b>${grand.toFixed(2)}</b></span></div>
+${sections}
+<script>setTimeout(()=>window.print(),350);</script></body></html>`;
+  };
+
+  const handlePrint     = () => openPrintWindow(buildSettlementsListHtml());
+  const handleExportPDF = () => openPrintWindow(buildSettlementsListHtml());
+  const handleExportExcel = () => {
+    if (filtered.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    const rows = filtered.map((s: any) => ({
+      "رقم المستند": s.docNumber ?? `CR-${s.id}`,
+      "التاريخ": s.settlementDate ?? "",
+      "العميل": cusMap[s.customerId] ?? "",
+      "طريقة الدفع": PAYMENT_LABEL[s.paymentMethod] ?? s.paymentMethod ?? "",
+      "الحساب": accMap[s.accountId] ?? "",
+      "المبلغ": Number(s.amount ?? 0).toFixed(2),
+      "العملة": s.currencyCode ?? "",
+      "الحالة": s.status === "posted" ? "مرحّلة" : "مسودة",
+      "ملاحظات": s.notes ?? "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 22 }, { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 24 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "تحصيل العملاء");
+    XLSX.writeFile(wb, `customer-settlements-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Bulk-print: settlements have no child lines, but we still re-fetch each
+  // doc so the popup uses the freshest server snapshot (status, etc.).
+  async function handleBulkPrint() {
+    const ids = Array.from(layout.selected);
+    if (ids.length === 0) return;
+    setBulkPrintBusy(true);
+    try {
+      const idSet = new Set(ids.map(Number));
+      const ordered = (filtered as any[]).filter((s) => idSet.has(Number(s.id)));
+      let failed = 0;
+      const docs = await Promise.all(
+        ordered.map(async (row: any) => {
+          try {
+            const res = await fetch(`${API}/api/sales/customer-settlements/${row.id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+          } catch {
+            failed += 1;
+            return row;
+          }
+        }),
+      );
+      openPrintWindow(buildBulkSettlementsHtml(docs));
+      if (failed > 0) {
+        toast({
+          title: "تعذّر تحميل تفاصيل بعض السندات",
+          description: `تمت طباعة ${docs.length} مع ${failed} سند بالبيانات المخزنة فقط`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setBulkPrintBusy(false);
+    }
+  }
+
   /* ── CSV export ── */
   function exportCsv() {
     if (filtered.length === 0) {
@@ -347,9 +553,39 @@ export default function CustomerSettlement() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowDownCircle className="h-6 w-6 text-primary" />تحصيل العملاء</h1>
           <p className="text-sm text-muted-foreground mt-1">قبض مستحقات العملاء وترحيل القيود</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />تحصيل جديد
-        </Button>
+        <div className="flex items-center gap-2 print:hidden">
+          {/* Solid green "New Settlement" button (visual far-left in RTL) */}
+          <Button
+            onClick={() => { reset(); setShowForm(true); }}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
+            <Plus className="h-4 w-4" />
+            تحصيل جديد
+          </Button>
+          {/* Grouped export pill: PDF | Excel | Print */}
+          <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
+            <Button
+              variant="ghost" size="sm" onClick={handleExportPDF}
+              className="h-9 rounded-none gap-1.5 text-red-700 hover:bg-red-50 hover:text-red-700 px-3"
+            >
+              <FileDown className="h-4 w-4" /> PDF
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handleExportExcel}
+              className="h-9 rounded-none gap-1.5 text-green-700 hover:bg-green-50 hover:text-green-700 px-3"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handlePrint}
+              className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3"
+            >
+              <Printer className="h-4 w-4" /> طباعة
+            </Button>
+          </div>
+        </div>
       </div>
 
       {showForm && (
@@ -485,6 +721,16 @@ export default function CustomerSettlement() {
           onClear={layout.clearSelection}
           busy={bulkBusy}
         >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
+            onClick={handleBulkPrint}
+            disabled={layout.selected.size === 0 || bulkPrintBusy}
+            title={`طباعة (${layout.selected.size})`}
+          >
+            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+            طباعة ({layout.selected.size})
+          </Button>
           <Button
             type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"

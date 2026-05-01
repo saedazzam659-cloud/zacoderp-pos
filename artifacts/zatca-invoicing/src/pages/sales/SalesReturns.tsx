@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, X, Loader2, Send } from "lucide-react";
+import { Plus, Trash2, RotateCcw, CheckCircle2, Undo2, Calculator, FileText, ListOrdered, Pencil, Copy, Printer, FileSpreadsheet, FileDown, X, Loader2, Send } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   downloadCsv, matchCol, useAuditGridLayout, useColumnResize,
 } from "@/lib/auditGridLayout";
@@ -32,6 +33,7 @@ import { CustomerVatControl } from "@/components/CustomerVatControl";
 import { DiscountRow } from "@/components/DiscountRow";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { safeLogoSrc } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -306,6 +308,7 @@ export default function SalesReturns() {
      show ONE toast at the end ("ok of N succeeded") instead of N toasts. */
   const isAdmin = user?.role === "admin" || user?.role === "superadmin";
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
   async function bulkRun(
     ids: number[],
     perId: (id: number) => Promise<void>,
@@ -743,6 +746,267 @@ export default function SalesReturns() {
     [DATA_KEYS, COLUMNS],
   );
 
+  /* ──────────────────────────────────────────────────────────────────
+     Page-level Print / PDF / Excel helpers (toolbar buttons in header)
+     ────────────────────────────────────────────────────────────────── */
+  const escapeHtml = (s: any) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const safeLogo = safeLogoSrc((user?.company as any)?.logo) ?? "";
+  const openPrintWindow = (html: string) => {
+    const w = window.open("", "_blank", "width=1100,height=800");
+    if (!w) {
+      toast({
+        title: "تم حظر النافذة المنبثقة",
+        description: "الرجاء السماح بفتح النوافذ المنبثقة من المتصفح للطباعة",
+        variant: "destructive",
+      });
+      return;
+    }
+    w.document.open(); w.document.write(html); w.document.close();
+  };
+  const itemsMap = useMemo(() => {
+    const m: Record<number, any> = {};
+    for (const it of (inventoryItems as any[])) m[Number(it.id)] = it;
+    return m;
+  }, [inventoryItems]);
+
+  // Build the page-level summary print HTML (one row per return)
+  const buildReturnsListHtml = (source: any[] = filteredReturns) => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const sumSubtotal = source.reduce((a, r: any) => a + (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)), 0);
+    const sumVat      = source.reduce((a, r: any) => a + Number(r.vatAmount ?? 0), 0);
+    const sumTotal    = source.reduce((a, r: any) => a + Number(r.totalAmount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${escapeHtml(t("salesReturns.title"))}</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:8px; }
+.h h1 { margin:0 0 4px; font-size:18px; }
+.h .meta { font-size:11px; color:#555; }
+.totals { display:flex; gap:16px; justify-content:center; margin:8px 0 12px; font-size:12px; }
+.totals span b { color:#1e3a8a; }
+table { width:100%; border-collapse:collapse; font-size:11px; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:right; }
+tbody tr:nth-child(even) td { background:#f5f7fb; }
+tfoot td { padding:6px 8px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
+.num { font-family:"Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>${escapeHtml(t("salesReturns.title"))}</h1>
+<div class="meta">تاريخ التقرير: ${today} — عدد المرتجعات: ${source.length}</div></div>
+<div class="totals">
+  <span>إجمالي المجموع: <b>${sumSubtotal.toFixed(2)}</b></span>
+  <span>إجمالي الضريبة: <b>${sumVat.toFixed(2)}</b></span>
+  <span>الإجمالي: <b>${sumTotal.toFixed(2)}</b></span>
+</div>
+<table><thead><tr>
+  <th>#</th><th>رقم المرتجع</th><th>التاريخ</th><th>العميل</th><th>الفاتورة</th>
+  <th>العملة</th><th>المجموع</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th>
+</tr></thead><tbody>
+${source.map((r: any, i: number) => {
+  const sub = Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0);
+  const status = r.status === "posted" ? "مرحّل" : r.status === "voided" ? "ملغى" : "مسودة";
+  return `<tr>
+    <td>${i + 1}</td>
+    <td>${escapeHtml(r.docNumber ?? `SR-${r.id}`)}</td>
+    <td>${escapeHtml(r.returnDate ?? "")}</td>
+    <td>${escapeHtml(cusMap[r.customerId] ?? "")}</td>
+    <td>${escapeHtml(r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : "")}</td>
+    <td>${escapeHtml(r.currencyCode ?? "")}</td>
+    <td class="num">${sub.toFixed(2)}</td>
+    <td class="num">${Number(r.vatAmount ?? 0).toFixed(2)}</td>
+    <td class="num">${Number(r.totalAmount ?? 0).toFixed(2)}</td>
+    <td>${status}</td>
+  </tr>`;
+}).join("")}
+</tbody><tfoot><tr>
+  <td colspan="6">الإجمالي العام</td>
+  <td class="num">${sumSubtotal.toFixed(2)}</td>
+  <td class="num">${sumVat.toFixed(2)}</td>
+  <td class="num">${sumTotal.toFixed(2)}</td>
+  <td></td>
+</tr></tfoot></table>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  // Build the bulk-print HTML — one full A4 portrait sheet per selected return
+  // showing every line (item / qty / price / vat / total) of that return.
+  const buildBulkReturnsHtml = (docs: any[]) => {
+    const today = new Date().toLocaleDateString("ar-SA");
+    const grandSub = docs.reduce((a, d: any) => a + (Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0)), 0);
+    const grandVat = docs.reduce((a, d: any) => a + Number(d.vatAmount ?? 0), 0);
+    const grandTot = docs.reduce((a, d: any) => a + Number(d.totalAmount ?? 0), 0);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;text-align:center;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
+    const sections = docs.map((d: any) => {
+      const lines: any[] = Array.isArray(d.lines) ? d.lines : [];
+      const docNo  = d.docNumber ?? `SR-${d.id}`;
+      const status = d.status === "posted" ? "مرحّل" : d.status === "voided" ? "ملغى" : "مسودة";
+      const sub = Number(d.totalAmount ?? 0) - Number(d.vatAmount ?? 0);
+      const linesHtml = lines.length === 0
+        ? `<tr><td colspan="7" style="text-align:center;color:#6b7280;padding:14px;">لا توجد أصناف لهذا المرتجع.</td></tr>`
+        : lines.map((l: any, i: number) => {
+            const it   = itemsMap[Number(l.itemId)];
+            const itemLabel = it
+              ? (it.code ? `${it.code} — ${it.nameAr ?? it.nameEn ?? ""}` : (it.nameAr ?? it.nameEn ?? `#${it.id}`))
+              : (l.description ?? `#${l.itemId ?? ""}`);
+            const qty  = Number(l.quantity ?? 0);
+            const up   = Number(l.unitPrice ?? 0);
+            const vat  = Number(l.vatAmount ?? 0);
+            const ttl  = Number(l.totalAmount ?? 0);
+            return `<tr>
+              <td style="text-align:center;">${i + 1}</td>
+              <td>${escapeHtml(itemLabel)}</td>
+              <td>${escapeHtml(l.description ?? "")}</td>
+              <td class="num">${qty.toFixed(2)}</td>
+              <td class="num">${up.toFixed(2)}</td>
+              <td class="num">${vat.toFixed(2)}</td>
+              <td class="num">${ttl.toFixed(2)}</td>
+            </tr>`;
+          }).join("");
+      return `
+<section class="doc">
+  <div class="doc-head">
+    <span class="badge b-doc">رقم المرتجع: ${escapeHtml(docNo)}</span>
+    <span class="badge b-date">التاريخ: ${escapeHtml(d.returnDate ?? "")}</span>
+    <span class="badge b-cust">العميل: ${escapeHtml(cusMap[d.customerId] ?? "")}</span>
+    ${d.invoiceId ? `<span class="badge b-inv">الفاتورة: ${escapeHtml(invMap[d.invoiceId] ?? `SI-${d.invoiceId}`)}</span>` : ""}
+    <span class="badge b-status s-${escapeHtml(d.status)}">${escapeHtml(status)}</span>
+  </div>
+  ${d.notes ? `<div class="desc">${escapeHtml(d.notes)}</div>` : ""}
+  <table>
+    <thead><tr>
+      <th style="width:30px;">#</th><th>الصنف</th><th>البيان</th>
+      <th style="width:70px;">الكمية</th><th style="width:80px;">السعر</th>
+      <th style="width:75px;">الضريبة</th><th style="width:90px;">الإجمالي</th>
+    </tr></thead>
+    <tbody>${linesHtml}</tbody>
+    <tfoot><tr>
+      <td colspan="5" style="text-align:left;">إجمالي المرتجع</td>
+      <td class="num">${Number(d.vatAmount ?? 0).toFixed(2)}</td>
+      <td class="num">${Number(d.totalAmount ?? 0).toFixed(2)}</td>
+    </tr><tr>
+      <td colspan="5" style="text-align:left;">المجموع قبل الضريبة</td>
+      <td colspan="2" class="num" style="text-align:right;">${sub.toFixed(2)}</td>
+    </tr></tfoot>
+  </table>
+</section>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة المرتجعات المحدّدة</title>
+<style>
+@page { size: A4 portrait; margin: 12mm; }
+* { box-sizing: border-box; }
+body { font-family:"Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; }
+.h { text-align:center; margin-bottom:10px; }
+.h h1 { margin:0 0 4px; font-size:17px; }
+.h .meta { font-size:11px; color:#555; }
+.grand { display:flex; gap:14px; justify-content:center; margin:6px 0 14px; font-size:12px; }
+.grand span b { color:#0f766e; }
+section.doc { margin:0 0 14px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; page-break-inside:avoid; background:#fff; }
+.doc-head { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:600; border:1px solid; }
+.b-doc{background:#eef2ff;border-color:#a5b4fc;color:#3730a3;}
+.b-date{background:#fef9c3;border-color:#fde047;color:#713f12;}
+.b-cust{background:#ecfeff;border-color:#67e8f9;color:#155e75;}
+.b-inv{background:#f5f3ff;border-color:#c4b5fd;color:#5b21b6;}
+.b-status.s-posted{background:#d1fae5;border-color:#34d399;color:#065f46;}
+.b-status.s-draft{background:#f1f5f9;border-color:#94a3b8;color:#334155;}
+.b-status.s-voided{background:#fee2e2;border-color:#f87171;color:#991b1b;}
+.desc { font-size:11px; color:#475569; padding:4px 6px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:4px; margin-bottom:6px; }
+table { width:100%; border-collapse:collapse; font-size:10.5px; }
+thead th { background:#1e3a8a; color:#fff; padding:5px 6px; border:1px solid #1e3a8a; text-align:right; font-weight:600; }
+tbody td { padding:4px 6px; border:1px solid #d1d5db; text-align:right; }
+tfoot td { padding:5px 6px; border:1px solid #1e3a8a; background:#eef2ff; font-weight:700; }
+.num { font-family:"Consolas",monospace; }
+.print-btn { position:fixed; top:10px; left:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">${logoHtml}${companyHtml}<h1>المرتجعات المحدّدة</h1>
+<div class="meta">تاريخ التقرير: ${today} — عدد المرتجعات: ${docs.length}</div></div>
+<div class="grand">
+  <span>إجمالي المجموع: <b>${grandSub.toFixed(2)}</b></span>
+  <span>إجمالي الضريبة: <b>${grandVat.toFixed(2)}</b></span>
+  <span>الإجمالي العام: <b>${grandTot.toFixed(2)}</b></span>
+</div>
+${sections}
+<script>setTimeout(()=>window.print(),350);</script></body></html>`;
+  };
+
+  const handlePrint      = () => openPrintWindow(buildReturnsListHtml());
+  const handleExportPDF  = () => openPrintWindow(buildReturnsListHtml());
+  const handleExportExcel = () => {
+    if (filteredReturns.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    const rows = filteredReturns.map((r: any) => ({
+      "رقم المرتجع": r.docNumber ?? `SR-${r.id}`,
+      "التاريخ": r.returnDate ?? "",
+      "العميل": cusMap[r.customerId] ?? "",
+      "الفاتورة": r.invoiceId ? (invMap[r.invoiceId] ?? `SI-${r.invoiceId}`) : "",
+      "العملة": r.currencyCode ?? "",
+      "المجموع": (Number(r.totalAmount ?? 0) - Number(r.vatAmount ?? 0)).toFixed(2),
+      "الضريبة": Number(r.vatAmount ?? 0).toFixed(2),
+      "الإجمالي": Number(r.totalAmount ?? 0).toFixed(2),
+      "الحالة": r.status === "posted" ? "مرحّل" : r.status === "voided" ? "ملغى" : "مسودة",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, t("salesReturns.title"));
+    XLSX.writeFile(wb, `sales-returns-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Bulk-print: fetch every selected return's full lines, then open the
+  // multi-doc print sheet. Falls back to the cached row if a fetch fails.
+  async function handleBulkPrint() {
+    const ids = Array.from(layout.selected);
+    if (ids.length === 0) return;
+    setBulkPrintBusy(true);
+    try {
+      const idSet = new Set(ids.map(Number));
+      const ordered = (filteredReturns as any[]).filter((r) => idSet.has(Number(r.id)));
+      let failed = 0;
+      const docs = await Promise.all(
+        ordered.map(async (row: any) => {
+          try {
+            const res = await fetch(`${API}/api/sales/sales-returns/${row.id}${cid ? `?companyId=${cid}` : ""}`, { headers: authH });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+          } catch {
+            failed += 1;
+            return { ...row, lines: [] };
+          }
+        }),
+      );
+      openPrintWindow(buildBulkReturnsHtml(docs));
+      if (failed > 0) {
+        toast({
+          title: "تعذّر تحميل تفاصيل بعض المرتجعات",
+          description: `تمت طباعة ${docs.length} مع ${failed} مرتجع بدون بنود تفصيلية`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setBulkPrintBusy(false);
+    }
+  }
+
   function exportCsv() {
     if (filteredReturns.length === 0) {
       toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
@@ -849,9 +1113,39 @@ export default function SalesReturns() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t("salesReturns.subtitle")}</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
-          <Plus className="h-4 w-4" />{t("salesReturns.newReturn")}
-        </Button>
+        <div className="flex items-center gap-2 print:hidden">
+          {/* Solid green "New Return" button (visual far-left in RTL) */}
+          <Button
+            onClick={() => { reset(); setShowForm(true); }}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
+            <Plus className="h-4 w-4" />
+            {t("salesReturns.newReturn")}
+          </Button>
+          {/* Grouped export pill: PDF | Excel | Print */}
+          <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
+            <Button
+              variant="ghost" size="sm" onClick={handleExportPDF}
+              className="h-9 rounded-none gap-1.5 text-red-700 hover:bg-red-50 hover:text-red-700 px-3"
+            >
+              <FileDown className="h-4 w-4" /> PDF
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handleExportExcel}
+              className="h-9 rounded-none gap-1.5 text-green-700 hover:bg-green-50 hover:text-green-700 px-3"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handlePrint}
+              className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3"
+            >
+              <Printer className="h-4 w-4" /> طباعة
+            </Button>
+          </div>
+        </div>
       </div>
 
       {showForm && (() => {
@@ -1218,6 +1512,16 @@ export default function SalesReturns() {
           onClear={clearSelection}
           busy={bulkBusy}
         >
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
+            onClick={handleBulkPrint}
+            disabled={layout.selected.size === 0 || bulkPrintBusy}
+            title={`طباعة (${layout.selected.size})`}
+          >
+            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+            طباعة ({layout.selected.size})
+          </Button>
           <Button
             type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-emerald-700 hover:bg-emerald-600 text-white"
