@@ -571,19 +571,37 @@ ${entrySections}
           </div>
         </div>
         <div className="flex items-center gap-2 print:hidden">
-          <Button variant="outline" size="sm" onClick={handlePrint} className="gap-1.5">
-            <Printer className="h-4 w-4" /> {t("accountingReports.print")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportExcel} className="gap-1.5 text-green-700 border-green-200 hover:bg-green-50">
-            <FileSpreadsheet className="h-4 w-4" /> {t("journalEntries.excel")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPDF} className="gap-1.5 text-red-700 border-red-200 hover:bg-red-50">
-            <FileDown className="h-4 w-4" /> {t("journalEntries.pdf")}
-          </Button>
-          <Button onClick={() => navigate("/accounting/journals/new")} className="gap-2">
+          {/* Solid green "New Entry" button (visual far-left in RTL) */}
+          <Button
+            onClick={() => navigate("/accounting/journals/new")}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
             <Plus className="h-4 w-4" />
             {t("journalEntries.newEntry")}
           </Button>
+          {/* Grouped export pill: PDF | Excel | Print */}
+          <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
+            <Button
+              variant="ghost" size="sm" onClick={handleExportPDF}
+              className="h-9 rounded-none gap-1.5 text-red-700 hover:bg-red-50 hover:text-red-700 px-3"
+            >
+              <FileDown className="h-4 w-4" /> {t("journalEntries.pdf")}
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handleExportExcel}
+              className="h-9 rounded-none gap-1.5 text-green-700 hover:bg-green-50 hover:text-green-700 px-3"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> {t("journalEntries.excel")}
+            </Button>
+            <div className="w-px bg-slate-200" />
+            <Button
+              variant="ghost" size="sm" onClick={handlePrint}
+              className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3"
+            >
+              <Printer className="h-4 w-4" /> {t("accountingReports.print")}
+            </Button>
+          </div>
         </div>
       </div>
 
