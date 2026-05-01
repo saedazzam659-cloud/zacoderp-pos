@@ -135,6 +135,26 @@ export default function JournalEntries() {
     enabled: !!user,
   });
 
+  // Used by bulk-print to label account ids on each journal-entry line.
+  // Cached across renders so opening Print repeatedly is cheap.
+  const API_URL = (import.meta as any).env?.VITE_API_URL ?? "";
+  const buildAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem("zatca_token");
+    return token
+      ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+      : { "Content-Type": "application/json" };
+  };
+  const { data: accountsList = [] } = useQuery<any[]>({
+    queryKey: ["accounts-flat", cid],
+    queryFn: async () => {
+      const url = cid ? `${API_URL}/api/accounts?companyId=${cid}` : `${API_URL}/api/accounts`;
+      const res = await fetch(url, { headers: buildAuthHeaders() });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!user,
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => journalEntriesApi.remove(id),
     onSuccess: () => {
@@ -334,15 +354,189 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
   const handleExportPDF = () => openPrintWindow(buildPrintHtml());
   const handlePrint    = () => openPrintWindow(buildPrintHtml());
 
-  /* ── Print only the rows the user has selected via checkboxes ── */
-  const handleBulkPrint = () => {
-    const ids = Array.from(layout.selected);
+  /* ── Bulk print: render each selected entry as a full journal-entry sheet
+        (header + every debit/credit line), not just a one-row summary. ─── */
+  const [bulkPrintBusy, setBulkPrintBusy] = useState(false);
+  const acctMap = useMemo(
+    () => new Map<number, any>((accountsList as any[]).map((a: any) => [a.id, a])),
+    [accountsList],
+  );
+
+  const buildBulkPrintHtml = (entriesWithLines: any[]) => {
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const dir = isRtl ? "rtl" : "ltr";
+    const lang = isRtl ? "ar" : "en";
+    const align = isRtl ? "right" : "left";
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const logoHtml = safeLogo
+      ? `<div style="margin-bottom:6px;"><img src="${safeLogo}" alt="" style="max-height:54px;max-width:170px;object-fit:contain;display:block;margin:0 auto;" /></div>`
+      : "";
+    const companyNameHtml = user?.company?.nameAr
+      ? `<div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:2px;">${escapeHtml(user.company.nameAr)}</div>`
+      : "";
+
+    // Grand totals across every selected entry.
+    const grandDebit  = entriesWithLines.reduce((s, e) => s + Number(e.totalDebit  ?? 0), 0);
+    const grandCredit = entriesWithLines.reduce((s, e) => s + Number(e.totalCredit ?? 0), 0);
+
+    // Localized labels for the per-entry header strip and the line table.
+    // Reuse the same i18n keys the existing exports rely on (COL_*_L).
+    const L = {
+      doc:        COL_DOC_L,
+      date:       COL_DATE_L,
+      type:       COL_TYPE_L,
+      desc:       COL_DESC_L,
+      debit:      COL_DEBIT_L,
+      credit:     COL_CREDIT_L,
+      status:     COL_STATUS_L,
+      account:    isRtl ? "الحساب" : "Account",
+      lineDesc:   isRtl ? "البيان"  : "Description",
+      costCenter: isRtl ? "مركز التكلفة" : "Cost Center",
+      lineNo:     isRtl ? "م" : "#",
+      subtotal:   isRtl ? "الإجمالي" : "Subtotal",
+      noLines:    isRtl ? "لا توجد أطراف لهذا القيد." : "No lines for this entry.",
+      grandTotal: isRtl ? "الإجمالي العام" : "Grand Total",
+    };
+
+    const entrySections = entriesWithLines.map((e: any) => {
+      const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
+      const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
+      const subDebit  = lines.reduce((s, ln) => s + Number(ln.debit  ?? 0), 0);
+      const subCredit = lines.reduce((s, ln) => s + Number(ln.credit ?? 0), 0);
+
+      const linesHtml = lines.length === 0
+        ? `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:10px;">${escapeHtml(L.noLines)}</td></tr>`
+        : lines.map((ln, i) => {
+            const acc = acctMap.get(Number(ln.accountId));
+            const accLabel = acc
+              ? `${escapeHtml(acc.code ?? "")} — ${escapeHtml(acc.nameAr ?? acc.nameEn ?? "")}`
+              : `#${escapeHtml(ln.accountId)}`;
+            return `<tr>
+              <td class="num center">${i + 1}</td>
+              <td>${accLabel}</td>
+              <td>${escapeHtml(ln.description ?? "")}</td>
+              <td class="num end">${Number(ln.debit  ?? 0).toFixed(2)}</td>
+              <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
+              <td>${escapeHtml(ln.costCenter ?? "")}</td>
+            </tr>`;
+          }).join("");
+
+      return `
+<section class="entry">
+  <div class="entry-head">
+    <div class="entry-title">
+      <span class="badge">${escapeHtml(L.doc)}: ${escapeHtml(docNo)}</span>
+      <span class="badge">${escapeHtml(L.date)}: ${escapeHtml(e.entryDate ?? "")}</span>
+      <span class="badge">${escapeHtml(L.type)}: ${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</span>
+      <span class="badge">${escapeHtml(L.status)}: ${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</span>
+    </div>
+    ${e.description ? `<div class="entry-desc"><b>${escapeHtml(L.desc)}:</b> ${escapeHtml(e.description)}</div>` : ""}
+  </div>
+  <table class="lines">
+    <thead>
+      <tr>
+        <th style="width:36px;">${escapeHtml(L.lineNo)}</th>
+        <th>${escapeHtml(L.account)}</th>
+        <th>${escapeHtml(L.lineDesc)}</th>
+        <th style="width:90px;">${escapeHtml(L.debit)}</th>
+        <th style="width:90px;">${escapeHtml(L.credit)}</th>
+        <th style="width:120px;">${escapeHtml(L.costCenter)}</th>
+      </tr>
+    </thead>
+    <tbody>${linesHtml}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3" class="end"><b>${escapeHtml(L.subtotal)}</b></td>
+        <td class="num end"><b>${subDebit.toFixed(2)}</b></td>
+        <td class="num end"><b>${subCredit.toFixed(2)}</b></td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</section>`;
+    }).join("");
+
+    return `<!DOCTYPE html><html dir="${dir}" lang="${lang}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
+<style>
+@page { size: A4 portrait; margin: 12mm 12mm 22mm 12mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; font-size: 9pt; color: #475569; } }
+@media print { thead { display: table-header-group; } .entry { page-break-inside: avoid; } }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI","Tahoma","Arial",system-ui,sans-serif; color:#111; margin:0; padding:0; direction:${dir}; }
+.h { text-align:center; margin-bottom:10px; }
+.h h1 { margin:0 0 4px; font-size:18px; }
+.h .meta { font-size:11px; color:#555; }
+.totals { display:flex; gap:16px; justify-content:center; margin:6px 0 14px; font-size:12px; }
+.totals span b { color:#1e3a8a; }
+.entry { margin: 0 0 14px; border:1px solid #cbd5e1; border-radius:6px; padding:8px 10px; background:#fff; }
+.entry-head { margin-bottom:6px; }
+.entry-title { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; }
+.badge { display:inline-block; padding:2px 8px; background:#eef2ff; color:#1e3a8a; border:1px solid #c7d2fe; border-radius:999px; font-size:10.5px; font-weight:600; }
+.entry-desc { font-size:11px; color:#334155; margin-top:2px; }
+table.lines { width:100%; border-collapse:collapse; font-size:11px; margin-top:4px; }
+table.lines thead th { background:#1e3a8a; color:#fff; padding:5px 7px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; }
+table.lines tbody td { padding:4px 7px; border:1px solid #d1d5db; text-align:${align}; }
+table.lines tbody tr:nth-child(even) td { background:#f8fafc; }
+table.lines tfoot td { padding:5px 7px; border:1px solid #cbd5e1; background:#f1f5f9; }
+.num { font-family: "Consolas",monospace; }
+.end { text-align:${isRtl ? "left" : "right"}; }
+.center { text-align:center; }
+.grand { margin-top:6px; padding:8px 12px; background:#1e3a8a; color:#fff; border-radius:6px; display:flex; justify-content:space-between; gap:18px; font-size:12px; }
+.print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">${escapeHtml(t("journalEntries.printPdf"))}</button>
+<div class="h">${logoHtml}${companyNameHtml}<h1>${escapeHtml(t("journalEntries.printSheetTitle"))}</h1>
+<div class="meta">${escapeHtml(t("journalEntries.reportDate"))}: ${escapeHtml(today)} — ${escapeHtml(t("journalEntries.entriesCount", { count: entriesWithLines.length }))}</div></div>
+<div class="totals">
+  <span>${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
+</div>
+${entrySections}
+<div class="grand">
+  <span>${escapeHtml(L.grandTotal)} — ${escapeHtml(t("journalEntries.totalDebit"))}: <b>${grandDebit.toFixed(2)}</b></span>
+  <span>${escapeHtml(t("journalEntries.totalCredit"))}: <b>${grandCredit.toFixed(2)}</b></span>
+</div>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  // Print only the rows the user has selected via checkboxes — fetches each
+  // selected entry's full details (with lines) so we can show every debit/credit
+  // line per entry, not just the aggregate totals from the list response.
+  const handleBulkPrint = async () => {
+    const ids = Array.from(layout.selected).map((x) => Number(x)).filter(Number.isFinite);
     if (ids.length === 0) return;
     const idSet = new Set(ids);
     // Preserve the on-screen order so the printout matches what the user sees.
     const selectedRows = (entries as any[]).filter((e: any) => idSet.has(e.id));
     if (selectedRows.length === 0) return;
-    openPrintWindow(buildPrintHtml(selectedRows));
+
+    setBulkPrintBusy(true);
+    try {
+      // Fetch in parallel — list size is small (the user just clicked checkboxes).
+      // Fallback to the row's aggregate values if a fetch fails so the printout
+      // still includes the entry header.
+      const detailed = await Promise.all(
+        selectedRows.map(async (row: any) => {
+          try {
+            const full = await journalEntriesApi.get(row.id, cid);
+            return {
+              ...row,
+              ...full,
+              // Defensive merge — `full` should already carry totals, but if the
+              // server omits them on detail responses fall back to the list row.
+              totalDebit:  full?.totalDebit  ?? row.totalDebit  ?? 0,
+              totalCredit: full?.totalCredit ?? row.totalCredit ?? 0,
+              lines: Array.isArray(full?.lines) ? full.lines : [],
+            };
+          } catch {
+            return { ...row, lines: [] };
+          }
+        }),
+      );
+      openPrintWindow(buildBulkPrintHtml(detailed));
+    } finally {
+      setBulkPrintBusy(false);
+    }
   };
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
@@ -497,10 +691,10 @@ tbody tr:nth-child(even) td { background:#f5f7fb; }
             type="button" size="sm"
             className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
             onClick={handleBulkPrint}
-            disabled={selectedIds.length === 0}
+            disabled={selectedIds.length === 0 || bulkPrintBusy}
             title={`${t("accountingReports.print")} (${selectedIds.length})`}
           >
-            <Printer className="h-3.5 w-3.5" />
+            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
             {t("accountingReports.print")} ({selectedIds.length})
           </Button>
           <Button
