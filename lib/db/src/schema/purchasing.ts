@@ -86,6 +86,7 @@ export const purchaseInvoicesTable = pgTable("purchase_invoices", {
   taxAccountId:         integer("tax_account_id"),
   discountAccountId:    integer("discount_account_id"),
   journalEntryId:       integer("journal_entry_id"),
+  sourceGrnId:          integer("source_grn_id"),
   notes:                text("notes"),
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().notNull(),

@@ -69,6 +69,11 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "purchase_invoice",     roleKey: "vat_input",              accountCode: "11071" },
   { documentType: "purchase_invoice",     roleKey: "payable",                accountCode: "21011" },
   { documentType: "purchase_invoice",     roleKey: "discount",               accountCode: "4103"  },
+  { documentType: "purchase_invoice",     roleKey: "receiving_clearing",     accountCode: "11091" },
+
+  // إذن استلام البضاعة
+  { documentType: "goods_receipt",        roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "goods_receipt",        roleKey: "receiving_clearing",     accountCode: "11091" },
 
   // مرتجع المشتريات
   { documentType: "purchase_return",      roleKey: "payable",                accountCode: "21011" },

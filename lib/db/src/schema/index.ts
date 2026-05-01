@@ -11,6 +11,7 @@ export * from "./journalEntries";
 export * from "./trialBalances";
 export * from "./currencies";
 export * from "./purchasing";
+export * from "./inventoryReceipts";
 export * from "./sales";
 export * from "./cash";
 export * from "./fiscalPeriods";

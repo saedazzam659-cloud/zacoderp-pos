@@ -16,6 +16,8 @@ import { pathRbac, requireAdminRole } from "../middleware/permissions.js";
 import { upsertBalance, getBalance, addStockLedgerEntry } from "../lib/stockHelpers.js";
 import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
+import { goodsReceiptsTable } from "@workspace/db";
+import { getReceivingClearingAccountId } from "./goodsReceipts.js";
 
 // ─── Journal entry helper ────────────────────────────────────────────────────
 type JLine = { accountId: number | null; debit?: number; credit?: number; description?: string | null };
@@ -587,6 +589,13 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     // Load warehouse info for inventory account derivation
     const whInfo = await loadWarehouseInfo(cid, lines.map(l => l.warehouseId).filter(Boolean) as number[]);
 
+    // When this invoice was created from a Goods Receipt Note (GRN), the
+    // stock movement already happened at GRN-post time. Skip the stock
+    // loop entirely so we don't double-count, and DEBIT Receiving Clearing
+    // (instead of Inventory) so it nets out against the GRN's credit to
+    // that same clearing account.
+    const grnSourced = !!(inv as any).sourceGrnId;
+
     // Update stock balance for each stockable line (in base units), accumulate inventory debit per warehouse
     const inventoryByWarehouse: Record<number, number> = {};
     for (const line of lines) {
@@ -596,6 +605,8 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       const cost     = Number(line.finalCost || line.unitPrice);
       const costUnit = qty > 0 ? cost / qty : Number(line.unitPrice) / factor;
       inventoryByWarehouse[line.warehouseId] = (inventoryByWarehouse[line.warehouseId] ?? 0) + cost;
+
+      if (grnSourced) continue;
 
       await upsertBalance(cid, line.itemId, line.warehouseId, qty, costUnit);
       const newBal = await getBalance(cid, line.itemId, line.warehouseId);
@@ -640,14 +651,22 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     if (vatAmount > 0 && !taxAccId) missing.push("حساب الضرائب (مدخلات)");
     if (discountAmount > 0 && !discountAccId) missing.push("حساب الخصم المكتسب");
     if (!counterpartyAccountId) missing.push(inv.paymentType === "cash" ? "حساب الخزنة" : inv.paymentType === "bank" ? "الحساب البنكي" : "حساب المورد");
-    // Inventory account derived from warehouse — verify each used warehouse has one
-    const missingWh: string[] = [];
-    for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
-      if (amt <= 0) continue;
-      const wid = Number(widStr);
-      if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+
+    // GRN-sourced invoices DEBIT Receiving Clearing instead of Inventory.
+    // For non-GRN invoices, derive Inventory from each warehouse's account.
+    let clearingAccId: number | null = null;
+    if (grnSourced) {
+      clearingAccId = await getReceivingClearingAccountId(cid);
+      if (!clearingAccId) missing.push("حساب وسيط الاستلام");
+    } else {
+      const missingWh: string[] = [];
+      for (const [widStr, amt] of Object.entries(inventoryByWarehouse)) {
+        if (amt <= 0) continue;
+        const wid = Number(widStr);
+        if (!whInfo[wid]?.accountId) missingWh.push(whInfo[wid]?.nameAr ?? String(wid));
+      }
+      if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
     }
-    if (missingWh.length) missing.push(`حساب المخزون لـ: ${missingWh.join("، ")}`);
     if (missing.length) {
       throw new Error(`يجب تحديد الحسابات التالية قبل الترحيل: ${missing.join("، ")}`);
     }
@@ -671,6 +690,18 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
     }
 
     const desc = `قيد فاتورة مشتريات رقم ${inv.docNumber || inv.id}`;
+    const debitLines: JLine[] = grnSourced
+      ? [{ accountId: clearingAccId!, debit: inventoryDebit, description: "تسوية وسيط استلام البضاعة" }]
+      : Object.entries(inventoryDebitByWh)
+          .filter(([, amt]) => amt > 0)
+          .map(([widStr, amt]) => {
+            const wid = Number(widStr);
+            return {
+              accountId: whInfo[wid]!.accountId!,
+              debit: amt,
+              description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
+            };
+          });
     const journalId = await createJournalEntry({
       companyId:    cid,
       branchId:     inv.branchId,
@@ -680,17 +711,7 @@ router.patch("/purchase-invoices/:id/post", async (req, res) => {
       entryType:    "purchase_invoice",
       exchangeRate: inv.exchangeRate,
       lines: [
-        // Inventory: one debit line per warehouse using its own GL account
-        ...Object.entries(inventoryDebitByWh)
-          .filter(([, amt]) => amt > 0)
-          .map(([widStr, amt]) => {
-            const wid = Number(widStr);
-            return {
-              accountId: whInfo[wid]!.accountId!,
-              debit: amt,
-              description: `قيمة البضاعة — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
-            };
-          }),
+        ...debitLines,
         { accountId: taxAccId,               debit:  vatAmount,      description: "ضريبة القيمة المضافة" },
         { accountId: counterpartyAccountId,  credit: totalAmount,    description: inv.paymentType === "cash" ? "صرف نقدي" : inv.paymentType === "bank" ? "صرف بنكي" : "مستحقات المورد" },
         { accountId: discountAccId,          credit: discountAmount, description: "خصم مكتسب" },
@@ -719,8 +740,14 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
     if (!inv) { res.status(404).json({ error: "الفاتورة غير موجودة" }); return; }
     if (inv.status !== "posted") { res.status(400).json({ error: "الفاتورة ليست مُرحَّلة" }); return; }
 
+    // GRN-sourced invoices never touched stock (the GRN did), so there's
+    // nothing in the stock ledger under refType=purchase_invoice for them
+    // — the loop below is a safe no-op in that case but we short-circuit
+    // to make the intent obvious.
+    const grnSourced = !!(inv as any).sourceGrnId;
+
     // ── Reverse stock movements (delete ledger rows + decrement balances) ──
-    const ledger = await db.select().from(stockLedgerTable)
+    const ledger = grnSourced ? [] : await db.select().from(stockLedgerTable)
       .where(and(
         eq(stockLedgerTable.companyId, cid),
         eq(stockLedgerTable.refType, "purchase_invoice"),
@@ -741,12 +768,14 @@ router.patch("/purchase-invoices/:id/unpost", requireAdminRole, async (req, res)
           .where(eq(stockBalanceTable.id, bal.id));
       }
     }
-    await db.delete(stockLedgerTable)
-      .where(and(
-        eq(stockLedgerTable.companyId, cid),
-        eq(stockLedgerTable.refType, "purchase_invoice"),
-        eq(stockLedgerTable.refId, id),
-      ));
+    if (!grnSourced) {
+      await db.delete(stockLedgerTable)
+        .where(and(
+          eq(stockLedgerTable.companyId, cid),
+          eq(stockLedgerTable.refType, "purchase_invoice"),
+          eq(stockLedgerTable.refId, id),
+        ));
+    }
 
     // ── Zero-out the JE lines, then delete the JE ──
     if (inv.journalEntryId) {
@@ -793,6 +822,18 @@ router.delete("/purchase-invoices/:id", async (req, res) => {
       return;
     }
     await cleanupDocArtifacts({ companyId: cid, refType: "purchase_invoice", refId: id, journalEntryId: (inv as any).journalEntryId });
+
+    // If this draft invoice was created from a GRN, restore the GRN to
+    // posted (un-link it) so the user can re-issue an invoice or unpost
+    // the GRN itself. Without this, a deleted draft would leave the GRN
+    // permanently stuck in "invoiced" status.
+    const grnId = (inv as any).sourceGrnId as number | null | undefined;
+    if (grnId) {
+      await db.update(goodsReceiptsTable)
+        .set({ status: "posted", linkedInvoiceId: null, updatedAt: new Date() })
+        .where(and(eq(goodsReceiptsTable.id, grnId), eq(goodsReceiptsTable.companyId, cid)));
+    }
+
     await db.delete(purchaseInvoicesTable).where(and(eq(purchaseInvoicesTable.id, id), eq(purchaseInvoicesTable.companyId, cid)));
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
