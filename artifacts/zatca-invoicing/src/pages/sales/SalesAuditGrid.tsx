@@ -11,7 +11,7 @@
  * ZATCA rejections, abnormally large totals, old drafts, open receivables)
  * and AI-generated recommendations. The result opens in a side Sheet.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
@@ -20,10 +20,12 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ArrowRight, RefreshCw, Sparkles, Printer, FileSpreadsheet,
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
+  Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -124,7 +126,91 @@ export default function SalesAuditGrid() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
-  const [showColFilters, setShowColFilters] = useState(false);
+
+  // ── Column layout (order + visibility) — persisted in localStorage ────
+  // Only "data" columns can be reordered/hidden; _sel/_idx/_act stay fixed.
+  const FIXED_LEAD = ["_sel", "_idx"] as const;
+  const FIXED_TAIL = ["_act"] as const;
+  const DATA_KEYS = COLUMNS.filter(c => !FIXED_LEAD.includes(c.key as any) && !FIXED_TAIL.includes(c.key as any)).map(c => c.key);
+  // Scope per-company so a shared browser doesn't leak layouts across tenants.
+  const LS_KEY = `salesAuditGrid.layout.v1.c${cid ?? "anon"}`;
+
+  const [dataOrder, setDataOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.dataOrder)) {
+          // Sanitize against current column set (drop unknown keys, append missing)
+          const seen = new Set<string>();
+          const valid = (parsed.dataOrder as string[]).filter(k => DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true));
+          for (const k of DATA_KEYS) if (!seen.has(k)) valid.push(k);
+          return valid;
+        }
+      }
+    } catch { /* ignore corrupt LS */ }
+    return [...DATA_KEYS];
+  });
+
+  // True when user has saved a non-default layout — header turns blue.
+  const hasCustomLayout = useMemo(() => {
+    if (dataOrder.length !== DATA_KEYS.length) return true;
+    return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
+  }, [dataOrder]);
+
+  // Persist layout on change. Skip the very first render (which already
+  // matches localStorage) — but useEffect with [dataOrder] handles it cleanly.
+  useEffect(() => {
+    try {
+      if (hasCustomLayout) {
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder }));
+      } else {
+        localStorage.removeItem(LS_KEY);
+      }
+    } catch { /* ignore quota errors */ }
+  }, [dataOrder, hasCustomLayout, LS_KEY]);
+
+  // Re-hydrate layout when the active company changes (e.g. user logs into a
+  // different tenant in the same browser tab). useState's lazy initializer
+  // only runs once at mount, so this guarantees the right layout follows cid.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.dataOrder)) {
+          const seen = new Set<string>();
+          const valid = (parsed.dataOrder as string[]).filter(k => DATA_KEYS.includes(k) && !seen.has(k) && (seen.add(k), true));
+          for (const k of DATA_KEYS) if (!seen.has(k)) valid.push(k);
+          setDataOrder(valid);
+          return;
+        }
+      }
+      setDataOrder([...DATA_KEYS]);
+    } catch { /* ignore corrupt LS */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cid]);
+
+  // Visible columns in render order: fixed lead + user-ordered data + fixed tail.
+  const visibleColumns = useMemo(() => {
+    const byKey = Object.fromEntries(COLUMNS.map(c => [c.key, c]));
+    return [...FIXED_LEAD, ...dataOrder, ...FIXED_TAIL]
+      .map(k => byKey[k])
+      .filter(Boolean);
+  }, [dataOrder]);
+
+  function moveCol(key: string, dir: -1 | 1) {
+    setDataOrder(prev => {
+      const i = prev.indexOf(key);
+      if (i < 0) return prev;
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }
+  function resetLayout() { setDataOrder([...DATA_KEYS]); }
 
   // ── Selection ─────────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -353,6 +439,73 @@ export default function SalesAuditGrid() {
     navigate(`/sales/returns?fromInvoice=${inv.id}`);
   }
 
+  // Bulk delete — only drafts/cancelled (server rejects posted invoices).
+  async function bulkDelete() {
+    const deletable = selectedInvoices.filter((i: any) => i.status !== "posted");
+    if (deletable.length === 0) {
+      toast({ title: "لا يمكن حذف الفواتير المرحَّلة. فك الترحيل أولاً.", variant: "destructive" });
+      return;
+    }
+    const ids = deletable.map((i: any) => i.id);
+    if (!window.confirm(`حذف ${ids.length} فاتورة نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map(async (id: number) => {
+          const r = await fetch(`${API}/api/sales/sales-invoices/${id}`, { method: "DELETE", headers: authH });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            throw new Error(j.error || `HTTP ${r.status}`);
+          }
+        })
+      );
+      const failed = results
+        .map((res, i) => ({ res, id: ids[i] }))
+        .filter(x => x.res.status === "rejected")
+        .map(x => ({ id: x.id, error: (x.res as PromiseRejectedResult).reason?.message ?? "خطأ" }));
+      const ok = ids.length - failed.length;
+      if (failed.length === 0) {
+        toast({ title: `تم حذف ${ok} فاتورة` });
+        clearSelection();
+      } else {
+        toast({
+          title: `حذف: ${ok} نجح، ${failed.length} فشل`,
+          description: failed.slice(0, 3).map(f => `#${f.id}: ${f.error}`).join(" • "),
+          variant: "destructive",
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["sales-invoices", cid, "audit-grid"] });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  // Single-row delete (used in the row actions cell, only for non-posted).
+  async function deleteOne(inv: any) {
+    if (inv.status === "posted") {
+      toast({ title: "لا يمكن حذف فاتورة مرحَّلة. فك الترحيل أولاً.", variant: "destructive" });
+      return;
+    }
+    if (!window.confirm(`حذف الفاتورة ${inv.docNumber ?? `SI-${inv.id}`} نهائياً؟`)) return;
+    setBulkBusy(true);
+    try {
+      const r = await fetch(`${API}/api/sales/sales-invoices/${inv.id}`, { method: "DELETE", headers: authH });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      toast({ title: "تم حذف الفاتورة" });
+      setSelected(prev => { const n = new Set(prev); n.delete(inv.id); return n; });
+      qc.invalidateQueries({ queryKey: ["sales-invoices", cid, "audit-grid"] });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "فشل الحذف", variant: "destructive" });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  const selectedDeletable = selectedInvoices.filter((i: any) => i.status !== "posted");
+
   // ── Footer totals ─────────────────────────────────────────────────────
   const totals = useMemo(() => {
     return filtered.reduce((acc, inv: any) => {
@@ -471,8 +624,16 @@ export default function SalesAuditGrid() {
   return (
     <div className="space-y-3" dir={isRtl ? "rtl" : "ltr"}>
       {/* ─── Top dark toolbar (legacy ERP look) ───────────────────────── */}
-      <div className="rounded-t-lg overflow-hidden border border-rose-900/30 shadow-sm">
-        <div className="bg-gradient-to-l from-rose-900 via-rose-800 to-rose-900 text-white px-3 py-2 flex items-center gap-2 flex-wrap">
+      <div className={cn(
+        "rounded-t-lg overflow-hidden border shadow-sm transition-colors",
+        hasCustomLayout ? "border-blue-900/30" : "border-rose-900/30",
+      )}>
+        <div className={cn(
+          "text-white px-3 py-2 flex items-center gap-2 flex-wrap transition-colors bg-gradient-to-l",
+          hasCustomLayout
+            ? "from-blue-900 via-blue-800 to-blue-900"
+            : "from-rose-900 via-rose-800 to-rose-900",
+        )}>
           <Button
             type="button"
             size="sm"
@@ -498,20 +659,98 @@ export default function SalesAuditGrid() {
             الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل
           </div>
           <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1",
-                showColFilters && "bg-white/20",
-              )}
-              onClick={() => setShowColFilters(s => !s)}
-              title="إظهار/إخفاء فلاتر الأعمدة"
-            >
-              <Filter className="h-3.5 w-3.5" />
-              فلاتر الأعمدة
-            </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className={cn(
+                    "h-7 px-2 text-white hover:bg-white/15 hover:text-white text-xs gap-1",
+                    hasCustomLayout && "bg-white/20",
+                  )}
+                  title="إعادة ترتيب الأعمدة"
+                >
+                  <Settings2 className="h-3.5 w-3.5" />
+                  ترتيب الأعمدة
+                  {hasCustomLayout && <span className="ms-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" title="ترتيب مخصّص محفوظ" />}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="bottom"
+                align="end"
+                className="w-72 p-2"
+                dir={isRtl ? "rtl" : "ltr"}
+              >
+                <div className="flex items-center justify-between mb-2 pb-2 border-b">
+                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Settings2 className="h-3.5 w-3.5 text-blue-600" />
+                    ترتيب الأعمدة
+                  </div>
+                  {hasCustomLayout && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[11px] text-slate-600 gap-1"
+                      onClick={resetLayout}
+                      title="إعادة الترتيب الافتراضي"
+                    >
+                      <RotateCw className="h-3 w-3" />
+                      إعادة تعيين
+                    </Button>
+                  )}
+                </div>
+                <div className="text-[10.5px] text-slate-500 mb-2 leading-relaxed">
+                  استخدم الأسهم لتغيير ترتيب الأعمدة. التعديلات تُحفظ تلقائياً.
+                </div>
+                <div className="max-h-72 overflow-y-auto space-y-0.5">
+                  {dataOrder.map((key, i) => {
+                    const col = COLUMNS.find(c => c.key === key);
+                    if (!col) return null;
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-1 px-1.5 py-1 rounded hover:bg-slate-50 border border-transparent hover:border-slate-200"
+                      >
+                        <span className="text-[10px] text-slate-400 font-mono w-5 text-center">{i + 1}</span>
+                        <span className="flex-1 text-xs text-slate-700 truncate">{col.label}</span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-5 w-5"
+                          onClick={() => moveCol(key, -1)}
+                          disabled={i === 0}
+                          title="نقل لأعلى"
+                          aria-label={`نقل العمود ${col.label} للأعلى`}
+                        >
+                          <ArrowUp className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-5 w-5"
+                          onClick={() => moveCol(key, +1)}
+                          disabled={i === dataOrder.length - 1}
+                          title="نقل لأسفل"
+                          aria-label={`نقل العمود ${col.label} للأسفل`}
+                        >
+                          <ArrowDown className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+                {hasCustomLayout && (
+                  <div className="mt-2 pt-2 border-t text-[10.5px] text-blue-700 bg-blue-50 -mx-2 -mb-2 px-2 py-1.5 rounded-b flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" />
+                    تم حفظ ترتيبك. سيُعرض هكذا في المرة القادمة.
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
             <Button
               type="button"
               size="sm"
@@ -666,6 +905,19 @@ export default function SalesAuditGrid() {
               <RotateCcw className="h-3.5 w-3.5" />
               ارتجاع
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-3 text-xs gap-1 bg-rose-600 hover:bg-rose-500 text-white"
+              onClick={bulkDelete}
+              disabled={bulkBusy || selectedDeletable.length === 0}
+              title={selectedDeletable.length === 0
+                ? "لا يمكن حذف الفواتير المرحَّلة. فك الترحيل أولاً."
+                : `حذف ${selectedDeletable.length} فاتورة (مسوّدة/ملغاة)`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              حذف ({selectedDeletable.length})
+            </Button>
             <div className="flex-1" />
             <Button
               type="button"
@@ -706,7 +958,7 @@ export default function SalesAuditGrid() {
             <table className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
-                  {COLUMNS.map(col => (
+                  {visibleColumns.map(col => (
                     <th
                       key={col.key}
                       className="px-2 py-1.5 border border-slate-300 text-center font-semibold whitespace-nowrap text-[10.5px]"
@@ -724,26 +976,25 @@ export default function SalesAuditGrid() {
                     </th>
                   ))}
                 </tr>
-                {showColFilters && (
-                  <tr className="bg-amber-50/80 border-b border-amber-200">
-                    {COLUMNS.map(col => (
-                      <th
-                        key={col.key}
-                        className="px-1 py-1 border border-slate-200 text-center"
-                      >
-                        {col.type === "none" ? null : (
-                          <Input
-                            value={colFilters[col.key] ?? ""}
-                            onChange={e => setColFilter(col.key, e.target.value)}
-                            placeholder={col.type === "num" ? ">=100" : "بحث…"}
-                            className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
-                            title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
-                          />
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                )}
+                {/* Per-column filter row — always visible, Excel-style */}
+                <tr className="bg-amber-50/80 border-b border-amber-200">
+                  {visibleColumns.map(col => (
+                    <th
+                      key={col.key}
+                      className="px-1 py-1 border border-slate-200 text-center"
+                    >
+                      {col.type === "none" ? null : (
+                        <Input
+                          value={colFilters[col.key] ?? ""}
+                          onChange={e => setColFilter(col.key, e.target.value)}
+                          placeholder={col.type === "num" ? ">=100" : "بحث…"}
+                          className="h-6 text-[10.5px] px-1.5 border-slate-300 bg-white"
+                          title={col.type === "num" ? "أمثلة: >=100, <500, =0" : "بحث جزئي"}
+                        />
+                      )}
+                    </th>
+                  ))}
+                </tr>
               </thead>
               <tbody>
                 {filtered.map((inv: any, idx: number) => {
@@ -752,6 +1003,117 @@ export default function SalesAuditGrid() {
                   const z = ZATCA[String(inv.zatcaStatus ?? "pending")] ?? null;
                   const payLabel = inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل";
                   const isSel = selected.has(inv.id);
+                  const canDelete = inv.status !== "posted";
+                  // Per-column body cell renderer — keyed off the column descriptor.
+                  const renderBodyCell = (col: typeof COLUMNS[number]) => {
+                    switch (col.key) {
+                      case "_sel":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSel}
+                              onChange={() => toggleRow(inv.id)}
+                              onClick={e => e.stopPropagation()}
+                              className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
+                              aria-label={`تحديد الفاتورة ${inv.docNumber ?? inv.id}`}
+                            />
+                          </td>
+                        );
+                      case "_idx":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{idx + 1}</td>;
+                      case "doc":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-rose-700 text-center">{inv.docNumber ?? `SI-${inv.id}`}</td>;
+                      case "date":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">{inv.invoiceDate}</td>;
+                      case "customer":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 max-w-[180px] truncate" title={cus?.name ?? ""}>{cus?.name ?? "—"}</td>;
+                      case "vat":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono text-[10px] text-slate-600 text-center">{cus?.vat ?? "—"}</td>;
+                      case "branch":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{branchMap[inv.branchId] ?? "—"}</td>;
+                      case "rep":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600 max-w-[120px] truncate" title={repMap[inv.salesRepId] ?? ""}>{repMap[inv.salesRepId] ?? "—"}</td>;
+                      case "payment":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{payLabel}</td>;
+                      case "currency":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{inv.currencyCode}</td>;
+                      case "subtotal":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(inv.subtotal)}</td>;
+                      case "discount":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-orange-700">{fmt(inv.discountAmount)}</td>;
+                      case "vatAmt":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(inv.vatAmount)}</td>;
+                      case "total":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(inv.totalAmount)}</td>;
+                      case "commission":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-end font-mono text-purple-700">{fmt(inv.commissionAmount ?? 0)}</td>;
+                      case "settle":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.paymentSettlement ? (
+                              <span className="inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200" title={inv.paymentSettlement.code}>
+                                ✓ {inv.paymentSettlement.code}
+                              </span>
+                            ) : <span className="text-slate-400">—</span>}
+                          </td>
+                        );
+                      case "je":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {inv.journalEntryId ? (
+                              <button onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}?tab=lines`)} className="font-mono text-[10px] text-blue-600 hover:underline">
+                                JE-{inv.journalEntryId}
+                              </button>
+                            ) : <span className="text-slate-400">—</span>}
+                          </td>
+                        );
+                      case "zatca":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            {z ? <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", z.cls)}>{z.label}</span> : <span className="text-slate-400">—</span>}
+                          </td>
+                        );
+                      case "status":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", st.cls)}>{st.label}</span>
+                          </td>
+                        );
+                      case "notes":
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-slate-600 max-w-[140px] truncate" title={inv.notes ?? ""}>{inv.notes ?? "—"}</td>;
+                      case "_act":
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                title="فتح"
+                                aria-label={`فتح الفاتورة ${inv.docNumber ?? inv.id}`}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/sales/invoices/${inv.id}`); }}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn("h-6 w-6", canDelete ? "text-rose-600 hover:bg-rose-50 hover:text-rose-700" : "text-slate-300 cursor-not-allowed")}
+                                title={canDelete ? "حذف الفاتورة" : "لا يمكن حذف فاتورة مرحَّلة"}
+                                aria-label={canDelete ? `حذف الفاتورة ${inv.docNumber ?? inv.id}` : `لا يمكن حذف الفاتورة المرحَّلة ${inv.docNumber ?? inv.id}`}
+                                disabled={!canDelete || bulkBusy}
+                                onClick={(e) => { e.stopPropagation(); deleteOne(inv); }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        );
+                      default:
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
+                    }
+                  };
                   return (
                     <tr
                       key={inv.id}
@@ -768,77 +1130,43 @@ export default function SalesAuditGrid() {
                       onDoubleClick={() => navigate(`/sales/invoices/${inv.id}`)}
                       title="اضغط لتحديد الصف، أو مرتين لفتح الفاتورة"
                     >
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSel}
-                          onChange={() => toggleRow(inv.id)}
-                          onClick={e => e.stopPropagation()}
-                          className="cursor-pointer h-3.5 w-3.5 accent-rose-600"
-                          aria-label={`تحديد الفاتورة ${inv.docNumber ?? inv.id}`}
-                        />
-                      </td>
-                      <td className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{idx + 1}</td>
-                      <td className="px-2 py-1 border border-slate-200 font-mono font-semibold text-rose-700 text-center">{inv.docNumber ?? `SI-${inv.id}`}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center whitespace-nowrap">{inv.invoiceDate}</td>
-                      <td className="px-2 py-1 border border-slate-200 max-w-[180px] truncate" title={cus?.name ?? ""}>{cus?.name ?? "—"}</td>
-                      <td className="px-2 py-1 border border-slate-200 font-mono text-[10px] text-slate-600 text-center">{cus?.vat ?? "—"}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center text-slate-600">{branchMap[inv.branchId] ?? "—"}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center text-slate-600 max-w-[120px] truncate" title={repMap[inv.salesRepId] ?? ""}>{repMap[inv.salesRepId] ?? "—"}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center text-slate-600">{payLabel}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{inv.currencyCode}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-end font-mono">{fmt(inv.subtotal)}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-end font-mono text-orange-700">{fmt(inv.discountAmount)}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-end font-mono text-amber-700">{fmt(inv.vatAmount)}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-end font-mono font-bold text-slate-900">{fmt(inv.totalAmount)}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-end font-mono text-purple-700">{fmt(inv.commissionAmount ?? 0)}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        {inv.paymentSettlement ? (
-                          <span className="inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border bg-blue-50 text-blue-700 border-blue-200" title={inv.paymentSettlement.code}>
-                            ✓ {inv.paymentSettlement.code}
-                          </span>
-                        ) : <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        {inv.journalEntryId ? (
-                          <button onClick={() => navigate(`/accounting/journals/${inv.journalEntryId}?tab=lines`)} className="font-mono text-[10px] text-blue-600 hover:underline">
-                            JE-{inv.journalEntryId}
-                          </button>
-                        ) : <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        {z ? <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", z.cls)}>{z.label}</span> : <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        <span className={cn("inline-flex items-center text-[10px] rounded px-1.5 py-0.5 font-medium border", st.cls)}>{st.label}</span>
-                      </td>
-                      <td className="px-2 py-1 border border-slate-200 text-slate-600 max-w-[140px] truncate" title={inv.notes ?? ""}>{inv.notes ?? "—"}</td>
-                      <td className="px-2 py-1 border border-slate-200 text-center">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          title="فتح"
-                          onClick={() => navigate(`/sales/invoices/${inv.id}`)}
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </Button>
-                      </td>
+                      {visibleColumns.map(renderBodyCell)}
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot className="sticky bottom-0">
                 <tr className="bg-slate-800 text-white text-[11px] font-semibold">
-                  {/* 10 leading cells: _sel, _idx, doc, date, customer, vat, branch, rep, payment, currency */}
-                  <td colSpan={10} className="px-2 py-2 border border-slate-700 text-end">الإجمالي:</td>
-                  <td className="px-2 py-2 border border-slate-700 text-end font-mono">{fmt(totals.subtotal)}</td>
-                  <td className="px-2 py-2 border border-slate-700 text-end font-mono text-orange-300">{fmt(totals.discount)}</td>
-                  <td className="px-2 py-2 border border-slate-700 text-end font-mono text-amber-300">{fmt(totals.vat)}</td>
-                  <td className="px-2 py-2 border border-slate-700 text-end font-mono">{fmt(totals.total)}</td>
-                  <td className="px-2 py-2 border border-slate-700 text-end font-mono text-purple-300">{fmt(totals.commission)}</td>
-                  {/* 6 trailing cells: settle, je, zatca, status, notes, _act */}
-                  <td colSpan={6} className="px-2 py-2 border border-slate-700" />
+                  {visibleColumns.map((col, i) => {
+                    // Numeric columns get their total; the very first cell holds the "الإجمالي:" label.
+                    const totalByKey: Record<string, number | undefined> = {
+                      subtotal: totals.subtotal,
+                      discount: totals.discount,
+                      vatAmt: totals.vat,
+                      total: totals.total,
+                      commission: totals.commission,
+                    };
+                    if (i === 0) {
+                      return (
+                        <td key={col.key} className="px-2 py-2 border border-slate-700 text-end whitespace-nowrap">
+                          الإجمالي:
+                        </td>
+                      );
+                    }
+                    if (col.key in totalByKey) {
+                      const tone =
+                        col.key === "discount" ? "text-orange-300" :
+                        col.key === "vatAmt"   ? "text-amber-300"  :
+                        col.key === "commission" ? "text-purple-300" :
+                        "";
+                      return (
+                        <td key={col.key} className={cn("px-2 py-2 border border-slate-700 text-end font-mono", tone)}>
+                          {fmt(totalByKey[col.key]!)}
+                        </td>
+                      );
+                    }
+                    return <td key={col.key} className="px-2 py-2 border border-slate-700" />;
+                  })}
                 </tr>
               </tfoot>
             </table>
