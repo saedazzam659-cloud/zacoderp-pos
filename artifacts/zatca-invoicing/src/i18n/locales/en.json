@@ -1136,6 +1136,14 @@
         "show": "Show QR code",
         "print": "Print sticker"
       },
+      "discount": {
+        "type": "Default discount type",
+        "typePlaceholder": "Choose discount type",
+        "value": "Discount value",
+        "none": "No discount",
+        "percent": "Percentage (%)",
+        "amount": "Fixed amount"
+      },
       "history": {
         "label": "Audit log",
         "title": "Item audit log",
@@ -1171,7 +1179,9 @@
           "description": "Description",
           "status": "Status",
           "imageUrl": "Image",
-          "tags": "Tags"
+          "tags": "Tags",
+          "discountType": "Default discount type",
+          "discountValue": "Discount value"
         }
       },
       "unitAdded": "Unit added",

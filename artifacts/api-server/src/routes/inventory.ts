@@ -298,6 +298,8 @@ const ITEM_AUDIT_FIELDS = [
   "groupId", "unitId", "costPrice", "salePrice", "vatRate",
   "reorderLevel", "maxLevel", "costMethod", "description",
   "status", "imageUrl", "tags",
+  // PRO Extension #3 — per-item default discount
+  "discountType", "discountValue",
 ] as const;
 
 function normAuditValue(v: unknown): unknown {
@@ -358,9 +360,23 @@ function normalizeTags(input: unknown): string | null {
   return cleaned.join(",").slice(0, 500);
 }
 
+// Validate & normalize a per-item discount input. Returns
+// `{ type: "none"|"percent"|"amount", value: string }` ready for insertion.
+// Defends against bad client payloads: unknown types default to "none",
+// negative values are clamped to 0, percent is capped at 100.
+function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|"percent"|"amount"; value: string } {
+  let type: "none"|"percent"|"amount" = "none";
+  if (rawType === "percent" || rawType === "amount") type = rawType;
+  let n = Number(rawValue ?? 0);
+  if (!isFinite(n) || n < 0) n = 0;
+  if (type === "percent" && n > 100) n = 100;
+  if (type === "none") n = 0;
+  return { type, value: String(n) };
+}
+
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -373,6 +389,7 @@ router.post("/items", async (req, res) => {
     res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
   }
   const normalizedTags = normalizeTags(tags);
+  const disc = normalizeDiscount(discountType, discountValue);
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || "stock", groupId: groupId || null, unitId: unitId || null,
@@ -381,6 +398,7 @@ router.post("/items", async (req, res) => {
     costMethod: costMethod || "weighted_avg", description,
     imageUrl: imageUrl || null,
     tags: normalizedTags === undefined ? null : normalizedTags,
+    discountType: disc.type, discountValue: disc.value,
   }).returning();
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
@@ -404,7 +422,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue } = req.body;
   const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
@@ -418,6 +436,12 @@ router.put("/items/:id", async (req, res) => {
   // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
   const existing = others.find(i => i.id === id) ?? null;
   const normalizedTags = normalizeTags(tags);
+  // Only touch discount columns when the client actually sent them, so a
+  // partial PUT (e.g. from an older client) doesn't accidentally reset the
+  // per-item default discount to "none".
+  const discPatch = (discountType !== undefined || discountValue !== undefined)
+    ? (() => { const d = normalizeDiscount(discountType, discountValue); return { discountType: d.type, discountValue: d.value }; })()
+    : {};
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
     groupId: groupId || null, unitId: unitId || null,
@@ -426,6 +450,7 @@ router.put("/items/:id", async (req, res) => {
     costMethod: costMethod || "weighted_avg", description,
     imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
     tags: normalizedTags === undefined ? undefined : normalizedTags,
+    ...discPatch,
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
@@ -1219,6 +1244,10 @@ router.post("/import/items", async (req, res) => {
 
       const groupId = r.groupCode ? groupByCode.get(String(r.groupCode).trim().toLowerCase()) ?? null : null;
       const unitId  = r.unitCode  ? unitByCode.get(String(r.unitCode).trim().toLowerCase())   ?? null : null;
+      // Honor discount columns when present in the spreadsheet, otherwise
+      // default to "none"/0 (matches the column default and keeps existing
+      // imports backward-compatible).
+      const importDisc = normalizeDiscount(r.discountType, r.discountValue);
       const values = {
         companyId: cid, code, nameAr,
         nameEn:       r.nameEn       != null && r.nameEn   !== "" ? String(r.nameEn)   : null,
@@ -1231,6 +1260,8 @@ router.post("/import/items", async (req, res) => {
         reorderLevel: String(Number(r.reorderLevel ?? 0) || 0),
         maxLevel:     r.maxLevel != null && r.maxLevel !== "" ? String(Number(r.maxLevel) || 0) : null,
         description:  r.description != null && r.description !== "" ? String(r.description) : null,
+        discountType:  importDisc.type,
+        discountValue: importDisc.value,
       };
 
       const existingRow = itemByCode.get(code.toLowerCase());

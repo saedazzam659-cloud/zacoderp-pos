@@ -83,6 +83,14 @@ export const itemsTable = pgTable("items", {
   imageUrl:         text("image_url"),
   // Comma-separated tags for smart search & filtering (PRO Extension #4)
   tags:             text("tags"),
+  // Default per-item discount applied automatically when the item is added
+  // to a sales document line (PRO Extension #3 — "خصم بنسبة/قيمة").
+  // discountType:  "none" | "percent" | "amount"
+  //   - "none"    → no auto-discount (default)
+  //   - "percent" → discountValue is a percentage of (qty × unitPrice)
+  //   - "amount"  → discountValue is an absolute currency amount per line
+  discountType:     text("discount_type").default("none").notNull(),
+  discountValue:    numeric("discount_value", { precision: 14, scale: 4 }).default("0").notNull(),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),

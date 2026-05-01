@@ -34,6 +34,8 @@ const EMPTY = {
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
+  // PRO Extension #3 — per-item default discount auto-applied on sales lines.
+  discountType: "none" as "none" | "percent" | "amount", discountValue: "0",
   tags: "" as string, // comma-separated
 };
 
@@ -888,6 +890,8 @@ export default function Items() {
       costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
       revenueAccountId: item.revenueAccountId ? String(item.revenueAccountId) : "",
       tags: item.tags ?? "",
+      discountType:  (item.discountType ?? "none") as "none" | "percent" | "amount",
+      discountValue: item.discountValue != null ? String(item.discountValue) : "0",
     });
     setEditId(item.id);
     setShowForm(true);
@@ -1051,6 +1055,38 @@ export default function Items() {
                   <Field label={t("pages.items.vatRate")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.vatRate} onChange={e => setForm((p: any) => ({ ...p, vatRate: e.target.value }))} /></Field>
                   <Field label={t("pages.items.costMethod")}>
                     <SearchCombobox items={[{ value: "weighted_avg", label: t("pages.items.weightedAvg") }, { value: "last_cost", label: t("pages.items.lastCost") }]} value={form.costMethod} onValueChange={v => setForm((p: any) => ({ ...p, costMethod: v }))} placeholder={t("pages.items.costMethodPlaceholder")} />
+                  </Field>
+                  <Field label={t("pages.items.discount.type")}>
+                    <SearchCombobox
+                      items={[
+                        { value: "none",    label: t("pages.items.discount.none") },
+                        { value: "percent", label: t("pages.items.discount.percent") },
+                        { value: "amount",  label: t("pages.items.discount.amount") },
+                      ]}
+                      value={form.discountType ?? "none"}
+                      onValueChange={(v) => setForm((p: any) => ({
+                        ...p,
+                        discountType: v,
+                        // Auto-zero the value when switching to "none" so a stale
+                        // number doesn't get accidentally persisted.
+                        discountValue: v === "none" ? "0" : (p.discountValue ?? "0"),
+                      }))}
+                      placeholder={t("pages.items.discount.typePlaceholder")}
+                    />
+                  </Field>
+                  <Field label={t("pages.items.discount.value")}>
+                    <Input
+                      type="number"
+                      step="any"
+                      min={0}
+                      max={form.discountType === "percent" ? 100 : undefined}
+                      dir="ltr"
+                      className="text-left"
+                      disabled={!form.discountType || form.discountType === "none"}
+                      value={form.discountValue ?? "0"}
+                      placeholder={form.discountType === "percent" ? "%" : ""}
+                      onChange={(e) => setForm((p: any) => ({ ...p, discountValue: e.target.value }))}
+                    />
                   </Field>
                 </FormGrid>
               </div>

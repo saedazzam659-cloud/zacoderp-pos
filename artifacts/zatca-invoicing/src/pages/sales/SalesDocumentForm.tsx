@@ -1282,6 +1282,28 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       const finalPrice = unitPrice !== undefined && unitPrice !== null && unitPrice !== ""
         ? String(unitPrice)
         : String(item.salePrice ?? "0");
+      // PRO Extension #3 — auto-apply the item's per-item default discount when
+      // the caller didn't pass one. "percent" is converted to an absolute
+      // currency amount so it lands cleanly in the line's `discount` column
+      // (which is stored as currency, not a percentage).
+      //
+      // Hardened against bad numeric inputs: qty/unitPrice can arrive as empty
+      // strings or NaN from the form, so we coerce + isFinite-guard each value
+      // before multiplying. Without this, `Number("")` (→0) silently zeros the
+      // discount and `Number("foo")` (→NaN) would persist `discount:"NaN"`.
+      let resolvedDiscount = discount;
+      if (resolvedDiscount === undefined || resolvedDiscount === null || resolvedDiscount === "") {
+        const dt = String(item.discountType ?? "none");
+        const dvRaw = Number(item.discountValue ?? 0);
+        const dv = isFinite(dvRaw) && dvRaw > 0 ? dvRaw : 0;
+        const qtyN  = (() => { const n = Number(qty); return isFinite(n) && n > 0 ? n : 1; })();
+        const priceN = (() => { const n = Number(finalPrice); return isFinite(n) && n >= 0 ? n : 0; })();
+        if (dt === "amount" && dv > 0) {
+          resolvedDiscount = String(dv * qtyN);
+        } else if (dt === "percent" && dv > 0) {
+          resolvedDiscount = String(priceN * qtyN * dv / 100);
+        }
+      }
       return {
         _id: crypto.randomUUID(),
         itemId: String(item.id),
@@ -1293,7 +1315,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
         warehouseId: "",
         qty: String(qty ?? 1),
         unitPrice: finalPrice,
-        discount: String(discount ?? "0"),
+        discount: String(resolvedDiscount ?? "0"),
         vatRate: String(item.vatRate ?? "15"),
         lineTotal: "0",
         notes: "",
