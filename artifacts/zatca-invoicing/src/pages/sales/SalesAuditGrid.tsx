@@ -52,6 +52,14 @@ const HEADER_THEMES: Record<HeaderColor, {
 };
 const HEADER_COLOR_KEYS: HeaderColor[] = ["white", "rose", "blue", "emerald", "amber", "purple", "slate", "teal"];
 const DEFAULT_HEADER_COLOR: HeaderColor = "white";
+
+// ── Page-size options for the audit grid ──────────────────────────────────
+// `0` means "show all" — useful when the user wants to scan/audit everything
+// at once or print without paging. Default is 25 — large enough to be useful,
+// small enough to keep the DOM responsive on slow devices.
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 0] as const;
+type PageSize = typeof PAGE_SIZE_OPTIONS[number];
+const DEFAULT_PAGE_SIZE: PageSize = 25;
 import { cn } from "@/lib/utils";
 
 // ── Column descriptor ─────────────────────────────────────────────────────
@@ -327,6 +335,8 @@ export default function SalesAuditGrid() {
   };
   const sanitizeColor = (c: unknown): HeaderColor =>
     HEADER_COLOR_KEYS.includes(c as HeaderColor) ? (c as HeaderColor) : DEFAULT_HEADER_COLOR;
+  const sanitizePageSize = (n: unknown): PageSize =>
+    (PAGE_SIZE_OPTIONS as readonly number[]).includes(n as number) ? (n as PageSize) : DEFAULT_PAGE_SIZE;
 
   const [dataOrder, setDataOrder] = useState<string[]>(() => {
     try {
@@ -350,29 +360,42 @@ export default function SalesAuditGrid() {
     return DEFAULT_HEADER_COLOR;
   });
 
+  const [pageSize, setPageSize] = useState<PageSize>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return sanitizePageSize(parsed?.pageSize);
+      }
+    } catch { /* ignore corrupt LS */ }
+    return DEFAULT_PAGE_SIZE;
+  });
+  // Current page is ephemeral (not persisted) — always start at 1 on mount.
+  const [page, setPage] = useState(1);
+
   const theme = HEADER_THEMES[headerColor];
 
   // True when user has any non-default customization saved.
   const hasCustomLayout = useMemo(() => {
     if (headerColor !== DEFAULT_HEADER_COLOR) return true;
+    if (pageSize !== DEFAULT_PAGE_SIZE) return true;
     if (dataOrder.length !== DATA_KEYS.length) return true;
     return dataOrder.some((k, i) => k !== DATA_KEYS[i]);
-  }, [dataOrder, headerColor]);
+  }, [dataOrder, headerColor, pageSize]);
 
   // Persist layout on change.
   useEffect(() => {
     try {
       if (hasCustomLayout) {
-        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor }));
+        localStorage.setItem(LS_KEY, JSON.stringify({ dataOrder, headerColor, pageSize }));
       } else {
         localStorage.removeItem(LS_KEY);
       }
     } catch { /* ignore quota errors */ }
-  }, [dataOrder, headerColor, hasCustomLayout, LS_KEY]);
+  }, [dataOrder, headerColor, pageSize, hasCustomLayout, LS_KEY]);
 
-  // Re-hydrate layout + color when the active company changes (e.g. user logs
-  // into a different tenant in the same browser tab). useState's lazy
-  // initializer only runs once at mount, so this keeps tenant scoping correct.
+  // Re-hydrate layout + color + pageSize when the active company changes
+  // (e.g. user logs into a different tenant in the same browser tab).
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -380,10 +403,14 @@ export default function SalesAuditGrid() {
         const parsed = JSON.parse(raw);
         setDataOrder(sanitizeOrder(parsed?.dataOrder));
         setHeaderColor(sanitizeColor(parsed?.headerColor));
+        setPageSize(sanitizePageSize(parsed?.pageSize));
+        setPage(1);
         return;
       }
       setDataOrder([...DATA_KEYS]);
       setHeaderColor(DEFAULT_HEADER_COLOR);
+      setPageSize(DEFAULT_PAGE_SIZE);
+      setPage(1);
     } catch { /* ignore corrupt LS */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cid]);
@@ -410,6 +437,8 @@ export default function SalesAuditGrid() {
   function resetLayout() {
     setDataOrder([...DATA_KEYS]);
     setHeaderColor(DEFAULT_HEADER_COLOR);
+    setPageSize(DEFAULT_PAGE_SIZE);
+    setPage(1);
   }
 
   // ── Selection ─────────────────────────────────────────────────────────
@@ -519,6 +548,46 @@ export default function SalesAuditGrid() {
       return true;
     });
   }, [invoices, search, statusFilter, dateFrom, dateTo, cusMap, branchMap, repMap, colFilters]);
+
+  // ── Pagination ────────────────────────────────────────────────────────
+  // pageSize === 0 means "show all" — we still keep `page` at 1 in that mode
+  // so toggling back to a finite size lands on a sane page. Totals (footer)
+  // are intentionally computed from `filtered`, not `paged`, so they always
+  // reflect the entire filtered result regardless of which page is shown.
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Clamp `page` if filters shrunk the result set below the current page.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+  // Reset to page 1 whenever filters/search change so users don't see an
+  // empty middle-page after typing in a filter.
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, dateFrom, dateTo, colFilters, pageSize]);
+
+  // `printAllOverride` lets us briefly render the entire filtered set so
+  // window.print() captures every row, not just the current page. It is
+  // toggled on right before printSelected() falls back to window.print() and
+  // toggled off again once the print dialog is dismissed.
+  const [printAllOverride, setPrintAllOverride] = useState(false);
+  const paged = useMemo(() => {
+    if (pageSize === 0 || printAllOverride) return filtered;
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize, printAllOverride]);
+  // When the override flips on, wait one frame for React to flush the full
+  // table to the DOM, fire window.print() (which blocks until the user
+  // dismisses the dialog), then drop the override.
+  useEffect(() => {
+    if (!printAllOverride) return;
+    const id = window.requestAnimationFrame(() => {
+      try { window.print(); } finally { setPrintAllOverride(false); }
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [printAllOverride]);
+
+  const pageStart = filtered.length === 0 ? 0 : (pageSize === 0 ? 1 : (page - 1) * pageSize + 1);
+  const pageEnd = pageSize === 0 ? filtered.length : Math.min(page * pageSize, filtered.length);
 
   // ── Selection helpers ─────────────────────────────────────────────────
   const allFilteredIds = useMemo(() => filtered.map((i: any) => i.id), [filtered]);
@@ -814,7 +883,12 @@ export default function SalesAuditGrid() {
 
   async function printSelected() {
     if (selected.size === 0) {
-      window.print();
+      // No row selection → fall back to printing the audit screen. We must
+      // first expand to ALL filtered rows (not just the current page),
+      // otherwise pagination would silently truncate the printout. The
+      // useEffect below handles the actual window.print() call after React
+      // has flushed the expanded view to the DOM.
+      setPrintAllOverride(true);
       return;
     }
     setPrinting(true);
@@ -1318,7 +1392,7 @@ export default function SalesAuditGrid() {
                       {col.key === "_sel" ? (
                         <input
                           type="checkbox"
-                          aria-label="تحديد الكل"
+                          aria-label="تحديد كل النتائج المفلترة (عبر جميع الصفحات)"
                           checked={allSelected}
                           ref={el => { if (el) el.indeterminate = someSelected; }}
                           onChange={toggleAll}
@@ -1349,7 +1423,10 @@ export default function SalesAuditGrid() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((inv: any, idx: number) => {
+                {paged.map((inv: any, idx: number) => {
+                  // Absolute row number across the FILTERED set (not just the
+                  // current page) so users can read row 27 on page 2 of 25.
+                  const absIdx = pageSize === 0 ? idx : (page - 1) * pageSize + idx;
                   const cus = cusMap[inv.customerId];
                   const st = STATUS[inv.status] ?? STATUS.draft;
                   const z = ZATCA[String(inv.zatcaStatus ?? "pending")] ?? null;
@@ -1373,7 +1450,7 @@ export default function SalesAuditGrid() {
                           </td>
                         );
                       case "_idx":
-                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{idx + 1}</td>;
+                        return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-500 font-mono">{absIdx + 1}</td>;
                       case "doc":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono font-semibold text-rose-700 text-center">{inv.docNumber ?? `SI-${inv.id}`}</td>;
                       case "date":
@@ -1522,6 +1599,102 @@ export default function SalesAuditGrid() {
                 </tr>
               </tfoot>
             </table>
+          )}
+        </div>
+
+        {/* ─── Pagination toolbar ────────────────────────────────────────── */}
+        {/* Sits inside the same bordered card as the grid so it visually
+            belongs to the table rather than to the page. Hidden in print so
+            page navigation chrome doesn't appear in printed audits. */}
+        <div className="bg-slate-50 border-t border-slate-200 px-3 py-1.5 flex items-center gap-2 flex-wrap text-xs print:hidden">
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="audit-page-size" className="text-slate-600 font-medium">عدد الأسطر:</label>
+            <select
+              id="audit-page-size"
+              value={pageSize}
+              onChange={e => setPageSize(sanitizePageSize(Number(e.target.value)))}
+              className="h-7 text-xs px-2 rounded border border-slate-300 bg-white text-slate-700 font-mono cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+              aria-label="عدد الأسطر المعروضة في كل صفحة"
+              title="عدد الفواتير المعروضة في كل صفحة"
+            >
+              {PAGE_SIZE_OPTIONS.map(n => (
+                <option key={n} value={n}>{n === 0 ? "الكل" : n}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="text-slate-600 font-mono">
+            {filtered.length === 0
+              ? "لا يوجد بيانات"
+              : (
+                <>
+                  <span className="text-slate-900 font-bold">{pageStart}</span>
+                  <span className="text-slate-400 mx-1">–</span>
+                  <span className="text-slate-900 font-bold">{pageEnd}</span>
+                  <span className="text-slate-500 mx-1">من</span>
+                  <span className="text-slate-900 font-bold">{filtered.length}</span>
+                  <span className="text-slate-500 ms-1">فاتورة</span>
+                </>
+              )}
+          </div>
+
+          {/* Spacer pushes nav to the opposite edge in RTL/LTR */}
+          <div className="flex-1" />
+
+          {pageSize !== 0 && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                aria-label="أول صفحة"
+                title="أول صفحة"
+              >
+                «
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                aria-label="الصفحة السابقة"
+              >
+                السابق
+              </Button>
+              <span className="text-slate-700 font-mono px-1.5">
+                صفحة <span className="font-bold text-slate-900">{page}</span>
+                <span className="text-slate-400 mx-1">/</span>
+                <span className="font-bold text-slate-900">{totalPages}</span>
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                aria-label="الصفحة التالية"
+              >
+                التالي
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPage(totalPages)}
+                disabled={page >= totalPages}
+                aria-label="آخر صفحة"
+                title="آخر صفحة"
+              >
+                »
+              </Button>
+            </div>
           )}
         </div>
       </div>
