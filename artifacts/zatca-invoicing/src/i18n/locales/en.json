@@ -1127,6 +1127,15 @@
         "applied": "Suggestions applied to the form",
         "errorTitle": "AI request failed"
       },
+      "tagsLabel": "Item tags",
+      "tagsHint": "Press Enter or comma to add a tag — used for smart search & filtering",
+      "tagsPlaceholder": "e.g. organic, fresh, on-sale",
+      "qr": {
+        "label": "QR code",
+        "title": "Item QR code",
+        "show": "Show QR code",
+        "print": "Print sticker"
+      },
       "unitAdded": "Unit added",
       "updated": "Updated",
       "deleted": "Deleted",
@@ -1177,7 +1186,7 @@
       "chooseCostAccount": "— Choose cost account —",
       "revenueAccount": "Revenue Account",
       "chooseRevenueAccount": "— Choose revenue account —",
-      "searchPlaceholder": "Search by code, name or barcode...",
+      "searchPlaceholder": "Search by code, name, barcode or tags...",
       "all": "All",
       "code": "Code",
       "item": "Item",

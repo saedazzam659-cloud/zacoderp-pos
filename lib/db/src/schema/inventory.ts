@@ -81,6 +81,8 @@ export const itemsTable = pgTable("items", {
   status:           itemStatusEnum("item_status").default("active").notNull(),
   description:      text("description"),
   imageUrl:         text("image_url"),
+  // Comma-separated tags for smart search & filtering (PRO Extension #4)
+  tags:             text("tags"),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),

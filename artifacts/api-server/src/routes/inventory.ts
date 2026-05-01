@@ -290,9 +290,33 @@ router.get("/items/:id", async (req, res) => {
   res.json({ ...row.item, group: row.group, unit: row.unit, balances: balances.map(b => ({ ...b.bal, warehouse: b.wh })) });
 });
 
+// Normalize a tags input (string or string[]) to a clean, deduped, trimmed,
+// comma-joined string suitable for storage. Caps total length to 500 chars
+// and individual tags to 40 chars to prevent abuse.
+function normalizeTags(input: unknown): string | null {
+  if (input === undefined) return undefined as any; // signal "leave alone"
+  if (input === null || input === "") return null;
+  const raw: string[] = Array.isArray(input)
+    ? input.map(x => String(x))
+    : String(input).split(",");
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const t of raw) {
+    const v = t.trim().slice(0, 40);
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    cleaned.push(v);
+    if (cleaned.length >= 20) break;
+  }
+  if (cleaned.length === 0) return null;
+  return cleaned.join(",").slice(0, 500);
+}
+
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -304,6 +328,7 @@ router.post("/items", async (req, res) => {
   if (barcode && existing.some(i => i.barcode?.trim() === String(barcode).trim())) {
     res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
   }
+  const normalizedTags = normalizeTags(tags);
   const [row] = await db.insert(itemsTable).values({
     companyId: cid, code, nameAr, nameEn, barcode,
     itemType: itemType || "stock", groupId: groupId || null, unitId: unitId || null,
@@ -311,6 +336,7 @@ router.post("/items", async (req, res) => {
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
     imageUrl: imageUrl || null,
+    tags: normalizedTags === undefined ? null : normalizedTags,
   }).returning();
   res.status(201).json(row);
 });
@@ -318,7 +344,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags } = req.body;
   const others = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (code && others.some(i => i.id !== id && i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لصنف آخر` }); return;
@@ -329,6 +355,7 @@ router.put("/items/:id", async (req, res) => {
   if (barcode && others.some(i => i.id !== id && i.barcode?.trim() === String(barcode).trim())) {
     res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
   }
+  const normalizedTags = normalizeTags(tags);
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
     groupId: groupId || null, unitId: unitId || null,
@@ -336,6 +363,7 @@ router.put("/items/:id", async (req, res) => {
     reorderLevel: reorderLevel || "0", maxLevel: maxLevel || null,
     costMethod: costMethod || "weighted_avg", description,
     imageUrl: imageUrl !== undefined ? (imageUrl || null) : undefined,
+    tags: normalizedTags === undefined ? undefined : normalizedTags,
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }

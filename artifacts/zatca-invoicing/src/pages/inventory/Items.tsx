@@ -18,7 +18,9 @@ import {
   Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
   AlertTriangle, BookMarked, Sparkles, Loader2,
+  QrCode, Tag, Printer,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -32,7 +34,177 @@ const EMPTY = {
   groupId: "", unitId: "", costPrice: "0", salePrice: "0", vatRate: "15",
   reorderLevel: "0", maxLevel: "", costMethod: "weighted_avg", description: "", status: "active",
   costAccountId: "", revenueAccountId: "", imageUrl: "",
+  tags: "" as string, // comma-separated
 };
+
+// ─── Helpers: tags as array ↔ string ─────────────────────────────────────────
+function tagsToArray(v: unknown): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(String).map(s => s.trim()).filter(Boolean);
+  return String(v).split(",").map(s => s.trim()).filter(Boolean);
+}
+
+// ─── Inline chip-style tags input ────────────────────────────────────────────
+function TagsInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const tags = tagsToArray(value);
+  const [draft, setDraft] = useState("");
+
+  function addTag(raw: string) {
+    const v = raw.trim().slice(0, 40);
+    if (!v) return;
+    if (tags.some(t => t.toLowerCase() === v.toLowerCase())) { setDraft(""); return; }
+    if (tags.length >= 20) { setDraft(""); return; }
+    onChange([...tags, v].join(","));
+    setDraft("");
+  }
+  function removeTag(idx: number) {
+    onChange(tags.filter((_, i) => i !== idx).join(","));
+  }
+
+  return (
+    <div className="min-h-9 w-full rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 items-center focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+      {tags.map((tg, i) => (
+        <span key={i} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-medium rounded-md px-2 py-0.5">
+          <Tag className="h-3 w-3" />
+          {tg}
+          <button type="button" onClick={() => removeTag(i)} className="hover:text-destructive" aria-label="remove">
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            addTag(draft);
+          } else if (e.key === "Backspace" && draft === "" && tags.length > 0) {
+            removeTag(tags.length - 1);
+          }
+        }}
+        onBlur={() => addTag(draft)}
+        placeholder={tags.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[80px] outline-none bg-transparent text-xs py-0.5"
+      />
+    </div>
+  );
+}
+
+// ─── QR Code preview dialog ──────────────────────────────────────────────────
+function ItemQrDialog({ open, onOpenChange, item }: { open: boolean; onOpenChange: (v: boolean) => void; item: any }) {
+  const { t, i18n } = useTranslation();
+  if (!item) return null;
+  // Use barcode if available, else item code, else id — most useful for POS scanning.
+  const qrValue = String(item.barcode || item.code || item.id);
+  // Locale-aware display name: prefer current-language name, fallback to Ar then En then code
+  const displayName = i18n.language?.startsWith("en")
+    ? (item.nameEn || item.nameAr || item.code || "")
+    : (item.nameAr || item.nameEn || item.code || "");
+
+  function printQr() {
+    // Open with noopener for safety; build the document via DOM APIs and textContent
+    // so user-controlled fields (name/code/barcode) cannot inject HTML/JS (XSS).
+    const w = window.open("", "_blank", "width=420,height=620,noopener,noreferrer");
+    if (!w) return;
+    const svgEl = document.getElementById("item-qr-svg");
+    const svgMarkup = svgEl ? new XMLSerializer().serializeToString(svgEl) : "";
+    const isRtl = !i18n.language?.startsWith("en");
+    const lang = isRtl ? "ar" : "en";
+    const dir = isRtl ? "rtl" : "ltr";
+    const printLabel = t("pages.items.qr.print");
+    const titleLabel = t("pages.items.qr.title");
+
+    // Build doc structure first, then inject only safe primitives.
+    const doc = w.document;
+    doc.open();
+    doc.write("<!doctype html><html><head></head><body></body></html>");
+    doc.close();
+
+    doc.documentElement.setAttribute("lang", lang);
+    doc.documentElement.setAttribute("dir", dir);
+
+    const titleEl = doc.createElement("title");
+    titleEl.textContent = `${titleLabel} — ${displayName}`;
+    doc.head.appendChild(titleEl);
+
+    const styleEl = doc.createElement("style");
+    styleEl.textContent = `
+      body { font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 20px; }
+      .sticker { display: inline-block; padding: 16px; border: 1px dashed #ccc; border-radius: 12px; }
+      h2 { margin: 8px 0 4px; font-size: 16px; }
+      .code { font-family: monospace; color: #555; font-size: 12px; }
+      .barcode { font-family: monospace; color: #888; font-size: 11px; margin-top: 4px; }
+      .actions { margin-top: 20px; }
+      .actions button { padding: 6px 14px; font-size: 13px; cursor: pointer; }
+      @media print { .actions { display: none; } .sticker { border: none; } }
+    `;
+    doc.head.appendChild(styleEl);
+
+    const sticker = doc.createElement("div");
+    sticker.className = "sticker";
+    // SVG markup is generated by qrcode.react and contains no user input — safe to inject as innerHTML.
+    const svgWrap = doc.createElement("div");
+    svgWrap.innerHTML = svgMarkup;
+    sticker.appendChild(svgWrap);
+
+    const h2 = doc.createElement("h2");
+    h2.textContent = displayName; // textContent → safe
+    sticker.appendChild(h2);
+
+    if (item.code) {
+      const codeDiv = doc.createElement("div");
+      codeDiv.className = "code";
+      codeDiv.textContent = String(item.code);
+      sticker.appendChild(codeDiv);
+    }
+    if (item.barcode) {
+      const bcDiv = doc.createElement("div");
+      bcDiv.className = "barcode";
+      bcDiv.textContent = `🔖 ${String(item.barcode)}`;
+      sticker.appendChild(bcDiv);
+    }
+    doc.body.appendChild(sticker);
+
+    const actions = doc.createElement("div");
+    actions.className = "actions";
+    const btn = doc.createElement("button");
+    btn.type = "button";
+    btn.textContent = printLabel; // localized
+    btn.addEventListener("click", () => w.print());
+    actions.appendChild(btn);
+    doc.body.appendChild(actions);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm" dir={i18n.language?.startsWith("en") ? "ltr" : "rtl"}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <QrCode className="h-5 w-5 text-primary" />
+            {t("pages.items.qr.title")}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-3 py-4">
+          <div className="bg-white p-3 rounded-xl border">
+            <QRCodeSVG id="item-qr-svg" value={qrValue} size={200} level="M" />
+          </div>
+          <p className="text-sm font-semibold text-center">{displayName}</p>
+          <p className="text-xs font-mono text-muted-foreground">{item.code}</p>
+          {item.barcode && <p className="text-[11px] font-mono text-muted-foreground">🔖 {item.barcode}</p>}
+        </div>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button onClick={printQr} className="gap-2">
+            <Printer className="h-4 w-4" />
+            {t("pages.items.qr.print")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ItemImageUpload({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { toast } = useToast();
@@ -333,6 +505,7 @@ function AIAssistDialog({
         groupId:     Boolean(enriched.suggestedGroupId) && isEmpty(form.groupId),
         unitId:      Boolean(enriched.suggestedUnitId) && isEmpty(form.unitId),
         itemType:    Boolean(enriched.suggestedItemType) && enriched.suggestedItemType !== form.itemType,
+        tags:        Array.isArray(enriched.tags) && enriched.tags.length > 0 && tagsToArray(form.tags).length === 0,
       });
     } catch (e: any) {
       if (myId !== reqIdRef.current) return;
@@ -353,6 +526,18 @@ function AIAssistDialog({
     if (picks.groupId     && draft.suggestedGroupId)  patch.groupId  = draft.suggestedGroupId;
     if (picks.unitId      && draft.suggestedUnitId)   patch.unitId   = draft.suggestedUnitId;
     if (picks.itemType    && draft.suggestedItemType) patch.itemType = draft.suggestedItemType;
+    if (picks.tags        && draft.tags && draft.tags.length > 0) {
+      // Merge with existing tags (dedupe by lowercase) — never silently wipe user tags
+      const existing = tagsToArray(form.tags);
+      const seen = new Set(existing.map(x => x.toLowerCase()));
+      const merged = [...existing];
+      for (const t of draft.tags) {
+        const k = t.toLowerCase();
+        if (!seen.has(k)) { seen.add(k); merged.push(t); }
+        if (merged.length >= 20) break;
+      }
+      patch.tags = merged.join(",");
+    }
     onApply(patch);
     toast({ title: t("pages.items.aiAssist.applied") });
     onOpenChange(false);
@@ -437,12 +622,19 @@ function AIAssistDialog({
                  suggested={draft.suggestedItemType === "stock" ? t("pages.items.stock") : draft.suggestedItemType === "service" ? t("pages.items.service") : null} />
 
             {draft.tags && draft.tags.length > 0 && (
-              <div className="rounded-lg border bg-card p-3">
-                <p className="text-xs font-semibold text-foreground mb-2">{t("pages.items.aiAssist.tags")}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {draft.tags.map((tag, i) => (
-                    <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
-                  ))}
+              <div className="flex items-start gap-3 rounded-lg border bg-card p-3">
+                <Checkbox
+                  checked={!!picks.tags}
+                  onCheckedChange={(v) => setPicks(p => ({ ...p, tags: !!v }))}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground mb-2">{t("pages.items.aiAssist.tags")}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {draft.tags.map((tag, i) => (
+                      <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -478,6 +670,7 @@ export default function Items() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedTab, setExpandedTab] = useState<"balances" | "units">("balances");
   const [aiOpen, setAiOpen] = useState(false);
+  const [qrItem, setQrItem] = useState<any>(null);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["items", cid],
@@ -513,6 +706,7 @@ export default function Items() {
       maxLevel: item.maxLevel ?? "",
       costAccountId:    item.costAccountId    ? String(item.costAccountId)    : "",
       revenueAccountId: item.revenueAccountId ? String(item.revenueAccountId) : "",
+      tags: item.tags ?? "",
     });
     setEditId(item.id);
     setShowForm(true);
@@ -535,7 +729,12 @@ export default function Items() {
   }
 
   const filtered = items.filter((it: any) => {
-    const matchText = it.nameAr.includes(search) || it.code.includes(search) || (it.nameEn ?? "").toLowerCase().includes(search.toLowerCase()) || (it.barcode ?? "").includes(search);
+    const s = search.toLowerCase();
+    const matchText = it.nameAr.includes(search)
+      || it.code.includes(search)
+      || (it.nameEn ?? "").toLowerCase().includes(s)
+      || (it.barcode ?? "").includes(search)
+      || (it.tags ?? "").toLowerCase().includes(s);
     const matchType = filterType === "all" || it.itemType === filterType;
     return matchText && matchType;
   });
@@ -639,6 +838,21 @@ export default function Items() {
                 <Field label="صورة الصنف" className="md:col-span-2">
                   <ItemImageUpload value={form.imageUrl ?? ""} onChange={(v) => setForm((p: any) => ({ ...p, imageUrl: v }))} />
                 </Field>
+                <Field label={t("pages.items.tagsLabel")} hint={t("pages.items.tagsHint")} className="md:col-span-2">
+                  <TagsInput
+                    value={form.tags ?? ""}
+                    onChange={(v) => setForm((p: any) => ({ ...p, tags: v }))}
+                    placeholder={t("pages.items.tagsPlaceholder")}
+                  />
+                </Field>
+                {editId && (
+                  <Field label={t("pages.items.qr.label")} className="md:col-span-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setQrItem({ id: editId, nameAr: form.nameAr, code: form.code, barcode: form.barcode })} className="gap-1.5 h-9">
+                      <QrCode className="h-4 w-4" />
+                      {t("pages.items.qr.show")}
+                    </Button>
+                  </Field>
+                )}
               </FormGrid>
             </TabsContent>
             <TabsContent value="pricing" className="mt-0 space-y-6">
@@ -747,6 +961,18 @@ export default function Items() {
                             <p className="font-medium">{it.nameAr}</p>
                             {it.nameEn && <p className="text-xs text-muted-foreground">{it.nameEn}</p>}
                             {it.barcode && <p className="text-[10px] text-muted-foreground/70 font-mono">🔖 {it.barcode}</p>}
+                            {it.tags && tagsToArray(it.tags).length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {tagsToArray(it.tags).slice(0, 4).map((tg, i) => (
+                                  <span key={i} className="inline-flex items-center gap-0.5 bg-primary/10 text-primary text-[9px] font-medium rounded px-1 py-0.5">
+                                    <Tag className="h-2 w-2" />{tg}
+                                  </span>
+                                ))}
+                                {tagsToArray(it.tags).length > 4 && (
+                                  <span className="text-[9px] text-muted-foreground">+{tagsToArray(it.tags).length - 4}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -770,6 +996,7 @@ export default function Items() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setQrItem(it)} title={t("pages.items.qr.show")}><QrCode className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(it)}><Pencil className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteItemConfirm"))) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
@@ -846,6 +1073,9 @@ export default function Items() {
           />
         )}
       </div>
+
+      {/* QR Code dialog (item-scoped, mounted once at top level) */}
+      <ItemQrDialog open={qrItem !== null} onOpenChange={(v) => !v && setQrItem(null)} item={qrItem} />
     </div>
   );
 }
