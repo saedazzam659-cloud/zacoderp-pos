@@ -102,6 +102,7 @@ const COLUMNS: ReadonlyArray<{ key: string; label: string; type: ColType; align?
   { key: "date",       label: "التاريخ",    type: "text",   align: "center" },
   { key: "customer",   label: "العميل",     type: "text",   align: "start"  },
   { key: "vat",        label: "الرقم الضريبي", type: "text", align: "center" },
+  { key: "phone",      label: "هاتف العميل", type: "text",  align: "center" },
   { key: "branch",     label: "الفرع",      type: "text",   align: "center" },
   { key: "rep",        label: "المندوب",    type: "text",   align: "center" },
   { key: "payment",    label: "نوع الدفع",  type: "text",   align: "center" },
@@ -659,16 +660,27 @@ export default function SalesAuditGrid() {
   // Two layers: top-bar (search/status/date) AND per-column filters (Excel-like).
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // Pre-compute the digit-only form of the query once, not once per row —
+    // the quick-search now also matches phone numbers ignoring formatting
+    // (spaces, dashes, "+966" prefix etc.), so we strip non-digits.
+    const qDigits = q.replace(/\D/g, "");
     const PAY_AR: Record<string, string> = { cash: "نقدي", bank: "بنكي", credit: "آجل" };
     const STATUS_AR: Record<string, string> = { draft: "مسودة", posted: "مُرحَّل", cancelled: "ملغاة" };
 
     return invoices.filter((inv: any) => {
       const cusName = cusMap[inv.customerId]?.name ?? "";
+      const cusPhone = cusMap[inv.customerId]?.phone ?? "";
+      const phoneDigits = cusPhone.replace(/\D/g, "");
 
-      // top-bar filters
+      // top-bar filters — quick search looks up phone in two ways:
+      //   1. case-insensitive substring on the raw phone string
+      //      (handy if user pastes "+966 555 …")
+      //   2. digit-only substring (handy for "5555" → "+966 555 5555")
       const matchText = !q
         || (inv.docNumber ?? "").toLowerCase().includes(q)
         || cusName.toLowerCase().includes(q)
+        || cusPhone.toLowerCase().includes(q)
+        || (qDigits.length > 0 && phoneDigits.includes(qDigits))
         || (inv.notes ?? "").toLowerCase().includes(q);
       const matchStatus = statusFilter === "all" || inv.status === statusFilter;
       const matchFrom = !dateFrom || (inv.invoiceDate >= dateFrom);
@@ -685,6 +697,7 @@ export default function SalesAuditGrid() {
           case "date":       cellValue = inv.invoiceDate; break;
           case "customer":   cellValue = cusName; break;
           case "vat":        cellValue = cusMap[inv.customerId]?.vat ?? ""; break;
+          case "phone":      cellValue = cusMap[inv.customerId]?.phone ?? ""; break;
           case "branch":     cellValue = branchMap[inv.branchId] ?? ""; break;
           case "rep":        cellValue = repMap[inv.salesRepId] ?? ""; break;
           case "payment":    cellValue = PAY_AR[inv.paymentType] ?? inv.paymentType ?? ""; break;
@@ -996,7 +1009,7 @@ export default function SalesAuditGrid() {
       return;
     }
     const header = [
-      "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","الفرع","المندوب",
+      "#","رقم الفاتورة","التاريخ","العميل","الرقم الضريبي","هاتف العميل","الفرع","المندوب",
       "نوع الدفع","العملة","المجموع","الخصم","الضريبة","الإجمالي","العمولة",
       "حالة السداد","القيد","ZATCA","الحالة","ملاحظات",
     ];
@@ -1006,6 +1019,7 @@ export default function SalesAuditGrid() {
       inv.invoiceDate ?? "",
       cusMap[inv.customerId]?.name ?? "",
       cusMap[inv.customerId]?.vat ?? "",
+      cusMap[inv.customerId]?.phone ?? "",
       branchMap[inv.branchId] ?? "",
       repMap[inv.salesRepId] ?? "",
       inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل",
@@ -1465,7 +1479,7 @@ export default function SalesAuditGrid() {
         {/* ─── Filter strip ────────────────────────────────────────────── */}
         <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
           <Input
-            placeholder="بحث (رقم فاتورة، عميل، ملاحظات)…"
+            placeholder="بحث (رقم فاتورة، عميل، هاتف، ملاحظات)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="h-7 text-xs w-56"
@@ -1730,6 +1744,34 @@ export default function SalesAuditGrid() {
                         return <td key={col.key} className={cn("px-2 py-1 border border-slate-200 truncate", colWidths.customer ? "" : "max-w-[180px]")} title={cus?.name ?? ""}>{cus?.name ?? "—"}</td>;
                       case "vat":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono text-[10px] text-slate-600 text-center">{cus?.vat ?? "—"}</td>;
+                      case "phone": {
+                        // Build a safe `tel:` href: keep only characters that
+                        // are valid in dialable strings per RFC 3966 (digits,
+                        // "+", and a few separators). The phone comes from
+                        // our own DB, but it's still user-entered text — this
+                        // sanitizer guards against odd characters slipping
+                        // into the URL scheme.
+                        const telHref = cus?.phone
+                          ? `tel:${cus.phone.replace(/[^0-9+*#(),;\-\s]/g, "")}`
+                          : "";
+                        return (
+                          <td key={col.key} className="px-2 py-1 border border-slate-200 font-mono text-[10px] text-center whitespace-nowrap">
+                            {cus?.phone ? (
+                              <a
+                                href={telHref}
+                                className="text-blue-700 hover:underline"
+                                title={`اتصل بالعميل: ${cus.phone}`}
+                                dir="ltr"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {cus.phone}
+                              </a>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                        );
+                      }
                       case "branch":
                         return <td key={col.key} className="px-2 py-1 border border-slate-200 text-center text-slate-600">{branchMap[inv.branchId] ?? "—"}</td>;
                       case "rep":
