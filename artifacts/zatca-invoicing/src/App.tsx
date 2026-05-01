@@ -199,7 +199,7 @@ import ReceiptVouchersReport   from "@/pages/cash/reports/ReceiptVouchersReport"
 import PaymentVouchersReport   from "@/pages/cash/reports/PaymentVouchersReport";
 import TransfersReport         from "@/pages/cash/reports/TransfersReport";
 // Sales
-import SalesInvoices        from "@/pages/sales/SalesInvoices";
+// SalesInvoices replaced by SalesAuditGrid as the main /sales/invoices screen
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
 import SalesAuditGrid       from "@/pages/sales/SalesAuditGrid";
 import SalesQuotations      from "@/pages/sales/SalesQuotations";
@@ -559,8 +559,9 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/sales" component={SalesHub} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/new"   module="sales_invoices"   action="create" component={SalesInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
+            {/* /sales/audit-grid kept as alias for any old links/bookmarks */}
             {!isSuperAdmin && <PermRoute path="/sales/audit-grid"     module="sales_invoices"   component={SalesAuditGrid} />}
-            {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesInvoices} />}
+            {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesAuditGrid} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/new" module="sales_quotations" action="create" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/:id" module="sales_quotations" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations"     module="sales_quotations" component={SalesQuotations} />}
