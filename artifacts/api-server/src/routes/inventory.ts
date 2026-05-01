@@ -7,11 +7,11 @@ import {
   stockAdjustmentsTable, stockAdjustmentItemsTable,
   stockCountsTable, stockCountItemsTable,
   journalEntriesTable, journalEntryLinesTable,
-  accountsTable,
+  accountsTable, auditLogTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
-import { pathRbac } from "../middleware/permissions.js";
+import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
 
@@ -290,6 +290,50 @@ router.get("/items/:id", async (req, res) => {
   res.json({ ...row.item, group: row.group, unit: row.unit, balances: balances.map(b => ({ ...b.bal, warehouse: b.wh })) });
 });
 
+// ─── ITEM AUDIT HELPERS ──────────────────────────────────────────────────────
+// Track changes on these editable columns; intentionally skip auto-managed
+// columns like id/companyId/createdAt/updatedAt that the user can't change.
+const ITEM_AUDIT_FIELDS = [
+  "code", "nameAr", "nameEn", "barcode", "itemType",
+  "groupId", "unitId", "costPrice", "salePrice", "vatRate",
+  "reorderLevel", "maxLevel", "costMethod", "description",
+  "status", "imageUrl", "tags",
+] as const;
+
+function normAuditValue(v: unknown): unknown {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t === "" ? null : t;
+  }
+  return v;
+}
+
+function diffItem(before: any, after: any): Array<{ field: string; from: unknown; to: unknown }> {
+  const out: Array<{ field: string; from: unknown; to: unknown }> = [];
+  for (const f of ITEM_AUDIT_FIELDS) {
+    const a = normAuditValue(before?.[f]);
+    const b = normAuditValue(after?.[f]);
+    if (String(a ?? "") !== String(b ?? "")) {
+      out.push({ field: f, from: a, to: b });
+    }
+  }
+  return out;
+}
+
+function snapshotItem(row: any): Record<string, unknown> {
+  const snap: Record<string, unknown> = {};
+  for (const f of ITEM_AUDIT_FIELDS) snap[f] = normAuditValue(row?.[f]);
+  return snap;
+}
+
+function ipFromReq(req: any): string | null {
+  const xf = req.headers?.["x-forwarded-for"];
+  if (typeof xf === "string" && xf.length) return xf.split(",")[0]!.trim().slice(0, 64);
+  if (Array.isArray(xf) && xf.length) return String(xf[0]).slice(0, 64);
+  return (req.socket?.remoteAddress ?? null)?.slice(0, 64) ?? null;
+}
+
 // Normalize a tags input (string or string[]) to a clean, deduped, trimmed,
 // comma-joined string suitable for storage. Caps total length to 500 chars
 // and individual tags to 40 chars to prevent abuse.
@@ -338,6 +382,22 @@ router.post("/items", async (req, res) => {
     imageUrl: imageUrl || null,
     tags: normalizedTags === undefined ? null : normalizedTags,
   }).returning();
+  void writeAudit({
+    userId:     (req as any).authUser?.id ?? null,
+    username:   (req as any).authUser?.username ?? null,
+    role:       (req as any).authUser?.role ?? null,
+    companyId:  cid,
+    module:     "inventory_items",
+    action:     "create",
+    method:     req.method,
+    path:       req.originalUrl ?? req.path,
+    entityType: "item",
+    entityId:   String(row.id),
+    statusCode: 201,
+    ip:         ipFromReq(req),
+    userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+    metadata:   { name: row.nameAr, code: row.code, snapshot: snapshotItem(row) },
+  });
   res.status(201).json(row);
 });
 
@@ -355,6 +415,8 @@ router.put("/items/:id", async (req, res) => {
   if (barcode && others.some(i => i.id !== id && i.barcode?.trim() === String(barcode).trim())) {
     res.status(409).json({ error: `الباركود "${barcode}" مستخدم لصنف آخر` }); return;
   }
+  // Snapshot the existing row BEFORE mutating so we can compute a precise diff.
+  const existing = others.find(i => i.id === id) ?? null;
   const normalizedTags = normalizeTags(tags);
   const [row] = await db.update(itemsTable).set({
     code, nameAr, nameEn, barcode, itemType: itemType || "stock",
@@ -367,13 +429,87 @@ router.put("/items/:id", async (req, res) => {
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
+  // Only audit when something actually changed (avoids "no-op save" noise).
+  const changes = existing ? diffItem(existing, row) : [];
+  if (changes.length > 0) {
+    void writeAudit({
+      userId:     (req as any).authUser?.id ?? null,
+      username:   (req as any).authUser?.username ?? null,
+      role:       (req as any).authUser?.role ?? null,
+      companyId:  cid,
+      module:     "inventory_items",
+      action:     "edit",
+      method:     req.method,
+      path:       req.originalUrl ?? req.path,
+      entityType: "item",
+      entityId:   String(row.id),
+      statusCode: 200,
+      ip:         ipFromReq(req),
+      userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+      metadata:   { name: row.nameAr, code: row.code, changes },
+    });
+  }
   res.json(row);
 });
 
 router.delete("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  await db.delete(itemsTable).where(and(eq(itemsTable.id, Number(req.params.id)), eq(itemsTable.companyId, cid)));
+  const id = Number(req.params.id);
+  // Snapshot the row BEFORE deletion so the audit trail keeps a copy of what
+  // existed (item rows themselves are gone after delete).
+  const [existing] = await db.select().from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "غير موجود" }); return; }
+  await db.delete(itemsTable).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  void writeAudit({
+    userId:     (req as any).authUser?.id ?? null,
+    username:   (req as any).authUser?.username ?? null,
+    role:       (req as any).authUser?.role ?? null,
+    companyId:  cid,
+    module:     "inventory_items",
+    action:     "delete",
+    method:     req.method,
+    path:       req.originalUrl ?? req.path,
+    entityType: "item",
+    entityId:   String(existing.id),
+    statusCode: 200,
+    ip:         ipFromReq(req),
+    userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+    metadata:   { name: existing.nameAr, code: existing.code, snapshot: snapshotItem(existing) },
+  });
   res.json({ ok: true });
+});
+
+// ─── ITEM AUDIT HISTORY ──────────────────────────────────────────────────────
+// Returns the full audit trail for one item (most-recent first), capped at
+// 500 rows. Tenant-scoped via `companyId` so other tenants' rows are hidden
+// even if an attacker guesses an `entityId` from a different company.
+router.get("/items/:id/audit", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  const rows = await db.select({
+    id:         auditLogTable.id,
+    userId:     auditLogTable.userId,
+    username:   auditLogTable.username,
+    role:       auditLogTable.role,
+    action:     auditLogTable.action,
+    method:     auditLogTable.method,
+    path:       auditLogTable.path,
+    statusCode: auditLogTable.statusCode,
+    ip:         auditLogTable.ip,
+    metadata:   auditLogTable.metadata,
+    createdAt:  auditLogTable.createdAt,
+  }).from(auditLogTable)
+    .where(and(
+      eq(auditLogTable.companyId, cid),
+      eq(auditLogTable.module, "inventory_items"),
+      eq(auditLogTable.entityType, "item"),
+      eq(auditLogTable.entityId, String(id)),
+    ))
+    .orderBy(desc(auditLogTable.createdAt))
+    .limit(500);
+  res.json(rows);
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1047,12 +1183,31 @@ router.post("/import/items", async (req, res) => {
 
   const groups = await db.select().from(itemGroupsTable).where(eq(itemGroupsTable.companyId, cid));
   const units  = await db.select().from(unitsTable).where(eq(unitsTable.companyId, cid));
-  const existing = await db.select({ id: itemsTable.id, code: itemsTable.code }).from(itemsTable).where(eq(itemsTable.companyId, cid));
+  // Fetch FULL existing rows (not just id/code) so we can compute precise
+  // before/after diffs for the audit log on each updated row.
+  const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   const groupByCode = new Map(groups.map((g: any) => [String(g.code).trim().toLowerCase(), g.id]));
   const unitByCode  = new Map(units.map((u: any)  => [String(u.code).trim().toLowerCase(), u.id]));
-  const itemByCode  = new Map(existing.map((it: any) => [String(it.code).trim().toLowerCase(), it.id]));
+  const itemByCode  = new Map<string, any>(existing.map((it: any) => [String(it.code).trim().toLowerCase(), it]));
 
-  let created = 0, updated = 0;
+  // Snapshot reusable audit-row metadata so each writeAudit call below stays
+  // small and consistent (and importantly tagged with `source: "import"` so
+  // the timeline can distinguish bulk-import activity from interactive edits).
+  const auditBase = {
+    userId:     (req as any).authUser?.id ?? null,
+    username:   (req as any).authUser?.username ?? null,
+    role:       (req as any).authUser?.role ?? null,
+    companyId:  cid,
+    module:     "inventory_items",
+    method:     req.method,
+    path:       req.originalUrl ?? req.path,
+    entityType: "item",
+    statusCode: 200,
+    ip:         ipFromReq(req),
+    userAgent:  req.get("user-agent")?.slice(0, 256) ?? null,
+  };
+
+  let createdCount = 0, updatedCount = 0;
   const errors: { row: number; error: string }[] = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -1078,23 +1233,45 @@ router.post("/import/items", async (req, res) => {
         description:  r.description != null && r.description !== "" ? String(r.description) : null,
       };
 
-      const existingId = itemByCode.get(code.toLowerCase());
-      if (existingId) {
+      const existingRow = itemByCode.get(code.toLowerCase());
+      if (existingRow) {
         const { companyId, ...upd } = values as any;
-        await db.update(itemsTable).set({ ...upd, updatedAt: new Date() })
-          .where(and(eq(itemsTable.id, existingId), eq(itemsTable.companyId, cid)));
-        updated++;
+        const [updatedRow] = await db.update(itemsTable).set({ ...upd, updatedAt: new Date() })
+          .where(and(eq(itemsTable.id, existingRow.id), eq(itemsTable.companyId, cid)))
+          .returning();
+        // Skip audit when the import row had no real effect.
+        const changes = updatedRow ? diffItem(existingRow, updatedRow) : [];
+        if (changes.length > 0) {
+          void writeAudit({
+            ...auditBase,
+            action:   "edit",
+            entityId: String(existingRow.id),
+            metadata: { name: updatedRow.nameAr, code: updatedRow.code, changes, source: "import" },
+          });
+          // Refresh map so a later row referencing the same code sees the new state.
+          itemByCode.set(code.toLowerCase(), updatedRow);
+        }
+        updatedCount++;
       } else {
-        const [ins] = await db.insert(itemsTable).values(values).returning({ id: itemsTable.id });
-        if (ins?.id) itemByCode.set(code.toLowerCase(), ins.id);
-        created++;
+        const [ins] = await db.insert(itemsTable).values(values).returning();
+        if (ins?.id) {
+          itemByCode.set(code.toLowerCase(), ins);
+          void writeAudit({
+            ...auditBase,
+            action:     "create",
+            entityId:   String(ins.id),
+            statusCode: 201,
+            metadata:   { name: ins.nameAr, code: ins.code, snapshot: snapshotItem(ins), source: "import" },
+          });
+        }
+        createdCount++;
       }
     } catch (e: any) {
       errors.push({ row: i + 2, error: e?.message || "خطأ غير معروف" });
     }
   }
 
-  res.json({ created, updated, errors, total: rows.length });
+  res.json({ created: createdCount, updated: updatedCount, errors, total: rows.length });
 });
 
 // ═══════════════════════════════════════════════════════════════════

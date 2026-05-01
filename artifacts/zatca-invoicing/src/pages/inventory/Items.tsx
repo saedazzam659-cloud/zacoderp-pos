@@ -18,7 +18,7 @@ import {
   Plus, Pencil, Trash2, Package, Search, X, Save,
   ChevronDown, ChevronUp, Warehouse, Ruler, Star,
   AlertTriangle, BookMarked, Sparkles, Loader2,
-  QrCode, Tag, Printer,
+  QrCode, Tag, Printer, History, ArrowRight,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
@@ -200,6 +200,186 @@ function ItemQrDialog({ open, onOpenChange, item }: { open: boolean; onOpenChang
             <Printer className="h-4 w-4" />
             {t("pages.items.qr.print")}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Item Audit-Log (history) dialog ─────────────────────────────────────────
+// Shows a tenant-scoped, most-recent-first timeline of every create/edit/
+// delete action for one item. Field-level diffs come from the server's
+// `metadata.changes` array; full snapshots come from create/delete entries.
+// All field labels are translated via `pages.items.history.fields.<key>` so
+// the timeline is fully bilingual.
+function ItemHistoryDialog({ open, onOpenChange, item }: { open: boolean; onOpenChange: (v: boolean) => void; item: any }) {
+  const { t, i18n } = useTranslation();
+  const { user } = useAuth();
+  // Include tenant id in the queryKey so cached audit rows from a previous
+  // tenant are never served when the user switches companies (architect finding).
+  const tenantKey = user?.role === "superadmin" ? "sa" : (user?.company?.id ?? "anon");
+  const isRtl = !i18n.language?.startsWith("en");
+  const { data: rows, isLoading, isError, error } = useQuery({
+    queryKey: ["item-audit", tenantKey, item?.id],
+    queryFn: () => inventoryApi.getItemAudit(item!.id),
+    enabled: !!item?.id && open,
+  });
+
+  function fieldLabel(field: string): string {
+    return t(`pages.items.history.fields.${field}`, { defaultValue: field });
+  }
+  function actionLabel(action: string): string {
+    if (action === "create") return t("pages.items.history.actionCreate");
+    if (action === "edit")   return t("pages.items.history.actionEdit");
+    if (action === "delete") return t("pages.items.history.actionDelete");
+    return action;
+  }
+  function actionColor(action: string): string {
+    if (action === "create") return "bg-green-50 text-green-700 border-green-200";
+    if (action === "edit")   return "bg-blue-50  text-blue-700  border-blue-200";
+    if (action === "delete") return "bg-red-50   text-red-700   border-red-200";
+    return "bg-slate-50 text-slate-700 border-slate-200";
+  }
+  function fmtValue(v: unknown): string {
+    if (v === null || v === undefined || v === "") return "—";
+    if (typeof v === "object") {
+      try { return JSON.stringify(v); } catch { return String(v); }
+    }
+    return String(v);
+  }
+  function fmtDate(s: string): string {
+    try {
+      return new Date(s).toLocaleString(isRtl ? "ar-SA" : "en-GB", {
+        year: "numeric", month: "short", day: "2-digit",
+        hour: "2-digit", minute: "2-digit",
+      });
+    } catch { return s; }
+  }
+
+  if (!item) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" dir={isRtl ? "rtl" : "ltr"}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <History className="h-5 w-5 text-primary" />
+            {t("pages.items.history.title")}
+            <span className="text-sm font-normal text-muted-foreground">
+              — {item.nameAr ?? item.code}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto pr-1 -mr-1">
+          {isLoading && (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t("pages.items.history.loading")}
+            </div>
+          )}
+          {isError && (
+            <div className="text-sm text-destructive bg-destructive/5 rounded-md p-3">
+              {t("pages.items.history.errorTitle")}: {parseError(error)}
+            </div>
+          )}
+          {!isLoading && !isError && (!rows || rows.length === 0) && (
+            <div className="text-sm text-muted-foreground text-center py-12 border border-dashed rounded-lg">
+              <History className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              {t("pages.items.history.empty")}
+            </div>
+          )}
+          {!isLoading && !isError && rows && rows.length > 0 && (
+            <ol className="space-y-3">
+              {rows.map((row: any) => {
+                const meta = row.metadata ?? {};
+                const changes: Array<{ field: string; from: unknown; to: unknown }> = Array.isArray(meta.changes) ? meta.changes : [];
+                const snapshot: Record<string, unknown> | null = meta.snapshot && typeof meta.snapshot === "object" ? meta.snapshot : null;
+                return (
+                  <li key={row.id} className="border rounded-lg p-3 bg-card">
+                    {/* Header row: action + timestamp + user */}
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <span className={cn("text-[11px] font-semibold rounded-full px-2 py-0.5 border", actionColor(row.action))}>
+                        {actionLabel(row.action)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {fmtDate(row.createdAt)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        · {t("pages.items.history.byUser")}{" "}
+                        <span className="font-medium text-foreground">
+                          {row.username || t("pages.items.history.anonymous")}
+                        </span>
+                        {row.role && <span className="text-muted-foreground"> ({row.role})</span>}
+                      </span>
+                      {row.action === "edit" && (
+                        <span className="text-[11px] text-muted-foreground ml-auto">
+                          {t("pages.items.history.changesCount", { count: changes.length })}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Edit: show diff table */}
+                    {row.action === "edit" && changes.length > 0 && (
+                      <div className="rounded border bg-muted/20 overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/40">
+                            <tr className="text-start">
+                              <th className="px-2 py-1.5 font-semibold text-start w-1/3">{t("pages.items.history.field")}</th>
+                              <th className="px-2 py-1.5 font-semibold text-start">{t("pages.items.history.from")}</th>
+                              <th className="px-2 py-1.5 w-6"></th>
+                              <th className="px-2 py-1.5 font-semibold text-start">{t("pages.items.history.to")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {changes.map((ch, i) => (
+                              <tr key={i} className="border-t border-muted/40">
+                                <td className="px-2 py-1.5 font-medium">{fieldLabel(ch.field)}</td>
+                                <td className="px-2 py-1.5 text-muted-foreground line-through tabular-nums break-all">
+                                  {fmtValue(ch.from)}
+                                </td>
+                                <td className="px-2 py-1.5 text-muted-foreground">
+                                  <ArrowRight className={cn("h-3 w-3", isRtl && "rotate-180")} />
+                                </td>
+                                <td className="px-2 py-1.5 font-medium tabular-nums break-all">
+                                  {fmtValue(ch.to)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Create / delete: collapsible snapshot */}
+                    {(row.action === "create" || row.action === "delete") && snapshot && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground py-1 select-none">
+                          {t("pages.items.history.snapshot")}
+                        </summary>
+                        <div className="rounded border bg-muted/20 mt-1 overflow-hidden">
+                          <table className="w-full">
+                            <tbody>
+                              {Object.entries(snapshot).map(([k, v]) => (
+                                <tr key={k} className="border-t border-muted/40 first:border-t-0">
+                                  <td className="px-2 py-1 font-medium w-1/3">{fieldLabel(k)}</td>
+                                  <td className="px-2 py-1 break-all tabular-nums">{fmtValue(v)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </details>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-2 mt-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>{t("common.close", { defaultValue: "إغلاق" })}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -671,6 +851,7 @@ export default function Items() {
   const [expandedTab, setExpandedTab] = useState<"balances" | "units">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
+  const [historyItem, setHistoryItem] = useState<any>(null);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["items", cid],
@@ -847,10 +1028,16 @@ export default function Items() {
                 </Field>
                 {editId && (
                   <Field label={t("pages.items.qr.label")} className="md:col-span-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setQrItem({ id: editId, nameAr: form.nameAr, code: form.code, barcode: form.barcode })} className="gap-1.5 h-9">
-                      <QrCode className="h-4 w-4" />
-                      {t("pages.items.qr.show")}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => setQrItem({ id: editId, nameAr: form.nameAr, code: form.code, barcode: form.barcode })} className="gap-1.5 h-9">
+                        <QrCode className="h-4 w-4" />
+                        {t("pages.items.qr.show")}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setHistoryItem({ id: editId, nameAr: form.nameAr, code: form.code })} className="gap-1.5 h-9">
+                        <History className="h-4 w-4" />
+                        {t("pages.items.history.show")}
+                      </Button>
+                    </div>
                   </Field>
                 )}
               </FormGrid>
@@ -997,6 +1184,7 @@ export default function Items() {
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setQrItem(it)} title={t("pages.items.qr.show")}><QrCode className="h-3.5 w-3.5" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setHistoryItem(it)} title={t("pages.items.history.show")}><History className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(it)}><Pencil className="h-3.5 w-3.5" /></Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm(t("pages.items.deleteItemConfirm"))) deleteMut.mutate(it.id); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                         </div>
@@ -1076,6 +1264,9 @@ export default function Items() {
 
       {/* QR Code dialog (item-scoped, mounted once at top level) */}
       <ItemQrDialog open={qrItem !== null} onOpenChange={(v) => !v && setQrItem(null)} item={qrItem} />
+
+      {/* Audit-log / history dialog (item-scoped, mounted once at top level) */}
+      <ItemHistoryDialog open={historyItem !== null} onOpenChange={(v) => !v && setHistoryItem(null)} item={historyItem} />
     </div>
   );
 }

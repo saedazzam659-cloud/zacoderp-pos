@@ -55,6 +55,7 @@ export const inventoryApi = {
   createItem: (data: any)    => post<any>("/items", data),
   updateItem: (id: number, data: any) => put<any>(`/items/${id}`, data),
   deleteItem: (id: number)   => del(`/items/${id}`),
+  getItemAudit: (id: number) => get<any[]>(`/items/${id}/audit`),
   // Item Unit Prices
   getItemUnits:    (itemId: number)                  => get<any[]>(`/items/${itemId}/units`),
   getItemUnitPrice: (itemId: number, unitId: number) => get<any>(`/items/${itemId}/units/${unitId}`),
