@@ -1,0 +1,287 @@
+🚀 Item Card Advanced PRO Extensions (إضافات احترافية لكارت الصنف)
+
+🎯 الهدف
+
+تحويل كارت الصنف إلى نظام ذكي قابل للتوسع يدعم:
+
+- التجارة
+- التصنيع
+- الصيانة
+- التحليل
+- التكامل مع الأنظمة الأخرى
+
+---
+
+🧩 1. إدارة الأصناف البديلة (Item Alternatives)
+
+الحقول:
+
+- HasAlternatives (bool)
+
+جدول:
+
+ItemAlternatives:
+
+- ItemId
+- AlternativeItemId
+- Priority
+
+الاستخدام:
+
+- عند نفاد الصنف → يقترح بديل في POS
+
+---
+
+📦 2. المنتجات المركبة (Bundles / Kits)
+
+الحقول:
+
+- IsBundle (bool)
+
+جدول:
+
+ItemBundleDetails:
+
+- ParentItemId
+- ChildItemId
+- Quantity
+
+القواعد:
+
+- عند بيع Bundle:
+  → يتم خصم مكونات الصنف من المخزون
+
+---
+
+🔗 3. Cross Selling / Up Selling
+
+جدول:
+
+ItemRelations:
+
+- ItemId
+- RelatedItemId
+- RelationType (CrossSell / UpSell)
+
+الاستخدام:
+
+- في POS:
+  → "العميل اشترى موبايل → اقترح كفر"
+
+---
+
+🏷️ 4. Tags & Smart Search
+
+الحقول:
+
+- Tags (Text)
+
+الاستخدام:
+
+- البحث الذكي
+- فلترة سريعة
+- AI لاحقاً
+
+---
+
+📊 5. تحليل الأداء (Item Analytics)
+
+الحقول المحسوبة:
+
+- LastSoldDate
+- TotalSalesQty
+- TotalRevenue
+- AverageMonthlySales
+
+القواعد:
+
+- تحديث تلقائي بعد كل عملية بيع
+
+---
+
+🚨 6. تنبيهات ذكية (Smart Alerts)
+
+أنواع التنبيهات:
+
+- صنف راكد (No Sales X Days)
+- قرب نفاد المخزون
+- انتهاء ضمان
+- ارتفاع/انخفاض سعر غير طبيعي
+
+---
+
+💲 7. تسعير ديناميكي (Dynamic Pricing)
+
+الحقول:
+
+- PricingStrategy:
+  
+  - Fixed
+  - MarginBased
+  - Dynamic
+
+- ProfitMargin %
+
+القواعد:
+
+IF PricingStrategy = MarginBased:
+→ SellingPrice = Cost + (Cost * Margin)
+
+---
+
+🧾 8. دعم تعدد العملات
+
+الحقول:
+
+- CurrencyId
+- ExchangeRate
+
+القواعد:
+
+- تحويل السعر تلقائي حسب العملة
+
+---
+
+🌍 9. دعم الفروع (Branches)
+
+الحقول:
+
+- BranchId
+
+القواعد:
+
+- نفس الصنف يمكن أن يكون له:
+  - سعر مختلف
+  - مخزون مختلف
+  - إعدادات مختلفة
+
+---
+
+🔐 10. صلاحيات متقدمة (Advanced Permissions)
+
+القواعد:
+
+- منع تعديل السعر إلا بإذن
+- منع بيع صنف معين لمستخدم معين
+- إخفاء أصناف حسب الدور (Role)
+
+---
+
+📱 11. دعم QR Code
+
+الاستخدام:
+
+- مسح سريع في POS
+- ربط بالصيانة
+- عرض بيانات الصنف
+
+---
+
+🧠 12. تكامل الذكاء الاصطناعي (AI Ready)
+
+الاستخدام:
+
+- اقتراح سعر مثالي
+- توقع الطلب
+- تحليل العملاء
+
+---
+
+🔄 13. Workflow للصنف
+
+الحالات:
+
+- Draft
+- Pending Approval
+- Approved
+- Archived
+
+القواعد:
+
+- لا يمكن البيع إلا Approved
+
+---
+
+🧪 14. سجل التعديلات (Audit Trail)
+
+جدول:
+
+ItemAudit:
+
+- ItemId
+- FieldName
+- OldValue
+- NewValue
+- UserId
+- Date
+
+---
+
+🧩 15. دعم API Integration
+
+الاستخدام:
+
+- ربط مع:
+  - مواقع التجارة الإلكترونية
+  - تطبيقات الموبايل
+  - أنظمة خارجية
+
+---
+
+⚡ 16. Cache & Performance
+
+القواعد:
+
+- Cache للأصناف الأكثر استخداماً
+- Lazy Loading
+- Pagination
+
+---
+
+🧾 17. إدارة الموردين للصنف
+
+جدول:
+
+ItemSuppliers:
+
+- SupplierId
+- ItemId
+- LastPurchasePrice
+- PreferredSupplier
+
+---
+
+🏭 18. BOM متقدم (Bill of Materials)
+
+الإضافات:
+
+- Versioning
+- تكلفة الإنتاج
+- فاقد الإنتاج (Waste %)
+
+---
+
+📉 19. إدارة العروض والخصومات
+
+الحقول:
+
+- HasOffer (bool)
+- OfferStartDate
+- OfferEndDate
+- OfferPrice
+
+---
+
+🧬 20. Variants (أحجام/ألوان)
+
+مثال:
+
+- تيشيرت:
+  - S / M / L
+  - أحمر / أزرق
+
+جدول:
+
+ItemVariants:
+
+- ParentIt
