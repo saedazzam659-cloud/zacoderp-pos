@@ -514,6 +514,7 @@
     "quotations": "Quotations",
     "salesOrders": "Sales Orders",
     "salesInvoices": "Sales Invoices",
+    "salesAuditGrid": "External Audit Grid",
     "salesReturns": "Sales Returns",
     "customerSettlements": "Customer Collections",
     "zatcaBridge": "ZATCA Bridge",

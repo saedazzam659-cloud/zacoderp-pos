@@ -515,6 +515,7 @@
     "quotations": "عروض الأسعار",
     "salesOrders": "أوامر البيع",
     "salesInvoices": "فواتير المبيعات",
+    "salesAuditGrid": "الجرد الخارجي للفواتير",
     "salesReturns": "مرتجعات المبيعات",
     "customerSettlements": "تحصيل العملاء",
     "zatcaBridge": "جسر ZATCA",

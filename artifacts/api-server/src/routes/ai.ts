@@ -3252,3 +3252,266 @@ ${top}
     res.status(500).json({ error: e?.message || "تحليل ميزان المراجعة فشل" });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// AI audit of a sales-invoices list (الجرد الخارجي للفواتير).
+// Receives a summary of all invoices and returns structured findings:
+// - issues (errors): VAT mismatches, missing customer, posted with no JE, ZATCA rejections
+// - warnings: drafts older than 7 days, abnormally large totals (outliers)
+// - summary metrics + 3-5 plain-Arabic recommendations
+// Falls back to a deterministic rule-based audit when AI is not configured.
+// Body: { invoices: Array<{...}>, currencyCode?: string }
+// Returns: { findings: Array<{level, code, invoiceId?, docNumber?, message, fix?}>, metrics, recommendations: string[] }
+// ═══════════════════════════════════════════════════════════════════
+router.post("/audit-sales-invoices", requirePermission("sales_invoices", "view"), async (req, res) => {
+  try {
+    const { invoices = [], currencyCode = "SAR" } = (req.body ?? {}) as {
+      invoices?: any[];
+      currencyCode?: string;
+    };
+    if (!Array.isArray(invoices) || invoices.length === 0) {
+      res.status(400).json({ error: "لا توجد فواتير لتدقيقها" });
+      return;
+    }
+
+    // ── Deterministic rule-based pass (always runs to seed the findings list) ──
+    const findings: Array<{
+      level: "error" | "warning" | "info";
+      code: string;
+      invoiceId?: number;
+      docNumber?: string;
+      message: string;
+      fix?: string;
+    }> = [];
+
+    let totalPosted = 0;
+    let totalDraft = 0;
+    let totalVat = 0;
+    const totals: number[] = [];
+    const today = new Date();
+
+    for (const inv of invoices) {
+      const sub = Number(inv.subtotal ?? 0);
+      const vat = Number(inv.vatAmount ?? 0);
+      const tot = Number(inv.totalAmount ?? 0);
+      const disc = Number(inv.discountAmount ?? 0);
+      totals.push(tot);
+      totalVat += vat;
+      if (inv.status === "posted") totalPosted += tot;
+      if (inv.status === "draft")  totalDraft  += tot;
+
+      // 1. VAT mismatch (allow ±0.5 rounding)
+      const expectedVat = (sub - disc) * 0.15;
+      if (sub > 0 && Math.abs(expectedVat - vat) > 0.5) {
+        findings.push({
+          level: "error",
+          code: "VAT_MISMATCH",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: `قيمة الضريبة (${vat.toFixed(2)}) لا تساوي 15% من المجموع بعد الخصم (المتوقع ${expectedVat.toFixed(2)})`,
+          fix: "افتح الفاتورة وأعد حساب البنود — قد يكون أحد البنود يحمل نسبة ضريبة مختلفة أو أن الخصم غير محسوب على الأساس الضريبي.",
+        });
+      }
+
+      // 2. Missing customer
+      if (!inv.customerId) {
+        findings.push({
+          level: "error",
+          code: "MISSING_CUSTOMER",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: "الفاتورة لا تحتوي على عميل — مطلوب لـ ZATCA إذا كانت B2B وللذمم المدينة.",
+          fix: "افتح الفاتورة واختر العميل من القائمة.",
+        });
+      }
+
+      // 3. Posted with no journal entry
+      if (inv.status === "posted" && !inv.journalEntryId) {
+        findings.push({
+          level: "error",
+          code: "POSTED_NO_JE",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: "الفاتورة مُرحّلة لكن لا يوجد قيد محاسبي مرتبط بها.",
+          fix: "ألغِ الترحيل وأعد ترحيل الفاتورة لإعادة توليد القيد.",
+        });
+      }
+
+      // 4. ZATCA rejection
+      if (String(inv.zatcaStatus ?? "") === "rejected") {
+        findings.push({
+          level: "error",
+          code: "ZATCA_REJECTED",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: `الفاتورة مرفوضة من ZATCA${inv.zatcaResponseCode ? ` (${inv.zatcaResponseCode})` : ""}.`,
+          fix: "افتح صفحة جسر ZATCA واطّلع على رسالة الخطأ ثم صحّح الحقول المطلوبة وأعد الإرسال.",
+        });
+      }
+
+      // 5. Old drafts (>7 days)
+      if (inv.status === "draft" && inv.invoiceDate) {
+        const d = new Date(inv.invoiceDate);
+        if (!isNaN(d.getTime())) {
+          const daysOld = Math.floor((today.getTime() - d.getTime()) / 86400000);
+          if (daysOld > 7) {
+            findings.push({
+              level: "warning",
+              code: "OLD_DRAFT",
+              invoiceId: inv.id,
+              docNumber: inv.docNumber,
+              message: `مسودة عمرها ${daysOld} يوماً — قد تكون منسيّة.`,
+              fix: "راجع الفاتورة ثم رحّلها أو احذفها.",
+            });
+          }
+        }
+      }
+
+      // 6. Zero total
+      if (tot <= 0 && inv.status !== "cancelled") {
+        findings.push({
+          level: "warning",
+          code: "ZERO_TOTAL",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: "الإجمالي صفر — تأكد من إدخال البنود.",
+          fix: "افتح الفاتورة وأضف البنود أو احذفها إن لم تكن مطلوبة.",
+        });
+      }
+
+      // 7. Credit posted invoice without payment settlement (potential receivable)
+      if (inv.status === "posted" && inv.paymentType === "credit" && !inv.paymentSettlement && tot > 0) {
+        findings.push({
+          level: "info",
+          code: "OPEN_RECEIVABLE",
+          invoiceId: inv.id,
+          docNumber: inv.docNumber,
+          message: `ذمّة مفتوحة بقيمة ${tot.toFixed(2)} ${currencyCode}.`,
+          fix: "أنشئ سند قبض للعميل عند التحصيل.",
+        });
+      }
+    }
+
+    // 8. Outlier detection (any total > 3× median).
+    //    Baseline = positive, non-cancelled totals only, so a sea of zero/cancelled
+    //    rows can't collapse the median to zero and silence outlier warnings.
+    const baseline = invoices
+      .filter((i: any) => i.status !== "cancelled" && Number(i.totalAmount ?? 0) > 0)
+      .map((i: any) => Number(i.totalAmount ?? 0))
+      .sort((a, b) => a - b);
+    let median = 0;
+    if (baseline.length > 0) {
+      const mid = Math.floor(baseline.length / 2);
+      median = baseline.length % 2 === 0
+        ? (baseline[mid - 1] + baseline[mid]) / 2
+        : baseline[mid];
+    }
+    if (median > 0) {
+      for (const inv of invoices) {
+        const tot = Number(inv.totalAmount ?? 0);
+        if (inv.status !== "cancelled" && tot > median * 3) {
+          findings.push({
+            level: "warning",
+            code: "OUTLIER_HIGH",
+            invoiceId: inv.id,
+            docNumber: inv.docNumber,
+            message: `قيمة الفاتورة (${tot.toFixed(2)}) أعلى بكثير من الوسيط (${median.toFixed(2)}).`,
+            fix: "تأكد من صحة الكميات والأسعار — قد يكون هناك خطأ إدخال.",
+          });
+        }
+      }
+    }
+
+    const metrics = {
+      totalInvoices: invoices.length,
+      totalPosted: invoices.filter((i: any) => i.status === "posted").length,
+      totalDrafts: invoices.filter((i: any) => i.status === "draft").length,
+      totalCancelled: invoices.filter((i: any) => i.status === "cancelled").length,
+      sumPosted: totalPosted,
+      sumDraft: totalDraft,
+      sumVat: totalVat,
+      median,
+      issuesCount: findings.filter(f => f.level === "error").length,
+      warningsCount: findings.filter(f => f.level === "warning").length,
+    };
+
+    // ── Build deterministic recommendations seed ──
+    const recommendations: string[] = [];
+    if (metrics.issuesCount > 0) {
+      recommendations.push(`عالج ${metrics.issuesCount} مشكلة حرجة قبل الترحيل أو الإرسال إلى ZATCA.`);
+    }
+    if (metrics.totalDrafts > 0) {
+      recommendations.push(`لديك ${metrics.totalDrafts} مسودة غير مُرحّلة بقيمة ${totalDraft.toFixed(2)} ${currencyCode} — راجعها وأكمل ترحيلها.`);
+    }
+    const openRcv = findings.filter(f => f.code === "OPEN_RECEIVABLE").length;
+    if (openRcv > 0) {
+      recommendations.push(`${openRcv} فاتورة آجلة مفتوحة بانتظار التحصيل — تابع العملاء.`);
+    }
+    if (recommendations.length === 0) {
+      recommendations.push("لا توجد مشاكل واضحة في فواتيرك — استمر بنفس مستوى الجودة.");
+    }
+
+    // ── Optionally enrich with AI commentary on top of rule findings ──
+    let aiUsed = false;
+    if (OPENAI_BASE && OPENAI_KEY) {
+      try {
+        const sample = invoices.slice(0, 50).map((i: any) => ({
+          id: i.id,
+          docNumber: i.docNumber,
+          date: i.invoiceDate,
+          customer: i.customerName ?? null,
+          payment: i.paymentType,
+          subtotal: Number(i.subtotal ?? 0),
+          vat: Number(i.vatAmount ?? 0),
+          total: Number(i.totalAmount ?? 0),
+          status: i.status,
+          zatcaStatus: i.zatcaStatus ?? null,
+          journalEntryId: i.journalEntryId ?? null,
+          paid: !!i.paymentSettlement,
+        }));
+        const userPrompt = `أنت مدقق محاسبي سعودي خبير في ZATCA. لديك ملخص ${invoices.length} فاتورة مبيعات (عيّنة ${sample.length}). والقواعد التلقائية اكتشفت ${findings.length} ملاحظة.
+المؤشرات: ${JSON.stringify(metrics)}
+عيّنة الفواتير:
+${JSON.stringify(sample)}
+
+اكتب 3-5 توصيات عملية موجزة بالعربية لتحسين جودة الفواتير وتقليل المخاطر المحاسبية والضريبية. ركّز على الأنماط (وليس فاتورة واحدة).
+أعد JSON فقط: { "recommendations": ["...", "..."] }`;
+
+        const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${OPENAI_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            max_completion_tokens: 1024,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "أنت مدقق محاسبي سعودي. ترد بـ JSON فقط بدون أي شرح." },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          const content = data?.choices?.[0]?.message?.content ?? "{}";
+          const parsed = JSON.parse(content);
+          const aiRecs = Array.isArray(parsed?.recommendations)
+            ? parsed.recommendations.map((x: any) => String(x).trim()).filter((x: string) => x.length > 0)
+            : [];
+          if (aiRecs.length > 0) {
+            recommendations.push(...aiRecs);
+            aiUsed = true;
+          }
+        }
+      } catch {
+        // Silently fall back to rule-based recommendations
+      }
+    }
+
+    res.json({ findings, metrics, recommendations, source: aiUsed ? "ai+rules" : "rules" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "تدقيق الفواتير فشل" });
+  }
+});

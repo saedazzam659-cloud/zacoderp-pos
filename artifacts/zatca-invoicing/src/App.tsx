@@ -201,6 +201,7 @@ import TransfersReport         from "@/pages/cash/reports/TransfersReport";
 // Sales
 import SalesInvoices        from "@/pages/sales/SalesInvoices";
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
+import SalesAuditGrid       from "@/pages/sales/SalesAuditGrid";
 import SalesQuotations      from "@/pages/sales/SalesQuotations";
 import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";
 import SalesOrders          from "@/pages/sales/SalesOrders";
@@ -558,6 +559,7 @@ function AppRoutes() {
             {!isSuperAdmin && <Route path="/sales" component={SalesHub} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/new"   module="sales_invoices"   action="create" component={SalesInvoiceForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices/:id"   module="sales_invoices"   component={SalesInvoiceForm} />}
+            {!isSuperAdmin && <PermRoute path="/sales/audit-grid"     module="sales_invoices"   component={SalesAuditGrid} />}
             {!isSuperAdmin && <PermRoute path="/sales/invoices"       module="sales_invoices"   component={SalesInvoices} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/new" module="sales_quotations" action="create" component={SalesQuotationForm} />}
             {!isSuperAdmin && <PermRoute path="/sales/quotations/:id" module="sales_quotations" component={SalesQuotationForm} />}
