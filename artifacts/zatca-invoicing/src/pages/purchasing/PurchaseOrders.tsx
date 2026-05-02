@@ -20,6 +20,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -634,6 +637,16 @@ ${sections}
         </AuditGridBulkBar>
       </div>
 
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",      count: filteredOrders.filter((o: any) => o.status === "draft").length },
+          { kind: "confirmed",  count: filteredOrders.filter((o: any) => o.status === "confirmed" && !o.convertedInvoiceId).length },
+          { kind: "converted",  count: filteredOrders.filter((o: any) => !!o.convertedInvoiceId).length },
+          { kind: "cancelled",  count: filteredOrders.filter((o: any) => o.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
           {isLoading ? (
@@ -792,9 +805,12 @@ ${sections}
                   };
                   return (
                     <tr key={ord.id}
+                      data-testid={`row-purchase-order-${ord.id}`}
+                      data-status={ord.status}
+                      data-has-converted={ord.convertedInvoiceId ? "1" : "0"}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({ status: ord.status, hasConverted: !!ord.convertedInvoiceId }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -802,7 +818,7 @@ ${sections}
                         toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/purchasing/orders/${ord.id}`)}
-                      title="اضغط لتحديد الصف، أو مرتين لفتح الأمر"
+                      title={buildToneTooltip({ status: ord.status, hasConverted: !!ord.convertedInvoiceId })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

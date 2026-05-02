@@ -12,6 +12,9 @@ import { Plus, Trash2, ClipboardList, Search, Send, ChevronDown, ChevronUp, Save
 import * as XLSX from "xlsx";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 
 import { useFmt } from "@/hooks/use-fmt";
@@ -208,6 +211,15 @@ export default function StockCounting() {
         <Input className="pr-9" placeholder="بحث برقم الجرد أو المخزن..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filtered.filter((x: any) => x.status === "draft").length },
+          { kind: "posted",    count: filtered.filter((x: any) => x.status === "posted").length },
+          { kind: "cancelled", count: filtered.filter((x: any) => x.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -227,7 +239,10 @@ export default function StockCounting() {
                   const st = STATUS_CONFIG[cnt.status] ?? STATUS_CONFIG.draft;
                   return (
                     <>
-                      <tr key={cnt.id} className="hover:bg-muted/30">
+                      <tr key={cnt.id}
+                          data-status={cnt.status}
+                          className={cn("transition-colors", rowToneFor({ status: cnt.status }))}
+                          title={buildToneTooltip({ status: cnt.status })}>
                         <td className="px-4 py-3">
                           <button onClick={() => { setExpandedId(expandedId === cnt.id ? null : cnt.id); setEditedLines({}); }} className="text-muted-foreground">
                             {expandedId === cnt.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}

@@ -21,6 +21,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import SalesPrintModal from "./SalesPrintModal";
 
@@ -655,6 +658,17 @@ ${sections}
         </AuditGridBulkBar>
       </div>
 
+      {/* Color legend — chips reflect counts within the FILTERED set */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filteredOrders.filter((o: any) => o.status === "draft").length },
+          { kind: "confirmed", count: filteredOrders.filter((o: any) => o.status === "confirmed").length },
+          { kind: "converted", count: filteredOrders.filter((o: any) => o.status === "converted" || !!o.convertedInvoiceId).length, hintOverride: "تم تحويلها إلى فاتورة" },
+          { kind: "cancelled", count: filteredOrders.filter((o: any) => o.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       {/* Audit-grid table */}
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
@@ -808,11 +822,18 @@ ${sections}
                         return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
                     }
                   };
+                  const hasConv = !!o.convertedInvoiceId;
                   return (
                     <tr key={o.id}
+                      data-testid={`row-order-${o.id}`}
+                      data-status={o.status}
+                      data-has-converted={hasConv ? "1" : "0"}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({
+                          status: o.status,
+                          hasConverted: hasConv,
+                        }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -820,7 +841,7 @@ ${sections}
                         toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/sales/orders/${o.id}`)}
-                      title="اضغط لتحديد الصف، أو مرتين لفتح الأمر"
+                      title={buildToneTooltip({ status: o.status, hasConverted: hasConv })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

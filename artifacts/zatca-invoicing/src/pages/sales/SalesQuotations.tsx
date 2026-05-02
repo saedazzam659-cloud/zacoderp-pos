@@ -20,6 +20,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import SalesPrintModal from "./SalesPrintModal";
 
@@ -655,6 +658,19 @@ ${sections}
         </AuditGridBulkBar>
       </div>
 
+      {/* Color legend — chips reflect counts within the FILTERED set */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filteredQuotations.filter((q: any) => q.status === "draft").length },
+          { kind: "sent",      count: filteredQuotations.filter((q: any) => q.status === "sent").length },
+          { kind: "accepted",  count: filteredQuotations.filter((q: any) => q.status === "accepted").length },
+          { kind: "rejected",  count: filteredQuotations.filter((q: any) => q.status === "rejected").length },
+          { kind: "converted", count: filteredQuotations.filter((q: any) => q.status === "converted" || !!q.convertedOrderId || !!q.convertedInvoiceId).length },
+          { kind: "cancelled", count: filteredQuotations.filter((q: any) => q.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       {/* Audit-grid table */}
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
@@ -808,11 +824,18 @@ ${sections}
                         return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
                     }
                   };
+                  const hasConv = !!q.convertedOrderId || !!q.convertedInvoiceId;
                   return (
                     <tr key={q.id}
+                      data-testid={`row-quote-${q.id}`}
+                      data-status={q.status}
+                      data-has-converted={hasConv ? "1" : "0"}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({
+                          status: q.status,
+                          hasConverted: hasConv,
+                        }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -820,7 +843,7 @@ ${sections}
                         toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/sales/quotations/${q.id}`)}
-                      title="اضغط لتحديد الصف، أو مرتين لفتح العرض"
+                      title={buildToneTooltip({ status: q.status, hasConverted: hasConv })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

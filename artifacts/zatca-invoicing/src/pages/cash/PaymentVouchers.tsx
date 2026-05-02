@@ -11,6 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { TablePagination, usePagination } from "@/components/TablePagination";
 import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -122,6 +126,13 @@ export default function PaymentVouchers() {
             <Input className={`${isRtl ? "pr-9" : "pl-9"} h-8 w-56 text-sm`} placeholder={t("cashCommon.search")} value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
+        {(() => {
+          const items: LegendItem[] = [
+            { kind: "draft",  count: filtered.filter((v: any) => v.status === "draft").length },
+            { kind: "posted", count: filtered.filter((v: any) => v.status === "posted").length },
+          ];
+          return <div className="px-3 pt-2"><DocColorLegend items={items} /></div>;
+        })()}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -146,7 +157,11 @@ export default function PaymentVouchers() {
                   {!search && <Button variant="outline" size="sm" className="mt-3" onClick={openAdd}><Plus className={`h-3.5 w-3.5 ${isRtl ? "ml-1" : "mr-1"}`} />{t(`${NS}.newVoucher`)}</Button>}
                 </td></tr>
               ) : pager.pagedItems.map((row: any) => (
-                <tr key={row.id} onDoubleClick={() => openEdit(row)} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" title={t("cashCommon.doubleClickEdit")}>
+                <tr key={row.id}
+                    data-status={row.status}
+                    onDoubleClick={() => openEdit(row)}
+                    className={cn("border-b transition-colors cursor-pointer", rowToneFor({ status: row.status }))}
+                    title={buildToneTooltip({ status: row.status })}>
                   <td className="px-4 py-3">
                     <p className="font-mono text-xs font-medium">{row.code}</p>
                     <p className="text-xs text-muted-foreground">{row.date}</p>

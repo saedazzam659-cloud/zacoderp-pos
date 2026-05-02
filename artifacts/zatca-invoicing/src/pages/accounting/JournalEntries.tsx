@@ -26,6 +26,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 
 // Maps a journal-entry's `entryType` + resolved `sourceId` to the route of the
 // source document that produced it. For sourced entry types we ALWAYS return a
@@ -729,6 +732,15 @@ ${entrySections}
       </div>
 
       {/* ── Audit-grid table ─────────────────────────────────────────────── */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filtered.filter((e: any) => e.status === "draft").length },
+          { kind: "posted",    count: filtered.filter((e: any) => e.status === "posted").length },
+          { kind: "cancelled", count: filtered.filter((e: any) => e.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
           {isLoading ? (
@@ -895,9 +907,11 @@ ${entrySections}
                   return (
                     <tr
                       key={entry.id}
+                      data-testid={`row-journal-entry-${entry.id}`}
+                      data-status={entry.status}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({ status: entry.status }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -905,7 +919,7 @@ ${entrySections}
                         layout.toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/accounting/journals/${entry.id}?tab=lines`)}
-                      title={t("journalEntries.doubleClickHint")}
+                      title={buildToneTooltip({ status: entry.status })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

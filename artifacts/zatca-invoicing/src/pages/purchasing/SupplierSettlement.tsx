@@ -11,6 +11,9 @@ import { SearchCombobox } from "@/components/ui/search-combobox";
 import { Plus, Trash2, Banknote, CheckCircle, Printer } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import { getSaveToastTitle } from "@/lib/saveToast";
 
@@ -230,6 +233,14 @@ export default function SupplierSettlement() {
         </div>
       </div>
 
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",  count: settlements.filter((s: any) => s.status === "draft").length },
+          { kind: "posted", count: settlements.filter((s: any) => s.status === "posted").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
         {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.loading")}</div>
           : settlements.length === 0 ? <div className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.noSettlements")}</div>
@@ -241,7 +252,10 @@ export default function SupplierSettlement() {
             </tr></thead>
             <tbody>
               {settlements.map((s: any) => (
-                <tr key={s.id} className="border-b hover:bg-muted/30">
+                <tr key={s.id}
+                    data-status={s.status}
+                    className={cn("border-b transition-colors", rowToneFor({ status: s.status }))}
+                    title={buildToneTooltip({ status: s.status })}>
                   <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{s.docNumber ?? `SS-${s.id}`}</td>
                   <td className="px-3 py-2.5">{s.settlementDate}</td>
                   <td className="px-3 py-2.5">{supMap[s.supplierId] ?? "—"}</td>

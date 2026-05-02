@@ -25,6 +25,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: any) => Number(n || 0).toLocaleString("ar-SA", { minimumFractionDigits: 2 });
@@ -757,6 +760,15 @@ ${sections}
       </div>
 
       {/* ── Audit-grid table ─────────────────────────────────────────────── */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filtered.filter((s: any) => s.status === "draft").length },
+          { kind: "posted",    count: filtered.filter((s: any) => s.status === "posted").length },
+          { kind: "cancelled", count: filtered.filter((s: any) => s.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
           {isLoading ? (
@@ -902,16 +914,18 @@ ${sections}
                   return (
                     <tr
                       key={s.id}
+                      data-testid={`row-customer-settlement-${s.id}`}
+                      data-status={s.status}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({ status: s.status }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
                         if (tag === "BUTTON" || tag === "INPUT" || tag === "A" || (e.target as HTMLElement).closest("button,a,input")) return;
                         layout.toggleRow(rid);
                       }}
-                      title="اضغط لتحديد الصف"
+                      title={buildToneTooltip({ status: s.status })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

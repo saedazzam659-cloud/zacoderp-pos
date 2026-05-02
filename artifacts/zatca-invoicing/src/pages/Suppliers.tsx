@@ -19,6 +19,10 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+} from "@/lib/docRowTone";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -399,6 +403,16 @@ export default function Suppliers() {
           </div>
         </div>
 
+        {(() => {
+          const items: LegendItem[] = [
+            { kind: "active",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length },
+            { kind: "inactive", count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length },
+            { kind: "debit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length },
+            { kind: "credit",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0).length },
+          ];
+          return <div className="px-4 pt-2"><DocColorLegend items={items} /></div>;
+        })()}
+
         {/* Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -436,9 +450,14 @@ export default function Suppliers() {
                   </td>
                 </tr>
               ) : (
-                pager.pagedItems.map((supplier: any) => (
+                pager.pagedItems.map((supplier: any) => {
+                  const bal = Number(balanceMap[supplier.id] ?? 0);
+                  const dictStatus = bal > 0 ? "debit" : bal < 0 ? "credit" : (supplier.vatNumber ? "active" : "inactive");
+                  return (
                   <tr key={supplier.id}
-                    className="border-b transition-colors hover:bg-muted/30 cursor-pointer group">
+                    data-status={dictStatus}
+                    className={cn("border-b transition-colors cursor-pointer group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
+                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}>
                     {/* Name — double-click to edit */}
                     <td className="px-5 py-3.5"
                       onDoubleClick={() => openEdit(supplier)}
@@ -508,7 +527,8 @@ export default function Suppliers() {
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

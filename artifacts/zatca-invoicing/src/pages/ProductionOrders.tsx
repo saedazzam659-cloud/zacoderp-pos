@@ -7,6 +7,10 @@ import { Plus, Search, Factory, ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -298,6 +302,18 @@ export default function ProductionOrders() {
             </Select>
           </div>
 
+          {(() => {
+            const items: LegendItem[] = [
+              { kind: "draft",         count: list.filter((x: any) => x.status === "draft").length },
+              { kind: "approved",      count: list.filter((x: any) => x.status === "approved").length },
+              { kind: "in_production", count: list.filter((x: any) => x.status === "in_production").length },
+              { kind: "quality_check", count: list.filter((x: any) => x.status === "quality_check").length },
+              { kind: "completed",     count: list.filter((x: any) => x.status === "completed" || x.status === "closed").length },
+              { kind: "cancelled",     count: list.filter((x: any) => x.status === "cancelled").length },
+            ];
+            return <DocColorLegend items={items} />;
+          })()}
+
           <div className="rounded-lg border bg-white dark:bg-slate-900">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
@@ -320,7 +336,11 @@ export default function ProductionOrders() {
                   <tr><td colSpan={6} className="p-8 text-center text-slate-500">{t("production.noOrders")}</td></tr>
                 )}
                 {list.map((o) => (
-                  <tr key={o.id} className="border-t hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`row-order-${o.id}`}>
+                  <tr key={o.id}
+                      data-status={o.status}
+                      className={cn("border-t transition-colors", rowToneFor({ status: o.status }))}
+                      title={buildToneTooltip({ status: o.status })}
+                      data-testid={`row-order-${o.id}`}>
                     <td className="p-3 font-mono text-xs">{o.orderNumber}</td>
                     <td className="p-3">{o.title}</td>
                     <td className="p-3">

@@ -21,6 +21,10 @@ import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+} from "@/lib/docRowTone";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -432,6 +436,14 @@ export default function SalesReps() {
             : "لا توجد نتائج مطابقة لبحثك."}
         </div>
       ) : (
+        <>
+        {(() => {
+          const items: LegendItem[] = [
+            { kind: "active",   count: filtered.filter((r: any) => r.isActive).length },
+            { kind: "inactive", count: filtered.filter((r: any) => !r.isActive).length },
+          ];
+          return <DocColorLegend items={items} />;
+        })()}
         <div className="border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
@@ -447,8 +459,14 @@ export default function SalesReps() {
               </tr>
             </thead>
             <tbody>
-              {pager.pagedItems.map((r) => (
-                <tr key={r.id} className="border-t hover:bg-muted/30" data-testid={`row-rep-${r.id}`}>
+              {pager.pagedItems.map((r) => {
+                const dictStatus = r.isActive ? "active" : "inactive";
+                return (
+                <tr key={r.id}
+                    data-status={dictStatus}
+                    className={cn("border-t transition-colors", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
+                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                    data-testid={`row-rep-${r.id}`}>
                   <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
                   <td className="px-3 py-2 font-medium">
                     {r.nameAr}
@@ -520,7 +538,8 @@ export default function SalesReps() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {filtered.length > 0 && (
@@ -535,6 +554,7 @@ export default function SalesReps() {
             />
           )}
         </div>
+        </>
       )}
 
       <AlertDialog open={!!deleteRep} onOpenChange={(o) => !o && setDeleteRep(null)}>

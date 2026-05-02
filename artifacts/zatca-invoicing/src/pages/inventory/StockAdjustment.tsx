@@ -15,6 +15,9 @@ import {
 import { FormPanel, Field, FormGrid, FormSection } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { SearchCombobox } from "@/components/ui/search-combobox";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import { useFmt } from "@/hooks/use-fmt";
@@ -612,6 +615,15 @@ export default function StockAdjustment() {
       </div>
 
       {/* List */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filtered.filter((x: any) => x.status === "draft").length },
+          { kind: "posted",    count: filtered.filter((x: any) => x.status === "posted").length },
+          { kind: "cancelled", count: filtered.filter((x: any) => x.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
@@ -642,7 +654,9 @@ export default function StockAdjustment() {
                   const st = STATUS_CONFIG[adj.status] ?? STATUS_CONFIG.draft;
                   return (
                     <Fragment key={adj.id}>
-                      <tr className="hover:bg-muted/30">
+                      <tr data-status={adj.status}
+                          className={cn("transition-colors", rowToneFor({ status: adj.status }))}
+                          title={buildToneTooltip({ status: adj.status })}>
                         <td className="px-4 py-3">
                           <button
                             onClick={() => setExpandedId(expandedId === adj.id ? null : adj.id)}

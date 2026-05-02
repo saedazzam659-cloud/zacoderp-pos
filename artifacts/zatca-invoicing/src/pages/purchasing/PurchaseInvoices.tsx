@@ -20,6 +20,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 import PurchasePrintModal from "./PurchasePrintModal";
 
@@ -644,6 +647,15 @@ ${sections}
       </div>
 
       {/* Audit-grid table */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filteredInvoices.filter((i: any) => i.status === "draft").length },
+          { kind: "posted",    count: filteredInvoices.filter((i: any) => i.status === "posted").length },
+          { kind: "cancelled", count: filteredInvoices.filter((i: any) => i.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
           {isLoading ? (
@@ -833,9 +845,11 @@ ${sections}
                   };
                   return (
                     <tr key={inv.id}
+                      data-testid={`row-purchase-invoice-${inv.id}`}
+                      data-status={inv.status}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        isSel ? SEL_TONE : rowToneFor({ status: inv.status }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -843,7 +857,7 @@ ${sections}
                         toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/purchasing/invoices/${inv.id}`)}
-                      title="اضغط لتحديد الصف، أو مرتين لفتح الفاتورة"
+                      title={buildToneTooltip({ status: inv.status })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>

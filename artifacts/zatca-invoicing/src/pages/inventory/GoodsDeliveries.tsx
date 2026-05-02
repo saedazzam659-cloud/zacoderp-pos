@@ -33,6 +33,9 @@ import {
   AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
   FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
 } from "@/components/auditGrid/AuditGridControls";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
+} from "@/lib/docRowTone";
 import { safeLogoSrc } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1317,6 +1320,15 @@ ${sections}
       </div>
 
       {/* ── List ─────────────────────────────────────────── */}
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "draft",     count: filteredDeliveries.filter((r: any) => r.status === "draft").length },
+          { kind: "posted",    count: filteredDeliveries.filter((r: any) => r.status === "posted").length },
+          { kind: "cancelled", count: filteredDeliveries.filter((r: any) => r.status === "cancelled").length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm -mt-3">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
           {isLoading ? (
@@ -1377,12 +1389,13 @@ ${sections}
                   const editable = r.status === "draft";
                   return (
                     <tr key={r.id}
+                      data-status={r.status}
                       className={cn(
-                        "border-b border-slate-200 hover:bg-amber-50/40 transition-colors",
-                        sel && "bg-blue-50/60",
+                        "border-b border-slate-200 transition-colors",
+                        sel ? SEL_TONE : rowToneFor({ status: r.status }),
                       )}
                       onDoubleClick={() => editable ? startEdit(r.id) : null}
-                      title={editable ? tr("rowDoubleClickEdit") : tr("rowDoubleClickView")}
+                      title={buildToneTooltip({ status: r.status })}
                       data-testid={`gdn-row-${r.id}`}
                     >
                       {visibleColumns.map((col) => {

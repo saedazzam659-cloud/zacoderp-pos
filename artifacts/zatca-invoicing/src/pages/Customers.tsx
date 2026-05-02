@@ -19,6 +19,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useTranslation } from "react-i18next";
 import { Trans } from "react-i18next";
+import { cn } from "@/lib/utils";
+import {
+  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+} from "@/lib/docRowTone";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -238,6 +242,16 @@ export default function Customers() {
       {/* ── Main card ── */}
       <div className="rounded-xl border bg-card overflow-hidden">
 
+        {(() => {
+          const items: LegendItem[] = [
+            { kind: "active",   count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && c.vatNumber).length },
+            { kind: "inactive", count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && !c.vatNumber).length },
+            { kind: "debit",    count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) > 0).length },
+            { kind: "credit",   count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) < 0).length },
+          ];
+          return <div className="px-4 pt-2"><DocColorLegend items={items} /></div>;
+        })()}
+
         {/* Search bar */}
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b bg-muted/10">
           <p className="text-xs text-muted-foreground">
@@ -305,10 +319,15 @@ export default function Customers() {
                   </td>
                 </tr>
               ) : (
-                pager.pagedItems.map((customer: any) => (
+                pager.pagedItems.map((customer: any) => {
+                  const bal = Number(balMap[customer.id] ?? 0);
+                  const dictStatus = bal > 0 ? "debit" : bal < 0 ? "credit" : (customer.vatNumber ? "active" : "inactive");
+                  return (
                   <tr
                     key={customer.id}
-                    className="border-b transition-colors hover:bg-muted/30 group"
+                    data-status={dictStatus}
+                    className={cn("border-b transition-colors group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
+                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
                   >
                     {/* Customer name */}
                     <td className="px-5 py-3">
@@ -430,7 +449,8 @@ export default function Customers() {
                       </div>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
