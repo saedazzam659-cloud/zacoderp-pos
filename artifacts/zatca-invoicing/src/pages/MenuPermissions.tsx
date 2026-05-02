@@ -12,7 +12,7 @@ import {
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
-  Wrench,
+  Wrench, Hotel,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
@@ -48,6 +48,8 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   hr_module:          UserCog,
   contracting:        HardHat,
   production:         Factory,
+  maintenance:        Wrench,
+  hotel:              Hotel,
   security_events:    ShieldAlert,
   seo_dashboard:      TrendingUp,
   ai_tools:           Sparkles,
@@ -68,6 +70,11 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "نقاط البيع": { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200",    ring: "from-teal-500/10" },
   "المحاسبة":   { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200",  ring: "from-indigo-500/10" },
   "شؤون الموظفين": { bg: "bg-rose-50",   text: "text-rose-700",    border: "border-rose-200",    ring: "from-rose-500/10" },
+  "إدارة المقاولات": { bg: "bg-orange-50", text: "text-orange-700", border: "border-orange-200", ring: "from-orange-500/10" },
+  "الإنتاج والتصنيع": { bg: "bg-slate-50", text: "text-slate-700",  border: "border-slate-200",  ring: "from-slate-500/10" },
+  "إدارة الصيانة": { bg: "bg-yellow-50", text: "text-yellow-700",  border: "border-yellow-200", ring: "from-yellow-500/10" },
+  "إدارة الفنادق": { bg: "bg-teal-50",   text: "text-teal-700",    border: "border-teal-200",   ring: "from-teal-500/10" },
+  "الأمن والمراقبة": { bg: "bg-red-50",   text: "text-red-700",     border: "border-red-200",    ring: "from-red-500/10" },
   "تحليلات SEO": { bg: "bg-fuchsia-50", text: "text-fuchsia-700", border: "border-fuchsia-200", ring: "from-fuchsia-500/10" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },
   "النظام":     { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200",  ring: "from-purple-500/10" },

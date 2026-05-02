@@ -113,8 +113,10 @@ router.post("/assets", async (req, res) => {
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
-    if (String(e?.message).includes("duplicate") || e?.code === "23505")
-      return res.status(409).json({ error: "كود الأصل مستخدم مسبقاً" });
+    if (String(e?.message).includes("duplicate") || e?.code === "23505") {
+      res.status(409).json({ error: "كود الأصل مستخدم مسبقاً" });
+      return;
+    }
     res.status(500).json({ error: e.message });
   }
 });
@@ -200,8 +202,10 @@ router.post("/technicians", async (req, res) => {
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
-    if (String(e?.message).includes("duplicate") || e?.code === "23505")
-      return res.status(409).json({ error: "كود الفني مستخدم مسبقاً" });
+    if (String(e?.message).includes("duplicate") || e?.code === "23505") {
+      res.status(409).json({ error: "كود الفني مستخدم مسبقاً" });
+      return;
+    }
     res.status(500).json({ error: e.message });
   }
 });
@@ -277,7 +281,7 @@ router.get("/orders/:id", async (req, res) => {
 
     const parts = await db.select({
       p: maintenanceOrderPartsTable,
-      itemCode: itemsTable.sku,
+      itemCode: itemsTable.code,
       itemName: itemsTable.nameAr,
     })
       .from(maintenanceOrderPartsTable)
@@ -333,8 +337,10 @@ router.post("/orders", async (req, res) => {
     }).returning();
     res.status(201).json(row);
   } catch (e: any) {
-    if (String(e?.message).includes("duplicate") || e?.code === "23505")
-      return res.status(409).json({ error: "رقم أمر الصيانة مستخدم مسبقاً" });
+    if (String(e?.message).includes("duplicate") || e?.code === "23505") {
+      res.status(409).json({ error: "رقم أمر الصيانة مستخدم مسبقاً" });
+      return;
+    }
     res.status(500).json({ error: e.message });
   }
 });

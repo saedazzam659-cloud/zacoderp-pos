@@ -271,12 +271,12 @@ const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/
 const PROTECTED_PREFIXES = [
   "/accounting", "/admin", "/ai-reports", "/cash", "/companies",
   "/contracting", "/control-panel", "/customers", "/general-settings",
-  "/hr", "/inbox", "/inventory", "/invoices", "/notifications",
-  "/org", "/pos-management", "/pos-monitoring", "/pos-settings",
-  "/pos-terminals", "/production", "/purchasing", "/sales", "/security",
-  "/seo", "/sessions", "/settings", "/suppliers", "/users",
-  "/vat-declaration", "/voice-assistant", "/work-sessions", "/zatca",
-  "/zatca-bridge", "/zatca-report",
+  "/hotel", "/hr", "/inbox", "/inventory", "/invoices", "/maintenance",
+  "/notifications", "/org", "/pos-management", "/pos-monitoring",
+  "/pos-settings", "/pos-terminals", "/production", "/purchasing",
+  "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
+  "/users", "/vat-declaration", "/voice-assistant", "/work-sessions",
+  "/zatca", "/zatca-bridge", "/zatca-report",
 ];
 
 function isProtectedDeepLink(loc: string): boolean {
