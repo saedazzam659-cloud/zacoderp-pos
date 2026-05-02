@@ -49,7 +49,7 @@ export default function BankAccounts() {
   });
   const { data: branches = [] } = useQuery({
     queryKey: ["branches", cid],
-    queryFn: () => fetch(`${API}/api/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
+    queryFn: () => fetch(`${API}/api/org/branches?companyId=${cid}`, { headers: h }).then(r => r.json()),
     enabled: !!cid,
   });
   const defaultCurrencyId = (currencies as any[]).find((c: any) => c.isDefault)?.id ?? (currencies as any[])[0]?.id ?? null;

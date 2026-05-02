@@ -647,7 +647,7 @@ export default function SalesAuditGrid() {
 
   const { data: branches = [] } = useQuery<any[]>({
     queryKey: ["branches-audit", cid],
-    queryFn: () => getList(cid ? `${API}/api/branches?companyId=${cid}` : `${API}/api/branches`).catch(() => []),
+    queryFn: () => getList(cid ? `${API}/api/org/branches?companyId=${cid}` : `${API}/api/org/branches`).catch(() => []),
     enabled: !!user,
   });
 
