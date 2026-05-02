@@ -12,7 +12,7 @@ import {
   ShieldCheck, BarChart3, Warehouse, ShoppingCart, ShoppingBag, Wallet, BookOpen,
   PieChart, Smartphone, CheckCircle2, XCircle, Save, Copy, RotateCcw, Sparkles,
   ChevronDown, ChevronUp, UserCog, HardHat, Factory, ShieldAlert, TrendingUp,
-  Wrench, Hotel,
+  Wrench, Hotel, Stethoscope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MENU_ITEMS as MENU_ITEMS_BASE, SECTIONS } from "@/lib/menuItems";
@@ -50,6 +50,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
   production:         Factory,
   maintenance:        Wrench,
   hotel:              Hotel,
+  hospital:           Stethoscope,
   security_events:    ShieldAlert,
   seo_dashboard:      TrendingUp,
   ai_tools:           Sparkles,
@@ -74,6 +75,7 @@ const SECTION_THEME: Record<string, { bg: string; text: string; border: string; 
   "الإنتاج والتصنيع": { bg: "bg-slate-50", text: "text-slate-700",  border: "border-slate-200",  ring: "from-slate-500/10" },
   "إدارة الصيانة": { bg: "bg-yellow-50", text: "text-yellow-700",  border: "border-yellow-200", ring: "from-yellow-500/10" },
   "إدارة الفنادق": { bg: "bg-teal-50",   text: "text-teal-700",    border: "border-teal-200",   ring: "from-teal-500/10" },
+  "إدارة المستشفيات": { bg: "bg-sky-50",  text: "text-sky-700",     border: "border-sky-200",    ring: "from-sky-500/10" },
   "الأمن والمراقبة": { bg: "bg-red-50",   text: "text-red-700",     border: "border-red-200",    ring: "from-red-500/10" },
   "تحليلات SEO": { bg: "bg-fuchsia-50", text: "text-fuchsia-700", border: "border-fuchsia-200", ring: "from-fuchsia-500/10" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50", text: "text-violet-700", border: "border-violet-200", ring: "from-violet-500/10" },

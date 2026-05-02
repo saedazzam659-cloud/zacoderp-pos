@@ -52,6 +52,10 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "contracting",
   // ── الإنتاج والتصنيع ──
   "production",
+  // ── إدارة الفنادق الذكية ──
+  "hotel",
+  // ── إدارة المستشفيات والمستوصفات ──
+  "hospital",
   // ── الأمن والمراقبة ──
   "security_events",
   // ── تحليلات SEO (SuperAdmin only — no parent billable module) ──

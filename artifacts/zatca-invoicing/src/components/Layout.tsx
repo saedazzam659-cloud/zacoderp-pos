@@ -203,6 +203,17 @@ const hotelSubNav: NavDef[] = [
   { nameKey: "nav.hotelAI",           href: "/hotel/ai",           icon: Sparkles,      permKey: "hotel" },
 ];
 const HOTEL_GROUP_PERMS = ["hotel"];
+// Hospital / Clinic ERP — gated by a single `hospital` permission key.
+const hospitalSubNav: NavDef[] = [
+  { nameKey: "nav.hospitalHub",          href: "/hospital",              icon: Stethoscope,    permKey: "hospital", exact: true },
+  { nameKey: "nav.hospitals",            href: "/hospital/hospitals",    icon: Building2,      permKey: "hospital" },
+  { nameKey: "nav.hospitalDoctors",      href: "/hospital/doctors",      icon: Stethoscope,    permKey: "hospital" },
+  { nameKey: "nav.hospitalPatients",     href: "/hospital/patients",     icon: UserSquare2,    permKey: "hospital" },
+  { nameKey: "nav.hospitalAppointments", href: "/hospital/appointments", icon: CalendarRange,  permKey: "hospital" },
+  { nameKey: "nav.hospitalInvoices",     href: "/hospital/invoices",     icon: ClipboardList,  permKey: "hospital" },
+  { nameKey: "nav.hospitalAI",           href: "/hospital/ai",           icon: Sparkles,       permKey: "hospital" },
+];
+const HOSPITAL_GROUP_PERMS = ["hospital"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.
 const securitySubNav: NavDef[] = [
   { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
@@ -1305,6 +1316,39 @@ function HotelNavGroup({
   );
 }
 
+// ─── HospitalNavGroup ────────────────────────────────────────────────────────
+// Collapsible "إدارة المستشفيات والمستوصفات" group — mirrors HotelNavGroup,
+// gated by the `hospital` permission key.
+function HospitalNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, HOSPITAL_GROUP_PERMS)) return null;
+  const isOnSub = hospitalSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/hospital"
+        icon={Stethoscope}
+        label={t("nav.hospitalGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {hospitalSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AIToolsNavGroup ─────────────────────────────────────────────────────────
 // Collapsible "أدوات الذكاء الاصطناعي" group — houses the voice assistant
 // settings, AI reports, sessions admin, work-sessions log, inbox, and the
@@ -1418,6 +1462,8 @@ function SidebarInner({
   onMaintenanceToggle,
   hotelOpen,
   onHotelToggle,
+  hospitalOpen,
+  onHospitalToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1466,6 +1512,8 @@ function SidebarInner({
   onMaintenanceToggle: () => void;
   hotelOpen: boolean;
   onHotelToggle: () => void;
+  hospitalOpen: boolean;
+  onHospitalToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -1711,6 +1759,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "hospital", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <HospitalNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={hospitalOpen}
+                  onToggle={onHospitalToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <PosNavGroup
@@ -1878,6 +1937,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...contractingSubNav,
     ...maintenanceSubNav,
     ...hotelSubNav,
+    ...hospitalSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -2137,6 +2197,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
   const [maintenanceOpen, setMaintenanceOpen] = useState(() => location.startsWith("/maintenance"));
   const [hotelOpen,        setHotelOpen]       = useState(() => location.startsWith("/hotel"));
+  const [hospitalOpen,     setHospitalOpen]    = useState(() => location.startsWith("/hospital"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -2163,7 +2224,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel" | "hospital"
     | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2178,6 +2239,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "contracting") setContractingOpen(false);
     if (keep !== "maintenance") setMaintenanceOpen(false);
     if (keep !== "hotel")       setHotelOpen(false);
+    if (keep !== "hospital")    setHospitalOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
@@ -2210,6 +2272,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
   const handleMaintenanceToggle = makeAccordionToggle("maintenance", maintenanceOpen, setMaintenanceOpen);
   const handleHotelToggle       = makeAccordionToggle("hotel",       hotelOpen,       setHotelOpen);
+  const handleHospitalToggle    = makeAccordionToggle("hospital",    hospitalOpen,    setHospitalOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
@@ -2264,6 +2327,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/contracting")) target = "contracting";
     else if (location.startsWith("/maintenance")) target = "maintenance";
     else if (location.startsWith("/hotel")) target = "hotel";
+    else if (location.startsWith("/hospital")) target = "hospital";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
@@ -2301,6 +2365,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         contracting: setContractingOpen,
         maintenance: setMaintenanceOpen,
         hotel:       setHotelOpen,
+        hospital:    setHospitalOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
@@ -2349,6 +2414,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onMaintenanceToggle: handleMaintenanceToggle,
     hotelOpen,
     onHotelToggle: handleHotelToggle,
+    hospitalOpen,
+    onHospitalToggle: handleHospitalToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

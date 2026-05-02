@@ -79,6 +79,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   production: "production",
   maintenance: "maintenance",
   hotel: "hotel",
+  hospital: "hospital",
   security_events: "security_events",
   // SEO Manager — per-company analytics surface backed by the platform-wide
   // /api/admin/seo router. Disabling this gate hides the entire SEO dashboard

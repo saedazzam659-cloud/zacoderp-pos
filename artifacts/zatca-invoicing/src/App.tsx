@@ -103,6 +103,13 @@ import HotelGuests from "@/pages/hotel/HotelGuests";
 import HotelBookings from "@/pages/hotel/HotelBookings";
 import HotelHousekeeping from "@/pages/hotel/HotelHousekeeping";
 import HotelAI from "@/pages/hotel/HotelAI";
+import HospitalHub from "@/pages/hospital/HospitalHub";
+import Hospitals from "@/pages/hospital/Hospitals";
+import HospitalDoctors from "@/pages/hospital/HospitalDoctors";
+import HospitalPatients from "@/pages/hospital/HospitalPatients";
+import HospitalAppointments from "@/pages/hospital/HospitalAppointments";
+import HospitalInvoices from "@/pages/hospital/HospitalInvoices";
+import HospitalAI from "@/pages/hospital/HospitalAI";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -271,7 +278,7 @@ const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/
 const PROTECTED_PREFIXES = [
   "/accounting", "/admin", "/ai-reports", "/cash", "/companies",
   "/contracting", "/control-panel", "/customers", "/general-settings",
-  "/hotel", "/hr", "/inbox", "/inventory", "/invoices", "/maintenance",
+  "/hospital", "/hotel", "/hr", "/inbox", "/inventory", "/invoices", "/maintenance",
   "/notifications", "/org", "/pos-management", "/pos-monitoring",
   "/pos-settings", "/pos-terminals", "/production", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
@@ -509,6 +516,15 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hotel/bookings"                module="hotel"          component={HotelBookings} />}
             {!isSuperAdmin && <PermRoute path="/hotel/housekeeping"            module="hotel"          component={HotelHousekeeping} />}
             {!isSuperAdmin && <PermRoute path="/hotel/ai"                      module="hotel"          component={HotelAI} />}
+
+            {/* Hospital / Clinic ERP — gated by `hospital` permission. */}
+            {!isSuperAdmin && <PermRoute path="/hospital"                      module="hospital"       component={HospitalHub} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/hospitals"            module="hospital"       component={Hospitals} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/doctors"              module="hospital"       component={HospitalDoctors} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/patients"             module="hospital"       component={HospitalPatients} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/appointments"         module="hospital"       component={HospitalAppointments} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/invoices"             module="hospital"       component={HospitalInvoices} />}
+            {!isSuperAdmin && <PermRoute path="/hospital/ai"                   module="hospital"       component={HospitalAI} />}
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

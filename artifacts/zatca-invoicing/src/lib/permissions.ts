@@ -29,6 +29,7 @@ const G = {
   contracting: "perms.groups.contracting",
   maintenance: "perms.groups.maintenance",
   hotel:       "perms.groups.hotel",
+  hospital:    "perms.groups.hospital",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
 };
@@ -106,6 +107,14 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // bookings, payments, housekeeping, and AI engines (dynamic pricing,
   // recommendations, forecasting, maintenance prediction).
   { key: "hotel",                label: "perms.modules.hotel",                group: G.hotel,       actions: ALL },
+
+  // Hospital / Clinic ERP — backend key is "hospital"; covers facilities,
+  // doctors, patients, appointments / encounters, invoices, and the
+  // NPHIES integration blueprint + AI helpers (claim risk, diagnosis
+  // suggestion). The real NPHIES connection requires CCHI accreditation;
+  // this module ships the FHIR R4 generator and an offline blueprint
+  // dashboard so the workflow can be exercised end-to-end.
+  { key: "hospital",             label: "perms.modules.hospital",             group: G.hospital,    actions: ALL },
 
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.

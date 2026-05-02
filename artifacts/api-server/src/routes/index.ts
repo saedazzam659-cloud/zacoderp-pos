@@ -69,6 +69,8 @@ import contractingAiRouter from "./contracting-ai";
 import maintenanceRouter from "./maintenance";
 import hotelRouter from "./hotel";
 import hotelAiRouter from "./hotel-ai";
+import hospitalRouter from "./hospital";
+import hospitalAiRouter from "./hospital-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 
@@ -149,5 +151,7 @@ router.use("/contracting-ai", contractingAiRouter);
 router.use("/maintenance", maintenanceRouter);
 router.use("/hotel", hotelRouter);
 router.use("/hotel-ai", hotelAiRouter);
+router.use("/hospital", hospitalRouter);
+router.use("/hospital-ai", hospitalAiRouter);
 
 export default router;
