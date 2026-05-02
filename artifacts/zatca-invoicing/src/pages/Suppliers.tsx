@@ -404,11 +404,7 @@ export default function Suppliers() {
         </div>
 
         {(() => {
-          // For suppliers the AP balance is stored as a negative number
-          // (لنا عليهم), so a credit (نحن مدينون لهم) means balance < 0 and
-          // the magnitude that matters for the credit-limit check is |balance|.
-          // overLimit takes precedence over the plain "credit" chip so a
-          // supplier we've over-borrowed from is not double-counted.
+          // AP balance is negative when we owe them; overLimit pre-empts "credit" so rows count once.
           const isOver = (s: any) => {
             const lim = Number(s.creditLimit ?? 0);
             const owed = Math.max(0, -Number(balanceMap[s.id] ?? 0));
@@ -473,22 +469,15 @@ export default function Suppliers() {
               ) : (
                 pager.pagedItems.map((supplier: any) => {
                   const bal = Number(balanceMap[supplier.id] ?? 0);
-                  // Supplier balance is stored negative when we owe them
-                  // (لنا عليهم), so the over-limit check uses |bal| against
-                  // the credit limit they've extended to us. overLimit beats
-                  // every other tone — it's the loudest collection-risk signal.
                   const limit = Number(supplier.creditLimit ?? 0);
+                  // AP balance is negative when we owe the supplier; compare |owed| against limit.
                   const owed = Math.max(0, -bal);
                   const overLimit = limit > 0 && owed > limit;
                   const dictStatus = overLimit
                     ? "overLimit"
-                    : bal > 0
-                      ? "debit"
-                      : bal < 0
-                        ? "credit"
-                        : supplier.vatNumber
-                          ? "active"
-                          : "inactive";
+                    : bal > 0 ? "debit"
+                    : bal < 0 ? "credit"
+                    : supplier.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
                     ? `تجاوز حد الائتمان (${owed.toLocaleString()} > ${limit.toLocaleString()})`
                     : "";

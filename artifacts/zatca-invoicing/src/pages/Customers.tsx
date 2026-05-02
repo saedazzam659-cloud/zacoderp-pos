@@ -243,9 +243,7 @@ export default function Customers() {
       <div className="rounded-xl border bg-card overflow-hidden">
 
         {(() => {
-          // overLimit takes precedence over debit (so the same customer is not
-          // double-counted): a row with bal>0 AND limit>0 AND bal>limit shows
-          // up only in the "تجاوز الائتمان" chip.
+          // overLimit takes precedence over debit so a row is counted once.
           const isOver = (c: any) => {
             const lim = Number(c.creditLimit ?? 0);
             return lim > 0 && Number(balMap[c.id] ?? 0) > lim;
@@ -339,21 +337,13 @@ export default function Customers() {
               ) : (
                 pager.pagedItems.map((customer: any) => {
                   const bal = Number(balMap[customer.id] ?? 0);
-                  // Credit limit: 0/null means "no limit set" — only flag when
-                  // a positive limit exists AND the receivable balance exceeds it.
                   const limit = Number(customer.creditLimit ?? 0);
                   const overLimit = limit > 0 && bal > limit;
-                  // Over-limit beats every other dictionary status — it's a
-                  // collection-risk warning the user should not be able to miss.
                   const dictStatus = overLimit
                     ? "overLimit"
-                    : bal > 0
-                      ? "debit"
-                      : bal < 0
-                        ? "credit"
-                        : customer.vatNumber
-                          ? "active"
-                          : "inactive";
+                    : bal > 0 ? "debit"
+                    : bal < 0 ? "credit"
+                    : customer.vatNumber ? "active" : "inactive";
                   const overTooltip = overLimit
                     ? `تجاوز حد الائتمان (${bal.toLocaleString()} > ${limit.toLocaleString()})`
                     : "";
