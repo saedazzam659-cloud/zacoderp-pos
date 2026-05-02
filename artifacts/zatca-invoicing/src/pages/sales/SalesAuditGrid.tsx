@@ -91,7 +91,7 @@ type PageSize = typeof PAGE_SIZE_OPTIONS[number];
 const DEFAULT_PAGE_SIZE: PageSize = 25;
 import { cn } from "@/lib/utils";
 import {
-  rowToneFor as sharedRowToneFor,
+  rowToneFor,
   SEL_TONE,
   DocColorLegend,
   buildToneTooltip,
@@ -1150,35 +1150,6 @@ export default function SalesAuditGrid() {
     rejected: { label: "مرفوض",  cls: "bg-rose-100 text-rose-800 border-rose-300" },
   };
 
-  /**
-   * Per-row visual tone — picked once per row from invoice status, return-flag
-   * and ZATCA acknowledgement so users can scan the grid like a heat-map and
-   * spot drafts / returns / rejections at a glance.
-   *
-   * Selection always wins (preserves the previous bulk-select UX), so this
-   * helper only runs when isSel === false.
-   *
-   * Order of priority (most critical first — last match wins):
-   *   1. cancelled  → muted gray (least visually loud)
-   *   2. draft      → soft amber  (work-in-progress)
-   *   3. posted     → soft emerald (committed to ledger — the "happy" state)
-   *   4. returned   → rose overlay (audit-critical, overrides posted/draft)
-   *
-   * The ZATCA dimension is rendered as a thin end-border (border-l in RTL =
-   * the visual end of the row) so it never fights the status background.
-   */
-  // Thin wrapper over the shared `rowToneFor` so existing call sites in this
-  // file (which pass `(inv, hasReturn)`) keep working without churn. All real
-  // styling logic lives in `lib/docRowTone.tsx` so every audit grid stays in
-  // visual sync as the palette evolves.
-  function rowToneFor(inv: any, hasReturn: boolean): string {
-    return sharedRowToneFor({
-      status: inv.status,
-      hasReturn,
-      zatcaStatus: inv.zatcaStatus,
-    });
-  }
-
   const filteredFindings = audit?.findings.filter(f =>
     findingFilter === "all" ? true : f.level === findingFilter
   ) ?? [];
@@ -1956,7 +1927,13 @@ export default function SalesAuditGrid() {
                       className={cn(
                         "transition-colors cursor-pointer",
                         // Selection wins — preserves the previous bulk-select feel.
-                        isSel ? SEL_TONE : rowToneFor(inv, hasReturn),
+                        isSel
+                          ? SEL_TONE
+                          : rowToneFor({
+                              status: inv.status,
+                              hasReturn,
+                              zatcaStatus: inv.zatcaStatus,
+                            }),
                       )}
                       onClick={(e) => {
                         // Don't toggle when clicking interactive children (links, buttons, inputs).
