@@ -25,7 +25,9 @@ import {
   Check,
   LogOut,
   Loader2,
+  ChefHat,
 } from "lucide-react";
+import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -119,6 +121,7 @@ export default function CashierPage() {
   );
   const [time, setTime] = useState(new Date());
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [restaurantOpen, setRestaurantOpen] = useState(false);
 
   // Auth gate
   useEffect(() => {
@@ -490,6 +493,13 @@ export default function CashierPage() {
             <UserIcon className="w-4 h-4" />
           </button>
           <button
+            onClick={() => setRestaurantOpen(true)}
+            title="طلبات الصالة (المطعم)"
+            className="h-10 px-3 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold grid place-items-center gap-1 hover-elevate active-elevate-2 hidden md:flex"
+          >
+            <ChefHat className="w-4 h-4" /> طلبات الصالة
+          </button>
+          <button
             onClick={() => navigate("/super")}
             title="نمط سوبر ماركت"
             className="h-10 px-3 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold grid place-items-center hover-elevate active-elevate-2 hidden md:flex"
@@ -740,6 +750,15 @@ export default function CashierPage() {
           />
         )}
       </AnimatePresence>
+
+      <RestaurantOrdersDialog
+        open={restaurantOpen}
+        onClose={() => setRestaurantOpen(false)}
+        branchId={branchId}
+        cashCashBoxId={posSettings?.posCashCashBoxId ?? defaultCashBoxId ?? null}
+        cardBankAccountId={posSettings?.posCardBankAccountId ?? null}
+        defaultWarehouseId={defaultWarehouseId ?? null}
+      />
     </div>
   );
 }
