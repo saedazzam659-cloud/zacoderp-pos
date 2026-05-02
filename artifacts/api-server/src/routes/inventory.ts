@@ -2870,7 +2870,18 @@ router.post("/alerts/notify", async (req, res) => {
       sourceKey,
       createdByUserId: req.authUser?.id ?? null,
     })
-      .onConflictDoNothing({ target: [notificationsTable.companyId, notificationsTable.sourceKey] })
+      // PostgreSQL requires the ON CONFLICT predicate to match the partial
+      // unique index's WHERE clause exactly when the index is partial.
+      // Index: ux_notifications_company_source_key (company_id, source_key)
+      //        WHERE source_key IS NOT NULL.
+      // NOTE: drizzle-orm 0.45.2 `onConflictDoNothing` ignores `targetWhere`
+      // and only honors the deprecated `where` field — so we use `where`
+      // here. This emits: ON CONFLICT (company_id, source_key)
+      // WHERE source_key IS NOT NULL DO NOTHING.
+      .onConflictDoNothing({
+        target: [notificationsTable.companyId, notificationsTable.sourceKey],
+        where: sql`${notificationsTable.sourceKey} IS NOT NULL`,
+      })
       .returning({ id: notificationsTable.id });
 
     if (inserted.length > 0) created++;
