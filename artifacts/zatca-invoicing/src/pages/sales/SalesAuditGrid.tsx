@@ -651,6 +651,20 @@ export default function SalesAuditGrid() {
     enabled: !!user,
   });
 
+  // Sales returns are fetched separately so we can highlight any invoice that
+  // has at least one return — a critical audit signal that wasn't visible in
+  // the previous row design. We don't need amounts here, just the set of
+  // invoiceIds, so a lightweight Set keeps the per-row check O(1).
+  const { data: salesReturns = [] } = useQuery<any[]>({
+    queryKey: ["sales-returns-audit", cid],
+    queryFn: () => getList(cid ? `${API}/api/sales/sales-returns?companyId=${cid}` : `${API}/api/sales/sales-returns`).catch(() => []),
+    enabled: !!user,
+  });
+  const returnedInvoiceIds = useMemo(
+    () => new Set<number>(salesReturns.map((r: any) => Number(r.invoiceId)).filter((n) => Number.isFinite(n))),
+    [salesReturns],
+  );
+
   // ── Lookup maps ───────────────────────────────────────────────────────
   const cusMap = useMemo(() => Object.fromEntries(customers.map((c: any) => [c.id, { name: c.nameAr ?? c.nameEn, vat: c.vatNumber, phone: c.phone }])), [customers]);
   const repMap = useMemo(() => Object.fromEntries(salesReps.map((r: any) => [r.id, r.nameAr ?? r.nameEn])), [salesReps]);
@@ -1128,6 +1142,52 @@ export default function SalesAuditGrid() {
     approved: { label: "مقبول",   cls: "bg-emerald-100 text-emerald-800 border-emerald-300" },
     rejected: { label: "مرفوض",  cls: "bg-rose-100 text-rose-800 border-rose-300" },
   };
+
+  /**
+   * Per-row visual tone — picked once per row from invoice status, return-flag
+   * and ZATCA acknowledgement so users can scan the grid like a heat-map and
+   * spot drafts / returns / rejections at a glance.
+   *
+   * Selection always wins (preserves the previous bulk-select UX), so this
+   * helper only runs when isSel === false.
+   *
+   * Order of priority (most critical first — last match wins):
+   *   1. cancelled  → muted gray (least visually loud)
+   *   2. draft      → soft amber  (work-in-progress)
+   *   3. posted     → soft emerald (committed to ledger — the "happy" state)
+   *   4. returned   → rose overlay (audit-critical, overrides posted/draft)
+   *
+   * The ZATCA dimension is rendered as a thin end-border (border-l in RTL =
+   * the visual end of the row) so it never fights the status background.
+   */
+  function rowToneFor(inv: any, hasReturn: boolean): string {
+    let tone = "";
+    let leftBar = "";
+    if (inv.status === "cancelled") {
+      tone    = "bg-slate-100 hover:bg-slate-200/70 text-slate-500 line-through decoration-slate-400/60";
+      leftBar = "border-s-2 border-s-slate-400";
+    } else if (inv.status === "draft") {
+      tone    = "bg-amber-50/70 hover:bg-amber-100/80";
+      leftBar = "border-s-[3px] border-s-amber-400";
+    } else if (inv.status === "posted") {
+      tone    = "bg-emerald-50/50 hover:bg-emerald-100/70";
+      leftBar = "border-s-[3px] border-s-emerald-400";
+    } else {
+      tone    = "hover:bg-amber-50/60";
+    }
+    // Returned overlay — rose tint + thicker border. We replace `tone` (not
+    // append) so the rose really stands out instead of muddying with green.
+    if (hasReturn && inv.status !== "cancelled") {
+      tone    = "bg-rose-50/70 hover:bg-rose-100/80";
+      leftBar = "border-s-[3px] border-s-rose-500";
+    }
+    // ZATCA acknowledgement — thin marker on the trailing edge of the row.
+    let endBar = "";
+    const z = String(inv.zatcaStatus ?? "");
+    if (z === "approved") endBar = "border-e-2 border-e-emerald-400";
+    else if (z === "rejected") endBar = "border-e-2 border-e-rose-500";
+    return cn(tone, leftBar, endBar);
+  }
 
   const filteredFindings = audit?.findings.filter(f =>
     findingFilter === "all" ? true : f.level === findingFilter
@@ -1718,6 +1778,7 @@ export default function SalesAuditGrid() {
                   const payLabel = inv.paymentType === "cash" ? "نقدي" : inv.paymentType === "bank" ? "بنكي" : "آجل";
                   const isSel = selected.has(inv.id);
                   const canDelete = inv.status !== "posted";
+                  const hasReturn = returnedInvoiceIds.has(Number(inv.id));
                   // Per-column body cell renderer — keyed off the column descriptor.
                   const renderBodyCell = (col: typeof COLUMNS[number]) => {
                     switch (col.key) {
@@ -1856,12 +1917,30 @@ export default function SalesAuditGrid() {
                         return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
                     }
                   };
+                  // Build a human-readable "why is this row tinted" tooltip,
+                  // stitched together from the active flags so the user
+                  // instantly knows what each color means.
+                  const toneReasons: string[] = [];
+                  if (inv.status === "draft")     toneReasons.push("مسودة — لم تُرحَّل بعد");
+                  if (inv.status === "posted")    toneReasons.push("مُرحَّلة في القيود");
+                  if (inv.status === "cancelled") toneReasons.push("ملغاة");
+                  if (hasReturn)                  toneReasons.push("بها مرتجع");
+                  if (inv.zatcaStatus === "approved") toneReasons.push("مؤكَّدة من زاتكا ✓");
+                  if (inv.zatcaStatus === "rejected") toneReasons.push("مرفوضة من زاتكا ✗");
+                  const rowTitle = toneReasons.length
+                    ? `${toneReasons.join(" · ")} — اضغط للتحديد، مرتين للفتح`
+                    : "اضغط لتحديد الصف، أو مرتين لفتح الفاتورة";
                   return (
                     <tr
                       key={inv.id}
+                      data-testid={`row-invoice-${inv.id}`}
+                      data-status={inv.status}
+                      data-has-return={hasReturn ? "1" : "0"}
+                      data-zatca={inv.zatcaStatus ?? "pending"}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100" : "hover:bg-amber-50/60",
+                        // Selection wins — preserves the previous bulk-select feel.
+                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100 border-s-[3px] border-s-emerald-600" : rowToneFor(inv, hasReturn),
                       )}
                       onClick={(e) => {
                         // Don't toggle when clicking interactive children (links, buttons, inputs).
@@ -1870,7 +1949,7 @@ export default function SalesAuditGrid() {
                         toggleRow(inv.id);
                       }}
                       onDoubleClick={() => navigate(`/sales/invoices/${inv.id}`)}
-                      title="اضغط لتحديد الصف، أو مرتين لفتح الفاتورة"
+                      title={rowTitle}
                     >
                       {visibleColumns.map(renderBodyCell)}
                     </tr>
