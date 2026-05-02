@@ -5231,6 +5231,21 @@
         "qty": "Qty Sold",
         "invoiceCount": "Invoice Count",
         "totalSales": "Total Sales"
+      },
+      "tree": {
+        "expandAll": "Expand all",
+        "collapseAll": "Collapse all",
+        "itemsLeaf": "Items",
+        "summaryLeaf": "Invoice summary",
+        "lineCount": "Lines",
+        "totalQty": "Total qty",
+        "subtotal": "Subtotal",
+        "discount": "Discount",
+        "vat": "VAT",
+        "total": "Total",
+        "unitPrice": "Price",
+        "qty": "Qty",
+        "invoicesCount": "{{n}} invoices"
       }
     }
   },

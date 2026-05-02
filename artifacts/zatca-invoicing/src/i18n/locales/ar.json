@@ -5307,6 +5307,21 @@
         "qty": "الكمية المباعة",
         "invoiceCount": "عدد الفواتير",
         "totalSales": "إجمالي المبيعات"
+      },
+      "tree": {
+        "expandAll": "توسيع الكل",
+        "collapseAll": "طي الكل",
+        "itemsLeaf": "الأصناف",
+        "summaryLeaf": "ملخص الفاتورة",
+        "lineCount": "عدد البنود",
+        "totalQty": "إجمالي الكمية",
+        "subtotal": "المجموع",
+        "discount": "الخصم",
+        "vat": "الضريبة",
+        "total": "الإجمالي",
+        "unitPrice": "السعر",
+        "qty": "الكمية",
+        "invoicesCount": "{{n}} فاتورة"
       }
     }
   },

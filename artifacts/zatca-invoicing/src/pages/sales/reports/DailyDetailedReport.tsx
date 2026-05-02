@@ -471,120 +471,141 @@ export default function DailyDetailedReport() {
         )}
       </Section>
 
-      {/* ───── NEW: Detailed Invoices table (with expandable item lines) */}
+      {/* ───── Detailed Invoices — TREE VIEW (one line per invoice; expand to see items + summary) */}
       <Section title={tr("sections.invoices")} icon={FileText}>
         {isLoading ? <Skeleton className="h-32 w-full" /> : invoices.length === 0 ? (
           <EmptyText>{tr("empty.noInvoices")}</EmptyText>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[1100px]">
-              <thead className="bg-muted/40 border-b">
-                <tr>
-                  <th className="px-2 py-2 w-8"></th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.time")}</th>
-                  <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("inv.doc")}</th>
-                  <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("inv.customer")}</th>
-                  <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("inv.branch")}</th>
-                  <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("inv.salesRep")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.method")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.lineCount")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.qty")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.subtotal")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.discount")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.vat")}</th>
-                  <th className="px-3 py-2 text-center font-semibold text-muted-foreground">{tr("inv.total")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {invoices.map(i => {
-                  const T = tone(i.paymentType);
-                  const isOpen = !!expandedInv[i.id];
-                  const invLines = linesByInvoice.get(i.id) ?? [];
-                  return (
-                    <>
-                      <tr key={i.id} className="hover:bg-muted/20">
-                        <td className="px-2 py-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedInv(p => ({ ...p, [i.id]: !p[i.id] }))}
-                            className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-muted/40"
-                            aria-label={isOpen ? tr("inv.collapse") : tr("inv.expand")}
-                          >
-                            {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs font-mono">{i.time || "—"}</td>
-                        <td className="px-3 py-2 font-bold text-xs">{i.docNumber ?? `#${i.id}`}</td>
-                        <td className="px-3 py-2 text-xs">{pickName(i.customerNameAr, i.customerNameEn)}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{pickName(i.branchNameAr, i.branchNameEn)}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{pickName(i.salesRepNameAr, i.salesRepNameEn)}</td>
-                        <td className="px-3 py-2 text-center">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] border ${T.badge}`}>
-                            {methodLabelByCode(i.paymentType)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs">{i.lineCount}</td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs">{fmt(i.totalQty)}</td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs">{fmt(i.subtotal)}</td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs text-rose-600">{fmt(i.discount)}</td>
-                        <td className="px-3 py-2 text-center tabular-nums text-xs">{fmt(i.vatAmount)}</td>
-                        <td className="px-3 py-2 text-center tabular-nums font-bold text-blue-700">{fmt(i.totalAmount)}</td>
-                      </tr>
-                      {isOpen && invLines.length > 0 && (
-                        <tr key={`${i.id}-lines`} className="bg-muted/10">
-                          <td></td>
-                          <td colSpan={12} className="px-3 py-3">
-                            <div className="rounded-md border bg-background overflow-hidden">
-                              <table className="w-full text-xs">
-                                <thead className="bg-muted/30">
-                                  <tr>
-                                    <th className={`px-2 py-1.5 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("ln.code")}</th>
-                                    <th className={`px-2 py-1.5 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>{tr("ln.name")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.unit")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.qty")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.unitPrice")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.discount")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.vatRate")}</th>
-                                    <th className="px-2 py-1.5 text-center font-semibold text-muted-foreground">{tr("ln.total")}</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                  {invLines.map(ln => (
-                                    <tr key={ln.lineId}>
-                                      <td className="px-2 py-1.5 font-mono text-[11px]">{ln.itemCode ?? "—"}</td>
-                                      <td className="px-2 py-1.5">{ln.itemName}</td>
-                                      <td className="px-2 py-1.5 text-center text-muted-foreground">{ln.unit ?? "—"}</td>
-                                      <td className="px-2 py-1.5 text-center tabular-nums">{fmt(ln.qty)}</td>
-                                      <td className="px-2 py-1.5 text-center tabular-nums">{fmt(ln.unitPrice)}</td>
-                                      <td className="px-2 py-1.5 text-center tabular-nums text-rose-600">{fmt(ln.discount)}</td>
-                                      <td className="px-2 py-1.5 text-center tabular-nums">{fmt(ln.vatRate)}%</td>
-                                      <td className="px-2 py-1.5 text-center tabular-nums font-bold">{fmt(ln.lineTotal)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+          <div>
+            {/* Toolbar: expand / collapse all */}
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2 pb-2 border-b">
+              <span className="text-[11px] text-muted-foreground">
+                {tr("tree.invoicesCount", { n: invoices.length })}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setExpandedInv(Object.fromEntries(invoices.map(i => [i.id, true])))}
+                  className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted/30 inline-flex items-center gap-1"
+                >
+                  <ChevronDown className="h-3 w-3" /> {tr("tree.expandAll")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpandedInv({})}
+                  className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted/30 inline-flex items-center gap-1"
+                >
+                  <ChevronUp className="h-3 w-3" /> {tr("tree.collapseAll")}
+                </button>
+              </div>
+            </div>
+
+            {/* Invoice tree — each invoice is a single horizontally-scrollable line */}
+            <ul className="text-sm divide-y">
+              {invoices.map(i => {
+                const T = tone(i.paymentType);
+                const isOpen = !!expandedInv[i.id];
+                const invLines = linesByInvoice.get(i.id) ?? [];
+                return (
+                  <li key={i.id}>
+                    {/* Parent node — single line, info-dense, hover highlight */}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedInv(p => ({ ...p, [i.id]: !p[i.id] }))}
+                      className="group w-full flex items-center gap-2 py-2 px-2 text-start hover:bg-muted/30 rounded-sm"
+                      aria-expanded={isOpen}
+                      aria-label={isOpen ? tr("inv.collapse") : tr("inv.expand")}
+                    >
+                      {isOpen
+                        ? <ChevronUp   className="h-3.5 w-3.5 text-muted-foreground shrink-0 transition" />
+                        : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0 transition group-hover:text-foreground" />
+                      }
+                      <FileText className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                      <span className="font-mono text-[11px] tabular-nums text-muted-foreground shrink-0">{i.time || "—"}</span>
+                      <span className="font-bold text-[12px] tabular-nums shrink-0">{i.docNumber ?? `#${i.id}`}</span>
+                      <span className="text-muted-foreground/60 text-[10px] shrink-0">·</span>
+                      <span className="text-[12px] truncate min-w-0 flex-1">{pickName(i.customerNameAr, i.customerNameEn)}</span>
+                      <span className="hidden sm:inline text-muted-foreground/60 text-[10px] shrink-0">·</span>
+                      <span className="hidden sm:inline text-[11px] text-muted-foreground shrink-0">{pickName(i.branchNameAr, i.branchNameEn)}</span>
+                      <span className="hidden md:inline text-muted-foreground/60 text-[10px] shrink-0">·</span>
+                      <span className="hidden md:inline text-[11px] text-muted-foreground shrink-0">{pickName(i.salesRepNameAr, i.salesRepNameEn)}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] border shrink-0 ${T.badge}`}>
+                        {methodLabelByCode(i.paymentType)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">×{i.lineCount}</span>
+                      <span className="hidden md:inline text-[10px] text-muted-foreground tabular-nums shrink-0">{fmt(i.totalQty)} {tr("tree.qty")}</span>
+                      <span className="text-[12px] font-bold text-blue-700 tabular-nums shrink-0 min-w-[5.5rem] text-end">{fmt(i.totalAmount)}</span>
+                    </button>
+
+                    {/* Children tree: indented with a vertical guide line; logical CSS so it works in RTL & LTR */}
+                    {isOpen && (
+                      <div className="ms-5 my-1 ps-3 border-s-2 border-dashed border-muted-foreground/25">
+                        {/* Items leaf */}
+                        {invLines.length > 0 && (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 py-1">
+                              <Package className="h-3 w-3" />
+                              <span>{tr("tree.itemsLeaf")} <span className="text-muted-foreground font-normal">({invLines.length})</span></span>
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  );
-                })}
-              </tbody>
-              {totals && (
-                <tfoot className="bg-muted/30 border-t">
-                  <tr>
-                    <td colSpan={7} className="px-3 py-2 text-xs font-bold">{tr("totalLabel")}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold">{totals.lineCount}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold">{fmt(totals.totalQty)}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold">{fmt(totals.subtotal)}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold text-rose-700">{fmt(totals.discount)}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold">{fmt(totals.vatAmount)}</td>
-                    <td className="px-3 py-2 text-center tabular-nums font-bold text-blue-700">{fmt(totals.invoicesAmount)}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
+                            <ul>
+                              {invLines.map(ln => (
+                                <li
+                                  key={ln.lineId}
+                                  className="flex items-center gap-2 py-1 px-2 text-[11px] hover:bg-muted/20 rounded-sm"
+                                >
+                                  <span className="text-muted-foreground/40 font-mono shrink-0">└</span>
+                                  <span className="font-mono text-[10px] text-muted-foreground shrink-0 min-w-[4.5rem]">{ln.itemCode ?? "—"}</span>
+                                  <span className="truncate min-w-0 flex-1">{ln.itemName}</span>
+                                  <span className="text-muted-foreground/60 shrink-0">·</span>
+                                  <span className="tabular-nums shrink-0">{fmt(ln.qty)}{ln.unit ? ` ${ln.unit}` : ""}</span>
+                                  <span className="text-muted-foreground/60 shrink-0">@</span>
+                                  <span className="tabular-nums text-muted-foreground shrink-0">{fmt(ln.unitPrice)}</span>
+                                  {Number(ln.discount) > 0 && (
+                                    <span className="tabular-nums text-rose-600 shrink-0">−{fmt(ln.discount)}</span>
+                                  )}
+                                  <span className="tabular-nums text-muted-foreground shrink-0 hidden md:inline">VAT {fmt(ln.vatRate)}%</span>
+                                  <span className="tabular-nums font-bold shrink-0 min-w-[4.5rem] text-end">{fmt(ln.lineTotal)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Summary leaf — invoice totals on a single inline line */}
+                        <div className="mt-1 pt-1 border-t border-dashed border-muted-foreground/15">
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-blue-700 py-1">
+                            <CreditCard className="h-3 w-3" />
+                            <span>{tr("tree.summaryLeaf")}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1 text-[11px]">
+                            <span className="text-muted-foreground/40 font-mono shrink-0">└</span>
+                            <span><span className="text-muted-foreground">{tr("tree.lineCount")}:</span> <b className="tabular-nums">{i.lineCount}</b></span>
+                            <span><span className="text-muted-foreground">{tr("tree.totalQty")}:</span> <b className="tabular-nums">{fmt(i.totalQty)}</b></span>
+                            <span><span className="text-muted-foreground">{tr("tree.subtotal")}:</span> <b className="tabular-nums">{fmt(i.subtotal)}</b></span>
+                            <span><span className="text-muted-foreground">{tr("tree.discount")}:</span> <b className="tabular-nums text-rose-600">{fmt(i.discount)}</b></span>
+                            <span><span className="text-muted-foreground">{tr("tree.vat")}:</span> <b className="tabular-nums">{fmt(i.vatAmount)}</b></span>
+                            <span className="ms-auto"><span className="text-muted-foreground">{tr("tree.total")}:</span> <b className="tabular-nums text-blue-700">{fmt(i.totalAmount)}</b></span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Grand totals footer — inline single line */}
+            {totals && (
+              <div className="mt-2 pt-2 border-t border-double flex flex-wrap items-center gap-x-4 gap-y-1 px-2 py-1 text-[12px] bg-muted/20 rounded-sm">
+                <span className="font-bold text-foreground">{tr("totalLabel")}</span>
+                <span><span className="text-muted-foreground">{tr("tree.lineCount")}:</span> <b className="tabular-nums">{totals.lineCount}</b></span>
+                <span><span className="text-muted-foreground">{tr("tree.totalQty")}:</span> <b className="tabular-nums">{fmt(totals.totalQty)}</b></span>
+                <span><span className="text-muted-foreground">{tr("tree.subtotal")}:</span> <b className="tabular-nums">{fmt(totals.subtotal)}</b></span>
+                <span><span className="text-muted-foreground">{tr("tree.discount")}:</span> <b className="tabular-nums text-rose-700">{fmt(totals.discount)}</b></span>
+                <span><span className="text-muted-foreground">{tr("tree.vat")}:</span> <b className="tabular-nums">{fmt(totals.vatAmount)}</b></span>
+                <span className="ms-auto"><span className="text-muted-foreground">{tr("tree.total")}:</span> <b className="tabular-nums text-blue-700 text-[13px]">{fmt(totals.invoicesAmount)}</b></span>
+              </div>
+            )}
           </div>
         )}
       </Section>
