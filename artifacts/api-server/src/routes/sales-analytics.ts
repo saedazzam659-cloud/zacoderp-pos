@@ -1117,4 +1117,330 @@ function emptyDailySummary() {
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Payment-Mix Report — daily breakdown across all payment methods
+// (cash / bank / credit / transfer / cheque / other / any custom value).
+// Combines posted sales invoices + posted customer receipt-vouchers so the
+// report shows BOTH what was sold AND what was actually collected, grouped
+// by the raw payment_type string. Unknown values are surfaced as-is so the
+// report is forward-compatible with any new payment methods added later.
+// ────────────────────────────────────────────────────────────────────────────
+
+const PAYMENT_LABELS: Record<string, { ar: string; en: string }> = {
+  cash:     { ar: "نقدي",        en: "Cash" },
+  bank:     { ar: "شبكة/بطاقة",  en: "Bank/Card" },
+  credit:   { ar: "آجل",         en: "Credit" },
+  transfer: { ar: "تحويل بنكي",  en: "Bank Transfer" },
+  cheque:   { ar: "شيك",         en: "Cheque" },
+  other:    { ar: "أخرى",        en: "Other" },
+};
+
+function methodLabel(raw: string | null | undefined): { ar: string; en: string } {
+  const k = String(raw ?? "other").toLowerCase().trim() || "other";
+  return PAYMENT_LABELS[k] ?? { ar: k, en: k };
+}
+
+router.get("/payment-mix-report", async (req: any, res) => {
+  try {
+    const cid = getCid(req);
+    const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    const bid = getBid(req);
+    if (!cid) {
+      res.json({
+        date,
+        totals: { invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0, totalAmount: 0, methodsCount: 0 },
+        rows: [], byHour: [], byBranch: [], topCustomers: [],
+      });
+      return;
+    }
+
+    // 1. Posted sales invoices for the day (every payment method we know of)
+    const invs = await db.select({
+      id:           salesInvoicesTable.id,
+      docNumber:    salesInvoicesTable.docNumber,
+      createdHour:  sql<number>`EXTRACT(HOUR FROM ${salesInvoicesTable.createdAt})::int`,
+      customerId:   salesInvoicesTable.customerId,
+      branchId:     salesInvoicesTable.branchId,
+      totalAmount:  salesInvoicesTable.totalAmount,
+      paymentType:  salesInvoicesTable.paymentType,
+    }).from(salesInvoicesTable).where(and(
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.invoiceDate, date),
+      eq(salesInvoicesTable.status, "posted"),
+      ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+    ));
+
+    // 2. Posted customer receipts for the day (entity_type='customer')
+    const recs = await db.select({
+      id:           receiptVouchersTable.id,
+      code:         receiptVouchersTable.code,
+      createdHour:  sql<number>`EXTRACT(HOUR FROM ${receiptVouchersTable.createdAt})::int`,
+      entityId:     receiptVouchersTable.entityId,
+      branchId:     receiptVouchersTable.branchId,
+      amount:       receiptVouchersTable.amount,
+      paymentType:  receiptVouchersTable.paymentType,
+    }).from(receiptVouchersTable).where(and(
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.date, date),
+      eq(receiptVouchersTable.status, "posted"),
+      eq(receiptVouchersTable.entityType, "customer"),
+      ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+    ));
+
+    // 3. Resolve branches + customers (tenant-scoped — defends against poisoned FKs)
+    const allBranchIds = Array.from(new Set([
+      ...invs.map(i => i.branchId).filter((x): x is number => !!x),
+      ...recs.map(r => r.branchId).filter((x): x is number => !!x),
+    ]));
+    const allCustomerIds = Array.from(new Set(invs.map(i => i.customerId).filter((x): x is number => !!x)));
+
+    const [branchRows, customerRows] = await Promise.all([
+      allBranchIds.length
+        ? db.select({ id: branchesTable.id, nameAr: branchesTable.nameAr, nameEn: branchesTable.nameEn })
+            .from(branchesTable).where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, allBranchIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+      allCustomerIds.length
+        ? db.select({ id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn })
+            .from(customersTable).where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, allCustomerIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+    ]);
+    const bmap = new Map(branchRows.map(b => [b.id, b]));
+    const cmap = new Map(customerRows.map(c => [c.id, c]));
+
+    // 4. Aggregate by payment method (across both invoices & receipts)
+    type MethodAcc = { invoiceCount: number; receiptCount: number; invoicesAmount: number; receiptsAmount: number };
+    const methodMap = new Map<string, MethodAcc>();
+    const norm = (raw: any) => String(raw ?? "other").toLowerCase().trim() || "other";
+
+    for (const i of invs) {
+      const k = norm(i.paymentType);
+      const e = methodMap.get(k) ?? { invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0 };
+      e.invoiceCount   += 1;
+      e.invoicesAmount += Number(i.totalAmount);
+      methodMap.set(k, e);
+    }
+    for (const r of recs) {
+      const k = norm(r.paymentType);
+      const e = methodMap.get(k) ?? { invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0 };
+      e.receiptCount   += 1;
+      e.receiptsAmount += Number(r.amount);
+      methodMap.set(k, e);
+    }
+
+    const rows = Array.from(methodMap.entries())
+      .map(([method, v]) => ({
+        method,
+        label: methodLabel(method),
+        invoiceCount:   v.invoiceCount,
+        receiptCount:   v.receiptCount,
+        invoicesAmount: v.invoicesAmount,
+        receiptsAmount: v.receiptsAmount,
+        totalAmount:    v.invoicesAmount + v.receiptsAmount,
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // 5. By-hour stacked breakdown (hour x method)
+    type HourCell = { hour: number; method: string; amount: number; count: number };
+    const hourMap = new Map<string, HourCell>();
+    const hourKey = (h: number, m: string) => `${h}|${m}`;
+    for (const i of invs) {
+      const m = norm(i.paymentType);
+      const k = hourKey(i.createdHour, m);
+      const cell = hourMap.get(k) ?? { hour: i.createdHour, method: m, amount: 0, count: 0 };
+      cell.amount += Number(i.totalAmount); cell.count += 1;
+      hourMap.set(k, cell);
+    }
+    for (const r of recs) {
+      const m = norm(r.paymentType);
+      const k = hourKey(r.createdHour, m);
+      const cell = hourMap.get(k) ?? { hour: r.createdHour, method: m, amount: 0, count: 0 };
+      cell.amount += Number(r.amount); cell.count += 1;
+      hourMap.set(k, cell);
+    }
+    const byHour = Array.from(hourMap.values())
+      .sort((a, b) => a.hour - b.hour || a.method.localeCompare(b.method));
+
+    // 6. By-branch breakdown (branch x method matrix)
+    type BranchAgg = {
+      branchId: number | null;
+      branchNameAr: string;
+      branchNameEn: string | null;
+      methods: Record<string, { count: number; amount: number }>;
+      totalAmount: number;
+    };
+    const branchAggMap = new Map<string, BranchAgg>();
+    function addToBranch(branchId: number | null, method: string, count: number, amount: number) {
+      const key = String(branchId ?? "_none");
+      const b = branchId ? bmap.get(branchId) : null;
+      const cur = branchAggMap.get(key) ?? {
+        branchId,
+        branchNameAr: b?.nameAr ?? "—",
+        branchNameEn: b?.nameEn ?? "—",
+        methods: {},
+        totalAmount: 0,
+      };
+      const m = cur.methods[method] ?? { count: 0, amount: 0 };
+      m.count += count; m.amount += amount;
+      cur.methods[method] = m;
+      cur.totalAmount += amount;
+      branchAggMap.set(key, cur);
+    }
+    for (const i of invs) addToBranch(i.branchId, norm(i.paymentType), 1, Number(i.totalAmount));
+    for (const r of recs) addToBranch(r.branchId, norm(r.paymentType), 1, Number(r.amount));
+    const byBranch = Array.from(branchAggMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // 7. Top customers by their payment-mix on invoices
+    type CustomerAgg = {
+      customerId: number | null;
+      customerNameAr: string;
+      customerNameEn: string | null;
+      methods: Record<string, { count: number; amount: number }>;
+      totalAmount: number;
+    };
+    const custAggMap = new Map<string, CustomerAgg>();
+    for (const i of invs) {
+      const key = String(i.customerId ?? "_none");
+      const c = i.customerId ? cmap.get(i.customerId) : null;
+      const cur = custAggMap.get(key) ?? {
+        customerId: i.customerId,
+        customerNameAr: c?.nameAr ?? "عميل نقدي",
+        customerNameEn: c?.nameEn ?? "Cash Customer",
+        methods: {},
+        totalAmount: 0,
+      };
+      const m = norm(i.paymentType);
+      const mEntry = cur.methods[m] ?? { count: 0, amount: 0 };
+      mEntry.count += 1; mEntry.amount += Number(i.totalAmount);
+      cur.methods[m] = mEntry;
+      cur.totalAmount += Number(i.totalAmount);
+      custAggMap.set(key, cur);
+    }
+    const topCustomers = Array.from(custAggMap.values())
+      .sort((a, b) => b.totalAmount - a.totalAmount)
+      .slice(0, 15);
+
+    res.json({
+      date,
+      totals: {
+        invoiceCount:   invs.length,
+        receiptCount:   recs.length,
+        invoicesAmount: invs.reduce((s, x) => s + Number(x.totalAmount), 0),
+        receiptsAmount: recs.reduce((s, x) => s + Number(x.amount), 0),
+        totalAmount:    invs.reduce((s, x) => s + Number(x.totalAmount), 0)
+                      + recs.reduce((s, x) => s + Number(x.amount), 0),
+        methodsCount:   rows.length,
+      },
+      rows, byHour, byBranch, topCustomers,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "payment-mix-report failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── AI insights for the payment-mix report ──────────────────────────────────
+// The frontend posts the on-screen report data; we hand it to the OpenAI
+// proxy and ask for short Arabic (or English) insights as structured JSON.
+router.post("/payment-mix-report/ai-insights", async (req: any, res) => {
+  try {
+    const cid = getCid(req);
+    if (!cid) { res.status(400).json({ error: "لا توجد شركة" }); return; }
+
+    const OPENAI_BASE = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const OPENAI_KEY  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!OPENAI_BASE || !OPENAI_KEY) {
+      res.status(503).json({ error: "خدمة الذكاء الاصطناعي غير متاحة" });
+      return;
+    }
+
+    const { date, totals, rows, byHour, byBranch, topCustomers, language } = req.body ?? {};
+    if (!date || !totals || !Array.isArray(rows)) {
+      res.status(400).json({ error: "بيانات التقرير غير مكتملة" });
+      return;
+    }
+    const lang: "ar" | "en" = language === "en" ? "en" : "ar";
+
+    // Compact textual summary so the model has every relevant number.
+    const fmt = (n: any) => Number(n ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+    const total = Number(totals.totalAmount ?? 0);
+    let summary = `التاريخ: ${date}\n`;
+    summary += `إجمالي اليوم: ${fmt(total)} ر.س (${totals.invoiceCount} فاتورة + ${totals.receiptCount} سند قبض)\n`;
+    summary += `عدد طرق الدفع المستخدمة: ${totals.methodsCount}\n\n`;
+    summary += `تفصيل حسب طريقة الدفع:\n`;
+    for (const r of rows) {
+      const share = total > 0 ? ((Number(r.totalAmount) / total) * 100).toFixed(1) : "0";
+      summary += `- ${r?.label?.ar ?? r.method}: ${fmt(r.totalAmount)} (${share}%) — ${r.invoiceCount} فاتورة، ${r.receiptCount} سند\n`;
+    }
+    if (Array.isArray(byBranch) && byBranch.length) {
+      summary += `\nالفروع:\n`;
+      for (const b of byBranch.slice(0, 5)) {
+        summary += `- ${b.branchNameAr}: ${fmt(b.totalAmount)} (${Object.keys(b.methods ?? {}).length} طريقة)\n`;
+      }
+    }
+    if (Array.isArray(byHour) && byHour.length) {
+      const hours = Array.from(new Set(byHour.map((h: any) => h.hour))).sort((a: any, b: any) => Number(a) - Number(b));
+      if (hours.length) {
+        summary += `\nساعات النشاط: من ${String(hours[0]).padStart(2, "0")}:00 حتى ${String(hours[hours.length - 1]).padStart(2, "0")}:00 (${hours.length} ساعة نشطة)\n`;
+      }
+    }
+    if (Array.isArray(topCustomers) && topCustomers.length) {
+      summary += `\nأفضل العملاء:\n`;
+      for (const c of topCustomers.slice(0, 5)) {
+        summary += `- ${c.customerNameAr}: ${fmt(c.totalAmount)}\n`;
+      }
+    }
+
+    const systemPrompt = lang === "ar"
+      ? `أنت مستشار محاسبي خبير لشركة سعودية. حلّل تقرير المبيعات اليومي حسب طرق الدفع وقدّم رؤى عملية قصيرة بالعربية الفصحى. ركّز على: توزيع طرق الدفع، نقاط القوة (مثلاً ارتفاع التحصيل النقدي)، نقاط الانتباه (تركّز عالٍ في الآجل، انخفاض الشبكة، ساعات الذروة)، وتوصية عملية واحدة قابلة للتنفيذ.
+ردّ بصيغة JSON فقط بدون أي شرح:
+{
+  "headline":       "<ملخص اليوم في جملة واحدة قوية>",
+  "highlights":     ["<نقطة قوة 1>", "<نقطة قوة 2>", "<نقطة قوة 3>"],
+  "concerns":       ["<تحذير 1>", "<تحذير 2>"],
+  "recommendation": "<توصية واحدة عملية>"
+}`
+      : `You are an expert accounting advisor for a Saudi company. Analyze the daily sales report by payment methods and provide concise actionable insights in English. Focus on: payment-mix distribution, strengths (e.g. high cash collection), concerns (high credit concentration, low card share, peak hours), and one concrete recommendation.
+Respond ONLY in JSON, no extra prose:
+{
+  "headline":       "<one strong summary sentence>",
+  "highlights":     ["<strength 1>", "<strength 2>", "<strength 3>"],
+  "concerns":       ["<warning 1>", "<warning 2>"],
+  "recommendation": "<one actionable recommendation>"
+}`;
+
+    const r = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        max_completion_tokens: 1024,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user",   content: summary },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      res.status(502).json({ error: `فشل الذكاء الاصطناعي: ${r.status} ${txt.slice(0, 200)}` });
+      return;
+    }
+    const data: any = await r.json();
+    const content: string = data?.choices?.[0]?.message?.content ?? "{}";
+    let parsed: any = {};
+    try { parsed = JSON.parse(content); } catch {}
+
+    res.json({
+      headline:       String(parsed.headline ?? ""),
+      highlights:     Array.isArray(parsed.highlights) ? parsed.highlights.map(String) : [],
+      concerns:       Array.isArray(parsed.concerns)   ? parsed.concerns.map(String)   : [],
+      recommendation: String(parsed.recommendation ?? ""),
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "payment-mix-report ai-insights failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

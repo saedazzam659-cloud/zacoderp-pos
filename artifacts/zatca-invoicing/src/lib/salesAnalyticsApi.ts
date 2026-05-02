@@ -201,4 +201,61 @@ export const salesAnalyticsApi = {
     get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId })}`),
   dailyReport:       (cid?: number, date?: string, branchId?: number) =>
     get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId })}`),
+  paymentMixReport:  (cid?: number, date?: string, branchId?: number) =>
+    get<PaymentMixReport>(`/payment-mix-report${qs({ companyId: cid, date, branchId })}`),
+  paymentMixAiInsights: async (payload: PaymentMixReport & { language?: "ar" | "en" }): Promise<PaymentMixAiInsights> => {
+    const r = await fetch(`${API}/api/sales-analytics/payment-mix-report/ai-insights`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+};
+
+export type PaymentMixMethodRow = {
+  method: string;
+  label: { ar: string; en: string };
+  invoiceCount: number;
+  receiptCount: number;
+  invoicesAmount: number;
+  receiptsAmount: number;
+  totalAmount: number;
+};
+export type PaymentMixHourCell = { hour: number; method: string; amount: number; count: number };
+export type PaymentMixBranchRow = {
+  branchId: number | null;
+  branchNameAr: string;
+  branchNameEn: string | null;
+  methods: Record<string, { count: number; amount: number }>;
+  totalAmount: number;
+};
+export type PaymentMixCustomerRow = {
+  customerId: number | null;
+  customerNameAr: string;
+  customerNameEn: string | null;
+  methods: Record<string, { count: number; amount: number }>;
+  totalAmount: number;
+};
+export type PaymentMixReport = {
+  date: string;
+  totals: {
+    invoiceCount: number;
+    receiptCount: number;
+    invoicesAmount: number;
+    receiptsAmount: number;
+    totalAmount: number;
+    methodsCount: number;
+  };
+  rows: PaymentMixMethodRow[];
+  byHour: PaymentMixHourCell[];
+  byBranch: PaymentMixBranchRow[];
+  topCustomers: PaymentMixCustomerRow[];
+};
+export type PaymentMixAiInsights = {
+  headline: string;
+  highlights: string[];
+  concerns: string[];
+  recommendation: string;
 };

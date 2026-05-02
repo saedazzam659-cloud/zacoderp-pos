@@ -725,6 +725,7 @@ const salesReportsSubNav: NavDef[] = [
   { nameKey: "navExtra.salesByPeriod",      href: "/sales/reports/sales-by-period",    icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.topCustomers",       href: "/sales/reports/top-customers",      icon: FileText, permKey: "sales_reports" },
   { nameKey: "navExtra.salesReturnsReport", href: "/sales/reports/returns",            icon: FileText, permKey: "sales_reports" },
+  { nameKey: "navExtra.paymentMixReport",   href: "/sales/reports/payment-mix",        icon: FileText, permKey: "sales_reports" },
 ];
 const salesReportsHeader: NavDef = { nameKey: "nav.allReports", href: "/sales/reports", icon: BarChart2, permKey: "sales_reports" };
 

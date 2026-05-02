@@ -179,6 +179,7 @@ import SalesByCustomer      from "@/pages/sales/reports/SalesByCustomer";
 import SalesByItem          from "@/pages/sales/reports/SalesByItem";
 import SalesByPeriod        from "@/pages/sales/reports/SalesByPeriod";
 import DailyReport          from "@/pages/sales/reports/DailyReport";
+import PaymentMixReport     from "@/pages/sales/reports/PaymentMixReport";
 import TopCustomers         from "@/pages/sales/reports/TopCustomers";
 import SalesReturnsReport   from "@/pages/sales/reports/SalesReturnsReport";
 import PurchaseReportsHub      from "@/pages/purchasing/reports/PurchaseReportsHub";
@@ -586,6 +587,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-item"      module="sales_reports"  component={SalesByItem} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/sales-by-period"    module="sales_reports"  component={SalesByPeriod} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/daily"              module="sales_reports"  component={DailyReport} />}
+            {!isSuperAdmin && <PermRoute path="/sales/reports/payment-mix"        module="sales_reports"  component={PaymentMixReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/top-customers"      module="sales_reports"  component={TopCustomers} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports/returns"            module="sales_reports"  component={SalesReturnsReport} />}
             {!isSuperAdmin && <PermRoute path="/sales/reports"                    module="sales_reports"  component={SalesReportsHub} />}

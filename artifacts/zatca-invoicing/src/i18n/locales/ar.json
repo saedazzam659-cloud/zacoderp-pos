@@ -790,6 +790,7 @@
     "salesByPeriod": "المبيعات اليومية / الشهرية",
     "topCustomers": "أفضل العملاء",
     "salesReturnsReport": "مرتجعات المبيعات",
+    "paymentMixReport": "تقرير طرق الدفع (AI)",
     "supplierStatement": "كشف حساب مورد",
     "supplierStatementDetailed": "كشف حساب مورد تفصيلي",
     "supplierBalances": "أرصدة الموردين",
@@ -4807,7 +4808,9 @@
       "returnsTitle": "تقرير مرتجعات المبيعات",
       "returnsDesc": "ملخص مرتجعات المبيعات لكل عميل",
       "dailyTitle": "تقرير المبيعات اليومي",
-      "dailyDesc": "لقطة كاملة عن يوم واحد: الفواتير، الأصناف، العملاء، الفروع وتحصيلات الخزينة"
+      "dailyDesc": "لقطة كاملة عن يوم واحد: الفواتير، الأصناف، العملاء، الفروع وتحصيلات الخزينة",
+      "paymentMixTitle": "تقرير المبيعات حسب طرق الدفع (AI)",
+      "paymentMixDesc": "تحليل ذكي لتوزيع المبيعات والتحصيلات حسب طرق الدفع (نقدي، شبكة، آجل، تحويل، شيك، أخرى) مع رؤى من الذكاء الاصطناعي"
     },
     "customerStatementDetailed": {
       "title": "كشف حساب عميل تفصيلي",
@@ -5180,6 +5183,61 @@
       "colReceiptCode": "رقم السند",
       "colEntity": "العميل",
       "colAmount": "المبلغ"
+    },
+    "paymentMix": {
+      "title": "تقرير المبيعات حسب طرق الدفع",
+      "subtitle": "تحليل ذكي لتوزيع المبيعات والتحصيلات حسب طرق الدفع مع رؤى الذكاء الاصطناعي",
+      "date": "التاريخ",
+      "backToToday": "العودة لليوم",
+      "exportFilename": "تقرير-طرق-الدفع",
+      "exportTitle": "تقرير المبيعات حسب طرق الدفع",
+      "exportSubtitle": "تاريخ {{date}} — الإجمالي {{value}}",
+      "totalLabel": "الإجمالي",
+      "kpi": {
+        "totalAmount": "إجمالي اليوم",
+        "totalHint": "يشمل {{n}} طريقة دفع",
+        "invoicesAmount": "مبيعات الفواتير",
+        "invoicesCount": "{{n}} فاتورة",
+        "receiptsAmount": "تحصيلات السندات",
+        "receiptsCount": "{{n}} سند قبض",
+        "branchesActive": "فروع نشطة",
+        "customersHint": "{{n}} عميل في القائمة"
+      },
+      "ai": {
+        "idleText": "اضغط لتحليل أداء طرق الدفع اليوم بالذكاء الاصطناعي والحصول على رؤى وتوصيات.",
+        "noDataHint": "لا توجد بيانات في هذا اليوم لتحليلها — يمكنك تجربة تاريخ آخر من حقل التاريخ أعلاه.",
+        "cta": "تحليل بالذكاء الاصطناعي",
+        "loading": "يقوم الذكاء الاصطناعي بتحليل بيانات اليوم…",
+        "errorPrefix": "تعذّر التحليل:",
+        "retry": "إعادة المحاولة",
+        "regenerate": "إعادة التحليل",
+        "highlights": "نقاط القوة",
+        "concerns": "نقاط الانتباه",
+        "recommendation": "توصية"
+      },
+      "sections": {
+        "ai": "الرؤى الذكية",
+        "methods": "تفصيل حسب طريقة الدفع",
+        "byHour": "التوزيع حسب الساعة",
+        "byBranch": "التوزيع حسب الفرع",
+        "topCustomers": "أفضل العملاء حسب طرق الدفع"
+      },
+      "empty": {
+        "noData": "لا توجد بيانات في هذا اليوم",
+        "noActivity": "لا يوجد نشاط في الساعات",
+        "noBranches": "لا يوجد نشاط في الفروع",
+        "noCustomers": "لا يوجد عملاء"
+      },
+      "colMethod": "طريقة الدفع",
+      "colInvoiceCount": "عدد الفواتير",
+      "colInvoicesAmt": "مبلغ الفواتير",
+      "colReceiptCount": "عدد السندات",
+      "colReceiptsAmt": "مبلغ السندات",
+      "colTotal": "الإجمالي",
+      "colShare": "النسبة",
+      "colBranch": "الفرع",
+      "colCustomer": "العميل",
+      "colMixUsed": "طرق الدفع المستخدمة"
     }
   },
   "hrPages": {
