@@ -757,7 +757,7 @@ export default function PurchaseInvoiceForm() {
                     <span>{tr("fields.exchangeRate")}</span>
                     {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
                       <span className="text-[10px] text-muted-foreground font-normal">
-                        1 {currencyCode} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                        1 {currencyCode} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
                       </span>
                     )}
                   </Label>
@@ -1124,7 +1124,7 @@ export default function PurchaseInvoiceForm() {
                   </div>
                   {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
                     <p className="text-[10px] text-muted-foreground border-t pt-1">
-                      {tr("equivIn")} {defaultCurrency?.code ?? "SAR"}: {fmt((totalAmount + totalExpLoaded) / Number(exchangeRate))}
+                      {tr("equivIn")} {defaultCurrency?.code ?? "SAR"}: {fmt((totalAmount + totalExpLoaded) * Number(exchangeRate))}
                     </p>
                   )}
                 </div>

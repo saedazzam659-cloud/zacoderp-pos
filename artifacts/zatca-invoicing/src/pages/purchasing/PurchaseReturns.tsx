@@ -1169,7 +1169,7 @@ ${sections}
                 label={<span className="flex items-center justify-between w-full">
                   <span>{tr("exchangeRate")}</span>
                   {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
-                    <span className="text-[10px] text-muted-foreground font-normal">= {Number(form.exchangeRate) > 0 ? (1 / Number(form.exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code}</span>
+                    <span className="text-[10px] text-muted-foreground font-normal">= {Number(form.exchangeRate) > 0 ? Number(form.exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code}</span>
                   )}
                 </span>}
               >
@@ -1511,7 +1511,7 @@ ${sections}
                 </div>
                 {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(form.exchangeRate) > 0 && (
                   <p className="text-[10px] text-muted-foreground border-t pt-1">
-                    {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount / Number(form.exchangeRate))}
+                    {tr("equivIn")} {defaultCurrency?.code}: {fmt(totalAmount * Number(form.exchangeRate))}
                   </p>
                 )}
               </div>

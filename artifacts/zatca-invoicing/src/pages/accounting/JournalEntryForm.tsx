@@ -1060,7 +1060,7 @@ ${description ? `<div class="desc"><span class="lbl">البيان العام</sp
                   />
                   {hasCurrencies && currency && (
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      1 {currency} = {Number(exchangeRate) > 0 ? (1 / Number(exchangeRate)).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                      1 {currency} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
                     </p>
                   )}
                 </div>

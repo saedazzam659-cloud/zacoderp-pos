@@ -613,8 +613,33 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">{t(`${NS}.exchangeRate`)}</Label>
+                    <Label className="text-xs font-medium flex items-center justify-between gap-2">
+                      <span>{t(`${NS}.exchangeRate`)}</span>
+                      {(() => {
+                        const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
+                        const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
+                        if (!sel || !base || sel.id === base.id) return null;
+                        const r = Number(form.exchangeRate);
+                        return (
+                          <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
+                            1 {sel.code} = {r > 0 ? r.toFixed(4) : "—"} {base.code}
+                          </span>
+                        );
+                      })()}
+                    </Label>
                     <Input type="number" step="0.000001" value={form.exchangeRate} onChange={e => setForm(p => ({ ...p, exchangeRate: e.target.value }))} placeholder="1" dir="ltr" className="h-9 text-sm text-left font-mono" />
+                    {(() => {
+                      const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
+                      const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
+                      const amt = Number(form.amount || 0);
+                      const r = Number(form.exchangeRate);
+                      if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
+                      return (
+                        <p className="text-[11px] text-muted-foreground" data-testid="rv-equiv">
+                          {t(`${NS}.equivalentIn`, "المكافئ بـ")} {base.code}: <span className="font-mono">{(amt * r).toFixed(2)}</span>
+                        </p>
+                      );
+                    })()}
                   </div>
                 </div>
 

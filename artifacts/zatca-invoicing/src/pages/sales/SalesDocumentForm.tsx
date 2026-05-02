@@ -1193,7 +1193,7 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   </div>
                   {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && Number(exchangeRate) > 0 && (
                     <p className="text-[10px] text-muted-foreground border-t pt-1">
-                      {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount / Number(exchangeRate)) })}
+                      {t("salesDocForm.equivalentIn", { currency: defaultCurrency?.code ?? "SAR", value: fmt(totalAmount * Number(exchangeRate)) })}
                     </p>
                   )}
                 </div>
@@ -1802,7 +1802,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("salesDocForm.exchangeRate")}</Label>
+                  <Label className="text-xs flex items-center justify-between gap-2">
+                    <span>{t("salesDocForm.exchangeRate")}</span>
+                    {currencyCode && currencyCode !== (defaultCurrency?.code ?? "SAR") && (
+                      <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
+                        1 {currencyCode} = {Number(exchangeRate) > 0 ? Number(exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                      </span>
+                    )}
+                  </Label>
                   <Input type="text" inputMode="decimal" className="h-9 text-sm" dir="ltr" value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </div>

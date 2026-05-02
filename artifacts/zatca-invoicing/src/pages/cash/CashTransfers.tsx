@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -230,7 +230,38 @@ export default function CashTransfers() {
                 ))}
               </select>
             </Field>
-            <Field label={t("cashTransfers.exchangeRate")}><Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} /></Field>
+            <Field label={
+              <span className="flex items-center justify-between gap-2 w-full">
+                <span>{t("cashTransfers.exchangeRate")}</span>
+                {(() => {
+                  const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
+                  const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
+                  if (!sel || !base || sel.id === base.id) return null;
+                  const r = Number(form.exchangeRate);
+                  return (
+                    <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
+                      1 {sel.code} = {r > 0 ? r.toFixed(4) : "—"} {base.code}
+                    </span>
+                  );
+                })()}
+              </span>
+            }>
+              <div className="space-y-1">
+                <Input type="number" step="0.000001" placeholder="1" dir="ltr" className="text-left" {...f("exchangeRate")} />
+                {(() => {
+                  const sel = (currencies as any[]).find((c: any) => String(c.id) === String(form.currencyId));
+                  const base = (currencies as any[]).find((c: any) => c.isDefault) ?? (currencies as any[])[0];
+                  const amt = Number(form.amount || 0);
+                  const r = Number(form.exchangeRate);
+                  if (!sel || !base || sel.id === base.id || !(amt > 0) || !(r > 0)) return null;
+                  return (
+                    <p className="text-[11px] text-muted-foreground" data-testid="ct-equiv">
+                      {t("cashTransfers.equivalentIn", "المكافئ بـ")} {base.code}: <span className="font-mono">{(amt * r).toFixed(2)}</span>
+                    </p>
+                  );
+                })()}
+              </div>
+            </Field>
             <Field label={t("cashTransfers.description")} className="md:col-span-2"><Input placeholder={t("cashTransfers.descriptionPlaceholder")} {...f("description")} /></Field>
             <Field label={t("cashCommon.notes")} className="md:col-span-2"><Input placeholder={t("cashCommon.notesPlaceholder")} {...f("notes")} /></Field>
           </FormGrid>

@@ -1243,7 +1243,18 @@ ${sections}
                   <Input placeholder="SAR" dir="ltr" className="text-left" value={form.currencyCode} onChange={e => setForm((p: any) => ({ ...p, currencyCode: e.target.value }))} />
                 )}
               </Field>
-              <Field label={t("salesReturns.exchangeRate")}><Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} /></Field>
+              <Field label={
+                <span className="flex items-center justify-between gap-2 w-full">
+                  <span>{t("salesReturns.exchangeRate")}</span>
+                  {form.currencyCode && form.currencyCode !== (defaultCurrency?.code ?? "SAR") && (
+                    <span className="text-[10px] text-muted-foreground font-normal" dir="ltr">
+                      1 {form.currencyCode} = {Number(form.exchangeRate) > 0 ? Number(form.exchangeRate).toFixed(4) : "—"} {defaultCurrency?.code ?? "SAR"}
+                    </span>
+                  )}
+                </span>
+              }>
+                <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
+              </Field>
               <Field label={t("salesReturns.paymentType")}>
                 <Select value={form.paymentType} onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v }))}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
