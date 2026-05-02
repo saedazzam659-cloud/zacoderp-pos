@@ -1314,7 +1314,26 @@ ${sections}
                 <Input type="text" inputMode="decimal" dir="ltr" className="text-left" value={form.exchangeRate} onChange={e => setForm((p: any) => ({ ...p, exchangeRate: e.target.value.replace(/[^0-9.]/g, "") }))} />
               </Field>
               <Field label={t("salesReturns.paymentType")}>
-                <Select value={form.paymentType} onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v }))}>
+                <Select value={form.paymentType} onValueChange={(v) => setForm((p: any) => {
+                  const next: any = { ...p, paymentType: v };
+                  if (v === "cash") {
+                    if (!p.cashBoxId) {
+                      const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                      if (first) next.cashBoxId = String(first.id);
+                    }
+                    next.bankAccountId = "";
+                  } else if (v === "bank") {
+                    if (!p.bankAccountId) {
+                      const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                      if (first) next.bankAccountId = String(first.id);
+                    }
+                    next.cashBoxId = "";
+                  } else {
+                    next.cashBoxId = "";
+                    next.bankAccountId = "";
+                  }
+                  return next;
+                })}>
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="credit">{t("salesReturns.paymentCredit")}</SelectItem>

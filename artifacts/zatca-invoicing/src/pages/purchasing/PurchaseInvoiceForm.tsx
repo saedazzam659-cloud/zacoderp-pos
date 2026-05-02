@@ -775,7 +775,25 @@ export default function PurchaseInvoiceForm() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{tr("fields.paymentType")}</Label>
-                  <Select value={paymentType} onValueChange={(v) => { setPaymentType(v); if (v !== "cash") setCashBoxId(""); if (v !== "bank") setBankAccountId(""); }}>
+                  <Select value={paymentType} onValueChange={(v) => {
+                    setPaymentType(v);
+                    if (v === "cash") {
+                      if (!cashBoxId) {
+                        const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                        if (first) setCashBoxId(String(first.id));
+                      }
+                      setBankAccountId("");
+                    } else if (v === "bank") {
+                      if (!bankAccountId) {
+                        const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                        if (first) setBankAccountId(String(first.id));
+                      }
+                      setCashBoxId("");
+                    } else {
+                      setCashBoxId("");
+                      setBankAccountId("");
+                    }
+                  }}>
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="credit">

@@ -1234,7 +1234,26 @@ ${sections}
               <Field label={tr("settlementType")} required>
                 <Select
                   value={form.paymentType}
-                  onValueChange={(v) => setForm((p: any) => ({ ...p, paymentType: v, cashBoxId: v === "cash" ? p.cashBoxId : "", bankAccountId: v === "bank" ? p.bankAccountId : "" }))}
+                  onValueChange={(v) => setForm((p: any) => {
+                    const next: any = { ...p, paymentType: v };
+                    if (v === "cash") {
+                      next.bankAccountId = "";
+                      if (!p.cashBoxId) {
+                        const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                        if (first) next.cashBoxId = String(first.id);
+                      } else next.cashBoxId = p.cashBoxId;
+                    } else if (v === "bank") {
+                      next.cashBoxId = "";
+                      if (!p.bankAccountId) {
+                        const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                        if (first) next.bankAccountId = String(first.id);
+                      } else next.bankAccountId = p.bankAccountId;
+                    } else {
+                      next.cashBoxId = "";
+                      next.bankAccountId = "";
+                    }
+                    return next;
+                  })}
                 >
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>

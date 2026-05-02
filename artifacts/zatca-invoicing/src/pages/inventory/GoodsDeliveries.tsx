@@ -1516,7 +1516,26 @@ ${sections}
           <div className="space-y-4 py-2">
             <Field label={tr("convertDialog.paymentType")} required>
               <Select value={convertForm.paymentType}
-                onValueChange={(v) => setConvertForm(p => ({ ...p, paymentType: v, cashBoxId: "", bankAccountId: "" }))}>
+                onValueChange={(v) => setConvertForm(p => {
+                  const next = { ...p, paymentType: v };
+                  if (v === "cash") {
+                    next.bankAccountId = "";
+                    if (!p.cashBoxId) {
+                      const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                      if (first) next.cashBoxId = String(first.id);
+                    }
+                  } else if (v === "bank") {
+                    next.cashBoxId = "";
+                    if (!p.bankAccountId) {
+                      const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                      if (first) next.bankAccountId = String(first.id);
+                    }
+                  } else {
+                    next.cashBoxId = "";
+                    next.bankAccountId = "";
+                  }
+                  return next;
+                })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="credit">{tr("convertDialog.paymentCredit")}</SelectItem>

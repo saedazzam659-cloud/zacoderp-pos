@@ -1570,9 +1570,28 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
           case "customerId":
             setCustomerId(value === null || value === undefined ? "" : String(value));
             break;
-          case "paymentType":
-            if (usesOps) setPaymentType(String(value ?? "credit"));
+          case "paymentType": {
+            if (!usesOps) break;
+            const v = String(value ?? "credit");
+            setPaymentType(v);
+            if (v === "cash") {
+              if (!cashBoxId) {
+                const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                if (first) setCashBoxId(String(first.id));
+              }
+              setBankAccountId("");
+            } else if (v === "bank") {
+              if (!bankAccountId) {
+                const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                if (first) setBankAccountId(String(first.id));
+              }
+              setCashBoxId("");
+            } else {
+              setCashBoxId("");
+              setBankAccountId("");
+            }
             break;
+          }
           case "cashBoxId":
             if (usesOps) setCashBoxId(value === null || value === undefined ? "" : String(value));
             break;
@@ -1827,7 +1846,25 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
                 {usesOps && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">{t("salesDocForm.paymentType")}</Label>
-                    <Select value={paymentType} onValueChange={setPaymentType}>
+                    <Select value={paymentType} onValueChange={(v) => {
+                      setPaymentType(v);
+                      if (v === "cash") {
+                        if (!cashBoxId) {
+                          const first = [...(cashBoxes as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                          if (first) setCashBoxId(String(first.id));
+                        }
+                        setBankAccountId("");
+                      } else if (v === "bank") {
+                        if (!bankAccountId) {
+                          const first = [...(bankAccounts as any[])].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)).find((b: any) => b.isActive !== false);
+                          if (first) setBankAccountId(String(first.id));
+                        }
+                        setCashBoxId("");
+                      } else {
+                        setCashBoxId("");
+                        setBankAccountId("");
+                      }
+                    }}>
                       <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="credit">{t("salesDocForm.paymentCredit")}</SelectItem>
