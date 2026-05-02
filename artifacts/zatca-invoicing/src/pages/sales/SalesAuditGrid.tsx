@@ -1675,6 +1675,53 @@ export default function SalesAuditGrid() {
         )}
       </div>
 
+      {/* ─── Color legend — explains what each row tint means ─────────────
+          Counts are derived from the FILTERED set so users immediately see
+          how many drafts / postings / returns survive their current filter.
+          ──────────────────────────────────────────────────────────────── */}
+      {(() => {
+        const counts = {
+          draft:     filtered.filter((i: any) => i.status === "draft").length,
+          posted:    filtered.filter((i: any) => i.status === "posted").length,
+          cancelled: filtered.filter((i: any) => i.status === "cancelled").length,
+          returned:  filtered.filter((i: any) => returnedInvoiceIds.has(Number(i.id))).length,
+          zatcaOk:   filtered.filter((i: any) => i.zatcaStatus === "approved").length,
+          zatcaBad:  filtered.filter((i: any) => i.zatcaStatus === "rejected").length,
+        };
+        const chip = (cls: string, label: string, n: number, hint: string) => (
+          <button
+            type="button"
+            title={hint}
+            data-testid={`legend-${label}`}
+            className={cn(
+              "group inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10.5px] font-medium transition-all hover:scale-[1.02] hover:shadow-sm cursor-help",
+              cls,
+            )}
+          >
+            <span className="inline-block h-2.5 w-2.5 rounded-sm shadow-inner shrink-0" style={{ background: "currentColor", opacity: 0.65 }} />
+            <span>{label}</span>
+            <span className="font-mono text-[10px] tabular-nums opacity-80 group-hover:opacity-100">({n})</span>
+          </button>
+        );
+        return (
+          <div
+            data-testid="row-color-legend"
+            className="flex items-center gap-1.5 flex-wrap px-3 py-1.5 bg-gradient-to-l from-slate-50 to-white border-x border-t border-slate-300 text-slate-600"
+          >
+            <span className="text-[10.5px] font-semibold text-slate-500 me-1">دلالة الألوان:</span>
+            {chip("border-amber-300  bg-amber-50/70  text-amber-800",  "مسودة",   counts.draft,     "الفواتير التي لم تُرحَّل بعد — قابلة للتعديل والحذف")}
+            {chip("border-emerald-300 bg-emerald-50/60 text-emerald-800", "مُرحَّلة", counts.posted,    "تم ترحيلها في القيود — لا يمكن حذفها")}
+            {chip("border-slate-300  bg-slate-100   text-slate-600",   "ملغاة",   counts.cancelled, "فواتير ألغيت — تظهر بخط داخلي")}
+            {chip("border-rose-300   bg-rose-50/70  text-rose-700",    "بها مرتجع", counts.returned, "صدر لها مستند مرتجع كلي أو جزئي")}
+            <span className="mx-1 text-slate-300">|</span>
+            {chip("border-emerald-300 bg-white text-emerald-700 border-e-4 border-e-emerald-400",
+                  "مؤكَّدة زاتكا", counts.zatcaOk,  "تأكدت من زاتكا — شريط أخضر في طرف السطر")}
+            {chip("border-rose-300   bg-white text-rose-700 border-e-4 border-e-rose-500",
+                  "مرفوضة زاتكا", counts.zatcaBad, "رفضت من زاتكا — شريط أحمر في طرف السطر")}
+          </div>
+        );
+      })()}
+
       {/* ─── Wide spreadsheet grid ─────────────────────────────────────── */}
       <div className="border border-slate-300 rounded-b-lg bg-white overflow-hidden shadow-sm">
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
