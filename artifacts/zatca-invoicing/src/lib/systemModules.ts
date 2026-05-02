@@ -113,6 +113,12 @@ export const SYSTEM_MODULES: SystemModule[] = [
     monthlyPrice: 40,
     permissions: ["security_events"],
   },
+  {
+    key: "maintenance", nameAr: "إدارة الصيانة", nameEn: "Maintenance & Assets", descAr: "تتبّع الأصول والمعدات، الفنّيين، أوامر الصيانة وقطع الغيار",
+    emoji: "🔧", category: "operations", categoryAr: "العمليات",
+    monthlyPrice: 50,
+    permissions: ["maintenance"],
+  },
 
   // ── Compliance ───────────────────────────────────────────────────
   {

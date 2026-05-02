@@ -1,0 +1,343 @@
+🏨🔥 نظام إدارة الفنادق الذكي داخل ERP (نسخة احترافية متكاملة)
+Hotel Smart AI ERP - Full Enterprise Module
+========================================
+
+# الإصدار: 1.0 Enterprise
+# البيئة: ERP System Integration
+# الهدف: تشغيل نظام فنادق متكامل داخل ERP متعدد الشركات مدعوم بالذكاء الاصطناعي
+
+========================================
+1. الهيكل العام للنظام
+========================================
+
+هذا الموديول هو وحدة مستقلة داخل ERP ويشمل:
+
+✔️ إدارة الفنادق
+✔️ إدارة الغرف
+✔️ إدارة النزلاء
+✔️ إدارة الحجوزات
+✔️ إدارة المدفوعات
+✔️ إدارة الصيانة
+✔️ ذكاء اصطناعي للتسعير والتوصيات
+✔️ نظام متعدد الشركات
+✔️ صلاحيات متقدمة
+✔️ تكامل كامل مع ERP (محاسبة - مخازن - CRM - HR)
+
+========================================
+2. MULTI COMPANY ARCHITECTURE
+========================================
+
+TABLE: Companies
+- CompanyID (PK)
+- CompanyName
+- Status
+- CreatedAt
+
+----------------------------------------
+
+كل الجداول تحتوي على:
+
+- CompanyID (FK إلزامي)
+
+RULE:
+لا يوجد أي بيانات بدون CompanyID
+
+========================================
+3. DATABASE STRUCTURE
+========================================
+
+TABLE: Hotels
+- HotelID (PK)
+- CompanyID (FK)
+- Name
+- Location
+- Rating
+- Status
+
+----------------------------------------
+
+TABLE: Rooms
+- RoomID (PK)
+- CompanyID (FK)
+- HotelID (FK)
+- RoomNumber
+- Type
+- BasePrice
+- Status
+- Features
+
+----------------------------------------
+
+TABLE: Guests
+- GuestID (PK)
+- CompanyID (FK)
+- FullName
+- Phone
+- Email
+- Preferences
+
+----------------------------------------
+
+TABLE: Bookings
+- BookingID (PK)
+- CompanyID (FK)
+- GuestID (FK)
+- RoomID (FK)
+- CheckIn
+- CheckOut
+- Status
+- TotalPrice (AI Generated)
+
+----------------------------------------
+
+TABLE: Payments
+- PaymentID (PK)
+- CompanyID (FK)
+- BookingID (FK)
+- Amount
+- Method
+- Status
+
+----------------------------------------
+
+TABLE: Housekeeping
+- TaskID (PK)
+- CompanyID (FK)
+- RoomID (FK)
+- AssignedTo
+- Status
+- Priority
+
+========================================
+4. ERP INTEGRATION LAYER
+========================================
+
+🔗 CRM INTEGRATION
+Guests ⇄ Customers Table
+(Shared Identity Mapping)
+
+----------------------------------------
+
+🔗 ACCOUNTING INTEGRATION
+When Booking Confirmed:
+→ Create Invoice in ERP Accounting
+→ Post Revenue Entry Automatically
+
+When Checkout:
+→ Final Invoice Generated
+→ Payment Registered
+
+----------------------------------------
+
+🔗 INVENTORY INTEGRATION
+Housekeeping Tasks:
+→ Consume inventory items (cleaning materials, linens)
+
+----------------------------------------
+
+🔗 HR INTEGRATION
+- Assign staff to rooms
+- Track cleaning tasks
+- Performance tracking
+
+========================================
+5. AI ENGINE (HOTEL INTELLIGENCE)
+========================================
+
+SERVICE: HotelAIEngine
+
+----------------------------------------
+
+FUNCTION 1: Dynamic Pricing
+INPUT:
+- RoomType
+- OccupancyRate
+- Season
+- Demand
+
+OUTPUT:
+- Optimized Price
+
+----------------------------------------
+
+FUNCTION 2: Room Recommendation
+INPUT:
+- Guest Preferences
+- History
+
+OUTPUT:
+- Best Room Match
+
+----------------------------------------
+
+FUNCTION 3: Demand Forecast
+INPUT:
+- CompanyID
+- Date Range
+
+OUTPUT:
+- Occupancy Prediction %
+
+----------------------------------------
+
+FUNCTION 4: Maintenance Prediction
+INPUT:
+- RoomID
+
+OUTPUT:
+- Risk Score + Alert
+
+========================================
+6. API STRUCTURE
+========================================
+
+BASE URL:
+/api/hotel/
+
+----------------------------------------
+
+POST /booking/create
+- إنشاء حجز جديد + تسعير AI
+
+POST /checkin/{bookingId}
+- تسجيل دخول + تغيير حالة الغرفة
+
+POST /checkout/{bookingId}
+- إنهاء الحجز + فاتورة ERP
+
+GET /rooms/available
+- عرض الغرف المتاحة
+
+GET /ai/price
+- حساب السعر الذكي
+
+GET /reports/dashboard
+- تقارير الفندق
+
+========================================
+7. BUSINESS WORKFLOW
+========================================
+
+🔹 الحجز:
+1- التحقق من الشركة
+2- التحقق من الغرف
+3- حساب السعر بالذكاء الاصطناعي
+4- إنشاء الحجز
+5- حجز الغرفة
+
+----------------------------------------
+
+🔹 Check-in:
+- تغيير الحالة إلى Occupied
+- ربط النزيل بالعميل في ERP
+
+----------------------------------------
+
+🔹 Check-out:
+- إنشاء فاتورة ERP
+- تسجيل الدفع
+- تحرير الغرفة
+- إرسال تقييم
+
+========================================
+8. PERMISSIONS SYSTEM
+========================================
+
+MODULE CODE: HOTEL_AI
+
+----------------------------------------
+
+PERMISSIONS:
+- HOTEL_VIEW
+- HOTEL_BOOKING
+- HOTEL_CHECKIN
+- HOTEL_CHECKOUT
+- HOTEL_AI_PRICE_EDIT
+- HOTEL_REPORTS
+- HOTEL_MAINTENANCE
+
+----------------------------------------
+
+ROLES:
+
+👑 Super Admin:
+- كل الصلاحيات + إدارة الشركات
+
+🏨 Hotel Admin:
+- إدارة فندق داخل الشركة
+
+🧑‍💼 Receptionist:
+- حجوزات + دخول + خروج
+
+🧹 Housekeeping:
+- الصيانة فقط
+
+💰 Finance:
+- الفواتير والمدفوعات فقط
+
+RULE:
+User can only access data within CompanyID
+
+========================================
+9. SECURITY LAYER
+========================================
+
+RULE 1:
+No API access without CompanyID
+
+RULE 2:
+Data isolation mandatory
+
+RULE 3:
+Logs tracked per company
+
+RULE 4:
+AI works per company context only
+
+========================================
+10. DASHBOARD (ERP INTEGRATION)
+========================================
+
+- إشغال الفنادق
+- الإيرادات اليومية
+- أفضل الغرف مبيعًا
+- تنبيهات الصيانة
+- أداء الذكاء الاصطناعي
+- مقارنة الشركات (Super Admin)
+
+========================================
+11. EVENT SYSTEM
+========================================
+
+EVENT: BookingCreated
+→ Create ERP invoice draft
+
+EVENT: CheckOutCompleted
+→ Final invoice + CRM update
+
+EVENT: MaintenanceTriggered
+→ Create HR task
+
+========================================
+12. SUPER ADMIN CONTROL
+========================================
+
+- إنشاء شركات جديدة
+- ربط المستخدمين بالشركات
+- تفعيل/إيقاف الفنادق
+- مراقبة كل البيانات
+- تحليل شامل لكل الشركات
+
+========================================
+13. SCALABILITY
+========================================
+
+✔️ Multi Company
+✔️ Multi Hotel
+✔️ Cloud Ready
+✔️ API Driven
+✔️ AI Expandable
+✔️ Microservice Ready
+
+========================================
+END OF FULL ERP HOTEL MODULE

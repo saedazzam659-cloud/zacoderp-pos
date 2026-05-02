@@ -814,6 +814,9 @@ router.post("/register", async (req, res) => {
     // Security & Surveillance — backend uses the `security_events` permission
     // key (see routes/ai.ts security/* handlers and Layout.tsx securitySubNav).
     security: ["security_events"],
+    // Maintenance / Asset Management — single permission key matching the
+    // requirePermission("maintenance") guard in routes/maintenance.ts.
+    maintenance: ["maintenance"],
   };
   // Permissions are derived from the ACTIVE module set we computed above for
   // pricing — this guarantees that a module deactivated in /admin/modules can
