@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { bankAccountsTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
+import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureBankAccountLedger } from "../lib/entityAccounts.js";
 
@@ -11,10 +11,27 @@ router.use(extractAuth);
 router.use(requireModulePermission("bank_accounts"));
 router.use(moduleAudit("bank_accounts"));
 
+/**
+ * Branch-scope filter for bank accounts (nullable branchId column).
+ * Same semantics as the cash-boxes helper: NULL branch = shared / HQ
+ * resource visible to every branch user; otherwise restrict to user's
+ * allowed branches.
+ */
+function branchOrNullScope(req: any, branchCol: any): any {
+  const allowed = getAllowedBranchIds(req);
+  if (allowed === null) return undefined;
+  if (allowed.length === 0) return sql`false`;
+  return or(isNull(branchCol), inArray(branchCol, allowed));
+}
+
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const rows = cid
-    ? await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid))
+  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
+  const conds: any[] = [];
+  if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
+  if (branchCond) conds.push(branchCond);
+  const rows = conds.length
+    ? await db.select().from(bankAccountsTable).where(and(...conds))
     : await db.select().from(bankAccountsTable);
   res.json(rows);
 });
@@ -23,8 +40,12 @@ router.get("/balances", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
+  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
   const banks = await db.select({ id: bankAccountsTable.id })
-    .from(bankAccountsTable).where(eq(bankAccountsTable.companyId, cid));
+    .from(bankAccountsTable)
+    .where(branchCond
+      ? and(eq(bankAccountsTable.companyId, cid), branchCond)
+      : eq(bankAccountsTable.companyId, cid));
 
   const [recv, paid] = await Promise.all([
     db.select({
@@ -52,7 +73,14 @@ router.get("/balances", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const [row] = await db.select().from(bankAccountsTable).where(eq(bankAccountsTable.id, parseInt(req.params.id)));
+  const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  const id  = parseInt(req.params.id);
+  // Tenant + branch isolation on individual fetch.
+  const conds: any[] = [eq(bankAccountsTable.id, id)];
+  if (cid) conds.push(eq(bankAccountsTable.companyId, cid));
+  const branchCond = branchOrNullScope(req, bankAccountsTable.branchId);
+  if (branchCond) conds.push(branchCond);
+  const [row] = await db.select().from(bankAccountsTable).where(and(...conds));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });

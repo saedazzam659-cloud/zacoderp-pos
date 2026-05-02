@@ -30,6 +30,7 @@ export const warehousesTable = pgTable("warehouses", {
   id:             serial("id").primaryKey(),
   companyId:      integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
   groupId:        integer("group_id").references(() => warehouseGroupsTable.id),
+  branchId:       integer("branch_id").references(() => branchesTable.id),
   code:           text("code").notNull(),
   nameAr:         text("name_ar").notNull(),
   nameEn:         text("name_en"),

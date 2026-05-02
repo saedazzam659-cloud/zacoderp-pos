@@ -21,9 +21,9 @@ import {
   currenciesTable,
   notificationsTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, asc, gte, lte, lt, inArray, isNull, or } from "drizzle-orm";
 import { aliasedTable } from "drizzle-orm";
-import { extractAuth, resolveCompanyId, branchScopeSpread } from "../middleware/auth.js";
+import { extractAuth, resolveCompanyId, branchScopeSpread, getAllowedBranchIds } from "../middleware/auth.js";
 import { pathRbac, writeAudit } from "../middleware/permissions.js";
 import { ensureWarehouseAccount } from "../lib/entityAccounts.js";
 import { nextSequenceNumber } from "../lib/sequences.js";
@@ -103,13 +103,74 @@ router.delete("/warehouse-groups/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 // WAREHOUSES
 // ═══════════════════════════════════════════════════════════════════
+// Branch isolation (READ): warehouses with branchId IS NULL are shared
+// across all branches (HQ default). Restricted users see those plus
+// warehouses linked to their allowed branches; admin / viewAll users see
+// everything.
+function warehouseBranchScope(req: any): any {
+  const allowed = getAllowedBranchIds(req);
+  if (allowed === null) return undefined;
+  if (allowed.length === 0) return sql`false`;
+  return or(isNull(warehousesTable.branchId), inArray(warehousesTable.branchId, allowed));
+}
+
+// Branch isolation (WRITE): stricter than READ — restricted users can only
+// MUTATE warehouses whose branchId is in their allowed list. Shared (NULL)
+// warehouses are read-only for them; only admin / viewAll users can update
+// or delete them.
+function warehouseBranchWriteScope(req: any): any {
+  const allowed = getAllowedBranchIds(req);
+  if (allowed === null) return undefined;
+  if (allowed.length === 0) return sql`false`;
+  return inArray(warehousesTable.branchId, allowed);
+}
+
+// Write-side authorization for warehouse branchId. Returns the normalized
+// branchId (number | null) on success, or an {error,status} object otherwise.
+//   * admin / viewAll users: any branchId is OK as long as it belongs to the
+//     same company (or null for shared).
+//   * restricted users: branchId MUST be non-null AND in their allowed list —
+//     they cannot create or move a warehouse to another branch, nor make it
+//     a shared (null) warehouse visible to all branches.
+async function assertWarehouseBranchWritable(req: any, rawBranchId: any, cid: number):
+  Promise<{ ok: true; branchId: number | null } | { ok: false; status: number; error: string }> {
+  const branchId = rawBranchId === "" || rawBranchId === undefined || rawBranchId === null
+    ? null
+    : Number(rawBranchId);
+  const allowed = getAllowedBranchIds(req);
+
+  if (allowed === null) {
+    // Admin / viewAll: just confirm the branch belongs to this company.
+    if (branchId != null) {
+      const [b] = await db.select({ id: branchesTable.id })
+        .from(branchesTable)
+        .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+      if (!b) return { ok: false, status: 400, error: "الفرع المحدد غير صالح أو لا ينتمي لهذه الشركة" };
+    }
+    return { ok: true, branchId };
+  }
+
+  // Restricted user.
+  if (branchId == null) {
+    return { ok: false, status: 403, error: "ليس لديك صلاحية إنشاء مخزن مشترك بين كل الفروع" };
+  }
+  if (!allowed.includes(branchId)) {
+    return { ok: false, status: 403, error: "ليس لديك صلاحية على هذا الفرع" };
+  }
+  return { ok: true, branchId };
+}
+
 router.get("/warehouses", async (req, res) => {
   const cid = getCompanyId(req);
-  const rows = cid
+  const branchCond = warehouseBranchScope(req);
+  const conds: any[] = [];
+  if (cid) conds.push(eq(warehousesTable.companyId, cid));
+  if (branchCond) conds.push(branchCond);
+  const rows = conds.length
     ? await db.select({ wh: warehousesTable, group: warehouseGroupsTable })
         .from(warehousesTable)
         .leftJoin(warehouseGroupsTable, eq(warehousesTable.groupId, warehouseGroupsTable.id))
-        .where(eq(warehousesTable.companyId, cid))
+        .where(and(...conds))
         .orderBy(asc(warehousesTable.code))
     : await db.select({ wh: warehousesTable, group: warehouseGroupsTable })
         .from(warehousesTable)
@@ -120,8 +181,13 @@ router.get("/warehouses", async (req, res) => {
 
 router.post("/warehouses", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, accountId } = req.body;
+  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, accountId } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم المخزن مطلوبان" }); return; }
+  // Branch-level write guard: restricted users can only create warehouses
+  // for their own branch(es); admin/viewAll users can create shared (NULL)
+  // warehouses but the branchId (if any) must belong to the same company.
+  const branchCheck = await assertWarehouseBranchWritable(req, branchId, cid);
+  if (!branchCheck.ok) { res.status(branchCheck.status).json({ error: branchCheck.error }); return; }
   const existing = await db.select().from(warehousesTable).where(eq(warehousesTable.companyId, cid));
   if (existing.some(w => w.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمخزن آخر` }); return;
@@ -143,14 +209,25 @@ router.post("/warehouses", async (req, res) => {
       resolvedAccountId = null;
     }
   }
-  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: resolvedAccountId }).returning();
+  const [row] = await db.insert(warehousesTable).values({ companyId: cid, code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, accountId: resolvedAccountId }).returning();
   res.status(201).json(row);
 });
 
 router.put("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, groupId, city, region, allowNegative, negativeLimit, isActive, accountId } = req.body;
+  const { code, nameAr, nameEn, groupId, branchId, city, region, allowNegative, negativeLimit, isActive, accountId } = req.body;
+  // First make sure the existing warehouse is within the caller's branch
+  // WRITE scope. Restricted users cannot update shared (NULL) warehouses
+  // even though they can SEE them — only admin can mutate shared resources.
+  const scopeCond = warehouseBranchWriteScope(req);
+  const existingConds: any[] = [eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid)];
+  if (scopeCond) existingConds.push(scopeCond);
+  const [current] = await db.select().from(warehousesTable).where(and(...existingConds));
+  if (!current) { res.status(404).json({ error: "غير موجود" }); return; }
+  // Then validate the *target* branchId the user is trying to set.
+  const branchCheck = await assertWarehouseBranchWritable(req, branchId, cid);
+  if (!branchCheck.ok) { res.status(branchCheck.status).json({ error: branchCheck.error }); return; }
   const others = await db.select().from(warehousesTable).where(eq(warehousesTable.companyId, cid));
   if (code && others.some(w => w.id !== id && w.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
     res.status(409).json({ error: `الكود "${code}" مستخدم بالفعل لمخزن آخر` }); return;
@@ -161,7 +238,7 @@ router.put("/warehouses/:id", async (req, res) => {
   if (accountId && others.some(w => w.id !== id && w.accountId === Number(accountId))) {
     res.status(409).json({ error: "هذا الحساب مرتبط بمخزن آخر — اختر حساباً آخر" }); return;
   }
-  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
+  const [row] = await db.update(warehousesTable).set({ code, nameAr, nameEn, groupId: groupId || null, branchId: branchCheck.branchId, city, region, allowNegative: !!allowNegative, negativeLimit: negativeLimit || null, isActive: isActive !== false, accountId: accountId ? Number(accountId) : null }).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });
@@ -169,7 +246,13 @@ router.put("/warehouses/:id", async (req, res) => {
 router.delete("/warehouses/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  await db.delete(warehousesTable).where(and(eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid)));
+  // Branch-scoped delete: restricted users can only delete warehouses they
+  // OWN (in their branch list). Shared (NULL) warehouses are admin-only.
+  const scopeCond = warehouseBranchWriteScope(req);
+  const conds: any[] = [eq(warehousesTable.id, id), eq(warehousesTable.companyId, cid)];
+  if (scopeCond) conds.push(scopeCond);
+  const result = await db.delete(warehousesTable).where(and(...conds)).returning({ id: warehousesTable.id });
+  if (!result.length) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json({ ok: true });
 });
 

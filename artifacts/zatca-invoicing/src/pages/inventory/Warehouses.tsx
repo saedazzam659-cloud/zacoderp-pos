@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { useBranches } from "@/hooks/useBranches";
 import { inventoryApi } from "@/lib/inventoryApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ import { AccountCombobox } from "@/components/AccountCombobox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useTranslation } from "react-i18next";
 
-const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "" };
+const EMPTY = { code: "", nameAr: "", nameEn: "", groupId: "", branchId: "", city: "", region: "", allowNegative: false, negativeLimit: "", accountId: "" };
 
 export default function Warehouses() {
   const { t } = useTranslation();
@@ -38,6 +39,9 @@ export default function Warehouses() {
     queryKey: ["warehouse-groups", cid],
     queryFn: () => inventoryApi.getWarehouseGroups(cid),
   });
+  // Branches the current user is allowed to see (already filtered server-side
+  // by /api/org/branches based on viewAllBranches / user_branches).
+  const { data: branches = [] } = useBranches();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["warehouses"] });
   const createMut = useMutation({ mutationFn: inventoryApi.createWarehouse, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.warehouses.messages.saved") }); } });
@@ -46,7 +50,7 @@ export default function Warehouses() {
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveTab("basic"); }
   function handleEdit(w: any) {
-    setForm({ ...w, groupId: w.groupId ?? "", negativeLimit: w.negativeLimit ?? "", accountId: w.accountId ? String(w.accountId) : "" });
+    setForm({ ...w, groupId: w.groupId ?? "", branchId: w.branchId ? String(w.branchId) : "", negativeLimit: w.negativeLimit ?? "", accountId: w.accountId ? String(w.accountId) : "" });
     setEditId(w.id);
     setShowForm(true);
   }
@@ -55,6 +59,7 @@ export default function Warehouses() {
     const payload = {
       ...form,
       groupId:       form.groupId  ? Number(form.groupId)  : null,
+      branchId:      form.branchId ? Number(form.branchId) : null,
       negativeLimit: form.negativeLimit || null,
       accountId:     form.accountId ? Number(form.accountId) : null,
     };
@@ -121,6 +126,16 @@ export default function Warehouses() {
                 <div className="space-y-1.5">
                   <Label>{t("pages.warehouses.fields.nameEn")}</Label>
                   <Input placeholder="Main Warehouse" dir="ltr" className="text-left" value={form.nameEn} onChange={e => setForm((p: any) => ({ ...p, nameEn: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label>{t("pages.warehouses.fields.branch")}</Label>
+                  <SearchCombobox
+                    items={[{ value: "", label: t("pages.warehouses.fields.noBranch") }, ...(branches as any[]).map((b: any) => ({ value: String(b.id), code: b.code, label: b.nameAr, labelEn: b.nameEn }))]}
+                    value={form.branchId}
+                    onValueChange={v => setForm((p: any) => ({ ...p, branchId: v }))}
+                    placeholder={t("pages.warehouses.placeholders.selectBranch")}
+                  />
+                  <p className="text-[10px] text-muted-foreground">{t("pages.warehouses.fields.branchHint")}</p>
                 </div>
               </div>
             </TabsContent>

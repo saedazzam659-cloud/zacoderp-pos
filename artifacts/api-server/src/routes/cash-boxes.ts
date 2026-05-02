@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { cashBoxesTable, receiptVouchersTable, paymentVouchersTable } from "@workspace/db";
-import { eq, and, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { eq, and, sql, or, isNull, inArray } from "drizzle-orm";
+import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 import { ensureCashBoxAccount } from "../lib/entityAccounts.js";
 
@@ -11,21 +11,43 @@ router.use(extractAuth);
 router.use(requireModulePermission("cash_boxes"));
 router.use(moduleAudit("cash_boxes"));
 
+/**
+ * Branch-scope filter for cash boxes / bank accounts (nullable branchId tables).
+ * - admin / superadmin / viewAllBranches=true → no restriction (returns undefined)
+ * - restricted user with allowed branches → rows whose branchId IS NULL (shared / HQ)
+ *   OR branchId IN allowed
+ * - restricted user with zero linked branches → no rows (sql`false`)
+ */
+function branchOrNullScope(req: any, branchCol: any): any {
+  const allowed = getAllowedBranchIds(req);
+  if (allowed === null) return undefined;
+  if (allowed.length === 0) return sql`false`;
+  return or(isNull(branchCol), inArray(branchCol, allowed));
+}
+
 router.get("/", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
-  const rows = cid
-    ? await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid))
+  const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
+  const conds: any[] = [];
+  if (cid) conds.push(eq(cashBoxesTable.companyId, cid));
+  if (branchCond) conds.push(branchCond);
+  const rows = conds.length
+    ? await db.select().from(cashBoxesTable).where(and(...conds))
     : await db.select().from(cashBoxesTable);
   res.json(rows);
 });
 
-/* GET /cash-boxes/balances?companyId=X — رصيد كل خزنة */
+/* GET /cash-boxes/balances?companyId=X — رصيد كل خزنة (مفلترة بالفرع للمستخدم المقيد) */
 router.get("/balances", async (req, res) => {
   const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
   if (!cid) { res.status(400).json({ error: "companyId مطلوب" }); return; }
 
+  const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
   const boxes = await db.select({ id: cashBoxesTable.id })
-    .from(cashBoxesTable).where(eq(cashBoxesTable.companyId, cid));
+    .from(cashBoxesTable)
+    .where(branchCond
+      ? and(eq(cashBoxesTable.companyId, cid), branchCond)
+      : eq(cashBoxesTable.companyId, cid));
 
   const [recv, paid] = await Promise.all([
     db.select({
@@ -53,7 +75,15 @@ router.get("/balances", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const [row] = await db.select().from(cashBoxesTable).where(eq(cashBoxesTable.id, parseInt(req.params.id)));
+  const cid = resolveCompanyId(req, req.query.companyId ? parseInt(req.query.companyId as string) : undefined);
+  const id  = parseInt(req.params.id);
+  // Tenant isolation + branch isolation: never let any user fetch a cash box
+  // outside their own company OR outside the branches they're allowed to see.
+  const conds: any[] = [eq(cashBoxesTable.id, id)];
+  if (cid) conds.push(eq(cashBoxesTable.companyId, cid));
+  const branchCond = branchOrNullScope(req, cashBoxesTable.branchId);
+  if (branchCond) conds.push(branchCond);
+  const [row] = await db.select().from(cashBoxesTable).where(and(...conds));
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }
   res.json(row);
 });

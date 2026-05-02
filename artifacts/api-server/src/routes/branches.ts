@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { regionsTable, branchesTable } from "@workspace/db";
-import { eq, and, asc, sql } from "drizzle-orm";
-import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { eq, and, asc, sql, inArray } from "drizzle-orm";
+import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
 
 const router = Router();
@@ -121,23 +121,28 @@ router.delete("/regions/:id", async (req, res) => {
 // ═══════════════════════════════════════════════════
 
 // LIST branches (optionally filtered by regionId)
+// Branch-level isolation: a non-admin user with viewAllBranches=false only
+// ever sees branches they're explicitly linked to via user_branches. admins
+// and viewAll users see every branch of the company.
 router.get("/branches", async (req, res) => {
   try {
     const cid = getCompanyId(req);
     const regionId = req.query.regionId ? Number(req.query.regionId) : undefined;
+    const allowed = getAllowedBranchIds(req);
 
-    let rows: any[];
-    if (cid && regionId) {
-      rows = await db.select().from(branchesTable)
-        .where(and(eq(branchesTable.companyId, cid), eq(branchesTable.regionId, regionId)))
-        .orderBy(asc(branchesTable.code));
-    } else if (cid) {
-      rows = await db.select().from(branchesTable)
-        .where(eq(branchesTable.companyId, cid))
-        .orderBy(asc(branchesTable.code));
-    } else {
-      rows = await db.select().from(branchesTable).orderBy(asc(branchesTable.code));
+    // Restricted user with zero linked branches → return empty list immediately.
+    if (allowed !== null && allowed.length === 0) {
+      res.json([]); return;
     }
+
+    const conds: any[] = [];
+    if (cid)        conds.push(eq(branchesTable.companyId, cid));
+    if (regionId)   conds.push(eq(branchesTable.regionId, regionId));
+    if (allowed)    conds.push(inArray(branchesTable.id, allowed));
+
+    const rows = conds.length
+      ? await db.select().from(branchesTable).where(and(...conds)).orderBy(asc(branchesTable.code))
+      : await db.select().from(branchesTable).orderBy(asc(branchesTable.code));
 
     // attach region name
     const regionIds = [...new Set(rows.map((r: any) => r.regionId).filter(Boolean))];

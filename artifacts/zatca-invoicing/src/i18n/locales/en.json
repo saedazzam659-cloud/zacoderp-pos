@@ -1608,7 +1608,10 @@
         "allowNegative": "Allow Overdraft",
         "negativeLimit": "Overdraft Limit (Optional)",
         "inventoryAccount": "Inventory Account",
-        "inventoryAccountHint": "The accounting account that represents the balance of this warehouse in the general ledger"
+        "inventoryAccountHint": "The accounting account that represents the balance of this warehouse in the general ledger",
+        "branch": "Branch",
+        "noBranch": "No branch (shared across all branches)",
+        "branchHint": "Pick the branch this warehouse belongs to. Leave empty to make it a shared warehouse visible to all branches."
       },
       "placeholders": {
         "mainWarehouse": "Main Warehouse",
@@ -1616,7 +1619,8 @@
         "riyadhRegion": "Riyadh Region",
         "selectGroup": "— Select Group —",
         "selectAccount": "— Select Inventory Account —",
-        "search": "Search by code or name..."
+        "search": "Search by code or name...",
+        "selectBranch": "Select branch..."
       },
       "table": {
         "code": "Code",
