@@ -6,6 +6,9 @@ import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/Login";
 import CashierPage from "@/pages/Cashier";
 import SupermarketPage from "@/pages/Supermarket";
+import RestaurantHub from "@/pages/RestaurantHub";
+import WaiterApp from "@/pages/WaiterApp";
+import KitchenDisplay from "@/pages/KitchenDisplay";
 
 const queryClient = new QueryClient();
 
@@ -16,6 +19,9 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/pos" component={CashierPage} />
       <Route path="/super" component={SupermarketPage} />
+      <Route path="/restaurant" component={RestaurantHub} />
+      <Route path="/waiter" component={WaiterApp} />
+      <Route path="/kitchen" component={KitchenDisplay} />
       <Route component={NotFound} />
     </Switch>
   );

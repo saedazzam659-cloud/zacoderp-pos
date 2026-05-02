@@ -350,6 +350,175 @@ export const api = {
     req<PosSession>("POST", "/api/pos-sessions/open", body),
   closePosSession: (id: number, body: { closingCash?: number; notes?: string }) =>
     req<PosSession>("POST", `/api/pos-sessions/${id}/close`, body),
+
+  // ─── POS Restaurant ─────────────────────────────────────────────────────
+  rTables: () => req<RTable[]>("GET", "/api/pos-restaurant/tables"),
+  rCreateTable: (b: Partial<RTable> & { branchId: number; code: string; nameAr: string }) =>
+    req<RTable>("POST", "/api/pos-restaurant/tables", b),
+  rUpdateTable: (id: number, b: Partial<RTable>) =>
+    req<RTable>("PUT", `/api/pos-restaurant/tables/${id}`, b),
+  rDeleteTable: (id: number) =>
+    req<{ ok: true }>("DELETE", `/api/pos-restaurant/tables/${id}`),
+
+  rCategories: () =>
+    req<RMenuCategory[]>("GET", "/api/pos-restaurant/menu/categories"),
+  rCreateCategory: (b: Partial<RMenuCategory> & { code: string; nameAr: string }) =>
+    req<RMenuCategory>("POST", "/api/pos-restaurant/menu/categories", b),
+  rUpdateCategory: (id: number, b: Partial<RMenuCategory>) =>
+    req<RMenuCategory>("PUT", `/api/pos-restaurant/menu/categories/${id}`, b),
+  rDeleteCategory: (id: number) =>
+    req<{ ok: true }>("DELETE", `/api/pos-restaurant/menu/categories/${id}`),
+
+  rMenuItems: (categoryId?: number) =>
+    req<RMenuItem[]>("GET", `/api/pos-restaurant/menu/items${categoryId ? `?categoryId=${categoryId}` : ""}`),
+  rCreateMenuItem: (b: Partial<RMenuItem> & { categoryId: number; code: string; nameAr: string }) =>
+    req<RMenuItem>("POST", "/api/pos-restaurant/menu/items", b),
+  rUpdateMenuItem: (id: number, b: Partial<RMenuItem>) =>
+    req<RMenuItem>("PUT", `/api/pos-restaurant/menu/items/${id}`, b),
+  rDeleteMenuItem: (id: number) =>
+    req<{ ok: true }>("DELETE", `/api/pos-restaurant/menu/items/${id}`),
+
+  rOrders: (q?: { status?: string; tableId?: number }) => {
+    const qs = new URLSearchParams();
+    if (q?.status) qs.set("status", q.status);
+    if (q?.tableId) qs.set("tableId", String(q.tableId));
+    const s = qs.toString();
+    return req<ROrder[]>("GET", `/api/pos-restaurant/orders${s ? `?${s}` : ""}`);
+  },
+  rOrder: (id: number) =>
+    req<ROrder & { items: ROrderItem[] }>("GET", `/api/pos-restaurant/orders/${id}`),
+  rCreateOrder: (b: {
+    branchId: number; channel?: string; tableId?: number;
+    customerName?: string; customerPhone?: string;
+    guestCount?: number; notes?: string;
+  }) => req<ROrder>("POST", "/api/pos-restaurant/orders", b),
+  rAddItem: (orderId: number, b: { menuItemId: number; qty?: number; notes?: string; modifiers?: any[] }) =>
+    req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
+      "POST", `/api/pos-restaurant/orders/${orderId}/items`, b),
+  rRemoveItem: (orderId: number, itemId: number) =>
+    req<{ ok: true; subtotal: string; vatAmount: string; total: string }>(
+      "DELETE", `/api/pos-restaurant/orders/${orderId}/items/${itemId}`),
+  rSendOrder: (id: number) =>
+    req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/send`),
+  rBillOrder: (id: number, b: { salesInvoiceId?: number } = {}) =>
+    req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/bill`, b),
+  rCancelOrder: (id: number) =>
+    req<{ ok: true }>("POST", `/api/pos-restaurant/orders/${id}/cancel`),
+
+  rKitchen: (station?: string) =>
+    req<(ROrder & { items: ROrderItem[] })[]>(
+      "GET", `/api/pos-restaurant/kitchen/tickets${station ? `?station=${station}` : ""}`),
+  rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
+    req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
+
+  rRecommend: (limit = 8) =>
+    req<{ menuItemId: number; nameSnapshot: string; qtySum: string; revenue: string; orderCount: number }[]>(
+      "GET", `/api/pos-restaurant/ai/recommend?limit=${limit}`),
+  rSuspiciousScan: () =>
+    req<{ created: number; items: RSuspiciousOp[] }>("POST", "/api/pos-restaurant/ai/suspicious/scan"),
+  rSuspicious: () =>
+    req<RSuspiciousOp[]>("GET", "/api/pos-restaurant/ai/suspicious"),
+  rSuspiciousAck: (id: number) =>
+    req<{ ok: true }>("PUT", `/api/pos-restaurant/ai/suspicious/${id}/ack`),
+};
+
+// ─── Restaurant types ────────────────────────────────────────────────────
+export type RTable = {
+  id: number;
+  companyId: number;
+  branchId: number;
+  code: string;
+  nameAr: string;
+  capacity: number;
+  area?: string | null;
+  status: "free" | "occupied" | "reserved" | "cleaning";
+  currentOrderId?: number | null;
+  notes?: string | null;
+  isActive: boolean;
+};
+
+export type RMenuCategory = {
+  id: number;
+  companyId: number;
+  code: string;
+  nameAr: string;
+  nameEn?: string | null;
+  kind: "food" | "drink" | "dessert" | "other";
+  displayOrder: number;
+  color?: string | null;
+  branchId?: number | null;
+  isActive: boolean;
+};
+
+export type RMenuItem = {
+  id: number;
+  companyId: number;
+  categoryId: number;
+  code: string;
+  nameAr: string;
+  nameEn?: string | null;
+  description?: string | null;
+  price: string;
+  prepTimeMinutes: number;
+  kitchenStation: "kitchen" | "bar" | "grill" | "cold" | "dessert";
+  imageUrl?: string | null;
+  itemId?: number | null;
+  vatIncluded: boolean;
+  modifiers?: any[];
+  isActive: boolean;
+};
+
+export type ROrder = {
+  id: number;
+  companyId: number;
+  branchId: number;
+  orderNumber: string;
+  channel: "dine_in" | "takeaway" | "delivery";
+  tableId?: number | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  waiterId?: number | null;
+  guestCount: number;
+  status: "draft" | "sent" | "preparing" | "ready" | "served" | "billed" | "cancelled";
+  subtotal: string;
+  vatAmount: string;
+  total: string;
+  notes?: string | null;
+  openedAt: string;
+  sentAt?: string | null;
+  readyAt?: string | null;
+  servedAt?: string | null;
+  billedAt?: string | null;
+  cancelledAt?: string | null;
+  billedInvoiceId?: number | null;
+};
+
+export type ROrderItem = {
+  id: number;
+  orderId: number;
+  menuItemId: number;
+  nameSnapshot: string;
+  qty: string;
+  price: string;
+  total: string;
+  status: "pending" | "preparing" | "ready" | "served" | "cancelled";
+  kitchenStation: string;
+  modifiers?: any[];
+  notes?: string | null;
+  sentAt?: string | null;
+  readyAt?: string | null;
+};
+
+export type RSuspiciousOp = {
+  id: number;
+  companyId: number;
+  userId?: number | null;
+  kind: string;
+  severity: "low" | "medium" | "high";
+  description: string;
+  payload?: any;
+  acknowledged: boolean;
+  createdAt: string;
 };
 
 const POS_SESSION_KEY = "zatca_pos_session_id";
