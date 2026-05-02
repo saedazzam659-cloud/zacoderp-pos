@@ -5054,8 +5054,16 @@
         "topCustomers": "Top customers",
         "byRep": "By sales rep",
         "byBranch": "By branch",
+        "byPayment": "Sales by payment method",
         "receipts": "Cash receipts collected today",
         "invoices": "All invoices for the day"
+      },
+      "byPayment": {
+        "colMethod": "Payment method",
+        "colCount": "Invoice count",
+        "colAmount": "Amount",
+        "colPercent": "Share",
+        "totalLabel": "Total"
       },
       "empty": {
         "noActivity": "No sales activity in this day",
@@ -5063,6 +5071,7 @@
         "noCustomers": "No customers",
         "noReps": "No sales-rep activity",
         "noBranches": "No branch activity",
+        "noPayments": "No sales for today",
         "noReceipts": "No cash receipts",
         "noInvoices": "No invoices on this day"
       },

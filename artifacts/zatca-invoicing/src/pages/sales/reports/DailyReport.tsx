@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { useFmt } from "@/hooks/use-fmt";
 import {
   Sun, FileText, Wallet, Banknote, CreditCard, Package, Users,
-  RotateCcw, Receipt, TrendingUp, Clock, Building2, UserCheck,
+  RotateCcw, Receipt, TrendingUp, Clock, Building2, UserCheck, PieChart,
 } from "lucide-react";
 
 const STATUS_TONE: Record<string, string> = {
@@ -319,6 +319,100 @@ export default function DailyReport() {
           )}
         </Section>
       </div>
+
+      {/* ───── Sales by payment method (breakdown table) */}
+      <Section title={tr("sections.byPayment")} icon={PieChart}>
+        {isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (() => {
+          const total = Number(summary?.totalAmount ?? 0);
+          const rows = [
+            {
+              key:    "cash" as const,
+              label:  tr("payment.cash"),
+              count:  summary?.cashCount  ?? 0,
+              amount: Number(summary?.cashAmount  ?? 0),
+            },
+            {
+              key:    "bank" as const,
+              label:  tr("payment.bank"),
+              count:  summary?.bankCount  ?? 0,
+              amount: Number(summary?.bankAmount  ?? 0),
+            },
+            {
+              key:    "credit" as const,
+              label:  tr("payment.credit"),
+              count:  summary?.creditCount ?? 0,
+              amount: Number(summary?.creditAmount ?? 0),
+            },
+          ];
+          const totalCount = rows.reduce((s, r) => s + r.count, 0);
+          if (totalCount === 0) return <EmptyText>{tr("empty.noPayments")}</EmptyText>;
+          return (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[480px]">
+                <thead className="bg-muted/40 border-b">
+                  <tr>
+                    <th className={`px-3 py-2 ${isRtl ? "text-right" : "text-left"} font-semibold text-muted-foreground`}>
+                      {tr("byPayment.colMethod")}
+                    </th>
+                    <th className="px-3 py-2 text-center font-semibold text-muted-foreground">
+                      {tr("byPayment.colCount")}
+                    </th>
+                    <th className="px-3 py-2 text-center font-semibold text-muted-foreground">
+                      {tr("byPayment.colAmount")}
+                    </th>
+                    <th className="px-3 py-2 text-center font-semibold text-muted-foreground">
+                      {tr("byPayment.colPercent")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {rows.map(r => {
+                    const pct = total > 0 ? (r.amount / total) * 100 : 0;
+                    return (
+                      <tr key={r.key} className="hover:bg-muted/20">
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${PAYMENT_TONE[r.key] ?? ""}`}>
+                            {r.label}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-center tabular-nums">{r.count}</td>
+                        <td className="px-3 py-2 text-center tabular-nums font-bold">{fmt(r.amount)}</td>
+                        <td className="px-3 py-2 text-center">
+                          <div className="flex items-center gap-2 justify-center">
+                            <div className="w-24 h-2 bg-muted/40 rounded overflow-hidden">
+                              <div
+                                className={
+                                  r.key === "cash"   ? "h-full bg-emerald-500/80" :
+                                  r.key === "bank"   ? "h-full bg-sky-500/80"     :
+                                                       "h-full bg-amber-500/80"
+                                }
+                                style={{ width: `${Math.min(100, pct)}%` }}
+                              />
+                            </div>
+                            <span className="tabular-nums text-xs text-muted-foreground w-10 text-right">
+                              {pct.toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-muted/30 border-t">
+                  <tr>
+                    <td className="px-3 py-2 text-xs font-bold">{tr("byPayment.totalLabel")}</td>
+                    <td className="px-3 py-2 text-center tabular-nums font-bold">{totalCount}</td>
+                    <td className="px-3 py-2 text-center tabular-nums font-bold text-blue-700">{fmt(total)}</td>
+                    <td className="px-3 py-2 text-center tabular-nums font-bold">100%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          );
+        })()}
+      </Section>
 
       {/* ───── Receipts list (cash collected today) */}
       <Section title={tr("sections.receipts")} icon={Receipt}>
