@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FormPanel } from "@/components/FormPanel";
-import { TablePagination, usePagination } from "@/components/TablePagination";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -20,11 +20,17 @@ import {
 import {
   Plus, Search, Pencil, Trash2, UserCheck, UserX,
   Phone, Mail, MapPin, Percent, Target, Users, Sparkles, Loader2,
+  FileSpreadsheet, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
+import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
+} from "@/components/auditGrid/AuditGridControls";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -121,7 +127,7 @@ export default function SalesReps() {
     staleTime: 60_000,
   });
 
-  const filtered = reps.filter((r) => {
+  const filteredBySearch = reps.filter((r) => {
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
     return (
@@ -134,7 +140,75 @@ export default function SalesReps() {
     );
   });
 
-  const pager = usePagination(filtered);
+  // ── Audit-grid layout (column reorder, resize, filters, palette, paging) ──
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: Rep) => string | number }
+  const COLUMNS: ColDef[] = useMemo(() => [
+    { key: "_sel",       label: "",            type: "none", valueOf: () => "" },
+    { key: "_idx",       label: "#",           type: "none", valueOf: () => "" },
+    { key: "code",       label: "الكود",       type: "text", valueOf: (r) => r.code ?? "" },
+    { key: "name",       label: "الاسم",       type: "text", valueOf: (r) => `${r.nameAr ?? ""} ${r.nameEn ?? ""}`.trim() },
+    { key: "phone",      label: "الهاتف",      type: "text", valueOf: (r) => r.phone ?? "" },
+    { key: "email",      label: "البريد",      type: "text", valueOf: (r) => r.email ?? "" },
+    { key: "region",     label: "المنطقة",     type: "text", valueOf: (r) => r.region ?? "" },
+    { key: "commission", label: "العمولة %",   type: "num",  valueOf: (r) => Number(r.commissionPct) || 0 },
+    { key: "target",     label: "الهدف الشهري", type: "num",  valueOf: (r) => Number(r.monthlyTarget) || 0 },
+    { key: "status",     label: "الحالة",      type: "text", valueOf: (r) => r.isActive ? "نشط" : "متوقف" },
+    { key: "_act",       label: "إجراءات",     type: "none", valueOf: () => "" },
+  ], []);
+  const dataKeys = useMemo(() => COLUMNS.filter(c => !["_sel","_idx","_act"].includes(c.key)).map(c => c.key), [COLUMNS]);
+  const allColKeys = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
+  const layout = useAuditGridLayout({ screenSlug: "salesReps", cid, dataKeys, allColKeys });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+  const { theme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection,
+          pageSize, page, setPage } = layout;
+  const isRtl = true;
+
+  const filtered = useMemo(() => filteredBySearch.filter((r) => {
+    for (const col of COLUMNS) {
+      const f = colFilters[col.key];
+      if (!f) continue;
+      if (!matchCol(col.valueOf(r), f, col.type)) return false;
+    }
+    return true;
+  }), [filteredBySearch, colFilters, COLUMNS]);
+
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  useEffect(() => { if (safePage !== page) setPage(safePage); }, [safePage, page, setPage]);
+  const paged = useMemo(() => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, pageSize, safePage]);
+  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find(c => c.key === "_sel")!;
+    const idx = COLUMNS.find(c => c.key === "_idx")!;
+    const act = COLUMNS.find(c => c.key === "_act")!;
+    return [sel, idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(() => layout.dataOrder
+    .map(k => COLUMNS.find(c => c.key === k)!)
+    .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
+  const allFilteredIds = useMemo(() => filtered.map(r => r.id), [filtered]);
+
+  function exportCsv() {
+    if (filtered.length === 0) {
+      toast({ title: "لا يوجد بيانات للتصدير", variant: "destructive" });
+      return;
+    }
+    const exportable = visibleColumns.filter(c => !["_sel","_idx","_act"].includes(c.key));
+    const header = ["#", ...exportable.map(c => c.label)];
+    const rows = filtered.map((r, i) => [
+      i + 1,
+      ...exportable.map(c => {
+        const v = c.valueOf(r);
+        return c.type === "num" ? Number(v).toFixed(2) : String(v ?? "");
+      }),
+    ]);
+    downloadCsv(`sales-reps-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
 
   function openNew() {
     setEditing(null);
@@ -251,15 +325,64 @@ export default function SalesReps() {
         </Button>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute end-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="بحث بالاسم، الكود، الهاتف، المنطقة…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pe-9"
-          data-testid="input-search-rep"
-        />
+      {/* Audit-grid toolbar */}
+      <div className={cn("rounded-t-lg overflow-hidden border shadow-sm transition-colors", theme.border)}>
+        <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir="rtl">
+          <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+            <Users className="h-4 w-4 opacity-90" />
+            مناديب المبيعات
+          </div>
+          <div className="flex items-center gap-1.5">
+            <HeaderColorPicker layout={layout} isRtl={isRtl} />
+            <FooterColorPicker layout={layout} isRtl={isRtl} />
+            <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+              onClick={exportCsv}
+              data-testid="btn-export-csv"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              تصدير CSV
+            </Button>
+          </div>
+        </div>
+        <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir="rtl">
+          <div className="relative">
+            <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="بحث بالاسم، الكود، الهاتف، المنطقة…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pe-7 h-7 text-xs w-64"
+              data-testid="input-search-rep"
+            />
+          </div>
+          {Object.values(colFilters).some(v => v) && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+              onClick={clearColFilters}
+            >
+              <X className="h-3.5 w-3.5 me-1" />
+              مسح فلاتر الأعمدة
+            </Button>
+          )}
+          <div className="flex-1" />
+          <span className="text-slate-700 font-medium">
+            {filtered.length} مندوب
+            {filtered.length !== reps.length && <span className="text-slate-400"> / {reps.length}</span>}
+          </span>
+        </div>
+        <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
+          <span className="text-emerald-800">
+            تم تحديد {layout.selected.size} مندوب
+          </span>
+        </AuditGridBulkBar>
       </div>
 
       {showForm && (
@@ -425,137 +548,249 @@ export default function SalesReps() {
         </FormPanel>
       )}
 
-      {isLoading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="border rounded-lg p-8 text-center text-muted-foreground">
-          {reps.length === 0
-            ? "لا يوجد مناديب بعد. اضغط على «مندوب جديد» للإضافة."
-            : "لا توجد نتائج مطابقة لبحثك."}
-        </div>
-      ) : (
-        <>
-        {(() => {
-          const items: LegendItem[] = [
-            { kind: "active",   count: filtered.filter((r: any) => r.isActive).length },
-            { kind: "inactive", count: filtered.filter((r: any) => !r.isActive).length },
-          ];
-          return <DocColorLegend items={items} />;
-        })()}
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr className="text-right">
-                <th className="px-3 py-2 font-medium">الكود</th>
-                <th className="px-3 py-2 font-medium">الاسم</th>
-                <th className="px-3 py-2 font-medium">الهاتف</th>
-                <th className="px-3 py-2 font-medium">المنطقة</th>
-                <th className="px-3 py-2 font-medium">العمولة</th>
-                <th className="px-3 py-2 font-medium">الهدف الشهري</th>
-                <th className="px-3 py-2 font-medium">الحالة</th>
-                <th className="px-3 py-2 font-medium text-center w-28">إجراءات</th>
+      {(() => {
+        const items: LegendItem[] = [
+          { kind: "active",   count: filtered.filter((r) => r.isActive).length },
+          { kind: "inactive", count: filtered.filter((r) => !r.isActive).length },
+        ];
+        return <DocColorLegend items={items} />;
+      })()}
+
+      <div className="border border-slate-300 border-t-0 rounded-b-lg bg-white overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table ref={tableRef} className="w-full text-[11px] border-collapse" dir="rtl">
+            <colgroup>
+              {visibleColumns.map((col) => (
+                <col
+                  key={col.key}
+                  data-col-key={col.key}
+                  style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined}
+                />
+              ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                {visibleColumns.map((col, idx) => (
+                  <th
+                    key={col.key}
+                    data-col-key={col.key}
+                    className={cn(
+                      "relative px-2 py-1.5 text-right font-semibold border-e border-slate-300 select-none",
+                      col.key === "_sel" && "w-9 text-center px-1",
+                      col.key === "_idx" && "w-10 text-center px-1",
+                      col.key === "_act" && "w-32 text-center",
+                      col.type === "num" && "text-end",
+                    )}
+                  >
+                    {col.key === "_sel" ? (
+                      <HeaderSelectCheckbox
+                        allSelected={isAllSelected(allFilteredIds)}
+                        someSelected={isSomeSelected(allFilteredIds)}
+                        onToggle={() => toggleAll(allFilteredIds)}
+                        disabled={allFilteredIds.length === 0}
+                      />
+                    ) : (
+                      <span className="inline-block truncate">{col.label}</span>
+                    )}
+                    {col.key !== "_sel" && (
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="absolute inset-y-0 start-0 w-1 cursor-col-resize hover:bg-blue-400/40 active:bg-blue-500/60"
+                      />
+                    )}
+                  </th>
+                ))}
+              </tr>
+              <tr className="bg-amber-50/80 border-b border-amber-200">
+                {visibleColumns.map((col) => (
+                  <th key={col.key} className="px-1 py-1 border-e border-amber-200/60">
+                    {col.type === "none" ? null : (
+                      <Input
+                        value={colFilters[col.key] ?? ""}
+                        onChange={(e) => setColFilter(col.key, e.target.value)}
+                        placeholder={col.type === "num" ? ">=N" : "فلتر…"}
+                        className="h-6 text-[10px] px-1.5 bg-white"
+                      />
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {pager.pagedItems.map((r) => {
-                const dictStatus = r.isActive ? "active" : "inactive";
-                return (
-                <tr key={r.id}
-                    data-status={dictStatus}
-                    className={cn("border-t transition-colors", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
-                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
-                    data-testid={`row-rep-${r.id}`}>
-                  <td className="px-3 py-2 font-mono text-xs">{r.code}</td>
-                  <td className="px-3 py-2 font-medium">
-                    {r.nameAr}
-                    {r.nameEn && <div className="text-xs text-muted-foreground">{r.nameEn}</div>}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {r.phone ? (<span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{r.phone}</span>) : "—"}
-                    {r.email && (<div className="text-xs flex items-center gap-1"><Mail className="h-3 w-3" />{r.email}</div>)}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {r.region ? (<span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{r.region}</span>) : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <Percent className="h-3 w-3 text-muted-foreground" />
-                      <span className="font-medium">{Number(r.commissionPct).toFixed(2)}%</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.commissionType === "collection" ? "على التحصيل" : "على الفاتورة"}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="inline-flex items-center gap-1">
-                      <Target className="h-3 w-3 text-muted-foreground" />
-                      {Number(r.monthlyTarget).toLocaleString("ar-SA", { maximumFractionDigits: 2 })} ر.س
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.isActive ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-50 text-green-700 border border-green-200">
-                        <UserCheck className="h-3 w-3" />نشط
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600 border border-gray-200">
-                        <UserX className="h-3 w-3" />متوقف
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center justify-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-violet-600 hover:text-violet-700"
-                        onClick={() => runAiAnalysis(r)}
-                        title="تحليل الأداء بالذكاء الاصطناعي"
-                        data-testid={`btn-ai-${r.id}`}
-                      >
-                        <Sparkles className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => openEdit(r)}
-                        data-testid={`btn-edit-${r.id}`}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-red-600 hover:text-red-700"
-                        onClick={() => setDeleteRep(r)}
-                        data-testid={`btn-delete-${r.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+              {isLoading ? (
+                [1, 2, 3, 4, 5].map((i) => (
+                  <tr key={i}>
+                    <td colSpan={visibleColumns.length} className="px-2 py-2">
+                      <Skeleton className="h-6 w-full" />
+                    </td>
+                  </tr>
+                ))
+              ) : paged.length === 0 ? (
+                <tr>
+                  <td colSpan={visibleColumns.length} className="px-3 py-12 text-center text-muted-foreground">
+                    {reps.length === 0
+                      ? "لا يوجد مناديب بعد. اضغط على «مندوب جديد» للإضافة."
+                      : "لا توجد نتائج مطابقة لبحثك."}
                   </td>
                 </tr>
-                );
-              })}
+              ) : (
+                paged.map((r, rowIdx) => {
+                  const dictStatus = r.isActive ? "active" : "inactive";
+                  const sel = isSelected(r.id);
+                  return (
+                    <tr
+                      key={r.id}
+                      data-status={dictStatus}
+                      className={cn(
+                        "border-b border-slate-200 transition-colors",
+                        sel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
+                      )}
+                      title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                      data-testid={`row-rep-${r.id}`}
+                    >
+                      {visibleColumns.map((col) => {
+                        if (col.key === "_sel") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center border-e border-slate-200/60">
+                              <RowSelectCheckbox
+                                checked={sel}
+                                onToggle={() => toggleRow(r.id)}
+                                ariaLabel={`تحديد ${r.nameAr}`}
+                              />
+                            </td>
+                          );
+                        }
+                        if (col.key === "_idx") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center text-slate-500 font-mono border-e border-slate-200/60">
+                              {pageStart + rowIdx}
+                            </td>
+                          );
+                        }
+                        if (col.key === "code") {
+                          return <td key={col.key} className="px-2 py-1 font-mono text-[10px] border-e border-slate-200/60">{r.code}</td>;
+                        }
+                        if (col.key === "name") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              <div className="font-medium">{r.nameAr}</div>
+                              {r.nameEn && <div className="text-[10px] text-muted-foreground">{r.nameEn}</div>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "phone") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {r.phone ? (<span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{r.phone}</span>) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "email") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {r.email ? (<span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{r.email}</span>) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "region") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {r.region ? (<span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{r.region}</span>) : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "commission") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
+                              <div className="inline-flex items-center gap-1">
+                                <Percent className="h-3 w-3 text-muted-foreground" />
+                                <span className="font-medium">{Number(r.commissionPct).toFixed(2)}%</span>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {r.commissionType === "collection" ? "على التحصيل" : "على الفاتورة"}
+                              </div>
+                            </td>
+                          );
+                        }
+                        if (col.key === "target") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
+                              <span className="inline-flex items-center gap-1">
+                                <Target className="h-3 w-3 text-muted-foreground" />
+                                {Number(r.monthlyTarget).toLocaleString("ar-SA", { maximumFractionDigits: 2 })} ر.س
+                              </span>
+                            </td>
+                          );
+                        }
+                        if (col.key === "status") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              {r.isActive ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-green-50 text-green-700 border border-green-200">
+                                  <UserCheck className="h-3 w-3" />نشط
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-600 border border-gray-200">
+                                  <UserX className="h-3 w-3" />متوقف
+                                </span>
+                              )}
+                            </td>
+                          );
+                        }
+                        if (col.key === "_act") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-violet-600 hover:text-violet-700"
+                                  onClick={() => runAiAnalysis(r)}
+                                  title="تحليل الأداء بالذكاء الاصطناعي"
+                                  data-testid={`btn-ai-${r.id}`}
+                                >
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => openEdit(r)}
+                                  data-testid={`btn-edit-${r.id}`}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-red-600 hover:text-red-700"
+                                  onClick={() => setDeleteRep(r)}
+                                  data-testid={`btn-delete-${r.id}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          );
+                        }
+                        return null;
+                      })}
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
-          {filtered.length > 0 && (
-            <TablePagination
-              page={pager.page}
-              pageSize={pager.pageSize}
-              pageCount={pager.pageCount}
-              total={pager.total}
-              onPageChange={pager.setPage}
-              onPageSizeChange={pager.setPageSize}
-              itemLabel="مندوب"
-            />
-          )}
         </div>
-        </>
-      )}
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filtered.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel="مندوب"
+        />
+      </div>
 
       <AlertDialog open={!!deleteRep} onOpenChange={(o) => !o && setDeleteRep(null)}>
         <AlertDialogContent dir="rtl">

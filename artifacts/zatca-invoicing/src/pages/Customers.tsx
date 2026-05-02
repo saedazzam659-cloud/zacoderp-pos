@@ -4,14 +4,14 @@ import { Link } from "wouter";
 import {
   Plus, Users, Search, Phone, Mail, MapPin,
   BadgeCheck, Building2, UserCheck, FileText, Pencil, Trash2,
+  FileSpreadsheet, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ExportButtons from "@/components/ExportButtons";
-import { TablePagination, usePagination } from "@/components/TablePagination";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -21,8 +21,13 @@ import { useTranslation } from "react-i18next";
 import { Trans } from "react-i18next";
 import { cn } from "@/lib/utils";
 import {
-  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
+import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
+} from "@/components/auditGrid/AuditGridControls";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -98,7 +103,7 @@ export default function Customers() {
     individual: individuals,
   };
 
-  const filtered = (customers as any[]).filter(c => {
+  const filteredBySearch = (customers as any[]).filter(c => {
     const q = search.toLowerCase();
     const matchSearch =
       !search ||
@@ -115,9 +120,76 @@ export default function Customers() {
     return matchSearch && matchTab;
   });
 
-  const pager = usePagination(filtered);
-
   const isRtl = i18n.language === "ar";
+
+  // ── Audit-grid layout ──
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number }
+  const COLUMNS: ColDef[] = useMemo(() => [
+    { key: "_sel",     label: "",                             type: "none", valueOf: () => "" },
+    { key: "_idx",     label: "#",                            type: "none", valueOf: () => "" },
+    { key: "name",     label: t("pages.customers.customer"),  type: "text", valueOf: (c) => `${c.nameAr ?? ""} ${c.nameEn ?? ""}`.trim() },
+    { key: "vat",      label: t("pages.customers.vatNumber"), type: "text", valueOf: (c) => c.vatNumber ?? "" },
+    { key: "cr",       label: t("pages.customers.crNumber"),  type: "text", valueOf: (c) => c.crNumber ?? "" },
+    { key: "city",     label: t("pages.customers.city"),      type: "text", valueOf: (c) => c.city ?? "" },
+    { key: "phone",    label: t("pages.customers.phone"),     type: "text", valueOf: (c) => c.phone ?? "" },
+    { key: "email",    label: t("pages.customers.email"),     type: "text", valueOf: (c) => c.email ?? "" },
+    { key: "type",     label: t("pages.customers.type"),      type: "text", valueOf: (c) => c.vatNumber ? "B2B" : "B2C" },
+    { key: "balance",  label: t("pages.customers.balance"),   type: "num",  valueOf: (c) => Number(balMap[c.id] ?? 0) },
+    { key: "_act",     label: t("common.actions"),            type: "none", valueOf: () => "" },
+  ], [t, balMap]);
+  const dataKeys = useMemo(() => COLUMNS.filter(c => !["_sel","_idx","_act"].includes(c.key)).map(c => c.key), [COLUMNS]);
+  const allColKeys = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
+  const layout = useAuditGridLayout({ screenSlug: "customers", cid, dataKeys, allColKeys });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+  const { theme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection,
+          pageSize, page, setPage } = layout;
+
+  const filtered = useMemo(() => filteredBySearch.filter((c) => {
+    for (const col of COLUMNS) {
+      const f = colFilters[col.key];
+      if (!f) continue;
+      if (!matchCol(col.valueOf(c), f, col.type)) return false;
+    }
+    return true;
+  }), [filteredBySearch, colFilters, COLUMNS]);
+
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  useEffect(() => { if (safePage !== page) setPage(safePage); }, [safePage, page, setPage]);
+  const paged = useMemo(() => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, pageSize, safePage]);
+  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find(c => c.key === "_sel")!;
+    const idx = COLUMNS.find(c => c.key === "_idx")!;
+    const act = COLUMNS.find(c => c.key === "_act")!;
+    return [sel, idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(() => layout.dataOrder
+    .map(k => COLUMNS.find(c => c.key === k)!)
+    .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
+  const allFilteredIds = useMemo(() => filtered.map((c: any) => c.id as number), [filtered]);
+
+  function exportCsv() {
+    if (filtered.length === 0) {
+      toast({ title: t("pages.customers.noResultsMatch"), variant: "destructive" });
+      return;
+    }
+    const exportable = visibleColumns.filter(c => !["_sel","_idx","_act"].includes(c.key));
+    const header = ["#", ...exportable.map(c => c.label)];
+    const rows = filtered.map((c: any, i: number) => [
+      i + 1,
+      ...exportable.map(col => {
+        const v = col.valueOf(c);
+        return col.type === "num" ? Number(v).toFixed(2) : String(v ?? "");
+      }),
+    ]);
+    downloadCsv(`customers-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
 
   return (
     <div className="space-y-0" dir={isRtl ? "rtl" : "ltr"}>
@@ -268,74 +340,146 @@ export default function Customers() {
           return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}
 
-        {/* Search bar */}
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b bg-muted/10">
-          <p className="text-xs text-muted-foreground">
-            {isLoading ? t("common.loading") : t("pages.customers.resultsCount", { count: filtered.length })}
-          </p>
-          <div className="relative">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder={t("pages.customers.searchPlaceholder")}
-              className="pr-9 h-8 w-64 text-sm"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+        {/* Audit-grid toolbar */}
+        <div className={cn("border-t shadow-sm transition-colors", theme.border)}>
+          <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir={isRtl ? "rtl" : "ltr"}>
+            <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+              <Users className="h-4 w-4 opacity-90" />
+              {t("pages.customers.customers")}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <HeaderColorPicker layout={layout} isRtl={isRtl} />
+              <FooterColorPicker layout={layout} isRtl={isRtl} />
+              <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                onClick={exportCsv}
+                data-testid="btn-export-csv-customers"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+            </div>
           </div>
+          <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir={isRtl ? "rtl" : "ltr"}>
+            <div className="relative">
+              <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder={t("pages.customers.searchPlaceholder")}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pe-7 h-7 text-xs w-64"
+              />
+            </div>
+            {Object.values(colFilters).some(v => v) && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+                onClick={clearColFilters}
+              >
+                <X className="h-3.5 w-3.5 me-1" />
+                مسح فلاتر الأعمدة
+              </Button>
+            )}
+            <div className="flex-1" />
+            <span className="text-slate-700 font-medium">
+              {isLoading ? t("common.loading") : t("pages.customers.resultsCount", { count: filtered.length })}
+            </span>
+          </div>
+          <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
+            <span className="text-emerald-800">تم تحديد {layout.selected.size} عميل</span>
+          </AuditGridBulkBar>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/20">
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.customer")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("pages.customers.vatNumber")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.customers.city")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">{t("pages.customers.contact")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.type")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.customers.balance")}</th>
-                <th className="h-9 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("common.actions")}</th>
+        {/* Audit-grid table */}
+        <div className="overflow-x-auto bg-white">
+          <table ref={tableRef} className="w-full text-[11px] border-collapse" dir={isRtl ? "rtl" : "ltr"}>
+            <colgroup>
+              {visibleColumns.map((col) => (
+                <col
+                  key={col.key}
+                  data-col-key={col.key}
+                  style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined}
+                />
+              ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                {visibleColumns.map((col, idx) => (
+                  <th
+                    key={col.key}
+                    data-col-key={col.key}
+                    className={cn(
+                      "relative px-2 py-1.5 text-right font-semibold border-e border-slate-300 select-none",
+                      col.key === "_sel" && "w-9 text-center px-1",
+                      col.key === "_idx" && "w-10 text-center px-1",
+                      col.key === "_act" && "w-44 text-center",
+                      col.type === "num" && "text-end",
+                    )}
+                  >
+                    {col.key === "_sel" ? (
+                      <HeaderSelectCheckbox
+                        allSelected={isAllSelected(allFilteredIds)}
+                        someSelected={isSomeSelected(allFilteredIds)}
+                        onToggle={() => toggleAll(allFilteredIds)}
+                        disabled={allFilteredIds.length === 0}
+                      />
+                    ) : (
+                      <span className="inline-block truncate">{col.label}</span>
+                    )}
+                    {col.key !== "_sel" && (
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="absolute inset-y-0 start-0 w-1 cursor-col-resize hover:bg-blue-400/40 active:bg-blue-500/60"
+                      />
+                    )}
+                  </th>
+                ))}
+              </tr>
+              <tr className="bg-amber-50/80 border-b border-amber-200">
+                {visibleColumns.map((col) => (
+                  <th key={col.key} className="px-1 py-1 border-e border-amber-200/60">
+                    {col.type === "none" ? null : (
+                      <Input
+                        value={colFilters[col.key] ?? ""}
+                        onChange={(e) => setColFilter(col.key, e.target.value)}
+                        placeholder={col.type === "num" ? ">=N" : "فلتر…"}
+                        className="h-6 text-[10px] px-1.5 bg-white"
+                      />
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b">
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="px-5 py-3.5">
-                        <Skeleton className="h-4 w-full max-w-32" />
-                      </td>
-                    ))}
+                  <tr key={i}>
+                    <td colSpan={visibleColumns.length} className="px-3 py-2">
+                      <Skeleton className="h-5 w-full" />
+                    </td>
                   </tr>
                 ))
-              ) : filtered.length === 0 ? (
+              ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-20 text-center">
+                  <td colSpan={visibleColumns.length} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
-                      <div className="h-14 w-14 rounded-full bg-muted/60 flex items-center justify-center">
-                        <Users className="h-7 w-7 opacity-40" />
+                      <div className="h-12 w-12 rounded-full bg-muted/60 flex items-center justify-center">
+                        <Users className="h-6 w-6 opacity-40" />
                       </div>
-                      <div>
-                        <p className="font-medium text-sm">
-                          {search ? t("pages.customers.noResultsMatch") : t("pages.customers.noCustomersInCategory")}
-                        </p>
-                        <p className="text-xs mt-0.5 opacity-70">
-                          {search ? t("pages.customers.tryDifferentSearch") : t("pages.customers.startByAdding")}
-                        </p>
-                      </div>
-                      {!search && (
-                        <Button asChild variant="outline" size="sm" className="gap-2 mt-1">
-                          <Link href="/customers/new">
-                            <Plus className="h-3.5 w-3.5" />{t("pages.customers.addCustomer")}
-                          </Link>
-                        </Button>
-                      )}
+                      <p className="text-sm">
+                        {search ? t("pages.customers.noResultsMatch") : t("pages.customers.noCustomersInCategory")}
+                      </p>
                     </div>
                   </td>
                 </tr>
               ) : (
-                pager.pagedItems.map((customer: any) => {
+                paged.map((customer: any, rowIdx: number) => {
                   const bal = Number(balMap[customer.id] ?? 0);
                   const limit = Number(customer.creditLimit ?? 0);
                   const overLimit = limit > 0 && bal > limit;
@@ -347,134 +491,154 @@ export default function Customers() {
                   const overTooltip = overLimit
                     ? `تجاوز حد الائتمان (${bal.toLocaleString()} > ${limit.toLocaleString()})`
                     : "";
+                  const sel = isSelected(customer.id);
                   return (
-                  <tr
-                    key={customer.id}
-                    data-status={dictStatus}
-                    data-over-limit={overLimit ? "true" : undefined}
-                    className={cn("border-b transition-colors group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
-                    title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
-                  >
-                    {/* Customer name */}
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary/20 to-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0 border border-primary/10">
-                          {customer.nameAr?.[0] ?? "ع"}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-foreground leading-tight">{customer.nameAr}</p>
-                          {customer.nameEn && (
-                            <p className="text-xs text-muted-foreground">{customer.nameEn}</p>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* VAT */}
-                    <td className="px-5 py-3 hidden sm:table-cell">
-                      {customer.vatNumber ? (
-                        <span className="inline-flex items-center gap-1 font-mono text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
-                          <BadgeCheck className="h-3 w-3" />{customer.vatNumber}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/40 text-xs">—</span>
+                    <tr
+                      key={customer.id}
+                      data-status={dictStatus}
+                      data-over-limit={overLimit ? "true" : undefined}
+                      className={cn(
+                        "border-b border-slate-200 transition-colors group",
+                        sel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
                       )}
-                    </td>
-
-                    {/* City */}
-                    <td className="px-5 py-3 hidden md:table-cell text-sm text-muted-foreground">
-                      {customer.city ? (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-                          {customer.city}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/40">—</span>
-                      )}
-                    </td>
-
-                    {/* Contact */}
-                    <td className="px-5 py-3 hidden lg:table-cell">
-                      <div className="space-y-0.5">
-                        {customer.phone && (
-                          <p className="text-xs text-muted-foreground flex items-center gap-1" dir="ltr">
-                            <Phone className="h-3 w-3 shrink-0" />{customer.phone}
-                          </p>
-                        )}
-                        {customer.email && (
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Mail className="h-3 w-3 shrink-0" />{customer.email}
-                          </p>
-                        )}
-                        {!customer.phone && !customer.email && (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Type badge */}
-                    <td className="px-5 py-3">
-                      {customer.vatNumber ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <Building2 className="h-3 w-3" />{t("pages.customers.companiesB2b")}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                          <UserCheck className="h-3 w-3" />{t("pages.customers.individualsB2c")}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Balance */}
-                    <td className="px-5 py-3">
-                      {(() => {
-                        const bal = balMap[customer.id] ?? 0;
-                        const abs = Math.abs(bal);
-                        const fmt = abs.toLocaleString(isRtl ? "ar-SA-u-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        if (Math.abs(bal) < 0.005) {
-                          return <span className="text-xs text-muted-foreground/60">{t("pages.customers.balanced")}</span>;
-                        }
-                        if (bal > 0) {
+                      title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                    >
+                      {visibleColumns.map((col) => {
+                        if (col.key === "_sel") {
                           return (
-                            <span className="inline-flex items-center gap-1.5">
-                              <span className="font-semibold tabular-nums text-rose-700">{fmt}</span>
-                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">{t("pages.customers.debit")}</span>
-                            </span>
+                            <td key={col.key} className="px-1 py-1 text-center border-e border-slate-200/60">
+                              <RowSelectCheckbox
+                                checked={sel}
+                                onToggle={() => toggleRow(customer.id)}
+                                ariaLabel={`تحديد ${customer.nameAr ?? ""}`}
+                              />
+                            </td>
                           );
                         }
-                        return (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="font-semibold tabular-nums text-emerald-700">{fmt}</span>
-                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">{t("pages.customers.credit")}</span>
-                          </span>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1">
-                          <Link href={`/invoices/new?customerId=${customer.id}`}>
-                            <FileText className="h-3 w-3" />{t("pages.customers.invoice")}
-                          </Link>
-                        </Button>
-                        <Button variant="outline" size="sm" asChild className="h-7 px-2.5 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50">
-                          <Link href={`/customers/${customer.id}`}>
-                            <Pencil className="h-3 w-3" />{t("common.edit")}
-                          </Link>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2.5 text-xs gap-1 border-red-200 text-red-700 hover:bg-red-50"
-                          onClick={() => setDeleteTarget(customer)}
-                        >
-                          <Trash2 className="h-3 w-3" />{t("common.delete")}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                        if (col.key === "_idx") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center text-slate-500 font-mono border-e border-slate-200/60">
+                              {pageStart + rowIdx}
+                            </td>
+                          );
+                        }
+                        if (col.key === "name") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              <div className="flex items-center gap-2">
+                                <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-primary/20 to-primary/10 text-primary font-bold text-xs flex items-center justify-center shrink-0 border border-primary/10">
+                                  {customer.nameAr?.[0] ?? "ع"}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-foreground leading-tight truncate">{customer.nameAr}</p>
+                                  {customer.nameEn && <p className="text-[10px] text-muted-foreground truncate">{customer.nameEn}</p>}
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        }
+                        if (col.key === "vat") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              {customer.vatNumber ? (
+                                <span className="inline-flex items-center gap-1 font-mono text-[10px] bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded-full">
+                                  <BadgeCheck className="h-3 w-3" />{customer.vatNumber}
+                                </span>
+                              ) : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "cr") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 font-mono text-[10px] text-muted-foreground border-e border-slate-200/60">
+                              {customer.crNumber || "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "city") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {customer.city ? (
+                                <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{customer.city}</span>
+                              ) : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "phone") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60" dir="ltr">
+                              {customer.phone ? (
+                                <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{customer.phone}</span>
+                              ) : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "email") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {customer.email ? (
+                                <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{customer.email}</span>
+                              ) : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "type") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              {customer.vatNumber ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <Building2 className="h-3 w-3" />B2B
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                  <UserCheck className="h-3 w-3" />B2C
+                                </span>
+                              )}
+                            </td>
+                          );
+                        }
+                        if (col.key === "balance") {
+                          const abs = Math.abs(bal);
+                          const fmt = abs.toLocaleString(isRtl ? "ar-SA-u-nu-latn" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                          return (
+                            <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
+                              {Math.abs(bal) < 0.005 ? (
+                                <span className="text-[10px] text-muted-foreground/60">{t("pages.customers.balanced")}</span>
+                              ) : bal > 0 ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="font-semibold text-rose-700">{fmt}</span>
+                                  <span className="px-1 py-0 rounded-full text-[9px] bg-rose-50 text-rose-700 border border-rose-200">{t("pages.customers.debit")}</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="font-semibold text-emerald-700">{fmt}</span>
+                                  <span className="px-1 py-0 rounded-full text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200">{t("pages.customers.credit")}</span>
+                                </span>
+                              )}
+                            </td>
+                          );
+                        }
+                        if (col.key === "_act") {
+                          return (
+                            <td key={col.key} className="px-1 py-1">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <Button variant="ghost" size="icon" asChild className="h-7 w-7" title={t("pages.customers.invoice")}>
+                                  <Link href={`/invoices/new?customerId=${customer.id}`}><FileText className="h-3.5 w-3.5" /></Link>
+                                </Button>
+                                <Button variant="ghost" size="icon" asChild className="h-7 w-7 text-blue-700" title={t("common.edit")}>
+                                  <Link href={`/customers/${customer.id}`}><Pencil className="h-3.5 w-3.5" /></Link>
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-700" title={t("common.delete")}
+                                  onClick={() => setDeleteTarget(customer)}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          );
+                        }
+                        return null;
+                      })}
+                    </tr>
                   );
                 })
               )}
@@ -482,18 +646,14 @@ export default function Customers() {
           </table>
         </div>
 
-        {/* Footer */}
-        {!isLoading && filtered.length > 0 && (
-          <TablePagination
-            page={pager.page}
-            pageSize={pager.pageSize}
-            pageCount={pager.pageCount}
-            total={pager.total}
-            onPageChange={pager.setPage}
-            onPageSizeChange={pager.setPageSize}
-            itemLabel={t("pages.customers.itemLabel", { defaultValue: "عميل" })}
-          />
-        )}
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filtered.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel={t("pages.customers.itemLabel", { defaultValue: "عميل" })}
+        />
       </div>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>

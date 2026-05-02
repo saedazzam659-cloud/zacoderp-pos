@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,10 +7,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Search, Truck, Phone, Mail, MapPin, BadgeCheck, Building2, Package,
   Pencil, Trash2, TrendingUp, TrendingDown, Minus,
+  FileSpreadsheet, X,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import ExportButtons from "@/components/ExportButtons";
-import { TablePagination, usePagination } from "@/components/TablePagination";
 import { FormPanel } from "@/components/FormPanel";
 import { AccountCombobox } from "@/components/AccountCombobox";
 import {
@@ -21,8 +21,13 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  rowToneFor, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
 } from "@/lib/docRowTone";
+import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
+} from "@/components/auditGrid/AuditGridControls";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -106,8 +111,9 @@ export default function Suppliers() {
     (balances as any[]).map((b: any) => [b.supplierId, b.balance])
   );
 
-  const filtered = suppliers.filter((s: any) => {
+  const filteredBySearch = suppliers.filter((s: any) => {
     const matchSearch =
+      !search ||
       s.nameAr?.includes(search) ||
       s.nameEn?.toLowerCase().includes(search.toLowerCase()) ||
       s.vatNumber?.includes(search) ||
@@ -120,9 +126,78 @@ export default function Suppliers() {
     return matchSearch && matchTab;
   });
 
-  const pager = usePagination(filtered);
-
   const withVat = suppliers.filter((s: any) => s.vatNumber).length;
+  const cid = (user?.role === "superadmin" ? undefined : user?.companyId) ?? undefined;
+
+  // ── Audit-grid layout ──
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number }
+  const COLUMNS: ColDef[] = useMemo(() => [
+    { key: "_sel",     label: "",                                  type: "none", valueOf: () => "" },
+    { key: "_idx",     label: "#",                                 type: "none", valueOf: () => "" },
+    { key: "name",     label: t("pages.suppliers.supplier"),       type: "text", valueOf: (s) => `${s.nameAr ?? ""} ${s.nameEn ?? ""}`.trim() },
+    { key: "vat",      label: t("pages.suppliers.vatNumberLabel"), type: "text", valueOf: (s) => s.vatNumber ?? "" },
+    { key: "cr",       label: t("pages.suppliers.crNumberLabel"),  type: "text", valueOf: (s) => s.crNumber ?? "" },
+    { key: "city",     label: t("pages.suppliers.cityLabel"),      type: "text", valueOf: (s) => s.city ?? "" },
+    { key: "phone",    label: t("pages.suppliers.phoneLabel"),     type: "text", valueOf: (s) => s.phone ?? "" },
+    { key: "email",    label: t("pages.suppliers.emailLabel"),     type: "text", valueOf: (s) => s.email ?? "" },
+    { key: "category", label: t("pages.suppliers.category"),       type: "text", valueOf: (s) => s.category ?? "" },
+    { key: "tax",      label: t("pages.suppliers.taxStatus"),      type: "text", valueOf: (s) => s.vatNumber ? t("pages.suppliers.registered") : t("pages.suppliers.notRegisteredBadge") },
+    { key: "balance",  label: t("common.balance"),                 type: "num",  valueOf: (s) => Number(balanceMap[s.id] ?? 0) },
+    { key: "_act",     label: t("pages.suppliers.action"),         type: "none", valueOf: () => "" },
+  ], [t, balanceMap]);
+  const dataKeys = useMemo(() => COLUMNS.filter(c => !["_sel","_idx","_act"].includes(c.key)).map(c => c.key), [COLUMNS]);
+  const allColKeys = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
+  const layout = useAuditGridLayout({ screenSlug: "suppliers", cid, dataKeys, allColKeys });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+  const { theme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection,
+          pageSize, page, setPage } = layout;
+
+  const filtered = useMemo(() => filteredBySearch.filter((s: any) => {
+    for (const col of COLUMNS) {
+      const f = colFilters[col.key];
+      if (!f) continue;
+      if (!matchCol(col.valueOf(s), f, col.type)) return false;
+    }
+    return true;
+  }), [filteredBySearch, colFilters, COLUMNS]);
+
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  useEffect(() => { if (safePage !== page) setPage(safePage); }, [safePage, page, setPage]);
+  const paged = useMemo(() => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, pageSize, safePage]);
+  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find(c => c.key === "_sel")!;
+    const idx = COLUMNS.find(c => c.key === "_idx")!;
+    const act = COLUMNS.find(c => c.key === "_act")!;
+    return [sel, idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(() => layout.dataOrder
+    .map(k => COLUMNS.find(c => c.key === k)!)
+    .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
+  const allFilteredIds = useMemo(() => filtered.map((s: any) => s.id as number), [filtered]);
+
+  function exportCsv() {
+    if (filtered.length === 0) {
+      toast({ title: t("common.noResults"), variant: "destructive" });
+      return;
+    }
+    const exportable = visibleColumns.filter(c => !["_sel","_idx","_act"].includes(c.key));
+    const header = ["#", ...exportable.map(c => c.label)];
+    const rows = filtered.map((s: any, i: number) => [
+      i + 1,
+      ...exportable.map(col => {
+        const v = col.valueOf(s);
+        return col.type === "num" ? Number(v).toFixed(2) : String(v ?? "");
+      }),
+    ]);
+    downloadCsv(`suppliers-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
 
   function openEdit(sup: any) {
     setEditSup(sup);
@@ -376,31 +451,23 @@ export default function Suppliers() {
 
       {/* Table card */}
       <div className="rounded-xl border bg-card overflow-hidden">
-        {/* Tabs + Search */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b">
-          <div className="flex overflow-x-auto">
-            {TYPE_TABS.map(tab => (
-              <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                className={`px-5 py-3.5 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px ${
-                  activeTab === tab.key
-                    ? "border-primary text-primary bg-primary/5"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
-                }`}>
-                {tab.label}
-                {!isLoading && (
-                  <span className="mr-1.5 text-xs bg-muted px-1.5 py-0.5 rounded-full">
-                    {tab.key === "all" ? suppliers.length : tab.key === "withVat" ? withVat : suppliers.length - withVat}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="relative px-4 py-3">
-            <Search className="absolute right-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder={t("pages.suppliers.searchPlaceholder")}
-              className="pl-4 pr-10 w-full sm:w-64 h-9"
-              value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
+        {/* Tabs (preserved) */}
+        <div className="flex overflow-x-auto border-b">
+          {TYPE_TABS.map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+              className={`px-5 py-3 text-sm font-medium whitespace-nowrap transition-colors border-b-2 -mb-px ${
+                activeTab === tab.key
+                  ? "border-primary text-primary bg-primary/5"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              }`}>
+              {tab.label}
+              {!isLoading && (
+                <span className="mr-1.5 text-xs bg-muted px-1.5 py-0.5 rounded-full">
+                  {tab.key === "all" ? suppliers.length : tab.key === "withVat" ? withVat : suppliers.length - withVat}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
         {(() => {
@@ -430,33 +497,133 @@ export default function Suppliers() {
           return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/20">
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.suppliers.supplier")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("pages.suppliers.vatNumberLabel")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.suppliers.cityLabel")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden lg:table-cell">{t("pages.suppliers.phoneEmail")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden md:table-cell">{t("pages.suppliers.category")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide">{t("pages.suppliers.taxStatus")}</th>
-                <th className="h-10 px-5 text-right font-medium text-muted-foreground text-xs tracking-wide hidden sm:table-cell">{t("common.balance")}</th>
-                <th className="h-10 px-4 text-center font-medium text-muted-foreground text-xs tracking-wide w-20">{t("pages.suppliers.action")}</th>
+        {/* Audit-grid toolbar */}
+        <div className={cn("border-t shadow-sm transition-colors", theme.border)}>
+          <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir="rtl">
+            <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+              <Truck className="h-4 w-4 opacity-90" />
+              {t("pages.suppliers.title")}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <HeaderColorPicker layout={layout} isRtl={true} />
+              <FooterColorPicker layout={layout} isRtl={true} />
+              <ColumnReorderPopover layout={layout} isRtl={true} columns={reorderableCols} />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                onClick={exportCsv}
+                data-testid="btn-export-csv-suppliers"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+            </div>
+          </div>
+          <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir="rtl">
+            <div className="relative">
+              <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder={t("pages.suppliers.searchPlaceholder")}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pe-7 h-7 text-xs w-64"
+              />
+            </div>
+            {Object.values(colFilters).some(v => v) && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+                onClick={clearColFilters}
+              >
+                <X className="h-3.5 w-3.5 me-1" />
+                مسح فلاتر الأعمدة
+              </Button>
+            )}
+            <div className="flex-1" />
+            <span className="text-slate-700 font-medium">
+              {filtered.length} {t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
+              {filtered.length !== suppliers.length && <span className="text-slate-400"> / {suppliers.length}</span>}
+            </span>
+          </div>
+          <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
+            <span className="text-emerald-800">تم تحديد {layout.selected.size} مورد</span>
+          </AuditGridBulkBar>
+        </div>
+
+        {/* Audit-grid table */}
+        <div className="overflow-x-auto bg-white">
+          <table ref={tableRef} className="w-full text-[11px] border-collapse" dir="rtl">
+            <colgroup>
+              {visibleColumns.map((col) => (
+                <col
+                  key={col.key}
+                  data-col-key={col.key}
+                  style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined}
+                />
+              ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                {visibleColumns.map((col, idx) => (
+                  <th
+                    key={col.key}
+                    data-col-key={col.key}
+                    className={cn(
+                      "relative px-2 py-1.5 text-right font-semibold border-e border-slate-300 select-none",
+                      col.key === "_sel" && "w-9 text-center px-1",
+                      col.key === "_idx" && "w-10 text-center px-1",
+                      col.key === "_act" && "w-24 text-center",
+                      col.type === "num" && "text-end",
+                    )}
+                  >
+                    {col.key === "_sel" ? (
+                      <HeaderSelectCheckbox
+                        allSelected={isAllSelected(allFilteredIds)}
+                        someSelected={isSomeSelected(allFilteredIds)}
+                        onToggle={() => toggleAll(allFilteredIds)}
+                        disabled={allFilteredIds.length === 0}
+                      />
+                    ) : (
+                      <span className="inline-block truncate">{col.label}</span>
+                    )}
+                    {col.key !== "_sel" && (
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="absolute inset-y-0 start-0 w-1 cursor-col-resize hover:bg-blue-400/40 active:bg-blue-500/60"
+                      />
+                    )}
+                  </th>
+                ))}
+              </tr>
+              <tr className="bg-amber-50/80 border-b border-amber-200">
+                {visibleColumns.map((col) => (
+                  <th key={col.key} className="px-1 py-1 border-e border-amber-200/60">
+                    {col.type === "none" ? null : (
+                      <Input
+                        value={colFilters[col.key] ?? ""}
+                        onChange={(e) => setColFilter(col.key, e.target.value)}
+                        placeholder={col.type === "num" ? ">=N" : "فلتر…"}
+                        className="h-6 text-[10px] px-1.5 bg-white"
+                      />
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b">
-                    {Array.from({ length: 8 }).map((_, j) => (
-                      <td key={j} className="px-5 py-4"><Skeleton className="h-4 w-full max-w-32" /></td>
-                    ))}
+                  <tr key={i}>
+                    <td colSpan={visibleColumns.length} className="px-3 py-2"><Skeleton className="h-5 w-full" /></td>
                   </tr>
                 ))
-              ) : filtered.length === 0 ? (
+              ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center text-muted-foreground">
+                  <td colSpan={visibleColumns.length} className="py-16 text-center text-muted-foreground">
                     <Truck className="h-10 w-10 mx-auto mb-3 opacity-30" />
                     <p className="text-sm">{search ? t("common.noResults") : t("pages.suppliers.noSuppliersYet")}</p>
                     {!search && (
@@ -467,10 +634,9 @@ export default function Suppliers() {
                   </td>
                 </tr>
               ) : (
-                pager.pagedItems.map((supplier: any) => {
+                paged.map((supplier: any, rowIdx: number) => {
                   const bal = Number(balanceMap[supplier.id] ?? 0);
                   const limit = Number(supplier.creditLimit ?? 0);
-                  // AP balance is negative when we owe the supplier; compare |owed| against limit.
                   const owed = Math.max(0, -bal);
                   const overLimit = limit > 0 && owed > limit;
                   const dictStatus = overLimit
@@ -481,81 +647,135 @@ export default function Suppliers() {
                   const overTooltip = overLimit
                     ? `تجاوز حد الائتمان (${owed.toLocaleString()} > ${limit.toLocaleString()})`
                     : "";
+                  const sel = isSelected(supplier.id);
                   return (
-                  <tr key={supplier.id}
-                    data-status={dictStatus}
-                    data-over-limit={overLimit ? "true" : undefined}
-                    className={cn("border-b transition-colors cursor-pointer group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
-                    title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}>
-                    {/* Name — double-click to edit */}
-                    <td className="px-5 py-3.5"
-                      onDoubleClick={() => openEdit(supplier)}
-                      title={t("pages.suppliers.doubleClickEdit")}>
-                      <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-lg bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
-                          {supplier.nameAr?.[0] ?? "م"}
-                        </div>
-                        <div>
-                          <p className="font-medium text-foreground group-hover:text-primary transition-colors">
-                            {supplier.nameAr}
-                          </p>
-                          {supplier.nameEn && <p className="text-xs text-muted-foreground">{supplier.nameEn}</p>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 hidden sm:table-cell">
-                      {supplier.vatNumber
-                        ? <span className="font-mono text-xs text-foreground flex items-center gap-1"><BadgeCheck className="h-3.5 w-3.5 text-green-600" />{supplier.vatNumber}</span>
-                        : <span className="text-muted-foreground/50 text-xs">—</span>}
-                    </td>
-                    <td className="px-5 py-3.5 hidden md:table-cell text-sm text-muted-foreground">
-                      {supplier.city
-                        ? <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 shrink-0" />{supplier.city}</span>
-                        : "—"}
-                    </td>
-                    <td className="px-5 py-3.5 hidden lg:table-cell">
-                      <div className="space-y-0.5">
-                        {supplier.phone && <p className="text-xs text-muted-foreground flex items-center gap-1" dir="ltr"><Phone className="h-3 w-3" />{supplier.phone}</p>}
-                        {supplier.email && <p className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="h-3 w-3" />{supplier.email}</p>}
-                        {!supplier.phone && !supplier.email && <span className="text-muted-foreground/50 text-xs">—</span>}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 hidden md:table-cell text-xs text-muted-foreground">
-                      {supplier.category || "—"}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
-                        supplier.vatNumber
-                          ? "bg-green-50 text-green-700 border-green-200"
-                          : "bg-amber-50 text-amber-700 border-amber-200"
-                      }`}>
-                        {supplier.vatNumber
-                          ? <><BadgeCheck className="h-3 w-3" />{t("pages.suppliers.registered")}</>
-                          : <><Building2 className="h-3 w-3" />{t("pages.suppliers.notRegisteredBadge")}</>}
-                      </span>
-                    </td>
-                    {/* Balance column */}
-                    <td className="px-5 py-3.5 hidden sm:table-cell">
-                      <BalanceBadge supplierId={supplier.id} />
-                    </td>
-                    {/* Actions */}
-                    <td className="px-4 py-3.5 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={e => { e.stopPropagation(); openEdit(supplier); }}
-                          className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-                          title={t("common.edit")}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={e => { e.stopPropagation(); setDeleteSup(supplier); }}
-                          className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
-                          title={t("common.delete")}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                    <tr key={supplier.id}
+                      data-status={dictStatus}
+                      data-over-limit={overLimit ? "true" : undefined}
+                      className={cn(
+                        "border-b border-slate-200 transition-colors group",
+                        sel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
+                      )}
+                      title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                    >
+                      {visibleColumns.map((col) => {
+                        if (col.key === "_sel") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center border-e border-slate-200/60">
+                              <RowSelectCheckbox
+                                checked={sel}
+                                onToggle={() => toggleRow(supplier.id)}
+                                ariaLabel={`تحديد ${supplier.nameAr ?? ""}`}
+                              />
+                            </td>
+                          );
+                        }
+                        if (col.key === "_idx") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center text-slate-500 font-mono border-e border-slate-200/60">
+                              {pageStart + rowIdx}
+                            </td>
+                          );
+                        }
+                        if (col.key === "name") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60"
+                              onDoubleClick={() => openEdit(supplier)}
+                              title={t("pages.suppliers.doubleClickEdit")}>
+                              <div className="flex items-center gap-2">
+                                <div className="h-7 w-7 rounded-lg bg-primary/10 text-primary font-bold text-xs flex items-center justify-center shrink-0">
+                                  {supplier.nameAr?.[0] ?? "م"}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-medium text-foreground group-hover:text-primary transition-colors truncate">{supplier.nameAr}</p>
+                                  {supplier.nameEn && <p className="text-[10px] text-muted-foreground truncate">{supplier.nameEn}</p>}
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        }
+                        if (col.key === "vat") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              {supplier.vatNumber
+                                ? <span className="font-mono text-[10px] text-foreground inline-flex items-center gap-1"><BadgeCheck className="h-3 w-3 text-green-600" />{supplier.vatNumber}</span>
+                                : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "cr") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 font-mono text-[10px] text-muted-foreground border-e border-slate-200/60">
+                              {supplier.crNumber || "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "city") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {supplier.city ? <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{supplier.city}</span> : "—"}
+                            </td>
+                          );
+                        }
+                        if (col.key === "phone") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60" dir="ltr">
+                              {supplier.phone ? <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{supplier.phone}</span> : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "email") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">
+                              {supplier.email ? <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{supplier.email}</span> : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                          );
+                        }
+                        if (col.key === "category") {
+                          return <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">{supplier.category || "—"}</td>;
+                        }
+                        if (col.key === "tax") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border",
+                                supplier.vatNumber ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200")}>
+                                {supplier.vatNumber
+                                  ? <><BadgeCheck className="h-3 w-3" />{t("pages.suppliers.registered")}</>
+                                  : <><Building2 className="h-3 w-3" />{t("pages.suppliers.notRegisteredBadge")}</>}
+                              </span>
+                            </td>
+                          );
+                        }
+                        if (col.key === "balance") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 tabular-nums text-end border-e border-slate-200/60">
+                              <BalanceBadge supplierId={supplier.id} />
+                            </td>
+                          );
+                        }
+                        if (col.key === "_act") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <button
+                                  onClick={e => { e.stopPropagation(); openEdit(supplier); }}
+                                  className="p-1 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                                  title={t("common.edit")}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={e => { e.stopPropagation(); setDeleteSup(supplier); }}
+                                  className="p-1 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors"
+                                  title={t("common.delete")}>
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          );
+                        }
+                        return null;
+                      })}
+                    </tr>
                   );
                 })
               )}
@@ -563,18 +783,14 @@ export default function Suppliers() {
           </table>
         </div>
 
-        {/* Footer */}
-        {!isLoading && filtered.length > 0 && (
-          <TablePagination
-            page={pager.page}
-            pageSize={pager.pageSize}
-            pageCount={pager.pageCount}
-            total={pager.total}
-            onPageChange={pager.setPage}
-            onPageSizeChange={pager.setPageSize}
-            itemLabel={t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
-          />
-        )}
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filtered.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel={t("pages.suppliers.itemLabel", { defaultValue: "مورد" })}
+        />
       </div>
 
 

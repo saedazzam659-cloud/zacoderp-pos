@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,12 +8,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchCombobox } from "@/components/ui/search-combobox";
-import { Plus, Trash2, Banknote, CheckCircle, Printer } from "lucide-react";
+import { Plus, Trash2, Banknote, CheckCircle, Printer, Search, X, FileSpreadsheet } from "lucide-react";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { cn } from "@/lib/utils";
 import {
-  rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, type LegendItem,
 } from "@/lib/docRowTone";
+import { downloadCsv, matchCol, useAuditGridLayout, useColumnResize } from "@/lib/auditGridLayout";
+import {
+  AuditGridBulkBar, AuditGridPagination, ColumnReorderPopover,
+  FooterColorPicker, HeaderColorPicker, HeaderSelectCheckbox, RowSelectCheckbox,
+} from "@/components/auditGrid/AuditGridControls";
 import { buildVoucherPrintHtml, openVoucherPrintWindow } from "@/lib/voucherPrint";
 import { getSaveToastTitle } from "@/lib/saveToast";
 
@@ -32,7 +37,8 @@ export default function SupplierSettlement() {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const qc = useQueryClient();
-  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const cid = (user?.role === "superadmin" ? undefined : user?.company?.id) ?? undefined;
+  const [search, setSearch] = useState("");
   const authH   = { Authorization: `Bearer ${token}` };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -136,17 +142,92 @@ export default function SupplierSettlement() {
 
   const totalPosted = settlements.filter((s: any) => s.status === "posted").reduce((t: number, s: any) => t + Number(s.amount || 0), 0);
 
-  const cols = [
-    t("purchasingPages.supplierSettlement.cols.docNumber"),
-    t("purchasingPages.supplierSettlement.cols.date"),
-    t("purchasingPages.supplierSettlement.cols.supplier"),
-    t("purchasingPages.supplierSettlement.cols.method"),
-    t("purchasingPages.supplierSettlement.cols.account"),
-    t("purchasingPages.supplierSettlement.cols.amount"),
-    t("purchasingPages.supplierSettlement.cols.currency"),
-    t("purchasingPages.supplierSettlement.cols.status"),
-    t("purchasingPages.supplierSettlement.cols.actions"),
-  ];
+  const methodLabel = (m: string) => m === "bank"
+    ? t("purchasingPages.supplierSettlement.methods.bank")
+    : m === "cash"
+      ? t("purchasingPages.supplierSettlement.methods.cash")
+      : t("purchasingPages.supplierSettlement.methods.check");
+
+  const filteredBySearch = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return settlements;
+    return settlements.filter((s: any) =>
+      String(s.docNumber ?? "").toLowerCase().includes(q) ||
+      String(s.settlementDate ?? "").includes(q) ||
+      String(supMap[s.supplierId] ?? "").toLowerCase().includes(q) ||
+      String(accMap[s.accountId] ?? "").toLowerCase().includes(q) ||
+      String(s.amount ?? "").includes(q)
+    );
+  }, [settlements, search, supMap, accMap]);
+
+  // ── Audit-grid layout ──
+  type ColType = "text" | "num" | "none";
+  interface ColDef { key: string; label: string; type: ColType; valueOf: (r: any) => string | number }
+  const COLUMNS: ColDef[] = useMemo(() => [
+    { key: "_sel",     label: "",                                                         type: "none", valueOf: () => "" },
+    { key: "_idx",     label: "#",                                                        type: "none", valueOf: () => "" },
+    { key: "docNumber", label: t("purchasingPages.supplierSettlement.cols.docNumber"),    type: "text", valueOf: (s) => s.docNumber ?? `SS-${s.id}` },
+    { key: "date",     label: t("purchasingPages.supplierSettlement.cols.date"),          type: "text", valueOf: (s) => s.settlementDate ?? "" },
+    { key: "supplier", label: t("purchasingPages.supplierSettlement.cols.supplier"),      type: "text", valueOf: (s) => supMap[s.supplierId] ?? "" },
+    { key: "method",   label: t("purchasingPages.supplierSettlement.cols.method"),        type: "text", valueOf: (s) => methodLabel(s.paymentMethod) },
+    { key: "account",  label: t("purchasingPages.supplierSettlement.cols.account"),       type: "text", valueOf: (s) => accMap[s.accountId] ?? "" },
+    { key: "amount",   label: t("purchasingPages.supplierSettlement.cols.amount"),        type: "num",  valueOf: (s) => Number(s.amount) || 0 },
+    { key: "currency", label: t("purchasingPages.supplierSettlement.cols.currency"),      type: "text", valueOf: (s) => s.currencyCode ?? "" },
+    { key: "status",   label: t("purchasingPages.supplierSettlement.cols.status"),        type: "text", valueOf: (s) => s.status === "posted" ? t("purchasingPages.supplierSettlement.postedF") : t("purchasingPages.supplierSettlement.draft") },
+    { key: "_act",     label: t("purchasingPages.supplierSettlement.cols.actions"),       type: "none", valueOf: () => "" },
+  ], [t, supMap, accMap]);
+  const dataKeys = useMemo(() => COLUMNS.filter(c => !["_sel","_idx","_act"].includes(c.key)).map(c => c.key), [COLUMNS]);
+  const allColKeys = useMemo(() => COLUMNS.map(c => c.key), [COLUMNS]);
+  const layout = useAuditGridLayout({ screenSlug: "supplierSettlement", cid, dataKeys, allColKeys });
+  const { tableRef, gripProps } = useColumnResize(layout.setColWidths);
+  const { theme, colWidths, colFilters, setColFilter, clearColFilters,
+          isSelected, toggleRow, toggleAll, isAllSelected, isSomeSelected, clearSelection,
+          pageSize, page, setPage } = layout;
+
+  const filtered = useMemo(() => filteredBySearch.filter((s: any) => {
+    for (const col of COLUMNS) {
+      const f = colFilters[col.key];
+      if (!f) continue;
+      if (!matchCol(col.valueOf(s), f, col.type)) return false;
+    }
+    return true;
+  }), [filteredBySearch, colFilters, COLUMNS]);
+
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  useEffect(() => { if (safePage !== page) setPage(safePage); }, [safePage, page, setPage]);
+  const paged = useMemo(() => pageSize === 0 ? filtered : filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, pageSize, safePage]);
+  const pageStart = filtered.length === 0 ? 0 : pageSize === 0 ? 1 : (safePage - 1) * pageSize + 1;
+  const pageEnd = pageSize === 0 ? filtered.length : Math.min(safePage * pageSize, filtered.length);
+
+  const visibleColumns = useMemo(() => {
+    const dataCols = layout.dataOrder.map(k => COLUMNS.find(c => c.key === k)).filter((c): c is ColDef => !!c);
+    const sel = COLUMNS.find(c => c.key === "_sel")!;
+    const idx = COLUMNS.find(c => c.key === "_idx")!;
+    const act = COLUMNS.find(c => c.key === "_act")!;
+    return [sel, idx, ...dataCols, act];
+  }, [layout.dataOrder, COLUMNS]);
+  const reorderableCols = useMemo(() => layout.dataOrder
+    .map(k => COLUMNS.find(c => c.key === k)!)
+    .map(c => ({ key: c.key, label: c.label })), [layout.dataOrder, COLUMNS]);
+  const allFilteredIds = useMemo(() => filtered.map((s: any) => s.id as number), [filtered]);
+
+  function exportCsv() {
+    if (filtered.length === 0) {
+      toast({ title: t("purchasingPages.supplierSettlement.noSettlements"), variant: "destructive" });
+      return;
+    }
+    const exportable = visibleColumns.filter(c => !["_sel","_idx","_act"].includes(c.key));
+    const header = ["#", ...exportable.map(c => c.label)];
+    const rows = filtered.map((s: any, i: number) => [
+      i + 1,
+      ...exportable.map(col => {
+        const v = col.valueOf(s);
+        return col.type === "num" ? Number(v).toFixed(2) : String(v ?? "");
+      }),
+    ]);
+    downloadCsv(`supplier-settlements-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
 
   return (
     <div className="space-y-6" dir={isRtl ? "rtl" : "ltr"}>
@@ -242,63 +323,231 @@ export default function SupplierSettlement() {
       })()}
 
       <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
-        {isLoading ? <div className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.loading")}</div>
-          : settlements.length === 0 ? <div className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.noSettlements")}</div>
-          : (
-          <table className="w-full text-sm">
-            <thead><tr className="bg-muted/50 border-b">
-              {cols.map(h =>
-                <th key={h} className={cn("px-3 py-3 font-semibold text-muted-foreground text-xs", isRtl ? "text-right" : "text-left")}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {settlements.map((s: any) => (
-                <tr key={s.id}
-                    data-status={s.status}
-                    className={cn("border-b transition-colors", rowToneFor({ status: s.status }))}
-                    title={buildToneTooltip({ status: s.status })}>
-                  <td className="px-3 py-2.5 font-mono text-xs font-semibold text-primary">{s.docNumber ?? `SS-${s.id}`}</td>
-                  <td className="px-3 py-2.5">{s.settlementDate}</td>
-                  <td className="px-3 py-2.5">{supMap[s.supplierId] ?? "—"}</td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {s.paymentMethod === "bank"
-                      ? t("purchasingPages.supplierSettlement.methods.bank")
-                      : s.paymentMethod === "cash"
-                        ? t("purchasingPages.supplierSettlement.methods.cash")
-                        : t("purchasingPages.supplierSettlement.methods.check")}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">{accMap[s.accountId] ?? "—"}</td>
-                  <td className="px-3 py-2.5 font-mono font-semibold">{fmt(s.amount)}</td>
-                  <td className="px-3 py-2.5">{s.currencyCode}</td>
-                  <td className="px-3 py-2.5">
-                    <span className={cn("text-xs rounded-full px-2 py-0.5 font-medium border",
-                      s.status === "posted" ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200"
-                    )}>{s.status === "posted" ? t("purchasingPages.supplierSettlement.postedF") : t("purchasingPages.supplierSettlement.draft")}</span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" title="طباعة سند الصرف"
-                        onClick={() => printOne(s)}>
-                        <Printer className="h-3.5 w-3.5" />
-                      </Button>
-                      {s.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title={t("purchasingPages.supplierSettlement.postTip")}
-                          onClick={() => { if (confirm(t("purchasingPages.supplierSettlement.confirmPost"))) postMut.mutate(s.id); }}>
-                          <CheckCircle className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {s.status === "draft" && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={() => { if (confirm(t("purchasingPages.supplierSettlement.confirmDelete"))) deleteMut.mutate(s.id); }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+        {/* Audit-grid toolbar */}
+        <div className={cn("border-b shadow-sm transition-colors", theme.border)}>
+          <div className={cn("px-3 py-2 flex items-center gap-2 flex-wrap transition-colors", theme.bar, theme.text)} dir="rtl">
+            <div className={cn("flex-1 text-sm font-bold tracking-wide flex items-center gap-2", theme.text)}>
+              <Banknote className="h-4 w-4 opacity-90" />
+              {t("purchasingPages.supplierSettlement.title")}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <HeaderColorPicker layout={layout} isRtl={isRtl} />
+              <FooterColorPicker layout={layout} isRtl={isRtl} />
+              <ColumnReorderPopover layout={layout} isRtl={isRtl} columns={reorderableCols} />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className={cn("h-7 px-2 text-xs gap-1", theme.btn)}
+                onClick={exportCsv}
+                data-testid="btn-export-csv-supplier-settlement"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+            </div>
+          </div>
+          <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 flex items-center gap-2 flex-wrap text-xs" dir="rtl">
+            <div className="relative">
+              <Search className="absolute end-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder={t("common.search")}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pe-7 h-7 text-xs w-64"
+              />
+            </div>
+            {Object.values(colFilters).some(v => v) && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50"
+                onClick={clearColFilters}
+              >
+                <X className="h-3.5 w-3.5 me-1" />
+                مسح فلاتر الأعمدة
+              </Button>
+            )}
+            <div className="flex-1" />
+            <span className="text-slate-700 font-medium">
+              {filtered.length} تسوية
+              {filtered.length !== settlements.length && <span className="text-slate-400"> / {settlements.length}</span>}
+            </span>
+          </div>
+          <AuditGridBulkBar count={layout.selected.size} onClear={clearSelection}>
+            <span className="text-emerald-800">تم تحديد {layout.selected.size} تسوية</span>
+          </AuditGridBulkBar>
+        </div>
+
+        {/* Audit-grid table */}
+        <div className="overflow-x-auto bg-white">
+          <table ref={tableRef} className="w-full text-[11px] border-collapse" dir="rtl">
+            <colgroup>
+              {visibleColumns.map((col) => (
+                <col
+                  key={col.key}
+                  data-col-key={col.key}
+                  style={colWidths[col.key] ? { width: `${colWidths[col.key]}px` } : undefined}
+                />
               ))}
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gradient-to-b from-slate-100 to-slate-200 text-slate-700">
+                {visibleColumns.map((col, idx) => (
+                  <th
+                    key={col.key}
+                    data-col-key={col.key}
+                    className={cn(
+                      "relative px-2 py-1.5 text-right font-semibold border-e border-slate-300 select-none",
+                      col.key === "_sel" && "w-9 text-center px-1",
+                      col.key === "_idx" && "w-10 text-center px-1",
+                      col.key === "_act" && "w-28 text-center",
+                      col.type === "num" && "text-end",
+                    )}
+                  >
+                    {col.key === "_sel" ? (
+                      <HeaderSelectCheckbox
+                        allSelected={isAllSelected(allFilteredIds)}
+                        someSelected={isSomeSelected(allFilteredIds)}
+                        onToggle={() => toggleAll(allFilteredIds)}
+                        disabled={allFilteredIds.length === 0}
+                      />
+                    ) : (
+                      <span className="inline-block truncate">{col.label}</span>
+                    )}
+                    {col.key !== "_sel" && (
+                      <span
+                        {...gripProps(col.key, idx)}
+                        className="absolute inset-y-0 start-0 w-1 cursor-col-resize hover:bg-blue-400/40 active:bg-blue-500/60"
+                      />
+                    )}
+                  </th>
+                ))}
+              </tr>
+              <tr className="bg-amber-50/80 border-b border-amber-200">
+                {visibleColumns.map((col) => (
+                  <th key={col.key} className="px-1 py-1 border-e border-amber-200/60">
+                    {col.type === "none" ? null : (
+                      <Input
+                        value={colFilters[col.key] ?? ""}
+                        onChange={(e) => setColFilter(col.key, e.target.value)}
+                        placeholder={col.type === "num" ? ">=N" : "فلتر…"}
+                        className="h-6 text-[10px] px-1.5 bg-white"
+                      />
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr><td colSpan={visibleColumns.length} className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.loading")}</td></tr>
+              ) : paged.length === 0 ? (
+                <tr><td colSpan={visibleColumns.length} className="p-12 text-center text-muted-foreground text-sm">{t("purchasingPages.supplierSettlement.noSettlements")}</td></tr>
+              ) : (
+                paged.map((s: any, rowIdx: number) => {
+                  const sel = isSelected(s.id);
+                  return (
+                    <tr key={s.id}
+                      data-status={s.status}
+                      className={cn(
+                        "border-b border-slate-200 transition-colors group",
+                        sel ? SEL_TONE : rowToneFor({ status: s.status }),
+                      )}
+                      title={buildToneTooltip({ status: s.status })}
+                    >
+                      {visibleColumns.map((col) => {
+                        if (col.key === "_sel") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center border-e border-slate-200/60">
+                              <RowSelectCheckbox
+                                checked={sel}
+                                onToggle={() => toggleRow(s.id)}
+                                ariaLabel={`تحديد ${s.docNumber ?? s.id}`}
+                              />
+                            </td>
+                          );
+                        }
+                        if (col.key === "_idx") {
+                          return (
+                            <td key={col.key} className="px-1 py-1 text-center text-slate-500 font-mono border-e border-slate-200/60">
+                              {pageStart + rowIdx}
+                            </td>
+                          );
+                        }
+                        if (col.key === "docNumber") {
+                          return <td key={col.key} className="px-2 py-1 font-mono text-[10px] font-semibold text-primary border-e border-slate-200/60">{s.docNumber ?? `SS-${s.id}`}</td>;
+                        }
+                        if (col.key === "date") {
+                          return <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">{s.settlementDate}</td>;
+                        }
+                        if (col.key === "supplier") {
+                          return <td key={col.key} className="px-2 py-1 border-e border-slate-200/60 truncate">{supMap[s.supplierId] ?? "—"}</td>;
+                        }
+                        if (col.key === "method") {
+                          return <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60">{methodLabel(s.paymentMethod)}</td>;
+                        }
+                        if (col.key === "account") {
+                          return <td key={col.key} className="px-2 py-1 text-muted-foreground border-e border-slate-200/60 truncate">{accMap[s.accountId] ?? "—"}</td>;
+                        }
+                        if (col.key === "amount") {
+                          return <td key={col.key} className="px-2 py-1 font-mono font-semibold tabular-nums text-end border-e border-slate-200/60">{fmt(s.amount)}</td>;
+                        }
+                        if (col.key === "currency") {
+                          return <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">{s.currencyCode}</td>;
+                        }
+                        if (col.key === "status") {
+                          return (
+                            <td key={col.key} className="px-2 py-1 border-e border-slate-200/60">
+                              <span className={cn("text-[10px] rounded-full px-1.5 py-0.5 font-medium border",
+                                s.status === "posted" ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200"
+                              )}>{s.status === "posted" ? t("purchasingPages.supplierSettlement.postedF") : t("purchasingPages.supplierSettlement.draft")}</span>
+                            </td>
+                          );
+                        }
+                        if (col.key === "_act") {
+                          return (
+                            <td key={col.key} className="px-1 py-1">
+                              <div className="flex items-center justify-center gap-0.5">
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-primary" title="طباعة سند الصرف"
+                                  onClick={() => printOne(s)}>
+                                  <Printer className="h-3.5 w-3.5" />
+                                </Button>
+                                {s.status === "draft" && (
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-green-700" title={t("purchasingPages.supplierSettlement.postTip")}
+                                    onClick={() => { if (confirm(t("purchasingPages.supplierSettlement.confirmPost"))) postMut.mutate(s.id); }}>
+                                    <CheckCircle className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {s.status === "draft" && (
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive"
+                                    onClick={() => { if (confirm(t("purchasingPages.supplierSettlement.confirmDelete"))) deleteMut.mutate(s.id); }}>
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        }
+                        return null;
+                      })}
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
-        )}
+        </div>
+
+        <AuditGridPagination
+          layout={layout}
+          totalRows={filtered.length}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          totalPages={totalPages}
+          unitLabel="تسوية"
+        />
       </div>
 
     </div>
