@@ -546,6 +546,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   hr:          ["hr", "hr_module"],
   production:  ["production"],
   contracting: ["contracting"],
+  maintenance: ["maintenance"],
   pos:         ["pos"],
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
