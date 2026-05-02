@@ -65,6 +65,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   // Operations modules
   contracting: "contracting",
   production: "production",
+  maintenance: "maintenance",
   security_events: "security_events",
   // SEO Manager — site analytics dashboard granted per company.
   seo_dashboard: "seo_dashboard",

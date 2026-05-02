@@ -92,6 +92,10 @@ import ContractingProjects from "@/pages/ContractingProjects";
 import ContractingProjectDetail from "@/pages/ContractingProjectDetail";
 import ContractingContractors from "@/pages/ContractingContractors";
 import ContractingBills from "@/pages/ContractingBills";
+import MaintenanceHub from "@/pages/maintenance/MaintenanceHub";
+import MaintenanceAssets from "@/pages/maintenance/MaintenanceAssets";
+import MaintenanceTechnicians from "@/pages/maintenance/MaintenanceTechnicians";
+import MaintenanceOrders from "@/pages/maintenance/MaintenanceOrders";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -483,6 +487,12 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/contracting/projects/:id"     module="contracting"    component={ContractingProjectDetail} />}
             {!isSuperAdmin && <PermRoute path="/contracting/contractors"      module="contracting"    component={ContractingContractors} />}
             {!isSuperAdmin && <PermRoute path="/contracting/bills"            module="contracting"    component={ContractingBills} />}
+
+            {/* Maintenance ERP — gated by `maintenance` permission. */}
+            {!isSuperAdmin && <PermRoute path="/maintenance"                  module="maintenance"    component={MaintenanceHub} />}
+            {!isSuperAdmin && <PermRoute path="/maintenance/assets"           module="maintenance"    component={MaintenanceAssets} />}
+            {!isSuperAdmin && <PermRoute path="/maintenance/technicians"      module="maintenance"    component={MaintenanceTechnicians} />}
+            {!isSuperAdmin && <PermRoute path="/maintenance/orders"           module="maintenance"    component={MaintenanceOrders} />}
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

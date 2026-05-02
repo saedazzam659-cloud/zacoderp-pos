@@ -556,6 +556,11 @@
     "settings": "Settings",
     "productionGroup": "Manufacturing",
     "productionDashboard": "Production Dashboard",
+    "maintenanceGroup": "Maintenance",
+    "maintenanceHub": "Maintenance Hub",
+    "maintenanceAssets": "Assets & Equipment",
+    "maintenanceTechnicians": "Technicians",
+    "maintenanceOrders": "Work Orders",
     "contractingGroup": "Contracting",
     "contractingDashboard": "Contracting Dashboard",
     "contractingProjects": "Projects",
@@ -756,6 +761,7 @@
     "accountingSubtitle": "Chart of accounts, journal entries, and financial reports",
     "hrSubtitle": "Employee files, attendance, payroll, and reports",
     "posSubtitle": "POS terminals, monitoring, and settings",
+    "maintenanceSubtitle": "Assets, technicians, work orders, and spare parts",
     "controlPanelSubtitle": "System settings, permissions, subscription, and audit",
     "inventoryTitle": "Warehouse Management",
     "inventorySubtitle": "All warehouse screens in one place"
@@ -1888,6 +1894,7 @@
       "hr": "Human Resources",
       "production": "Production & Manufacturing",
       "contracting": "Contracting Management",
+      "maintenance": "Maintenance Management",
       "security": "Security & Surveillance",
       "aiTools": "AI Tools"
     },
@@ -1949,6 +1956,7 @@
       "hr_face_attendance": "AI Face Attendance",
       "production": "Production & Manufacturing (Dashboard, Orders, Resources)",
       "contracting": "Contracting Management (Dashboard, Projects, Contractors, Bills)",
+      "maintenance": "Maintenance Management (Assets, Technicians, Work Orders, Spare Parts)",
       "security_events": "Security & Surveillance (Events, Notification Rules)"
     }
   },

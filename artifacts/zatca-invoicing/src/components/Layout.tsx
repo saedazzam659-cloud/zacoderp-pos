@@ -13,7 +13,7 @@ import {
   ShoppingBag, FileSignature, KeyRound, CalendarRange, Target, Undo2, ExternalLink, UserCog, Calculator,
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope,
   ScrollText, Database, ListOrdered, HardDrive, Trash2,
-  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat,
+  Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -184,6 +184,14 @@ const contractingSubNav: NavDef[] = [
   { nameKey: "nav.contractingBills",       href: "/contracting/bills",        icon: FileText,  permKey: "contracting" },
 ];
 const CONTRACTING_GROUP_PERMS = ["contracting"];
+// Maintenance ERP — gated by a single `maintenance` permission key.
+const maintenanceSubNav: NavDef[] = [
+  { nameKey: "nav.maintenanceHub",         href: "/maintenance",             icon: Wrench,        permKey: "maintenance", exact: true },
+  { nameKey: "nav.maintenanceAssets",      href: "/maintenance/assets",      icon: Boxes,         permKey: "maintenance" },
+  { nameKey: "nav.maintenanceTechnicians", href: "/maintenance/technicians", icon: HardHat,       permKey: "maintenance" },
+  { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, permKey: "maintenance" },
+];
+const MAINTENANCE_GROUP_PERMS = ["maintenance"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.
 const securitySubNav: NavDef[] = [
   { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
@@ -1218,6 +1226,39 @@ function ContractingNavGroup({
   );
 }
 
+// ─── MaintenanceNavGroup ─────────────────────────────────────────────────────
+// Collapsible "إدارة الصيانة" group — mirrors ContractingNavGroup, gated by
+// the `maintenance` permission key.
+function MaintenanceNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, MAINTENANCE_GROUP_PERMS)) return null;
+  const isOnSub = maintenanceSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/maintenance"
+        icon={Wrench}
+        label={t("nav.maintenanceGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {maintenanceSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AIToolsNavGroup ─────────────────────────────────────────────────────────
 // Collapsible "أدوات الذكاء الاصطناعي" group — houses the voice assistant
 // settings, AI reports, sessions admin, work-sessions log, inbox, and the
@@ -1327,6 +1368,8 @@ function SidebarInner({
   onProductionToggle,
   contractingOpen,
   onContractingToggle,
+  maintenanceOpen,
+  onMaintenanceToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1371,6 +1414,8 @@ function SidebarInner({
   onProductionToggle: () => void;
   contractingOpen: boolean;
   onContractingToggle: () => void;
+  maintenanceOpen: boolean;
+  onMaintenanceToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -1594,6 +1639,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "maintenance", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <MaintenanceNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={maintenanceOpen}
+                  onToggle={onMaintenanceToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <PosNavGroup
@@ -1759,6 +1815,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...hrSubNav,
     ...productionSubNav,
     ...contractingSubNav,
+    ...maintenanceSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -2016,6 +2073,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [hrOpen,         setHrOpen]           = useState(() => location.startsWith("/hr/"));
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
   const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
+  const [maintenanceOpen, setMaintenanceOpen] = useState(() => location.startsWith("/maintenance"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -2042,7 +2100,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance"
     | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2055,6 +2113,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "hr")         setHrOpen(false);
     if (keep !== "production")  setProductionOpen(false);
     if (keep !== "contracting") setContractingOpen(false);
+    if (keep !== "maintenance") setMaintenanceOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
@@ -2085,6 +2144,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleHrToggle         = makeAccordionToggle("hr",         hrOpen,         setHrOpen);
   const handleProductionToggle  = makeAccordionToggle("production",  productionOpen,  setProductionOpen);
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
+  const handleMaintenanceToggle = makeAccordionToggle("maintenance", maintenanceOpen, setMaintenanceOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
@@ -2172,6 +2232,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         hr:         setHrOpen,
         production:  setProductionOpen,
         contracting: setContractingOpen,
+        maintenance: setMaintenanceOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
@@ -2216,6 +2277,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onProductionToggle: handleProductionToggle,
     contractingOpen,
     onContractingToggle: handleContractingToggle,
+    maintenanceOpen,
+    onMaintenanceToggle: handleMaintenanceToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

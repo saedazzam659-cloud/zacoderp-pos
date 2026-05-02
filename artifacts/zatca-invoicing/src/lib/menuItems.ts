@@ -45,6 +45,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "production",         label: "الإنتاج والتصنيع",           section: "الإنتاج والتصنيع" },
 
+  { key: "maintenance",        label: "إدارة الصيانة",              section: "إدارة الصيانة" },
+
   { key: "security_events",    label: "الأمن والمراقبة",            section: "الأمن والمراقبة" },
 
   { key: "seo_dashboard",      label: "إدارة SEO",                  section: "تحليلات SEO" },
@@ -92,6 +94,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   hr_module:          "hr",
   contracting:        "contracting",
   production:         "production",
+  maintenance:        "maintenance",
   security_events:    "security",
   seo_dashboard:      null,           // SuperAdmin tool, not billed per-company
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
@@ -124,6 +127,7 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "شؤون الموظفين":         { bg: "bg-rose-50",     text: "text-rose-700",     border: "border-rose-200" },
   "إدارة المقاولات":       { bg: "bg-yellow-50",   text: "text-yellow-700",   border: "border-yellow-200" },
   "الإنتاج والتصنيع":      { bg: "bg-stone-50",    text: "text-stone-700",    border: "border-stone-200" },
+  "إدارة الصيانة":         { bg: "bg-orange-50",   text: "text-orange-700",   border: "border-orange-200" },
   "الأمن والمراقبة":       { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
   "تحليلات SEO":           { bg: "bg-fuchsia-50",  text: "text-fuchsia-700",  border: "border-fuchsia-200" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },

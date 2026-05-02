@@ -27,6 +27,7 @@ const G = {
   hr:          "perms.groups.hr",
   production:  "perms.groups.production",
   contracting: "perms.groups.contracting",
+  maintenance: "perms.groups.maintenance",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
 };
@@ -95,6 +96,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // Contracting Management — backend key is "contracting"; covers projects,
   // contractors, bills, and the contracting dashboard behind a single permission.
   { key: "contracting",          label: "perms.modules.contracting",          group: G.contracting, actions: ALL },
+
+  // Maintenance ERP — backend key is "maintenance"; covers assets, technicians,
+  // work orders, and spare-parts consumption behind a single permission.
+  { key: "maintenance",          label: "perms.modules.maintenance",          group: G.maintenance, actions: ALL },
 
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.

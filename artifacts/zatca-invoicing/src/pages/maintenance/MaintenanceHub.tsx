@@ -1,0 +1,22 @@
+import { useTranslation } from "react-i18next";
+import { Wrench, Boxes, HardHat, ClipboardList } from "lucide-react";
+import { MenuHub, type HubTile } from "@/components/MenuHub";
+
+const tiles: HubTile[] = [
+  { nameKey: "nav.maintenanceAssets",      href: "/maintenance/assets",      icon: Boxes,         tone: "amber",   permKey: "maintenance" },
+  { nameKey: "nav.maintenanceTechnicians", href: "/maintenance/technicians", icon: HardHat,       tone: "indigo",  permKey: "maintenance" },
+  { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, tone: "emerald", permKey: "maintenance" },
+];
+
+export default function MaintenanceHub() {
+  const { t } = useTranslation();
+  return (
+    <MenuHub
+      title={t("nav.maintenanceGroup")}
+      subtitle={t("hub.maintenanceSubtitle")}
+      icon={Wrench}
+      headerTone="orange"
+      tiles={tiles}
+    />
+  );
+}
