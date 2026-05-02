@@ -194,7 +194,110 @@ export const inventoryApi = {
   }) => post<ItemDocument>(`/items/${itemId}/documents`, data),
   deleteItemDocument: (itemId: number, docId: number) =>
     del(`/items/${itemId}/documents/${docId}`),
+
+  // PRO Extension #8 — multi-currency override prices per item
+  getItemCurrencyPrices: (itemId: number) =>
+    get<ItemCurrencyPrice[]>(`/items/${itemId}/currency-prices`),
+  addItemCurrencyPrice: (itemId: number, data: {
+    currencyCode: string; costPrice: number | string; salePrice: number | string; notes?: string;
+  }) => post<ItemCurrencyPrice>(`/items/${itemId}/currency-prices`, data),
+  updateItemCurrencyPrice: (itemId: number, rowId: number, data: Partial<{
+    costPrice: number | string; salePrice: number | string; notes: string;
+  }>) => put<ItemCurrencyPrice>(`/items/${itemId}/currency-prices/${rowId}`, data),
+  deleteItemCurrencyPrice: (itemId: number, rowId: number) =>
+    del(`/items/${itemId}/currency-prices/${rowId}`),
+
+  // PRO Extension #9 — per-branch stock & reorder thresholds
+  getItemBranchStock: (itemId: number) =>
+    get<ItemBranchStockRow[]>(`/items/${itemId}/branch-stock`),
+  upsertItemBranchStock: (itemId: number, branchId: number, data: {
+    qty: number | string; reorderLevel?: number | string | null; maxLevel?: number | string | null; notes?: string;
+  }) => put<any>(`/items/${itemId}/branch-stock/${branchId}`, data),
+  deleteItemBranchStock: (itemId: number, rowId: number) =>
+    del(`/items/${itemId}/branch-stock/${rowId}`),
+
+  // PRO Extension #16 — smart reorder suggestion
+  getReorderSuggestion: (itemId: number) =>
+    get<ReorderSuggestion>(`/items/${itemId}/reorder-suggestion`),
+
+  // PRO Extension #18 — manufacturing BOM steps
+  getItemBomSteps: (itemId: number) =>
+    get<BomStepsResponse>(`/items/${itemId}/bom-steps`),
+  addItemBomStep: (itemId: number, data: {
+    sequence?: number; nameAr: string; nameEn?: string;
+    durationMinutes?: number; laborCost?: number | string; overheadCost?: number | string; notes?: string;
+  }) => post<BomStep>(`/items/${itemId}/bom-steps`, data),
+  updateItemBomStep: (itemId: number, stepId: number, data: Partial<{
+    sequence: number; nameAr: string; nameEn: string;
+    durationMinutes: number; laborCost: number | string; overheadCost: number | string; notes: string;
+  }>) => put<BomStep>(`/items/${itemId}/bom-steps/${stepId}`, data),
+  deleteItemBomStep: (itemId: number, stepId: number) =>
+    del(`/items/${itemId}/bom-steps/${stepId}`),
+
+  // PRO Extension #15 — scan tenant for low-stock items and create
+  // broadcast notifications (idempotent per item per day via sourceKey).
+  notifyLowStock: () =>
+    post<{ scanned: number; created: number; skippedAlreadyNotified: number; skippedAboveThreshold: number }>(
+      `/alerts/notify`, {}),
 };
+
+export interface ItemCurrencyPrice {
+  id: number; companyId: number; itemId: number;
+  currencyCode: string;
+  costPrice: string; salePrice: string;
+  notes: string | null;
+  createdAt: string; updatedAt: string;
+}
+
+export interface ItemBranchStockRow {
+  branchId: number; branchCode: string; branchNameAr: string; branchNameEn: string | null; isMain: boolean;
+  rowId: number | null;
+  qty: string;
+  reorderLevel: string | null;
+  maxLevel: string | null;
+  notes: string | null;
+}
+
+export interface ReorderSuggestion {
+  itemId: number; code: string; nameAr: string; nameEn: string | null;
+  inputs: {
+    currentStock: number;
+    avgMonthlySales: number;
+    dailyVelocity: number;
+    leadTimeDays: number;
+    reorderLevel: number;
+    maxLevel: number | null;
+    safetyFactor: number;
+  };
+  computed: {
+    leadTimeConsumption: number;
+    targetStock: number;
+    suggestedOrderQty: number;
+    needsReorder: boolean;
+  };
+}
+
+export interface BomStep {
+  id: number; companyId: number; itemId: number;
+  sequence: number;
+  nameAr: string; nameEn: string | null;
+  durationMinutes: number | null;
+  laborCost: string; overheadCost: string;
+  notes: string | null;
+  createdAt: string; updatedAt: string;
+}
+
+export interface BomStepsResponse {
+  steps: BomStep[];
+  totals: {
+    stepCount: number;
+    totalDurationMin: number;
+    totalLaborCost: number;
+    totalOverheadCost: number;
+    componentCost: number;
+    manufacturedCost: number;
+  };
+}
 
 export interface ItemDocument {
   id: number;

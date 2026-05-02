@@ -1,4 +1,5 @@
-import { pgTable, serial, text, integer, boolean, timestamp, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { usersTable } from "./users";
 
@@ -18,7 +19,16 @@ export const notificationsTable = pgTable("notifications", {
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
   createdAt:    timestamp("created_at").defaultNow().notNull(),
   readAt:       timestamp("read_at"),
-});
+}, (t) => ({
+  // Idempotency anchor for system-generated notifications (e.g. low-stock
+  // alerts use sourceKey="low_stock_item_<id>_<YYYY-MM-DD>"). Partial so
+  // that legacy ad-hoc notifications without a sourceKey still work.
+  // Combined with INSERT ... ON CONFLICT DO NOTHING this gives us strict
+  // dedupe even under concurrent /alerts/notify requests.
+  uxNotifSourceKey: uniqueIndex("ux_notifications_company_source_key")
+    .on(t.companyId, t.sourceKey)
+    .where(sql`${t.sourceKey} IS NOT NULL`),
+}));
 
 export type Notification = typeof notificationsTable.$inferSelect;
 

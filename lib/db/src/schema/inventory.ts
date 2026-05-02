@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { companiesTable } from "./companies";
 import { accountsTable } from "./accounts";
 import { suppliersTable } from "./suppliers";
+import { branchesTable } from "./branches";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 export const itemTypeEnum       = pgEnum("item_type",        ["stock", "service"]);
@@ -219,6 +220,84 @@ export const itemUnitPricesTable = pgTable("item_unit_prices", {
   salePrice:        numeric("sale_price",  { precision: 14, scale: 4 }).notNull().default("0"),
   isBase:           boolean("is_base").notNull().default(false),
   createdAt:        timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── PRO Extension #8 — Item Currency Prices ─────────────────────────────────
+// Per-item override prices in non-default currencies. The base costPrice/
+// salePrice on `items` are always quoted in the company's default currency
+// (typically SAR); rows here let an item also have a price in USD/EUR/AED/etc.
+// The route enforces that you can NEVER add a row for the company's default
+// currency (which would be ambiguous vs the base price columns) and that
+// the currency must exist in this tenant. Sales/purchase forms can opt in
+// to use these prices via a future "currency picker" — out of scope for
+// this batch, but the data is here to drive it.
+export const itemCurrencyPricesTable = pgTable("item_currency_prices", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:       integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  // Stored as the currency `code` (e.g. "USD", "EUR") rather than an FK
+  // to currencies.id, matching the convention already in use across
+  // suppliers/purchasing/inventoryReceipts where currency_code is a text col.
+  currencyCode: text("currency_code").notNull(),
+  costPrice:    numeric("cost_price", { precision: 14, scale: 4 }).notNull().default("0"),
+  salePrice:    numeric("sale_price", { precision: 14, scale: 4 }).notNull().default("0"),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  // Prevent the same item having two rows for the same currency (the
+  // route's app-level dup check is best-effort; this is the safety net).
+  itemCurrencyUniq: uniqueIndex("item_currency_prices_item_curr_uniq")
+    .on(t.companyId, t.itemId, t.currencyCode),
+}));
+
+// ─── PRO Extension #9 — Item Branch Stock ────────────────────────────────────
+// Per-item per-branch quantity & reorder thresholds. The system already has
+// `stock_balance` (per-item per-WAREHOUSE quantities) but branches and
+// warehouses are different: a single branch can have multiple warehouses
+// (e.g. main store + cold storage), and conversely some warehouses serve
+// the whole company. This table is the lighter "branch view" — the qty
+// here is the operator's read on what's at that branch (initially set
+// from the warehouses inside the branch but not auto-synced — to keep the
+// data lean and skip touching the stock-posting code path in this batch).
+export const itemBranchStockTable = pgTable("item_branch_stock", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:       integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  branchId:     integer("branch_id").notNull().references(() => branchesTable.id, { onDelete: "cascade" }),
+  qty:          numeric("qty", { precision: 18, scale: 4 }).notNull().default("0"),
+  reorderLevel: numeric("reorder_level", { precision: 14, scale: 4 }),
+  maxLevel:     numeric("max_level", { precision: 14, scale: 4 }),
+  notes:        text("notes"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  // One row per (item, branch) per tenant — UPSERT target.
+  itemBranchUniq: uniqueIndex("item_branch_stock_item_branch_uniq")
+    .on(t.companyId, t.itemId, t.branchId),
+}));
+
+// ─── PRO Extension #18 — Item BOM Steps ──────────────────────────────────────
+// Manufacturing steps for a bundle/kit. Each step has a sequence #, a
+// name, an optional duration, and labour + overhead costs. The total
+// labor + overhead is added to the bundle's component cost (sum of
+// children) to give a more accurate manufactured-cost figure. Only
+// shown for items where isBundle=true (orthogonal to variants per
+// Extension #20). Sequence is per-item, no DB unique on (item, seq) —
+// the UI re-numbers freely on add/move/delete.
+export const itemBomStepsTable = pgTable("item_bom_steps", {
+  id:               serial("id").primaryKey(),
+  companyId:        integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  itemId:           integer("item_id").notNull().references(() => itemsTable.id, { onDelete: "cascade" }),
+  sequence:         integer("sequence").notNull().default(0),
+  nameAr:           text("name_ar").notNull(),
+  nameEn:           text("name_en"),
+  durationMinutes:  integer("duration_minutes").default(0),
+  laborCost:        numeric("labor_cost",    { precision: 14, scale: 4 }).notNull().default("0"),
+  overheadCost:     numeric("overhead_cost", { precision: 14, scale: 4 }).notNull().default("0"),
+  notes:            text("notes"),
+  createdAt:        timestamp("created_at").defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at").defaultNow().notNull(),
 });
 
 // ─── Stock Balance (summary per item per warehouse) ───────────────────────────

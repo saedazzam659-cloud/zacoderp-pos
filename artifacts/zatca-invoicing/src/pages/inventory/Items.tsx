@@ -22,11 +22,12 @@ import {
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
   Truck, Check, Boxes, Layers,
+  Building2, Cog, Bell,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
 import ScanToImageDialog from "@/components/ScanToImageDialog";
-import type { ItemDocument, ItemSupplier, BundleComponent, ItemVariant } from "@/lib/inventoryApi";
+import type { ItemDocument, ItemSupplier, BundleComponent, ItemVariant, ItemBranchStockRow } from "@/lib/inventoryApi";
 import { FormPanel, Field, FormGrid } from "@/components/FormPanel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -924,7 +925,7 @@ export default function Items() {
   const [showForm, setShowForm] = useState(false);
   const [activeItemTab, setActiveItemTab] = useState("basic");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants">("balances");
+  const [expandedTab, setExpandedTab] = useState<"balances" | "units" | "analytics" | "documents" | "suppliers" | "bundle" | "variants" | "currencies" | "branches" | "reorder" | "bomSteps">("balances");
   const [aiOpen, setAiOpen] = useState(false);
   const [qrItem, setQrItem] = useState<any>(null);
   const [historyItem, setHistoryItem] = useState<any>(null);
@@ -957,6 +958,23 @@ export default function Items() {
   const createMut = useMutation({ mutationFn: inventoryApi.createItem, onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemSaved") }); }, onError: errToast("تعذّر حفظ الصنف") });
   const updateMut = useMutation({ mutationFn: ({ id, data }: any) => inventoryApi.updateItem(id, data), onSuccess: () => { invalidate(); reset(); toast({ title: t("pages.items.itemUpdated") }); }, onError: errToast("تعذّر تعديل الصنف") });
   const deleteMut = useMutation({ mutationFn: inventoryApi.deleteItem, onSuccess: () => { invalidate(); toast({ title: t("pages.items.deleted") }); }, onError: errToast("تعذّر الحذف") });
+  // PRO Extension #15 — manual low-stock scan that creates broadcast
+  // notifications. Server is idempotent per-item per-day so re-clicking
+  // a few seconds later is safe and the toast clearly explains the result.
+  const notifyLowStockMut = useMutation({
+    mutationFn: () => inventoryApi.notifyLowStock(),
+    onSuccess: (r) => {
+      toast({
+        title: t("pages.items.notifyLowStock.successTitle"),
+        description: t("pages.items.notifyLowStock.successBody", {
+          created: r.created,
+          alreadyNotified: r.skippedAlreadyNotified,
+          aboveThreshold: r.skippedAboveThreshold,
+        }),
+      });
+    },
+    onError: errToast(t("pages.items.notifyLowStock.failed")),
+  });
 
   function reset() { setForm(EMPTY); setEditId(null); setShowForm(false); setActiveItemTab("basic"); }
   function handleEdit(item: any) {
@@ -1069,6 +1087,23 @@ export default function Items() {
           >
             <ScanLine className="h-4 w-4" />
             {t("pages.items.scanToImage.button")}
+          </Button>
+          {/* PRO Extension #15 — manual trigger to scan items at-or-below
+              their reorderLevel and create broadcast notifications.
+              Idempotent per-item per-day on the server, so spam-clicking
+              is safe. */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 border-amber-500/40 text-amber-700 dark:text-amber-400"
+            onClick={() => notifyLowStockMut.mutate()}
+            disabled={notifyLowStockMut.isPending}
+            title={t("pages.items.notifyLowStock.buttonHint")}
+          >
+            {notifyLowStockMut.isPending
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <Bell className="h-4 w-4" />}
+            {t("pages.items.notifyLowStock.button")}
           </Button>
           <ExportButtons rows={exportRows} columns={ITEM_EXPORT_COLS} filename={`${t("pages.items.itemsTitle")}-${new Date().toISOString().slice(0,10)}`} title={t("pages.items.itemsTitle")} />
           <Button size="sm" className="gap-2" onClick={() => { reset(); setShowForm(true); }}>
@@ -1426,6 +1461,40 @@ export default function Items() {
                                 <Layers className="h-3.5 w-3.5" />{t("pages.items.variants.tabLabel")}
                               </button>
                             )}
+                            {/* PRO Extension #8 — Multi-currency override prices */}
+                            <button
+                              onClick={() => setExpandedTab("currencies")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "currencies" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <DollarSign className="h-3.5 w-3.5" />{t("pages.items.currencyPrices.tabLabel")}
+                            </button>
+                            {/* PRO Extension #9 — Per-branch stock & thresholds */}
+                            <button
+                              onClick={() => setExpandedTab("branches")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "branches" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <Building2 className="h-3.5 w-3.5" />{t("pages.items.branches.tabLabel")}
+                            </button>
+                            {/* PRO Extension #16 — Smart reorder suggestion */}
+                            <button
+                              onClick={() => setExpandedTab("reorder")}
+                              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                expandedTab === "reorder" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                            >
+                              <TrendingUp className="h-3.5 w-3.5" />{t("pages.items.reorder.tabLabel")}
+                            </button>
+                            {/* PRO Extension #18 — BOM steps (only meaningful for bundles) */}
+                            {it.isBundle && (
+                              <button
+                                onClick={() => setExpandedTab("bomSteps")}
+                                className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                                  expandedTab === "bomSteps" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
+                              >
+                                <Cog className="h-3.5 w-3.5" />{t("pages.items.bomSteps.tabLabel")}
+                              </button>
+                            )}
                           </div>
 
                           {expandedTab === "balances" && (
@@ -1477,6 +1546,22 @@ export default function Items() {
 
                           {expandedTab === "variants" && (
                             <ItemVariantsPanel itemId={it.id} parentName={it.nameAr} />
+                          )}
+
+                          {expandedTab === "currencies" && (
+                            <ItemCurrencyPricesPanel itemId={it.id} />
+                          )}
+
+                          {expandedTab === "branches" && (
+                            <ItemBranchStockPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
+                          )}
+
+                          {expandedTab === "reorder" && (
+                            <ItemReorderPanel itemId={it.id} unitCode={it.unit?.code ?? ""} />
+                          )}
+
+                          {expandedTab === "bomSteps" && (
+                            <ItemBomStepsPanel itemId={it.id} />
                           )}
                         </td>
                       </tr>
@@ -2515,6 +2600,618 @@ function ItemVariantsPanel({ itemId, parentName }: { itemId: number; parentName:
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #8 — Multi-currency override prices panel
+// ════════════════════════════════════════════════════════════════════════════
+// Lets the user set per-item override prices in any of the tenant's
+// non-default currencies. The default currency is excluded from the
+// dropdown because the base price columns on `items` already cover it.
+function ItemCurrencyPricesPanel({ itemId }: { itemId: number }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const cid = user?.role === "superadmin" ? undefined : user?.company?.id;
+  const { fmt } = useFmt();
+
+  const { data: rows = [], isLoading, isError } = useQuery({
+    queryKey: ["item-currency-prices", itemId],
+    queryFn: () => inventoryApi.getItemCurrencyPrices(itemId),
+  });
+
+  // Pull tenant currency directory; filter out the default + already-used.
+  const { data: allCurrencies = [] } = useQuery({
+    queryKey: ["currencies", cid],
+    queryFn: async () => {
+      const r = await fetch(`/api/currencies${cid ? `?companyId=${cid}` : ""}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("zatca_token") ?? ""}` },
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<Array<{ id: number; code: string; nameAr: string; nameEn?: string; isDefault: boolean }>>;
+    },
+  });
+  const usedCodes = new Set(rows.map(r => r.currencyCode));
+  const availableCurrencies = allCurrencies.filter(c => !c.isDefault && !usedCodes.has(c.code));
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ currencyCode: "", costPrice: "", salePrice: "", notes: "" });
+  const resetForm = () => setForm({ currencyCode: "", costPrice: "", salePrice: "", notes: "" });
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["item-currency-prices", itemId] });
+  const errToast = (key: string) => (e: any) => toast({
+    title: t(key), description: parseError(e), variant: "destructive",
+  });
+
+  const addMut = useMutation({
+    mutationFn: () => inventoryApi.addItemCurrencyPrice(itemId, {
+      currencyCode: form.currencyCode,
+      costPrice: form.costPrice || 0,
+      salePrice: form.salePrice || 0,
+      notes: form.notes || undefined,
+    }),
+    onSuccess: () => { inv(); resetForm(); setShowForm(false); toast({ title: t("pages.items.currencyPrices.added") }); },
+    onError: errToast("pages.items.currencyPrices.addFailed"),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (rowId: number) => inventoryApi.deleteItemCurrencyPrice(itemId, rowId),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.currencyPrices.deleted") }); },
+    onError: errToast("pages.items.currencyPrices.deleteFailed"),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError) return (
+    <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+      {t("pages.items.currencyPrices.loadError")}
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      {!showForm && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">{t("pages.items.currencyPrices.description")}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => setShowForm(true)}
+            disabled={availableCurrencies.length === 0}
+            title={availableCurrencies.length === 0 ? t("pages.items.currencyPrices.noMoreCurrencies") : ""}
+          >
+            <Plus className="h-3.5 w-3.5" />{t("pages.items.currencyPrices.addButton")}
+          </Button>
+        </div>
+      )}
+      {showForm && (
+        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.currencyPrices.currency")} *</label>
+              <select
+                value={form.currencyCode}
+                onChange={(e) => setForm(f => ({ ...f, currencyCode: e.target.value }))}
+                className="w-full h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="">— {t("pages.items.currencyPrices.chooseCurrency")} —</option>
+                {availableCurrencies.map(c => (
+                  <option key={c.code} value={c.code}>{c.code} — {c.nameAr}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.currencyPrices.costPrice")}</label>
+              <Input type="number" step="0.0001" min="0" value={form.costPrice}
+                onChange={(e) => setForm(f => ({ ...f, costPrice: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.currencyPrices.salePrice")}</label>
+              <Input type="number" step="0.0001" min="0" value={form.salePrice}
+                onChange={(e) => setForm(f => ({ ...f, salePrice: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.currencyPrices.notes")}</label>
+              <Input value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} className="h-9" />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>
+              {t("common.cancel", { defaultValue: "إلغاء" })}
+            </Button>
+            <Button size="sm" disabled={!form.currencyCode || addMut.isPending}
+              onClick={() => addMut.mutate()} className="gap-1.5">
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t("pages.items.currencyPrices.save")}
+            </Button>
+          </div>
+        </div>
+      )}
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <DollarSign className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.currencyPrices.empty")}
+        </p>
+      ) : (
+        <div className="rounded-lg border overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="px-3 py-2 text-start">{t("pages.items.currencyPrices.currency")}</th>
+                <th className="px-3 py-2 text-end">{t("pages.items.currencyPrices.costPrice")}</th>
+                <th className="px-3 py-2 text-end">{t("pages.items.currencyPrices.salePrice")}</th>
+                <th className="px-3 py-2 text-start">{t("pages.items.currencyPrices.notes")}</th>
+                <th className="w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-t hover:bg-muted/20">
+                  <td className="px-3 py-2 font-mono font-semibold">{r.currencyCode}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">{fmt(r.costPrice)}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">{fmt(r.salePrice)}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.notes ?? "—"}</td>
+                  <td className="px-2 py-2">
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive"
+                      onClick={() => {
+                        if (window.confirm(t("pages.items.currencyPrices.deleteConfirm", { code: r.currencyCode }))) deleteMut.mutate(r.id);
+                      }}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #9 — Per-branch stock & thresholds panel
+// ════════════════════════════════════════════════════════════════════════════
+// Renders ONE row per tenant branch (LEFT-JOINed server-side). Each row
+// can be edited inline — qty, reorderLevel and maxLevel — and saving
+// upserts via PUT /branch-stock/:branchId. Empty fields delete the row.
+function ItemBranchStockPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { fmt, fmtQty } = useFmt();
+
+  const { data: rows = [], isLoading, isError } = useQuery({
+    queryKey: ["item-branch-stock", itemId],
+    queryFn: () => inventoryApi.getItemBranchStock(itemId),
+  });
+
+  const [edits, setEdits] = useState<Record<number, { qty: string; reorderLevel: string; maxLevel: string; notes: string }>>({});
+  const editFor = (b: ItemBranchStockRow) => edits[b.branchId] ?? {
+    qty: b.qty ?? "0",
+    reorderLevel: b.reorderLevel ?? "",
+    maxLevel: b.maxLevel ?? "",
+    notes: b.notes ?? "",
+  };
+
+  const inv = () => qc.invalidateQueries({ queryKey: ["item-branch-stock", itemId] });
+  const errToast = (key: string) => (e: any) => toast({
+    title: t(key), description: parseError(e), variant: "destructive",
+  });
+
+  const saveMut = useMutation({
+    mutationFn: ({ branchId, data }: { branchId: number; data: any }) =>
+      inventoryApi.upsertItemBranchStock(itemId, branchId, data),
+    onSuccess: (_d, vars) => {
+      inv();
+      setEdits(e => { const n = { ...e }; delete n[vars.branchId]; return n; });
+      toast({ title: t("pages.items.branches.saved") });
+    },
+    onError: errToast("pages.items.branches.saveFailed"),
+  });
+  const deleteMut = useMutation({
+    mutationFn: (rowId: number) => inventoryApi.deleteItemBranchStock(itemId, rowId),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.branches.deleted") }); },
+    onError: errToast("pages.items.branches.deleteFailed"),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError) return (
+    <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+      {t("pages.items.branches.loadError")}
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">{t("pages.items.branches.description")}</p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <Building2 className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.branches.noBranches")}
+        </p>
+      ) : (
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="px-3 py-2 text-start">{t("pages.items.branches.branch")}</th>
+                <th className="px-3 py-2 text-end w-28">{t("pages.items.branches.qty")}</th>
+                <th className="px-3 py-2 text-end w-28">{t("pages.items.branches.reorderLevel")}</th>
+                <th className="px-3 py-2 text-end w-28">{t("pages.items.branches.maxLevel")}</th>
+                <th className="px-3 py-2 text-start">{t("pages.items.branches.notes")}</th>
+                <th className="w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => {
+                const e = editFor(b);
+                const dirty = edits[b.branchId] !== undefined;
+                const qtyNum = Number(b.qty);
+                const rlNum  = b.reorderLevel != null ? Number(b.reorderLevel) : null;
+                // Highlight branches at-or-below their per-branch reorder level
+                // (the per-branch level wins over the global one, when set).
+                const isLow  = rlNum !== null && rlNum > 0 && qtyNum <= rlNum;
+                return (
+                  <tr key={b.branchId} className={cn("border-t hover:bg-muted/10", isLow && "bg-amber-50/40 dark:bg-amber-900/10")}>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{b.branchNameAr}</span>
+                        {b.isMain && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-bold">{t("pages.items.branches.mainBadge")}</span>}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">{b.branchCode}</span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input type="number" step="0.0001" value={e.qty} className="h-8 text-end tabular-nums"
+                        onChange={(ev) => setEdits(s => ({ ...s, [b.branchId]: { ...editFor(b), qty: ev.target.value } }))} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input type="number" step="0.0001" min="0" value={e.reorderLevel} className="h-8 text-end tabular-nums"
+                        onChange={(ev) => setEdits(s => ({ ...s, [b.branchId]: { ...editFor(b), reorderLevel: ev.target.value } }))} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input type="number" step="0.0001" min="0" value={e.maxLevel} className="h-8 text-end tabular-nums"
+                        onChange={(ev) => setEdits(s => ({ ...s, [b.branchId]: { ...editFor(b), maxLevel: ev.target.value } }))} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Input value={e.notes} className="h-8"
+                        onChange={(ev) => setEdits(s => ({ ...s, [b.branchId]: { ...editFor(b), notes: ev.target.value } }))} />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex gap-1 justify-end">
+                        {dirty && (
+                          <Button size="icon" variant="default" className="h-7 w-7"
+                            disabled={saveMut.isPending}
+                            onClick={() => saveMut.mutate({
+                              branchId: b.branchId,
+                              data: {
+                                qty: e.qty || "0",
+                                reorderLevel: e.reorderLevel === "" ? null : e.reorderLevel,
+                                maxLevel:     e.maxLevel     === "" ? null : e.maxLevel,
+                                notes:        e.notes || undefined,
+                              },
+                            })}>
+                            <Save className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {b.rowId !== null && (
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive"
+                            onClick={() => {
+                              if (window.confirm(t("pages.items.branches.deleteConfirm", { branch: b.branchNameAr }))) deleteMut.mutate(b.rowId!);
+                            }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot className="bg-muted/30">
+              <tr className="border-t font-semibold">
+                <td className="px-3 py-2">{t("pages.items.branches.totals")}</td>
+                <td className="px-3 py-2 text-end tabular-nums">
+                  {fmtQty(rows.reduce((s, r) => s + Number(r.qty || 0), 0))} {unitCode}
+                </td>
+                <td colSpan={4}></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #16 — Smart reorder suggestion panel
+// ════════════════════════════════════════════════════════════════════════════
+// Read-only panel that displays the inputs (current stock, velocity, lead
+// time, thresholds) the server used and the final suggested order qty.
+// We also show the formula so the user understands where the number came
+// from — important for trust on automated suggestions.
+function ItemReorderPanel({ itemId, unitCode }: { itemId: number; unitCode: string }) {
+  const { t } = useTranslation();
+  const { fmt, fmtQty } = useFmt();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-reorder", itemId],
+    queryFn: () => inventoryApi.getReorderSuggestion(itemId),
+  });
+
+  if (isLoading) return <Skeleton className="h-32 w-full" />;
+  if (isError || !data) return (
+    <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+      {t("pages.items.reorder.loadError")}
+    </div>
+  );
+
+  const { inputs, computed } = data;
+  const Tile = ({ label, value, hint, color }: { label: string; value: React.ReactNode; hint?: string; color?: string }) => (
+    <div className="rounded-lg border bg-background p-3">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn("text-lg font-bold tabular-nums mt-0.5", color)}>{value}</p>
+      {hint && <p className="text-[10px] text-muted-foreground mt-0.5">{hint}</p>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">{t("pages.items.reorder.description")}</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <Tile
+          label={t("pages.items.reorder.currentStock")}
+          value={`${fmtQty(inputs.currentStock)} ${unitCode}`}
+        />
+        <Tile
+          label={t("pages.items.reorder.avgMonthlySales")}
+          value={fmtQty(inputs.avgMonthlySales)}
+          hint={t("pages.items.reorder.avgMonthlySalesHint")}
+        />
+        <Tile
+          label={t("pages.items.reorder.dailyVelocity")}
+          value={fmtQty(inputs.dailyVelocity)}
+          hint={`${fmtQty(inputs.dailyVelocity)} ${unitCode}/${t("pages.items.reorder.day")}`}
+        />
+        <Tile
+          label={t("pages.items.reorder.leadTimeDays")}
+          value={inputs.leadTimeDays}
+          hint={t("pages.items.reorder.leadTimeHint")}
+        />
+        <Tile
+          label={t("pages.items.reorder.reorderLevel")}
+          value={fmtQty(inputs.reorderLevel)}
+          hint={inputs.maxLevel != null ? t("pages.items.reorder.maxLevelHint", { max: fmtQty(inputs.maxLevel) }) : undefined}
+        />
+      </div>
+
+      <div className={cn(
+        "rounded-lg border-2 p-4 flex items-center justify-between gap-4 flex-wrap",
+        computed.needsReorder
+          ? "border-amber-500/60 bg-amber-50 dark:bg-amber-900/20"
+          : "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-900/10",
+      )}>
+        <div>
+          <p className={cn("text-xs font-semibold flex items-center gap-1.5",
+            computed.needsReorder ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300")}>
+            {computed.needsReorder
+              ? <><AlertTriangle className="h-4 w-4" />{t("pages.items.reorder.needsReorder")}</>
+              : <><Check className="h-4 w-4" />{t("pages.items.reorder.adequate")}</>}
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-1 max-w-md">
+            {t("pages.items.reorder.formula", {
+              reorder: fmtQty(inputs.reorderLevel),
+              consumption: fmtQty(computed.leadTimeConsumption),
+              target: fmtQty(computed.targetStock),
+              current: fmtQty(inputs.currentStock),
+            })}
+          </p>
+        </div>
+        <div className="text-end">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("pages.items.reorder.suggestedQty")}</p>
+          <p className={cn("text-3xl font-bold tabular-nums",
+            computed.suggestedOrderQty > 0 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300")}>
+            {fmtQty(computed.suggestedOrderQty)} <span className="text-base font-medium text-muted-foreground">{unitCode}</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #18 — BOM steps panel (manufacturing recipe)
+// ════════════════════════════════════════════════════════════════════════════
+// Sequence-ordered list of manufacturing steps with labour + overhead
+// cost per step. The footer shows the totals and the "manufactured cost"
+// (component cost + labour + overhead), useful when costing a kit.
+function ItemBomStepsPanel({ itemId }: { itemId: number }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { fmt } = useFmt();
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["item-bom-steps", itemId],
+    queryFn: () => inventoryApi.getItemBomSteps(itemId),
+  });
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ sequence: "", nameAr: "", nameEn: "", durationMinutes: "", laborCost: "", overheadCost: "", notes: "" });
+  const resetForm = () => setForm({ sequence: "", nameAr: "", nameEn: "", durationMinutes: "", laborCost: "", overheadCost: "", notes: "" });
+
+  const inv = () => {
+    qc.invalidateQueries({ queryKey: ["item-bom-steps", itemId] });
+    qc.invalidateQueries({ queryKey: ["item-bundle", itemId] });
+  };
+  const errToast = (key: string) => (e: any) => toast({
+    title: t(key), description: parseError(e), variant: "destructive",
+  });
+
+  const addMut = useMutation({
+    mutationFn: () => inventoryApi.addItemBomStep(itemId, {
+      // Auto-pick next sequence if user didn't supply one
+      sequence: form.sequence ? Number(form.sequence) : ((data?.steps.length ?? 0) + 1),
+      nameAr: form.nameAr,
+      nameEn: form.nameEn || undefined,
+      durationMinutes: form.durationMinutes ? Number(form.durationMinutes) : 0,
+      laborCost:    form.laborCost    || 0,
+      overheadCost: form.overheadCost || 0,
+      notes: form.notes || undefined,
+    }),
+    onSuccess: () => { inv(); resetForm(); setShowForm(false); toast({ title: t("pages.items.bomSteps.added") }); },
+    onError: errToast("pages.items.bomSteps.addFailed"),
+  });
+  const deleteMut = useMutation({
+    mutationFn: (stepId: number) => inventoryApi.deleteItemBomStep(itemId, stepId),
+    onSuccess: () => { inv(); toast({ title: t("pages.items.bomSteps.deleted") }); },
+    onError: errToast("pages.items.bomSteps.deleteFailed"),
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isError || !data) return (
+    <div className="text-center text-xs text-destructive py-4 border border-dashed border-destructive/30 rounded-lg">
+      {t("pages.items.bomSteps.loadError")}
+    </div>
+  );
+
+  const { steps, totals } = data;
+
+  return (
+    <div className="space-y-3">
+      {!showForm && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">{t("pages.items.bomSteps.description")}</p>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowForm(true)}>
+            <Plus className="h-3.5 w-3.5" />{t("pages.items.bomSteps.addButton")}
+          </Button>
+        </div>
+      )}
+      {showForm && (
+        <div className="p-3 rounded-lg border bg-background/50 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.sequence")}</label>
+              <Input type="number" min="0" value={form.sequence} placeholder={`${(data.steps.length ?? 0) + 1}`}
+                onChange={(e) => setForm(f => ({ ...f, sequence: e.target.value }))} className="h-9" />
+            </div>
+            <div className="lg:col-span-2">
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.nameAr")} *</label>
+              <Input value={form.nameAr} onChange={(e) => setForm(f => ({ ...f, nameAr: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.nameEn")}</label>
+              <Input value={form.nameEn} onChange={(e) => setForm(f => ({ ...f, nameEn: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.durationMinutes")}</label>
+              <Input type="number" min="0" value={form.durationMinutes}
+                onChange={(e) => setForm(f => ({ ...f, durationMinutes: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.laborCost")}</label>
+              <Input type="number" step="0.0001" min="0" value={form.laborCost}
+                onChange={(e) => setForm(f => ({ ...f, laborCost: e.target.value }))} className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.overheadCost")}</label>
+              <Input type="number" step="0.0001" min="0" value={form.overheadCost}
+                onChange={(e) => setForm(f => ({ ...f, overheadCost: e.target.value }))} className="h-9" />
+            </div>
+            <div className="lg:col-span-1">
+              <label className="text-xs font-medium block mb-1">{t("pages.items.bomSteps.notes")}</label>
+              <Input value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} className="h-9" />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => { resetForm(); setShowForm(false); }}>
+              {t("common.cancel", { defaultValue: "إلغاء" })}
+            </Button>
+            <Button size="sm" disabled={!form.nameAr || addMut.isPending}
+              onClick={() => addMut.mutate()} className="gap-1.5">
+              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {t("pages.items.bomSteps.save")}
+            </Button>
+          </div>
+        </div>
+      )}
+      {steps.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-6 text-center border border-dashed rounded-lg">
+          <Cog className="h-6 w-6 mx-auto mb-1.5 opacity-30" />
+          {t("pages.items.bomSteps.empty")}
+        </p>
+      ) : (
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="px-2 py-2 text-center w-12">#</th>
+                <th className="px-3 py-2 text-start">{t("pages.items.bomSteps.step")}</th>
+                <th className="px-3 py-2 text-end w-24">{t("pages.items.bomSteps.durationMinutes")}</th>
+                <th className="px-3 py-2 text-end w-28">{t("pages.items.bomSteps.laborCost")}</th>
+                <th className="px-3 py-2 text-end w-28">{t("pages.items.bomSteps.overheadCost")}</th>
+                <th className="w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {steps.map(s => (
+                <tr key={s.id} className="border-t hover:bg-muted/20">
+                  <td className="px-2 py-2 text-center font-mono font-semibold">{s.sequence}</td>
+                  <td className="px-3 py-2">
+                    <p className="font-medium">{s.nameAr}</p>
+                    {s.nameEn && <p className="text-[10px] text-muted-foreground">{s.nameEn}</p>}
+                    {s.notes && <p className="text-[10px] text-muted-foreground italic">{s.notes}</p>}
+                  </td>
+                  <td className="px-3 py-2 text-end tabular-nums">{s.durationMinutes ?? 0}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">{fmt(s.laborCost)}</td>
+                  <td className="px-3 py-2 text-end tabular-nums">{fmt(s.overheadCost)}</td>
+                  <td className="px-2 py-2">
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive"
+                      onClick={() => {
+                        if (window.confirm(t("pages.items.bomSteps.deleteConfirm", { name: s.nameAr }))) deleteMut.mutate(s.id);
+                      }}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-muted/30 font-semibold">
+              <tr className="border-t">
+                <td colSpan={2} className="px-3 py-2">{t("pages.items.bomSteps.totals")}</td>
+                <td className="px-3 py-2 text-end tabular-nums">{totals.totalDurationMin}</td>
+                <td className="px-3 py-2 text-end tabular-nums">{fmt(totals.totalLaborCost)}</td>
+                <td className="px-3 py-2 text-end tabular-nums">{fmt(totals.totalOverheadCost)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Manufactured-cost summary — components + labour + overhead */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("pages.items.bomSteps.componentCost")}</p>
+          <p className="text-base font-bold tabular-nums">{fmt(totals.componentCost)}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("pages.items.bomSteps.totalLaborCost")}</p>
+          <p className="text-base font-bold tabular-nums">{fmt(totals.totalLaborCost)}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/20 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("pages.items.bomSteps.totalOverheadCost")}</p>
+          <p className="text-base font-bold tabular-nums">{fmt(totals.totalOverheadCost)}</p>
+        </div>
+        <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-3">
+          <p className="text-[10px] uppercase tracking-wide text-primary font-semibold">{t("pages.items.bomSteps.manufacturedCost")}</p>
+          <p className="text-lg font-bold tabular-nums text-primary">{fmt(totals.manufacturedCost)}</p>
+        </div>
+      </div>
     </div>
   );
 }

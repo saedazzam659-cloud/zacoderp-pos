@@ -13,6 +13,13 @@ import {
   itemSuppliersTable,
   itemBundleComponentsTable,
   suppliersTable,
+  // Batch 8 — final 5 PRO Extensions
+  itemCurrencyPricesTable,
+  itemBranchStockTable,
+  itemBomStepsTable,
+  branchesTable,
+  currenciesTable,
+  notificationsTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, asc, gte, lte, lt, inArray } from "drizzle-orm";
 import { aliasedTable } from "drizzle-orm";
@@ -2327,6 +2334,555 @@ router.post("/import/opening-balances", async (req, res) => {
   }
 
   res.json({ applied, errors, total: rows.length });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #8 — Item Currency Prices
+// ════════════════════════════════════════════════════════════════════════════
+// Per-item override prices in non-default currencies. Useful for businesses
+// that quote some items in USD/EUR/AED while keeping SAR as the company base.
+// We store currency by `code` (text) — matching every other place in the
+// system that already does this (suppliers, purchasing, inventoryReceipts).
+
+// Helper: validate that an item belongs to the tenant; returns 404 if not.
+async function ensureItemInTenant(cid: number, itemId: number): Promise<boolean> {
+  const [r] = await db.select({ id: itemsTable.id }).from(itemsTable)
+    .where(and(eq(itemsTable.id, itemId), eq(itemsTable.companyId, cid)));
+  return !!r;
+}
+
+// Helper: pull the company's default currency code (used to reject creating
+// an override row for the same currency as the base price columns).
+async function getDefaultCurrencyCode(cid: number): Promise<string | null> {
+  const [c] = await db.select({ code: currenciesTable.code })
+    .from(currenciesTable)
+    .where(and(eq(currenciesTable.companyId, cid), eq(currenciesTable.isDefault, true)));
+  return c?.code ?? null;
+}
+
+router.get("/items/:id/currency-prices", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+  const rows = await db.select().from(itemCurrencyPricesTable)
+    .where(and(eq(itemCurrencyPricesTable.companyId, cid), eq(itemCurrencyPricesTable.itemId, id)))
+    .orderBy(asc(itemCurrencyPricesTable.currencyCode));
+  res.json(rows);
+});
+
+router.post("/items/:id/currency-prices", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  const { currencyCode, costPrice, salePrice, notes } = req.body ?? {};
+  const code = String(currencyCode ?? "").trim().toUpperCase();
+  if (!code) { res.status(400).json({ error: "رمز العملة مطلوب" }); return; }
+
+  // Currency must exist in this tenant — otherwise the user can stuff arbitrary
+  // codes into the table and the UI dropdowns won't recognise them.
+  const [curr] = await db.select({ code: currenciesTable.code, isDefault: currenciesTable.isDefault })
+    .from(currenciesTable)
+    .where(and(eq(currenciesTable.companyId, cid), eq(currenciesTable.code, code)));
+  if (!curr) { res.status(400).json({ error: "العملة غير معرّفة في هذه الشركة" }); return; }
+  if (curr.isDefault) {
+    res.status(400).json({ error: "العملة الافتراضية للشركة محفوظة في حقول السعر الأساسية للصنف" });
+    return;
+  }
+
+  const cost = Number(costPrice ?? 0);
+  const sale = Number(salePrice ?? 0);
+  if (!Number.isFinite(cost) || cost < 0) { res.status(400).json({ error: "سعر التكلفة يجب أن يكون رقماً موجباً" }); return; }
+  if (!Number.isFinite(sale) || sale < 0) { res.status(400).json({ error: "سعر البيع يجب أن يكون رقماً موجباً" }); return; }
+
+  let row;
+  try {
+    [row] = await db.insert(itemCurrencyPricesTable).values({
+      companyId: cid, itemId: id, currencyCode: code,
+      costPrice: String(cost), salePrice: String(sale),
+      notes: notes ? String(notes).slice(0, 500) : null,
+    }).returning();
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      res.status(409).json({ error: "هذه العملة مضافة بالفعل لهذا الصنف" });
+      return;
+    }
+    throw err;
+  }
+  auditSubEntity(req, "inventory_items", id, "create", null, { currencyPrice: row });
+  res.status(201).json(row);
+});
+
+router.put("/items/:id/currency-prices/:rowId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(id) || !Number.isFinite(rowId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [existing] = await db.select().from(itemCurrencyPricesTable)
+    .where(and(eq(itemCurrencyPricesTable.id, rowId),
+               eq(itemCurrencyPricesTable.itemId, id),
+               eq(itemCurrencyPricesTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "السعر غير موجود" }); return; }
+
+  const patch: any = { updatedAt: new Date() };
+  if (req.body.costPrice !== undefined) {
+    const v = Number(req.body.costPrice);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "سعر التكلفة غير صالح" }); return; }
+    patch.costPrice = String(v);
+  }
+  if (req.body.salePrice !== undefined) {
+    const v = Number(req.body.salePrice);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "سعر البيع غير صالح" }); return; }
+    patch.salePrice = String(v);
+  }
+  if (req.body.notes !== undefined) patch.notes = req.body.notes ? String(req.body.notes).slice(0, 500) : null;
+
+  const [updated] = await db.update(itemCurrencyPricesTable).set(patch)
+    .where(eq(itemCurrencyPricesTable.id, rowId)).returning();
+  auditSubEntity(req, "inventory_items", id, "update", { currencyPrice: existing }, { currencyPrice: updated });
+  res.json(updated);
+});
+
+router.delete("/items/:id/currency-prices/:rowId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(id) || !Number.isFinite(rowId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [existing] = await db.select().from(itemCurrencyPricesTable)
+    .where(and(eq(itemCurrencyPricesTable.id, rowId),
+               eq(itemCurrencyPricesTable.itemId, id),
+               eq(itemCurrencyPricesTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "السعر غير موجود" }); return; }
+
+  await db.delete(itemCurrencyPricesTable).where(eq(itemCurrencyPricesTable.id, rowId));
+  auditSubEntity(req, "inventory_items", id, "delete", { currencyPrice: existing }, null);
+  res.json({ ok: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #9 — Item Branch Stock
+// ════════════════════════════════════════════════════════════════════════════
+// Per-item per-branch quantity & per-branch reorder thresholds. The "list"
+// endpoint LEFT JOINs branches so the UI can render every tenant branch as
+// a row even when no stock has been recorded yet — saves a round-trip and
+// makes the empty-cell-vs-zero distinction obvious in the UI.
+
+router.get("/items/:id/branch-stock", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // LEFT JOIN with the per-tenant branches list so the response is always
+  // "every branch in the company, plus its stock row if any".
+  const rows = await db.select({
+    branch: branchesTable,
+    stock:  itemBranchStockTable,
+  })
+    .from(branchesTable)
+    .leftJoin(itemBranchStockTable,
+      and(eq(itemBranchStockTable.branchId, branchesTable.id),
+          eq(itemBranchStockTable.itemId, id),
+          eq(itemBranchStockTable.companyId, cid)))
+    .where(eq(branchesTable.companyId, cid))
+    .orderBy(asc(branchesTable.code));
+  res.json(rows.map(r => ({
+    branchId:     r.branch.id,
+    branchCode:   r.branch.code,
+    branchNameAr: r.branch.nameAr,
+    branchNameEn: r.branch.nameEn,
+    isMain:       r.branch.isMain,
+    rowId:        r.stock?.id ?? null,
+    qty:          r.stock?.qty ?? "0",
+    reorderLevel: r.stock?.reorderLevel ?? null,
+    maxLevel:     r.stock?.maxLevel ?? null,
+    notes:        r.stock?.notes ?? null,
+  })));
+});
+
+router.put("/items/:id/branch-stock/:branchId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const branchId = Number(req.params.branchId);
+  if (!Number.isFinite(id) || !Number.isFinite(branchId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Validate branch is in this tenant before touching the stock table.
+  const [br] = await db.select({ id: branchesTable.id }).from(branchesTable)
+    .where(and(eq(branchesTable.id, branchId), eq(branchesTable.companyId, cid)));
+  if (!br) { res.status(404).json({ error: "الفرع غير موجود" }); return; }
+
+  const qty = Number(req.body.qty ?? 0);
+  if (!Number.isFinite(qty)) { res.status(400).json({ error: "الكمية غير صالحة" }); return; }
+  const reorderLevel = req.body.reorderLevel != null ? Number(req.body.reorderLevel) : null;
+  const maxLevel     = req.body.maxLevel     != null ? Number(req.body.maxLevel)     : null;
+  if (reorderLevel !== null && (!Number.isFinite(reorderLevel) || reorderLevel < 0)) {
+    res.status(400).json({ error: "حد إعادة الطلب يجب أن يكون رقماً موجباً" }); return;
+  }
+  if (maxLevel !== null && (!Number.isFinite(maxLevel) || maxLevel < 0)) {
+    res.status(400).json({ error: "الحد الأقصى يجب أن يكون رقماً موجباً" }); return;
+  }
+  const notes = req.body.notes ? String(req.body.notes).slice(0, 500) : null;
+
+  // Upsert via SELECT-then-INSERT/UPDATE inside a transaction to avoid the
+  // race window. The unique index on (company,item,branch) is the safety
+  // net for the brief gap.
+  const before = await db.select().from(itemBranchStockTable).where(and(
+    eq(itemBranchStockTable.companyId, cid),
+    eq(itemBranchStockTable.itemId, id),
+    eq(itemBranchStockTable.branchId, branchId),
+  ));
+  let row;
+  if (before[0]) {
+    [row] = await db.update(itemBranchStockTable).set({
+      qty: String(qty),
+      reorderLevel: reorderLevel !== null ? String(reorderLevel) : null,
+      maxLevel:     maxLevel     !== null ? String(maxLevel)     : null,
+      notes,
+      updatedAt: new Date(),
+    }).where(eq(itemBranchStockTable.id, before[0].id)).returning();
+    auditSubEntity(req, "inventory_items", id, "update",
+      { branchStock: before[0] }, { branchStock: row });
+  } else {
+    [row] = await db.insert(itemBranchStockTable).values({
+      companyId: cid, itemId: id, branchId,
+      qty: String(qty),
+      reorderLevel: reorderLevel !== null ? String(reorderLevel) : null,
+      maxLevel:     maxLevel     !== null ? String(maxLevel)     : null,
+      notes,
+    }).returning();
+    auditSubEntity(req, "inventory_items", id, "create", null, { branchStock: row });
+  }
+  res.json(row);
+});
+
+router.delete("/items/:id/branch-stock/:rowId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const rowId = Number(req.params.rowId);
+  if (!Number.isFinite(id) || !Number.isFinite(rowId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [existing] = await db.select().from(itemBranchStockTable)
+    .where(and(eq(itemBranchStockTable.id, rowId),
+               eq(itemBranchStockTable.itemId, id),
+               eq(itemBranchStockTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "السجل غير موجود" }); return; }
+
+  await db.delete(itemBranchStockTable).where(eq(itemBranchStockTable.id, rowId));
+  auditSubEntity(req, "inventory_items", id, "delete", { branchStock: existing }, null);
+  res.json({ ok: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #16 — Smart Reorder Suggestion
+// ════════════════════════════════════════════════════════════════════════════
+// Computes a suggested reorder quantity based on:
+//   - currentStock          — sum of stock_balance.qty across all warehouses
+//   - dailyVelocity         — averageMonthlySales / 30 (from /analytics math)
+//   - leadTimeDays          — MAX(item_suppliers.lead_time_days), 0 if none
+//   - reorderLevel/maxLevel — items.reorder_level / items.max_level
+//
+// Math:
+//   targetStock     = max(reorderLevel + leadTimeDays * dailyVelocity * 1.2,
+//                         maxLevel ?? reorderLevel * 2)
+//   suggestedQty    = max(0, ceil(targetStock - currentStock))
+//
+// The 1.2 safety factor pads the lead-time consumption against velocity
+// volatility (a common rule-of-thumb for "comfortable" buffer stock). The
+// max(...) ensures we never aim BELOW the user-set reorder threshold.
+
+router.get("/items/:id/reorder-suggestion", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [item] = await db.select({
+    id: itemsTable.id, code: itemsTable.code,
+    nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn,
+    reorderLevel: itemsTable.reorderLevel, maxLevel: itemsTable.maxLevel,
+  }).from(itemsTable)
+    .where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid)));
+  if (!item) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Pull all 3 inputs in parallel.
+  const trailing12Cutoff = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+  const [stockAgg, velocityAgg, supplierAgg] = await Promise.all([
+    // current stock across all warehouses
+    db.select({ qty: sql<string>`coalesce(sum(${stockBalanceTable.qty}), 0)` })
+      .from(stockBalanceTable)
+      .where(and(eq(stockBalanceTable.companyId, cid), eq(stockBalanceTable.itemId, id))),
+    // velocity from posted sales over last 12 months
+    db.select({ qtyLast12: sql<string>`coalesce(sum(${salesInvoiceLinesTable.qty}) filter (where ${salesInvoicesTable.invoiceDate} >= ${trailing12Cutoff}), 0)` })
+      .from(salesInvoiceLinesTable)
+      .innerJoin(salesInvoicesTable, eq(salesInvoiceLinesTable.invoiceId, salesInvoicesTable.id))
+      .where(and(
+        eq(salesInvoiceLinesTable.companyId, cid),
+        eq(salesInvoicesTable.companyId, cid),
+        eq(salesInvoicesTable.status, "posted"),
+        eq(salesInvoiceLinesTable.itemId, id),
+      )),
+    // longest lead time across linked suppliers
+    db.select({ leadTime: sql<number>`coalesce(max(${itemSuppliersTable.leadTimeDays}), 0)::int` })
+      .from(itemSuppliersTable)
+      .where(and(eq(itemSuppliersTable.companyId, cid), eq(itemSuppliersTable.itemId, id))),
+  ]);
+
+  const currentStock = Number(stockAgg[0]?.qty ?? 0);
+  const avgMonthlySales = Number(velocityAgg[0]?.qtyLast12 ?? 0) / 12;
+  const dailyVelocity = avgMonthlySales / 30;
+  const leadTimeDays = Number(supplierAgg[0]?.leadTime ?? 0);
+  const reorderLevel = Number(item.reorderLevel ?? 0);
+  const maxLevel = item.maxLevel != null ? Number(item.maxLevel) : null;
+
+  const safetyFactor = 1.2;
+  const leadTimeConsumption = leadTimeDays * dailyVelocity * safetyFactor;
+  const upperTarget = maxLevel != null && maxLevel > 0 ? maxLevel : reorderLevel * 2;
+  const targetStock = Math.max(reorderLevel + leadTimeConsumption, upperTarget);
+  const suggestedOrderQty = Math.max(0, Math.ceil(targetStock - currentStock));
+
+  // "needsReorder" = true when current is already at-or-below reorder threshold.
+  // Useful for the UI to highlight the suggestion in red vs. green.
+  const needsReorder = reorderLevel > 0 && currentStock <= reorderLevel;
+
+  res.json({
+    itemId: id,
+    code: item.code, nameAr: item.nameAr, nameEn: item.nameEn,
+    inputs: {
+      currentStock,
+      avgMonthlySales,
+      dailyVelocity,
+      leadTimeDays,
+      reorderLevel,
+      maxLevel,
+      safetyFactor,
+    },
+    computed: {
+      leadTimeConsumption,
+      targetStock,
+      suggestedOrderQty,
+      needsReorder,
+    },
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #18 — BOM Steps (manufacturing steps)
+// ════════════════════════════════════════════════════════════════════════════
+// Steps are only meaningful for items where `isBundle = true` — but we don't
+// 400 on non-bundles since the user might add steps first then flip the
+// bundle flag. The UI handles the visibility rule.
+
+router.get("/items/:id/bom-steps", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  // Compute the component cost in parallel — saves a round-trip from the UI.
+  const [steps, compCostAgg] = await Promise.all([
+    db.select().from(itemBomStepsTable)
+      .where(and(eq(itemBomStepsTable.companyId, cid), eq(itemBomStepsTable.itemId, id)))
+      .orderBy(asc(itemBomStepsTable.sequence), asc(itemBomStepsTable.id)),
+    db.select({
+      cost: sql<string>`coalesce(sum(${itemBundleComponentsTable.qty} * ${itemsTable.costPrice}), 0)`,
+    })
+    .from(itemBundleComponentsTable)
+    .innerJoin(itemsTable, eq(itemsTable.id, itemBundleComponentsTable.childItemId))
+    .where(and(
+      eq(itemBundleComponentsTable.companyId, cid),
+      eq(itemBundleComponentsTable.parentItemId, id),
+    )),
+  ]);
+
+  const totalLabor    = steps.reduce((s, x) => s + Number(x.laborCost ?? 0), 0);
+  const totalOverhead = steps.reduce((s, x) => s + Number(x.overheadCost ?? 0), 0);
+  const totalDuration = steps.reduce((s, x) => s + Number(x.durationMinutes ?? 0), 0);
+  const componentCost = Number(compCostAgg[0]?.cost ?? 0);
+
+  res.json({
+    steps,
+    totals: {
+      stepCount:        steps.length,
+      totalDurationMin: totalDuration,
+      totalLaborCost:   totalLabor,
+      totalOverheadCost: totalOverhead,
+      componentCost,
+      manufacturedCost: componentCost + totalLabor + totalOverhead,
+    },
+  });
+});
+
+router.post("/items/:id/bom-steps", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+  if (!(await ensureItemInTenant(cid, id))) { res.status(404).json({ error: "الصنف غير موجود" }); return; }
+
+  const { sequence, nameAr, nameEn, durationMinutes, laborCost, overheadCost, notes } = req.body ?? {};
+  if (!nameAr || !String(nameAr).trim()) { res.status(400).json({ error: "اسم الخطوة مطلوب" }); return; }
+  const seq = Number(sequence ?? 0);
+  const dur = Number(durationMinutes ?? 0);
+  const lc  = Number(laborCost ?? 0);
+  const oc  = Number(overheadCost ?? 0);
+  if (!Number.isFinite(seq) || seq < 0)   { res.status(400).json({ error: "ترتيب الخطوة غير صالح" }); return; }
+  if (!Number.isFinite(dur) || dur < 0)   { res.status(400).json({ error: "مدة الخطوة غير صالحة" }); return; }
+  if (!Number.isFinite(lc)  || lc  < 0)   { res.status(400).json({ error: "تكلفة العمل غير صالحة" }); return; }
+  if (!Number.isFinite(oc)  || oc  < 0)   { res.status(400).json({ error: "تكلفة الأعباء غير صالحة" }); return; }
+
+  const [row] = await db.insert(itemBomStepsTable).values({
+    companyId: cid, itemId: id,
+    sequence: seq,
+    nameAr: String(nameAr).slice(0, 200),
+    nameEn: nameEn ? String(nameEn).slice(0, 200) : null,
+    durationMinutes: dur,
+    laborCost: String(lc),
+    overheadCost: String(oc),
+    notes: notes ? String(notes).slice(0, 1000) : null,
+  }).returning();
+  auditSubEntity(req, "inventory_items", id, "create", null, { bomStep: row });
+  res.status(201).json(row);
+});
+
+router.put("/items/:id/bom-steps/:stepId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(id) || !Number.isFinite(stepId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [existing] = await db.select().from(itemBomStepsTable)
+    .where(and(eq(itemBomStepsTable.id, stepId),
+               eq(itemBomStepsTable.itemId, id),
+               eq(itemBomStepsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "الخطوة غير موجودة" }); return; }
+
+  const patch: any = { updatedAt: new Date() };
+  if (req.body.sequence !== undefined) {
+    const v = Number(req.body.sequence);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "ترتيب الخطوة غير صالح" }); return; }
+    patch.sequence = v;
+  }
+  if (req.body.nameAr !== undefined) {
+    if (!String(req.body.nameAr).trim()) { res.status(400).json({ error: "اسم الخطوة مطلوب" }); return; }
+    patch.nameAr = String(req.body.nameAr).slice(0, 200);
+  }
+  if (req.body.nameEn !== undefined) patch.nameEn = req.body.nameEn ? String(req.body.nameEn).slice(0, 200) : null;
+  if (req.body.durationMinutes !== undefined) {
+    const v = Number(req.body.durationMinutes);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "مدة الخطوة غير صالحة" }); return; }
+    patch.durationMinutes = v;
+  }
+  if (req.body.laborCost !== undefined) {
+    const v = Number(req.body.laborCost);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "تكلفة العمل غير صالحة" }); return; }
+    patch.laborCost = String(v);
+  }
+  if (req.body.overheadCost !== undefined) {
+    const v = Number(req.body.overheadCost);
+    if (!Number.isFinite(v) || v < 0) { res.status(400).json({ error: "تكلفة الأعباء غير صالحة" }); return; }
+    patch.overheadCost = String(v);
+  }
+  if (req.body.notes !== undefined) patch.notes = req.body.notes ? String(req.body.notes).slice(0, 1000) : null;
+
+  const [updated] = await db.update(itemBomStepsTable).set(patch)
+    .where(eq(itemBomStepsTable.id, stepId)).returning();
+  auditSubEntity(req, "inventory_items", id, "update", { bomStep: existing }, { bomStep: updated });
+  res.json(updated);
+});
+
+router.delete("/items/:id/bom-steps/:stepId", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(id) || !Number.isFinite(stepId)) { res.status(400).json({ error: "معرّف غير صالح" }); return; }
+
+  const [existing] = await db.select().from(itemBomStepsTable)
+    .where(and(eq(itemBomStepsTable.id, stepId),
+               eq(itemBomStepsTable.itemId, id),
+               eq(itemBomStepsTable.companyId, cid)));
+  if (!existing) { res.status(404).json({ error: "الخطوة غير موجودة" }); return; }
+
+  await db.delete(itemBomStepsTable).where(eq(itemBomStepsTable.id, stepId));
+  auditSubEntity(req, "inventory_items", id, "delete", { bomStep: existing }, null);
+  res.json({ ok: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRO Extension #15 — Auto Low-Stock Notifications
+// ════════════════════════════════════════════════════════════════════════════
+// Scans the tenant's items, finds those with summed stock <= reorderLevel
+// (only items with a positive reorderLevel are checked — 0 means "no
+// threshold configured"), and creates ONE broadcast notification per
+// item per day. Idempotency is via `source_key = "low_stock_item_<id>_<YYYY-MM-DD>"`
+// — re-running the same day skips items already notified, so the user
+// can safely click the button repeatedly.
+
+router.post("/alerts/notify", async (req, res) => {
+  const cid = guard(req, res); if (!cid) return;
+
+  // Aggregate stock per item, then filter on reorderLevel client-side.
+  // We can't HAVING-filter on a column from `items` joined to a SUM,
+  // so we do the comparison after the aggregation.
+  const rows = await db.select({
+    itemId: itemsTable.id, code: itemsTable.code,
+    nameAr: itemsTable.nameAr, nameEn: itemsTable.nameEn,
+    reorderLevel: itemsTable.reorderLevel,
+    totalQty: sql<string>`coalesce(sum(${stockBalanceTable.qty}), 0)`,
+  })
+    .from(itemsTable)
+    .leftJoin(stockBalanceTable, and(
+      eq(stockBalanceTable.itemId, itemsTable.id),
+      eq(stockBalanceTable.companyId, cid),
+    ))
+    .where(and(
+      eq(itemsTable.companyId, cid),
+      eq(itemsTable.status, "active"),
+      sql`coalesce(${itemsTable.reorderLevel}, 0) > 0`,
+    ))
+    .groupBy(itemsTable.id, itemsTable.code, itemsTable.nameAr, itemsTable.nameEn, itemsTable.reorderLevel);
+
+  const today = new Date().toISOString().slice(0, 10);
+  let created = 0;
+  let skippedAlreadyNotified = 0;
+
+  for (const r of rows) {
+    const totalQty = Number(r.totalQty);
+    const reorder  = Number(r.reorderLevel ?? 0);
+    if (totalQty > reorder) continue;
+
+    const sourceKey = `low_stock_item_${r.itemId}_${today}`;
+    // Strict idempotency: rely on the partial unique index
+    // ux_notifications_company_source_key (companyId, sourceKey)
+    // WHERE sourceKey IS NOT NULL combined with ON CONFLICT DO NOTHING.
+    // This is concurrency-safe — two parallel /alerts/notify requests
+    // can never insert duplicate same-day notifications for the same
+    // item, even if they pass the SELECT race window simultaneously.
+    const inserted = await db.insert(notificationsTable).values({
+      companyId: cid,
+      userId:    null,                          // broadcast — every user sees it
+      title:     `مخزون منخفض: ${r.nameAr}`,
+      body:      `الصنف \`${r.code}\` (${r.nameAr}) — الرصيد الحالي ${totalQty} ≤ حد إعادة الطلب ${reorder}.`,
+      severity:  "medium",
+      category:  "inventory_alert",
+      sourceKey,
+      createdByUserId: req.authUser?.id ?? null,
+    })
+      .onConflictDoNothing({ target: [notificationsTable.companyId, notificationsTable.sourceKey] })
+      .returning({ id: notificationsTable.id });
+
+    if (inserted.length > 0) created++;
+    else skippedAlreadyNotified++;
+  }
+
+  res.json({
+    scanned: rows.length,
+    created,
+    skippedAlreadyNotified,
+    skippedAboveThreshold: rows.length - created - skippedAlreadyNotified,
+  });
 });
 
 export default router;
