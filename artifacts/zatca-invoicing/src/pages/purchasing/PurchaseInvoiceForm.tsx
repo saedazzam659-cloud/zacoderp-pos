@@ -271,9 +271,10 @@ export default function PurchaseInvoiceForm() {
     return String((1 / Number(rate.rate)).toFixed(6));
   }
 
-  function handleCurrencyChange(code: string) {
+  async function handleCurrencyChange(code: string) {
     setCurrencyCode(code);
     setExchangeRate(getLatestRate(code));
+    await repriceAllLinesForCurrency(code);
   }
 
   useEffect(() => {
@@ -421,12 +422,33 @@ export default function PurchaseInvoiceForm() {
     return rows;
   }
 
+  // Per-currency cost cache: itemId → [{ currencyCode, costPrice, ... }]
+  const [itemCurrencyPricesMap, setItemCurrencyPricesMap] = useState<Record<string, any[]>>({});
+  async function fetchItemCurrencyPrices(itemId: string): Promise<any[]> {
+    if (itemCurrencyPricesMap[itemId]) return itemCurrencyPricesMap[itemId];
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/currency-prices?companyId=${cid}`, { headers: authH });
+    const rows = r.ok ? await r.json() : [];
+    setItemCurrencyPricesMap(prev => ({ ...prev, [itemId]: rows }));
+    return rows;
+  }
+  function pickCurrencyCost(rows: any[], code: string): string | null {
+    const m = rows.find((p: any) => p.currencyCode === code);
+    if (!m || m.costPrice == null || m.costPrice === "") return null;
+    return String(m.costPrice);
+  }
+
   async function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    let chosenPrice: string = String(base?.costPrice ?? item.costPrice ?? "0");
+    if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
+      const cps = await fetchItemCurrencyPrices(itemId);
+      const m = pickCurrencyCost(cps, currencyCode);
+      if (m != null) chosenPrice = m;
+    }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       const updated: InvoiceLine = {
@@ -437,9 +459,43 @@ export default function PurchaseInvoiceForm() {
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
         unit:      unitNameOf(base?.unit) || unitNameOf(fallbackUnit) || "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
-        unitPrice: trimTrailingZeros(base?.costPrice ?? item.costPrice ?? "0"),
+        unitPrice: trimTrailingZeros(chosenPrice),
         vatRate:   (Number(item.vatRate) > 0 ? String(item.vatRate) : "15"),
       };
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
+      return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
+    }));
+  }
+
+  const repriceVersion = useRef(0);
+  async function repriceAllLinesForCurrency(code: string) {
+    if (!defaultCurrency) return;
+    const myVersion = ++repriceVersion.current;
+    const isDefault = code === defaultCurrency.code;
+    const updates: Record<string, string> = {};
+    for (const l of lines) {
+      if (!l.itemId) continue;
+      let np: string | null = null;
+      if (isDefault) {
+        const itemUnits = await fetchItemUnits(l.itemId);
+        const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
+          ?? itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+        const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
+        const v = row?.costPrice ?? item?.costPrice;
+        if (v != null) np = String(v);
+      } else {
+        const cps = await fetchItemCurrencyPrices(l.itemId);
+        const m = pickCurrencyCost(cps, code);
+        if (m != null) np = m;
+      }
+      if (np != null) updates[l._id] = trimTrailingZeros(np);
+    }
+    if (myVersion !== repriceVersion.current) return;
+    if (!Object.keys(updates).length) return;
+    setLines(prev => prev.map(l => {
+      const np = updates[l._id];
+      if (np == null) return l;
+      const updated: InvoiceLine = { ...l, unitPrice: np };
       const { lineTotal } = calcLine(updated, priceIncludesVat);
       return { ...updated, lineTotal: lineTotal.toFixed(2), finalCost: (lineTotal + Number(updated.expenseShare || 0)).toFixed(2) };
     }));

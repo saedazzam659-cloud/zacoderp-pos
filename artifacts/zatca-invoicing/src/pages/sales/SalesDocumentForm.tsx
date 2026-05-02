@@ -405,7 +405,58 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     if (rate.fromCurrencyId === selected.id) return String(rate.rate);
     return String((1 / Number(rate.rate)).toFixed(6));
   }
-  function handleCurrencyChange(code: string) { setCurrencyCode(code); setExchangeRate(getLatestRate(code)); }
+  async function handleCurrencyChange(code: string) {
+    setCurrencyCode(code);
+    setExchangeRate(getLatestRate(code));
+    await repriceAllLinesForCurrency(code);
+  }
+  // Re-price every line whose item has a per-currency price configured. When
+  // the new currency IS the company default, snap unitPrice back to the
+  // item's catalog (current-unit) salePrice; the user previously saw a
+  // foreign-currency price for that line and switching back must restore
+  // the SAR figure, otherwise the gross would silently jump.
+  // Stale-guard: if the user toggles the currency selector faster than the
+  // async fetches resolve, only the most recent invocation may apply its
+  // setLines — older runs would otherwise overwrite the latest selection
+  // with prices for the wrong currency.
+  const repriceVersion = useRef(0);
+  async function repriceAllLinesForCurrency(code: string) {
+    if (!defaultCurrency) return;
+    const myVersion = ++repriceVersion.current;
+    const isDefault = code === defaultCurrency.code;
+    const updates: Record<string, string> = {};
+    for (const l of lines) {
+      if (!l.itemId) continue;
+      let np: string | null = null;
+      if (isDefault) {
+        const itemUnits = await fetchItemUnits(l.itemId);
+        const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
+          ?? itemUnits.find((u: any) => u.isBase)
+          ?? itemUnits[0];
+        const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
+        const v = row?.salePrice ?? item?.sellPrice ?? item?.price;
+        if (v != null) np = String(v);
+      } else {
+        const cps = await fetchItemCurrencyPrices(l.itemId);
+        const m = pickCurrencyPrice(cps, code);
+        if (m != null) np = m;
+      }
+      if (np != null) updates[l._id] = trimTrailingZeros(np);
+    }
+    if (myVersion !== repriceVersion.current) return;
+    if (!Object.keys(updates).length) return;
+    setLines(prev => prev.map(l => {
+      const np = updates[l._id];
+      if (np == null) return l;
+      const updated: DocLine = {
+        ...l, unitPrice: np, baseUnitPrice: np,
+        engineUnitPrice: null, engineDiscount: null,
+        appliedOfferId: null, appliedOfferName: null,
+      };
+      const { lineTotal } = calcLine(updated, priceIncludesVat);
+      return { ...updated, lineTotal: lineTotal.toFixed(2) };
+    }));
+  }
 
   useEffect(() => {
     if (!isNew || !defaultCurrency || currencyCode) return;
@@ -619,6 +670,26 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     return rows;
   }
 
+  // Cache item-specific per-currency prices: itemId → [{ currencyCode, salePrice, costPrice, ... }]
+  // The header currency drives line pricing — when a non-default currency is
+  // selected and the item has a row for it, that price wins over the catalog
+  // (SAR) salePrice, otherwise the customer would be quoted in foreign units
+  // at a base-currency number.
+  const [itemCurrencyPricesMap, setItemCurrencyPricesMap] = useState<Record<string, any[]>>({});
+  async function fetchItemCurrencyPrices(itemId: string): Promise<any[]> {
+    if (itemCurrencyPricesMap[itemId]) return itemCurrencyPricesMap[itemId];
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/currency-prices?companyId=${cid}`, { headers: authH });
+    const rows = r.ok ? await r.json() : [];
+    setItemCurrencyPricesMap(prev => ({ ...prev, [itemId]: rows }));
+    return rows;
+  }
+  function pickCurrencyPrice(rows: any[], code: string): string | null {
+    const match = rows.find((p: any) => p.currencyCode === code);
+    if (!match) return null;
+    const v = match.salePrice;
+    return v != null && v !== "" ? String(v) : null;
+  }
+
   async function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) { updateLine(lineId, "itemId", ""); return; }
@@ -628,7 +699,13 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
     const chosenUnitId = base?.unitId ?? item.unitId ?? null;
     const chosenUnitName = base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "";
-    const chosenPrice = base?.salePrice ?? item.sellPrice ?? item.price ?? "0";
+    const catalogPrice = base?.salePrice ?? item.sellPrice ?? item.price ?? "0";
+    let chosenPrice: string = String(catalogPrice);
+    if (currencyCode && defaultCurrency && currencyCode !== defaultCurrency.code) {
+      const cps = await fetchItemCurrencyPrices(itemId);
+      const match = pickCurrencyPrice(cps, currencyCode);
+      if (match != null) chosenPrice = match;
+    }
     const chosenFactor = base?.conversionFactor ?? "1";
 
     setLines(prev => prev.map(l => {

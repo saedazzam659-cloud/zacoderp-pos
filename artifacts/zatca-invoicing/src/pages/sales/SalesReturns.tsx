@@ -237,7 +237,10 @@ export default function SalesReturns() {
     if (rate.fromCurrencyId === selected.id) return String(rate.rate);
     return String((1 / Number(rate.rate)).toFixed(6));
   }
-  function handleCurrencyChange(code: string) { setForm((p: any) => ({ ...p, currencyCode: code, exchangeRate: getLatestRate(code) })); }
+  async function handleCurrencyChange(code: string) {
+    setForm((p: any) => ({ ...p, currencyCode: code, exchangeRate: getLatestRate(code) }));
+    await repriceAllLinesForCurrency(code);
+  }
 
   useEffect(() => {
     if (!showForm || !defaultCurrency || form.currencyCode) return;
@@ -564,12 +567,34 @@ export default function SalesReturns() {
     return rows;
   }
 
+  // Per-currency price cache: itemId → [{ currencyCode, salePrice, ... }]
+  const [itemCurrencyPricesMap, setItemCurrencyPricesMap] = useState<Record<string, any[]>>({});
+  async function fetchItemCurrencyPrices(itemId: string): Promise<any[]> {
+    if (itemCurrencyPricesMap[itemId]) return itemCurrencyPricesMap[itemId];
+    const r = await fetch(`${API}/api/inventory/items/${itemId}/currency-prices?companyId=${cid}`, { headers: authH });
+    const rows = r.ok ? await r.json() : [];
+    setItemCurrencyPricesMap(prev => ({ ...prev, [itemId]: rows }));
+    return rows;
+  }
+  function pickCurrencySale(rows: any[], code: string): string | null {
+    const m = rows.find((p: any) => p.currencyCode === code);
+    if (!m || m.salePrice == null || m.salePrice === "") return null;
+    return String(m.salePrice);
+  }
+
   async function selectItem(lineId: string, itemId: string) {
     const item = inventoryItems.find((i: any) => String(i.id) === itemId);
     if (!item) return;
     const itemUnits = await fetchItemUnits(itemId);
     const base = itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
     const fallbackUnit = units.find((u: any) => u.id === item.unitId);
+    let chosenPrice: string = String(base?.salePrice ?? item.sellPrice ?? item.price ?? "0");
+    const code = form.currencyCode;
+    if (code && defaultCurrency && code !== defaultCurrency.code) {
+      const cps = await fetchItemCurrencyPrices(itemId);
+      const m = pickCurrencySale(cps, code);
+      if (m != null) chosenPrice = m;
+    }
     setLines(prev => prev.map(l => {
       if (l._id !== lineId) return l;
       const updated: ReturnLine = {
@@ -580,9 +605,42 @@ export default function SalesReturns() {
         unitId:    base?.unitId ? String(base.unitId) : (item.unitId ? String(item.unitId) : ""),
         unit:      base?.unit?.nameAr ?? fallbackUnit?.nameAr ?? "",
         conversionFactor: String(base?.conversionFactor ?? "1"),
-        unitPrice: String(base?.salePrice ?? item.sellPrice ?? item.price ?? "0"),
+        unitPrice: chosenPrice,
         vatRate:   String(item.vatRate ?? "15"),
       };
+      return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
+    }));
+  }
+
+  const repriceVersion = useRef(0);
+  async function repriceAllLinesForCurrency(code: string) {
+    if (!defaultCurrency) return;
+    const myVersion = ++repriceVersion.current;
+    const isDefault = code === defaultCurrency.code;
+    const updates: Record<string, string> = {};
+    for (const l of lines) {
+      if (!l.itemId) continue;
+      let np: string | null = null;
+      if (isDefault) {
+        const itemUnits = await fetchItemUnits(l.itemId);
+        const row = itemUnits.find((u: any) => String(u.unitId) === l.unitId)
+          ?? itemUnits.find((u: any) => u.isBase) ?? itemUnits[0];
+        const item = inventoryItems.find((i: any) => String(i.id) === l.itemId);
+        const v = row?.salePrice ?? item?.sellPrice ?? item?.price;
+        if (v != null) np = String(v);
+      } else {
+        const cps = await fetchItemCurrencyPrices(l.itemId);
+        const m = pickCurrencySale(cps, code);
+        if (m != null) np = m;
+      }
+      if (np != null) updates[l._id] = np;
+    }
+    if (myVersion !== repriceVersion.current) return;
+    if (!Object.keys(updates).length) return;
+    setLines(prev => prev.map(l => {
+      const np = updates[l._id];
+      if (np == null) return l;
+      const updated: ReturnLine = { ...l, unitPrice: np };
       return { ...updated, lineTotal: calcLineTotal(updated, !!form.priceIncludesVat).toFixed(2) };
     }));
   }
