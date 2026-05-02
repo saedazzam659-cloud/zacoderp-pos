@@ -53,6 +53,11 @@ router.get("/", async (req, res) => {
       isActive: usersTable.isActive,
       lastLoginAt: usersTable.lastLoginAt,
       createdAt: usersTable.createdAt,
+      // ─── Approval permissions (see schema/users.ts) ───
+      canApprove:            usersTable.canApprove,
+      approvalLevel:         usersTable.approvalLevel,
+      maxApprovalAmount:     usersTable.maxApprovalAmount,
+      requireSecondApproval: usersTable.requireSecondApproval,
     }).from(usersTable)
       .where(eq(usersTable.companyId, cid))
       .orderBy(asc(usersTable.id));
@@ -95,6 +100,7 @@ router.post("/", async (req, res) => {
     const {
       username, password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
+      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
     } = req.body ?? {};
     if (!username || !password) { res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" }); return; }
     if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
@@ -120,6 +126,13 @@ router.post("/", async (req, res) => {
 
     const newRole = role && ["admin", "user"].includes(role) ? role : "user";
 
+    // Approval-permission sanitisation — clamp to safe ranges so a malformed
+    // payload can't punch a hole in the workflow (e.g. negative levels or a
+    // non-numeric cap that would later crash the comparison).
+    const apprLevel = Number.isFinite(Number(approvalLevel)) ? Math.max(0, Math.min(9, Math.trunc(Number(approvalLevel)))) : 0;
+    const apprMaxRaw = Number(maxApprovalAmount);
+    const apprMax = Number.isFinite(apprMaxRaw) && apprMaxRaw >= 0 ? apprMaxRaw.toFixed(2) : "0";
+
     const [created] = await db.insert(usersTable).values({
       username,
       email: email || null,
@@ -133,6 +146,11 @@ router.post("/", async (req, res) => {
       // Default true if not provided (matches the column default).
       viewAllBranches: typeof viewAllBranches === "boolean" ? viewAllBranches : true,
       isActive: isActive !== false,
+      // Approval permissions — see schema/users.ts.
+      canApprove:            typeof canApprove === "boolean" ? canApprove : false,
+      approvalLevel:         apprLevel,
+      maxApprovalAmount:     apprMax,
+      requireSecondApproval: typeof requireSecondApproval === "boolean" ? requireSecondApproval : false,
     }).returning();
 
     if (validBranchIds.length) {
@@ -159,6 +177,7 @@ router.patch("/:id", async (req, res) => {
     const {
       password, email, role, code, nameAr, nameEn,
       isActive, branchIds, permissions, viewAllBranches,
+      canApprove, approvalLevel, maxApprovalAmount, requireSecondApproval,
     } = req.body ?? {};
 
     const update: any = { updatedAt: new Date() };
@@ -170,6 +189,16 @@ router.patch("/:id", async (req, res) => {
     if (typeof isActive === "boolean") update.isActive = isActive;
     if (typeof viewAllBranches === "boolean") update.viewAllBranches = viewAllBranches;
     if (permissions !== undefined) update.permissions = permissions;
+    // ─── Approval permissions (clamped) ───
+    if (typeof canApprove === "boolean") update.canApprove = canApprove;
+    if (typeof requireSecondApproval === "boolean") update.requireSecondApproval = requireSecondApproval;
+    if (approvalLevel !== undefined && Number.isFinite(Number(approvalLevel))) {
+      update.approvalLevel = Math.max(0, Math.min(9, Math.trunc(Number(approvalLevel))));
+    }
+    if (maxApprovalAmount !== undefined) {
+      const n = Number(maxApprovalAmount);
+      if (Number.isFinite(n) && n >= 0) update.maxApprovalAmount = n.toFixed(2);
+    }
     if (password) {
       if (String(password).length < 6) { res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }); return; }
       update.passwordHash = await bcrypt.hash(String(password), 12);

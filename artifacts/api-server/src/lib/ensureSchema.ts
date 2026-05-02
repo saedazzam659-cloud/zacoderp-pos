@@ -244,6 +244,29 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
     // Backfill: any legacy company without a code gets ZTC-{id}.
     { label: "backfill companies.code",
       sql:   `UPDATE companies SET code = 'ZTC-' || id WHERE code IS NULL` },
+    // ─── approval_log: append-only audit trail for the document approval
+    // workflow (see lib/db/src/schema/approvalLog.ts). Drizzle's ensureColumns
+    // only ALTERs existing tables, never CREATEs new ones, so we materialise
+    // the table here. Idempotent — safe to re-run on every boot.
+    { label: "create approval_log table",
+      sql:   `CREATE TABLE IF NOT EXISTS approval_log (
+        id            SERIAL PRIMARY KEY,
+        company_id    INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        document_type TEXT    NOT NULL,
+        document_id   INTEGER NOT NULL,
+        user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action        TEXT    NOT NULL,
+        level         INTEGER NOT NULL DEFAULT 0,
+        amount        NUMERIC(18,2) NOT NULL DEFAULT '0',
+        from_status   TEXT,
+        to_status     TEXT,
+        comment       TEXT,
+        created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "approval_log_doc_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS approval_log_doc_idx ON approval_log (company_id, document_type, document_id)` },
+    { label: "approval_log_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS approval_log_company_idx ON approval_log (company_id, created_at)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

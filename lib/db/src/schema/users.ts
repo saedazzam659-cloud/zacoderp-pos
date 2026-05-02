@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, jsonb, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, jsonb, primaryKey, numeric, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { companiesTable } from "./companies";
@@ -46,6 +46,21 @@ export const usersTable = pgTable("users", {
   //                tools (status = 'error') with no critical/warn rows.
   // Other roles never reach the digest list, so this column is harmless on them.
   notifyMaintenanceSeverity: text("notify_maintenance_severity").notNull().default("critical"),
+  // ─── Approval permissions (per-user document approval workflow) ─────
+  // Whether the user can approve documents at all. When false, the
+  // "approve" button is hidden in document UIs regardless of any other
+  // approval-related fields below.
+  canApprove:           boolean("can_approve").notNull().default(false),
+  // Hierarchical approval level (0 = none, 1 = L1 …). Documents whose
+  // amount exceeds this user's `maxApprovalAmount` get bumped to the
+  // next level for further approval.
+  approvalLevel:        integer("approval_level").notNull().default(0),
+  // Maximum total amount this user is allowed to approve in one shot.
+  // 0 = no cap (use with caution; combine with role/company controls).
+  maxApprovalAmount:    numeric("max_approval_amount", { precision: 18, scale: 2 }).notNull().default("0"),
+  // When true, this user's approval is not final — the document moves
+  // to the next level for a second signoff before being marked Approved.
+  requireSecondApproval: boolean("require_second_approval").notNull().default(false),
   sessionToken: text("session_token"),
   sessionId: text("session_id"),
   // ID of the user's currently-selected manual session (FK to sessions.id, see

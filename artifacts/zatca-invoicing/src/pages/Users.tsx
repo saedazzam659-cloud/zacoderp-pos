@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   Users as UsersIcon, Plus, Pencil, Trash2, Shield, Search, KeyRound,
-  CheckCircle2, XCircle, Loader2, X, Save, Check,
+  CheckCircle2, XCircle, Loader2, X, Save, Check, ShieldCheck,
 } from "lucide-react";
 import {
   PERMISSION_MODULES, PERMISSION_GROUPS, ACTION_LABELS,
@@ -43,6 +43,12 @@ type UserRow = {
   isActive: boolean;
   lastLoginAt: string | null;
   branchIds: number[];
+  // Approval workflow — server returns numeric strings for the cap because
+  // it's a NUMERIC column; we coerce on form-load.
+  canApprove?: boolean;
+  approvalLevel?: number;
+  maxApprovalAmount?: string | number | null;
+  requireSecondApproval?: boolean;
 };
 
 type Branch = { id: number; code: string; nameAr: string; nameEn?: string | null };
@@ -60,6 +66,11 @@ const emptyForm = () => ({
   viewAllBranches: true,
   branchIds: [] as number[],
   permissions: viewOnlyPermissions(),
+  // Approval defaults: off, level 0, no cap, single-signature is fine.
+  canApprove: false,
+  approvalLevel: 0,
+  maxApprovalAmount: "0",
+  requireSecondApproval: false,
 });
 
 export default function Users() {
@@ -199,6 +210,12 @@ export default function Users() {
       viewAllBranches: u.viewAllBranches ?? true,
       branchIds: u.branchIds ?? [],
       permissions: { ...viewOnlyPermissions(), ...(u.permissions ?? {}) },
+      // Approval workflow fields — coerce numeric-string cap to a string the
+      // <Input type="number"> can render without leading zeros.
+      canApprove: !!u.canApprove,
+      approvalLevel: Number.isFinite(Number(u.approvalLevel)) ? Number(u.approvalLevel) : 0,
+      maxApprovalAmount: u.maxApprovalAmount != null ? String(u.maxApprovalAmount) : "0",
+      requireSecondApproval: !!u.requireSecondApproval,
     });
     setOpenForm(true);
     setConfirmDeleteId(null);
@@ -226,6 +243,11 @@ export default function Users() {
         viewAllBranches: form.viewAllBranches,
         branchIds: form.branchIds,
         permissions: form.permissions,
+        // Approval workflow — server clamps these too as a safety net.
+        canApprove: form.canApprove,
+        approvalLevel: Number(form.approvalLevel) || 0,
+        maxApprovalAmount: String(form.maxApprovalAmount ?? "0"),
+        requireSecondApproval: form.requireSecondApproval,
       };
       if (editingId == null) {
         body.username = form.username;
@@ -389,10 +411,14 @@ export default function Users() {
 
           <CardContent className="pt-5">
             <Tabs defaultValue="info" className="w-full" dir={isRtl ? "rtl" : "ltr"}>
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
                 <TabsTrigger value="info">{t("users.tabInfo")}</TabsTrigger>
                 <TabsTrigger value="branches">{t("users.tabBranches", { count: form.branchIds.length })}</TabsTrigger>
                 <TabsTrigger value="permissions">{t("users.tabPermissions")}</TabsTrigger>
+                <TabsTrigger value="approval" data-testid="tab-approval" className="gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {t("users.tabApproval")}
+                </TabsTrigger>
               </TabsList>
 
               {/* Info Tab */}
@@ -587,6 +613,104 @@ export default function Users() {
                     );
                   })}
                 </div>
+              </TabsContent>
+
+              {/* Approval Permissions Tab — controls per-user document-approval workflow */}
+              <TabsContent value="approval" className="space-y-4 pt-4" data-testid="approval-tab-content">
+                <div className="text-sm text-muted-foreground flex items-start gap-2 p-3 rounded-lg border border-indigo-200 bg-indigo-50/40 dark:bg-indigo-950/20">
+                  <ShieldCheck className="h-4 w-4 text-indigo-600 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold text-indigo-900 dark:text-indigo-100">{t("users.tabApproval")}</div>
+                    <div className="text-xs mt-0.5">{t("users.approvalSectionHint")}</div>
+                    {form.role === "admin" && (
+                      <div className="text-xs mt-1.5 text-amber-700 font-medium">{t("users.approvalAdminNote")}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 1) Master switch — gates everything below */}
+                <label
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                    form.canApprove
+                      ? "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/30"
+                      : "hover:bg-muted/50"
+                  }`}
+                  data-testid="checkbox-can-approve"
+                >
+                  <Checkbox
+                    checked={form.canApprove}
+                    onCheckedChange={(v) => setForm(f => ({ ...f, canApprove: !!v }))}
+                  />
+                  <div>
+                    <div className="font-medium">{t("users.canApprove")}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{t("users.canApproveHint")}</div>
+                  </div>
+                </label>
+
+                {/* 2) Level + cap + 2nd-approval — disabled and dimmed when canApprove is off */}
+                <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${!form.canApprove ? "opacity-50 pointer-events-none" : ""}`}>
+                  <div>
+                    <Label className="flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-indigo-600" />
+                      {t("users.approvalLevel")}
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={9}
+                      step={1}
+                      value={form.approvalLevel}
+                      onChange={(e) => setForm({ ...form, approvalLevel: Math.max(0, Math.min(9, Number(e.target.value) || 0)) })}
+                      data-testid="input-approval-level"
+                      className="font-mono"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t("users.approvalLevelHint")}</p>
+                  </div>
+                  <div>
+                    <Label className="flex items-center gap-1">
+                      <KeyRound className="h-3 w-3 text-emerald-600" />
+                      {t("users.maxApprovalAmount")}
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={form.maxApprovalAmount}
+                      onChange={(e) => setForm({ ...form, maxApprovalAmount: e.target.value })}
+                      data-testid="input-max-approval-amount"
+                      className="font-mono tabular-nums"
+                      placeholder="0.00"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">{t("users.maxApprovalAmountHint")}</p>
+                  </div>
+                </div>
+
+                <label
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                    !form.canApprove ? "opacity-50 pointer-events-none" : ""
+                  } ${
+                    form.requireSecondApproval
+                      ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30"
+                      : "hover:bg-muted/50"
+                  }`}
+                  data-testid="checkbox-require-second-approval"
+                >
+                  <Checkbox
+                    checked={form.requireSecondApproval}
+                    onCheckedChange={(v) => setForm(f => ({ ...f, requireSecondApproval: !!v }))}
+                  />
+                  <div>
+                    <div className="font-medium">{t("users.requireSecondApproval")}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{t("users.requireSecondApprovalHint")}</div>
+                  </div>
+                </label>
+
+                {!form.canApprove && (
+                  <div className="text-xs text-muted-foreground italic flex items-center gap-1.5 px-1">
+                    <XCircle className="h-3 w-3 text-rose-500" />
+                    {t("users.approvalDisabledHint")}
+                  </div>
+                )}
               </TabsContent>
             </Tabs>
 

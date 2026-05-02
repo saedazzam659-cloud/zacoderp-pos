@@ -1862,7 +1862,19 @@
     "error": "Error",
     "errSaveFailed": "Save failed",
     "errUpdateFailed": "Update failed",
-    "errDeleteFailed": "Delete failed"
+    "errDeleteFailed": "Delete failed",
+    "tabApproval": "Approval permissions",
+    "approvalSectionHint": "Control whether this user can approve documents (invoices, receipts, journals) and within what limits.",
+    "canApprove": "Can approve documents",
+    "canApproveHint": "Without this, no Approve button is shown to this user on any document.",
+    "approvalLevel": "Approval level",
+    "approvalLevelHint": "0 = none, 1 = L1, 2 = L2… Documents whose amount exceeds this user's cap are automatically escalated to the next level.",
+    "maxApprovalAmount": "Max approval amount",
+    "maxApprovalAmountHint": "Largest single amount this user can approve. Set to 0 for no cap.",
+    "requireSecondApproval": "Requires second approval",
+    "requireSecondApprovalHint": "Their approval alone is not final — the document moves to the next level for a second signoff.",
+    "approvalDisabledHint": "Approval is disabled for this user — the Approve button will be hidden everywhere.",
+    "approvalAdminNote": "Admin role automatically gets the highest approval level regardless of these settings."
   },
   "perms": {
     "groups": {
