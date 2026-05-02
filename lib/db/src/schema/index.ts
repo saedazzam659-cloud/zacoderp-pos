@@ -20,6 +20,7 @@ export * from "./fiscalPeriods";
 export * from "./costCenters";
 export * from "./hr";
 export * from "./pos";
+export * from "./pos-restaurant";
 export * from "./notifications";
 export * from "./supportMessages";
 export * from "./accountingMappings";
