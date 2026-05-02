@@ -411,6 +411,16 @@ export const api = {
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
 
+  rPeakHours: (days = 30) =>
+    req<{
+      rangeDays: number; totalOrders: number; totalRevenue: number;
+      byHour: { hour: number; orders: number; revenue: string; guests: number }[];
+      byDow:  { dow: number; orders: number; revenue: string }[];
+      peakHour?: { hour: number; orders: number };
+      peakDow?:  { dow: number; orders: number };
+      recommendations: { hour: number; suggestedWaiters: number; avgOrdersPerDay: number }[];
+    }>("GET", `/api/pos-restaurant/ai/peak-hours?days=${days}`),
+
   rRecommend: (limit = 8) =>
     req<{ menuItemId: number; nameSnapshot: string; qtySum: string; revenue: string; orderCount: number }[]>(
       "GET", `/api/pos-restaurant/ai/recommend?limit=${limit}`),

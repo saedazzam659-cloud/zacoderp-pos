@@ -17,6 +17,7 @@ export default function RestaurantHub() {
     { to: "/kitchen", label: "شاشة المطبخ",   sub: "تذاكر المطبخ المباشرة",   icon: ChefHat,       color: "from-rose-500 to-red-600" },
     { to: "/pos",     label: "الكاشير",       sub: "إصدار الفواتير والتحصيل",  icon: Receipt,       color: "from-emerald-500 to-teal-600" },
     { to: "/super",   label: "السوبرماركت",   sub: "البيع بالباركود والميزان", icon: Coffee,        color: "from-sky-500 to-blue-600" },
+    { to: "/restaurant-ai", label: "التحليلات الذكية", sub: "ساعات الذروة والتوصيات والمراقبة", icon: Sparkles, color: "from-fuchsia-500 to-pink-600" },
     { to: "/restaurant-settings", label: "الإعدادات", sub: "الطاولات والقائمة والفئات", icon: Settings, color: "from-violet-500 to-purple-600" },
   ];
 

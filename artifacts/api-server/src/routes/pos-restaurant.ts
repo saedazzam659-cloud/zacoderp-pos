@@ -553,6 +553,61 @@ router.get("/ai/suspicious", async (req, res) => {
   res.json(rows);
 });
 
+// ════════════════════════════════════════════════════════════════════════
+// AI: peak-hour analysis (last 30 days, by hour-of-day & day-of-week)
+// ════════════════════════════════════════════════════════════════════════
+router.get("/ai/peak-hours", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const days = Math.min(90, Math.max(1, Number(req.query.days ?? 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const byHour = await db.select({
+    hour: sql<number>`EXTRACT(HOUR FROM ${posOrdersTable.openedAt})::int`,
+    orders: sql<number>`COUNT(*)::int`,
+    revenue: sql<string>`COALESCE(SUM(${posOrdersTable.total}::numeric), 0)::text`,
+    guests: sql<number>`COALESCE(SUM(${posOrdersTable.guestCount}), 0)::int`,
+  }).from(posOrdersTable)
+    .where(and(
+      eq(posOrdersTable.companyId, cid),
+      gte(posOrdersTable.openedAt, since),
+      sql`${posOrdersTable.status} != 'cancelled'`,
+    ))
+    .groupBy(sql`EXTRACT(HOUR FROM ${posOrdersTable.openedAt})`)
+    .orderBy(sql`EXTRACT(HOUR FROM ${posOrdersTable.openedAt})`);
+
+  const byDow = await db.select({
+    dow: sql<number>`EXTRACT(DOW FROM ${posOrdersTable.openedAt})::int`,
+    orders: sql<number>`COUNT(*)::int`,
+    revenue: sql<string>`COALESCE(SUM(${posOrdersTable.total}::numeric), 0)::text`,
+  }).from(posOrdersTable)
+    .where(and(
+      eq(posOrdersTable.companyId, cid),
+      gte(posOrdersTable.openedAt, since),
+      sql`${posOrdersTable.status} != 'cancelled'`,
+    ))
+    .groupBy(sql`EXTRACT(DOW FROM ${posOrdersTable.openedAt})`)
+    .orderBy(sql`EXTRACT(DOW FROM ${posOrdersTable.openedAt})`);
+
+  const totalOrders = byHour.reduce((s, r) => s + (r.orders ?? 0), 0);
+  const totalRevenue = byHour.reduce((s, r) => s + Number(r.revenue ?? 0), 0);
+  const peakHour = byHour.slice().sort((a, b) => (b.orders ?? 0) - (a.orders ?? 0))[0];
+  const peakDow = byDow.slice().sort((a, b) => (b.orders ?? 0) - (a.orders ?? 0))[0];
+
+  // Heuristic staffing recommendation: 1 waiter / 25 orders per hour
+  const recommendations = byHour
+    .filter(r => (r.orders ?? 0) > 0)
+    .map(r => ({
+      hour: r.hour,
+      suggestedWaiters: Math.max(1, Math.ceil((r.orders / Math.max(1, days)) / 5)),
+      avgOrdersPerDay: +(r.orders / Math.max(1, days)).toFixed(1),
+    }));
+
+  res.json({
+    rangeDays: days, totalOrders, totalRevenue,
+    byHour, byDow, peakHour, peakDow, recommendations,
+  });
+});
+
 router.put("/ai/suspicious/:id/ack", async (req, res) => {
   const cid = cidOr401(req, res); if (!cid) return;
   const id = Number(req.params.id);
