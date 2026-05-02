@@ -33,7 +33,26 @@ async function createJournalEntry(opts: {
   lines: JLine[];
 }): Promise<number> {
   const cleanLines = opts.lines.filter(l => l.accountId && ((l.debit ?? 0) > 0 || (l.credit ?? 0) > 0));
-  if (cleanLines.length < 2) throw new Error("القيد المحاسبي يحتاج إلى طرفين على الأقل");
+  if (cleanLines.length < 2) {
+    // Build a diagnostic showing which proposed lines were rejected and why,
+    // so the operator can fix the underlying mapping/amount issue instead of
+    // staring at a generic "needs at least 2 sides" error.
+    const rejected = opts.lines.map((l, i) => {
+      const reasons: string[] = [];
+      if (!l.accountId) reasons.push("حساب غير محدد");
+      const dr = l.debit  ?? 0;
+      const cr = l.credit ?? 0;
+      if (!(dr > 0 || cr > 0)) reasons.push(dr < 0 || cr < 0 ? "مبلغ غير موجب" : "مبلغ صفر");
+      if (!reasons.length) return null;
+      const label = l.description?.trim() || `سطر ${i + 1}`;
+      return `«${label}» (${reasons.join("، ")})`;
+    }).filter(Boolean).join("؛ ");
+    throw new Error(
+      `القيد المحاسبي يحتاج إلى طرفين على الأقل (المقبول: ${cleanLines.length}/${opts.lines.length}). ` +
+      `الأسطر المرفوضة: ${rejected || "—"}. ` +
+      `الأسباب الشائعة: حسابات الربط غير مضبوطة، أو إجمالي الفاتورة وتكلفة البضاعة كلاهما صفر.`
+    );
+  }
   const totalDebit  = cleanLines.reduce((s, l) => s + (l.debit  ?? 0), 0);
   const totalCredit = cleanLines.reduce((s, l) => s + (l.credit ?? 0), 0);
   if (Math.abs(totalDebit - totalCredit) > 0.01) {
@@ -719,10 +738,15 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       }
     }
 
-    // Decrease stock for each stockable line (in base units) + accumulate COGS per warehouse.
-    // GDN-sourced invoices: skip stock + skip COGS (already recognised at GDN-post time).
+    // ─── PRE-COMPUTE COGS (no mutation) ───
+    // Two-pass design: first pass walks the lines without mutating stock so
+    // the zero-value early guard below can fire BEFORE any side effect. The
+    // second pass (after all validations) actually decrements stock and
+    // writes the ledger. GDN-sourced invoices skip COGS entirely.
     let totalCogs = 0;
     const cogsByWarehouse: Record<number, number> = {};
+    type StockOp = { itemId: number; warehouseId: number; qty: number; avgCost: number; notes: string | null };
+    const stockOps: StockOp[] = [];
     if (!gdnSourced) {
       for (const line of lines) {
         if (!line.itemId || !line.warehouseId) continue;
@@ -732,23 +756,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
         const lineCogs = qty * avgCost;
         totalCogs += lineCogs;
         cogsByWarehouse[line.warehouseId] = (cogsByWarehouse[line.warehouseId] ?? 0) + lineCogs;
-
-        await upsertBalance(cid, line.itemId, line.warehouseId, -qty, avgCost);
-        const newBal = await getBalance(cid, line.itemId, line.warehouseId);
-        await addStockLedgerEntry({
-          companyId:   cid,
-          itemId:      line.itemId,
-          warehouseId: line.warehouseId,
-          txDate:      inv.invoiceDate,
-          txType:      "sale",
-          qty:         String(-qty),
-          costPrice:   String(avgCost.toFixed(4)),
-          totalCost:   String((-qty * avgCost).toFixed(2)),
-          balanceQty:  String(newBal),
-          refId:       id,
-          refType:     "sales_invoice",
-          notes:       line.notes ?? undefined,
-        });
+        stockOps.push({ itemId: line.itemId, warehouseId: line.warehouseId, qty, avgCost, notes: line.notes ?? null });
       }
     }
 
@@ -759,6 +767,24 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     //   Cr Sales Revenue (= subtotal, gross before discount)
     //   Cr VAT Output    (= vatAmount)
     //   Cr Inventory     (= total cost — credit reduces inventory asset)
+    //
+    // Early guard: an invoice that carries no monetary value AND no inventory
+    // cost has nothing to journalise — every proposed line would be filtered
+    // out for being zero, surfacing as the cryptic "needs at least 2 sides"
+    // downstream. Catch it here with an actionable message instead. Runs
+    // BEFORE any stock mutation so a rejection leaves no partial state.
+    {
+      const totalForGuard = Number(inv.totalAmount || 0);
+      if (totalForGuard === 0 && totalCogs === 0) {
+        res.status(400).json({
+          error: gdnSourced
+            ? "لا يمكن ترحيل هذه الفاتورة المُولَّدة من إذن تسليم: إجمالي الفاتورة صفر — لا يوجد ما يُسجَّل محاسبياً."
+            : "لا يمكن ترحيل هذه الفاتورة: إجمالي الفاتورة وتكلفة البضاعة كلاهما صفر. تأكد من إدخال أسعار البيع للأصناف أو وجود تكلفة مخزنية مسجلة قبل الترحيل.",
+        });
+        return;
+      }
+    }
+
     const mapSi = await loadMappings(cid, "sales_invoice");
     const salesAccId    = pickAccount(inv.salesAccountId,    mapSi("sales_invoice", "revenue"));
     const cogsAccId     = pickAccount(inv.cogsAccountId,     mapSi("sales_invoice", "cogs"));
@@ -889,6 +915,29 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
               }),
           ],
     });
+
+    // ─── ACTUAL STOCK MUTATION ───
+    // Now that all validations passed AND the journal entry was created
+    // successfully, persist the stock decrements. Doing this after JE
+    // creation guarantees a rejected/unbalanced JE leaves stock untouched.
+    for (const op of stockOps) {
+      await upsertBalance(cid, op.itemId, op.warehouseId, -op.qty, op.avgCost);
+      const newBal = await getBalance(cid, op.itemId, op.warehouseId);
+      await addStockLedgerEntry({
+        companyId:   cid,
+        itemId:      op.itemId,
+        warehouseId: op.warehouseId,
+        txDate:      inv.invoiceDate,
+        txType:      "sale",
+        qty:         String(-op.qty),
+        costPrice:   String(op.avgCost.toFixed(4)),
+        totalCost:   String((-op.qty * op.avgCost).toFixed(2)),
+        balanceQty:  String(newBal),
+        refId:       id,
+        refType:     "sales_invoice",
+        notes:       op.notes ?? undefined,
+      });
+    }
 
     const [updated] = await db.update(salesInvoicesTable)
       .set({ status: "posted", journalEntryId: journalId, updatedAt: new Date() })
