@@ -405,10 +405,18 @@ export default function Suppliers() {
 
         {(() => {
           const items: LegendItem[] = [
-            { kind: "active",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length },
-            { kind: "inactive", count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length },
-            { kind: "debit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length },
-            { kind: "credit",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0).length },
+            { kind: "active",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length,
+              labelOverride: "مسجَّل ضريبياً بدون رصيد",
+              hintOverride: "مورد لديه رقم تسجيل ضريبي ورصيده صفر — جاهز للتعامل" },
+            { kind: "inactive", count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length,
+              labelOverride: "غير مسجَّل بدون رصيد",
+              hintOverride: "مورد بدون تسجيل ضريبي ورصيده صفر — لا تُخصم منه ضريبة مدخلات" },
+            { kind: "debit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length,
+              labelOverride: "مدين (دفعنا له زيادة)",
+              hintOverride: "موردون لنا عليهم رصيد مدين — دفعنا أكثر من المستحق" },
+            { kind: "credit",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0).length,
+              labelOverride: "دائن (لنا عليهم)",
+              hintOverride: "موردون لهم علينا رصيد دائن — مستحقات لم تُسدَّد" },
           ];
           return <div className="px-4 pt-2"><DocColorLegend items={items} /></div>;
         })()}
