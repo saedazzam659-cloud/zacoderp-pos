@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { setAuthTokenGetter, setSessionIdGetter } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -122,6 +123,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return Number.isFinite(n) && n > 0 ? n : null;
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const sseRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const qc = useQueryClient();
 
   // Keep localStorage in lock-step so setSessionIdGetter() reads stay correct.
   const persistManualSession = useCallback((id: number | null) => {
@@ -186,6 +190,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [user, checkSession]);
+
+  // Realtime push: open an SSE connection so any change made by SuperAdmin
+  // (license limits, plan, status, freeze, etc.) propagates to the user
+  // immediately instead of waiting for the 10-second poll. The server sends
+  // typed events (subscription_changed | company_changed | permissions_changed);
+  // for any of them we re-fetch /auth/me and invalidate every query so cached
+  // data reflects the new state right away.
+  useEffect(() => {
+    // Tear down any prior connection (e.g. when switching users / on logout).
+    const closeStream = () => {
+      if (sseRef.current) {
+        try { sseRef.current.close(); } catch { /* ignore */ }
+        sseRef.current = null;
+      }
+      if (sseRetryRef.current) {
+        clearTimeout(sseRetryRef.current);
+        sseRetryRef.current = null;
+      }
+    };
+
+    if (!user) { closeStream(); return; }
+
+    let cancelled = false;
+    let retryDelay = 1000; // ms — exponential, capped
+
+    const open = () => {
+      if (cancelled) return;
+      const tok = localStorage.getItem(TOKEN_KEY);
+      if (!tok) return;
+      // EventSource cannot send headers, so token rides as a query param.
+      const url = `${API_BASE}/api/realtime/session-events?token=${encodeURIComponent(tok)}`;
+      let es: EventSource;
+      try {
+        es = new EventSource(url);
+      } catch {
+        // Browser refused to construct — back off and retry
+        sseRetryRef.current = setTimeout(open, Math.min(retryDelay, 30_000));
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+        return;
+      }
+      sseRef.current = es;
+
+      const onRefresh = () => {
+        // Re-fetch the user (subscription, permissions, company status) and
+        // bust every cached query so list pages re-render with fresh limits.
+        void checkSession();
+        try { qc.invalidateQueries(); } catch { /* ignore */ }
+      };
+
+      es.addEventListener("subscription_changed", onRefresh);
+      es.addEventListener("company_changed", onRefresh);
+      es.addEventListener("permissions_changed", onRefresh);
+
+      es.addEventListener("hello", () => {
+        // Stream confirmed live → reset backoff for the next disconnect.
+        retryDelay = 1000;
+      });
+
+      es.onerror = () => {
+        // EventSource auto-reconnects, but if the server closed the stream
+        // (e.g. token rotated, server restart) we close + back off to avoid
+        // tight loops against a 401 response.
+        try { es.close(); } catch { /* ignore */ }
+        sseRef.current = null;
+        if (cancelled) return;
+        sseRetryRef.current = setTimeout(open, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      };
+    };
+
+    open();
+    return () => { cancelled = true; closeStream(); };
+  }, [user, checkSession, qc]);
 
   const login = async (username: string, password: string, companyCode?: string) => {
     // Tenant identity is now (companyCode, username, password). The

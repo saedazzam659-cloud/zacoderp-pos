@@ -67,12 +67,17 @@ import dataDoctorRouter from "./data-doctor";
 import contractingRouter from "./contracting";
 import contractingAiRouter from "./contracting-ai";
 import reportInvitationsRouter from "./report-invitations";
+import realtimeRouter from "./realtime";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth/superadmin", superAdminAuthRouter);
+// MUST be mounted BEFORE zatcaRouter (which is path-less and globally requires
+// auth via requireAuthed). The SSE endpoint authenticates via ?token=… query
+// param itself and would otherwise be 401-ed by zatca's middleware.
+router.use("/realtime", realtimeRouter);
 router.use("/reports-invitations", reportInvitationsRouter);
 router.use("/admin/modules", adminModulesRouter);
 router.use("/admin/industries", adminIndustriesRouter);

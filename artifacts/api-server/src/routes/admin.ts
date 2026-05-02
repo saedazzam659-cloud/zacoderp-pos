@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { companiesTable, usersTable, subscriptionsTable, planConfigsTable, invoicesTable, invoiceLineItemsTable, customersTable, suppliersTable, stockLedgerTable, stockBalanceTable, salesInvoicesTable, salesReturnsTable, purchaseInvoicesTable, purchaseReturnsTable, journalEntriesTable, journalEntryLinesTable, itemsTable, notificationsTable, branchesTable, warehousesTable, systemSettingsTable, autoBackupsTable, auditLogTable, sequencesTable, reportEmailSchedulesTable, reportEmailScheduleRunsTable, reportEmailInvitationsTable, maintenanceRunsTable, maintenanceScheduleTable, maintenanceEmailRunsTable, maintenanceRetentionSettingsTable } from "@workspace/db";
 import { AVAILABLE_REPORTS, REPORT_KEYS } from "../lib/reportDigest.js";
+import { emitSessionRefresh, emitSessionRefreshMany } from "../lib/sessionEvents.js";
 import { ensureScheduleRow, runReportDigest, REPORT_SCHEDULE_ID } from "../lib/reportScheduler.js";
 import {
   checkJournalPending, checkBrokenRefs, checkUnlinkedAccounts,
@@ -131,6 +132,7 @@ router.post("/requests/:id/approve", requireSuperAdmin, async (req, res) => {
   await db.update(usersTable).set({ isActive: true, updatedAt: new Date() })
     .where(eq(usersTable.companyId, id));
 
+  emitSessionRefresh(id, "company_changed", { op: "approve" });
   res.json({ ok: true, company });
 });
 
@@ -149,6 +151,7 @@ router.post("/requests/:id/reject", requireSuperAdmin, async (req, res) => {
   await db.update(usersTable).set({ isActive: false, updatedAt: new Date() })
     .where(eq(usersTable.companyId, id));
 
+  emitSessionRefresh(id, "company_changed", { op: "reject" });
   res.json({ ok: true, company });
 });
 
@@ -352,6 +355,7 @@ router.put("/subscriptions/:id", requireSuperAdmin, async (req, res) => {
     entityId: String(updated.id),
     metadata: { fields: Object.keys(updates) },
   });
+  emitSessionRefresh(updated.companyId, "subscription_changed", { op: "edit", fields: Object.keys(updates) });
   res.json({ ok: true, subscription: updated });
 });
 
@@ -440,6 +444,7 @@ router.post("/subscriptions/:id/extend", requireSuperAdmin, async (req, res) => 
     entityId: String(id),
     metadata: { op: "extend", months, newEnd: updated?.endDate ?? row.end_date, reactivated },
   });
+  emitSessionRefresh(updated?.companyId ?? row.company_id, "subscription_changed", { op: "extend", months, reactivated });
   res.json({ ok: true, subscription: updated, reactivated });
 });
 
@@ -498,6 +503,7 @@ router.post("/subscriptions/:id/change-plan", requireSuperAdmin, async (req, res
       to:   { plan: planKey,       billingCycle: cycle,                price,                  endDate: end },
     },
   });
+  emitSessionRefresh(updated.companyId, "subscription_changed", { op: "change-plan", plan: planKey });
   res.json({ ok: true, subscription: updated });
 });
 
@@ -553,6 +559,7 @@ router.post("/subscriptions/bulk-extend", requireSuperAdmin, async (req, res) =>
       metadata: { op: "bulk-extend", months, newEnd: r.end_date, reactivated: reactivatedCompanyIds.includes(cid) },
     });
   }
+  emitSessionRefreshMany(rows.map(r => Number(r.company_id)), "subscription_changed", { op: "bulk-extend", months });
   res.json({
     ok: true,
     requestedIds, updatedIds, missingIds,
@@ -594,6 +601,7 @@ router.post("/subscriptions/bulk-freeze", requireSuperAdmin, async (req, res) =>
       metadata: { op: isActive ? "bulk-activate" : "bulk-freeze" },
     });
   }
+  emitSessionRefreshMany(updated.map(u => u.companyId), "subscription_changed", { op: isActive ? "bulk-activate" : "bulk-freeze" });
   res.json({
     ok: true,
     requestedIds, updatedIds, missingIds,
@@ -779,9 +787,11 @@ router.post("/licenses", requireSuperAdmin, async (req, res) => {
     const [existing] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.companyId, companyId));
     if (existing) {
       const [updated] = await db.update(subscriptionsTable).set(payload).where(eq(subscriptionsTable.id, existing.id)).returning();
+      emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "updated" });
       res.json({ ok: true, subscription: updated, action: "updated" });
     } else {
       const [created] = await db.insert(subscriptionsTable).values(payload).returning();
+      emitSessionRefresh(companyId, "subscription_changed", { op: "license-upsert", action: "created" });
       res.json({ ok: true, subscription: created, action: "created" });
     }
   } catch (err: any) {
@@ -1161,6 +1171,7 @@ router.post("/companies/:id/restore", requireSuperAdmin, async (req, res) => {
   if (!company) {
     res.status(404).json({ error: "الشركة غير موجودة في سلة المحذوفات" }); return;
   }
+  emitSessionRefresh(id, "company_changed", { op: "restore" });
   res.json({ ok: true, company });
 });
 
@@ -1249,6 +1260,9 @@ router.put("/companies/:id/users/:userId", requireSuperAdmin, async (req, res) =
   if (isActive != null) updates.isActive = isActive;
   if (password) updates.passwordHash = await bcrypt.hash(password, 12);
   const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
+  if (updated?.companyId != null) {
+    emitSessionRefresh(updated.companyId, "permissions_changed", { op: "user-update", userId });
+  }
   res.json({ ok: true, user: updated });
 });
 
