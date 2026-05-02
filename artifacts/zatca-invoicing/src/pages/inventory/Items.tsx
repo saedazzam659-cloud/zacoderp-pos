@@ -35,6 +35,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import {
+  rowToneFor, SEL_TONE, DocColorLegend, buildToneTooltip, DICT_TONES, type LegendItem,
+} from "@/lib/docRowTone";
 
 const EMPTY = {
   code: "", nameAr: "", nameEn: "", barcode: "", itemType: "stock",
@@ -1280,6 +1283,15 @@ export default function Items() {
 
       {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
+        {(() => {
+          const items: LegendItem[] = [
+            { kind: "active",   count: filtered.filter((it: any) => it.status === "active").length,
+              labelOverride: "نشط", hintOverride: "صنف نشط — يظهر في فواتير البيع/الشراء وحركات المخزون" },
+            { kind: "inactive", count: filtered.filter((it: any) => it.status !== "active").length,
+              labelOverride: "غير نشط", hintOverride: "صنف موقوف — لا يظهر في الإدخال" },
+          ];
+          return <DocColorLegend items={items} />;
+        })()}
         <table className="w-full text-sm">
           <thead className="bg-muted/50 border-b">
             <tr>
@@ -1317,9 +1329,19 @@ export default function Items() {
               ? [...Array(5)].map((_, i) => <tr key={i}><td colSpan={11} className="px-4 py-3"><Skeleton className="h-6 w-full" /></td></tr>)
               : filtered.length === 0
               ? <tr><td colSpan={11} className="px-4 py-12 text-center text-muted-foreground"><Package className="h-8 w-8 mx-auto mb-2 opacity-30" />{t("pages.items.noItemsFound")}{search ? t("pages.items.matchingSearch") : ""}</td></tr>
-              : pager.pagedItems.map((it: any) => (
+              : pager.pagedItems.map((it: any) => {
+                  const dictStatus = it.status === "active" ? "active" : "inactive";
+                  const isSel = selectedIds.has(it.id);
+                  return (
                   <Fragment key={it.id}>
-                    <tr className="hover:bg-muted/30">
+                    <tr
+                      data-status={dictStatus}
+                      className={cn(
+                        "transition-colors group",
+                        isSel ? SEL_TONE : rowToneFor({ status: dictStatus, statusMap: DICT_TONES }),
+                      )}
+                      title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                    >
                       <td className="px-3 py-3 text-center">
                         <Checkbox
                           checked={selectedIds.has(it.id)}
@@ -1567,7 +1589,8 @@ export default function Items() {
                       </tr>
                     )}
                   </Fragment>
-                ))}
+                  );
+                })}
           </tbody>
         </table>
         {!isLoading && (
