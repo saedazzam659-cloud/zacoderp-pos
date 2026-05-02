@@ -67,6 +67,8 @@ import dataDoctorRouter from "./data-doctor";
 import contractingRouter from "./contracting";
 import contractingAiRouter from "./contracting-ai";
 import maintenanceRouter from "./maintenance";
+import hotelRouter from "./hotel";
+import hotelAiRouter from "./hotel-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 
@@ -145,5 +147,7 @@ router.use(zatcaRouter);
 router.use("/contracting", contractingRouter);
 router.use("/contracting-ai", contractingAiRouter);
 router.use("/maintenance", maintenanceRouter);
+router.use("/hotel", hotelRouter);
+router.use("/hotel-ai", hotelAiRouter);
 
 export default router;

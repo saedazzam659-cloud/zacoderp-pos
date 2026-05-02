@@ -192,6 +192,7 @@ router.post("/seed", requireSuperAdmin, async (_req, res) => {
       { key: "contracting",     nameAr: "إدارة المقاولات",      nameEn: "Contracting / Construction", description: "إدارة مشاريع المقاولات: بنود التنفيذ، الموارد، المستخلصات، المخاطر، ومحلل ذكاء اصطناعي للتأخير وتجاوز الميزانية", monthlyPrice: "650.00", icon: "HardHat",  iconColor: "#ea580c", category: "العمليات",         sortOrder: 100, isActive: true },
       { key: "production",      nameAr: "الإنتاج والتصنيع",     nameEn: "Manufacturing / Production", description: "أوامر الإنتاج، الماكينات، قوائم المواد ومراحل التصنيع",                                                                          monthlyPrice: "500.00", icon: "Factory",  iconColor: "#7c3aed", category: "العمليات",         sortOrder: 105, isActive: true },
       { key: "maintenance",     nameAr: "إدارة الصيانة",        nameEn: "Maintenance / Asset Management", description: "تتبّع الأصول والمعدات، الفنّيين، أوامر الصيانة، قطع الغيار وتكاليف التشغيل",                                                  monthlyPrice: "500.00", icon: "Wrench",   iconColor: "#ea580c", category: "العمليات",         sortOrder: 110, isActive: true },
+      { key: "hotel",           nameAr: "إدارة الفنادق الذكية", nameEn: "Hotel Smart AI ERP",             description: "إدارة الفنادق، الغرف، النزلاء، الحجوزات، المدفوعات، خدمة الغرف، وتسعير ديناميكي بالذكاء الاصطناعي",                          monthlyPrice: "750.00", icon: "Hotel",    iconColor: "#0d9488", category: "العمليات",         sortOrder: 120, isActive: true },
     ];
 
     let inserted = 0;

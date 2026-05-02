@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
-  LayoutDashboard, Building2, FileText, Users, Settings,
+  LayoutDashboard, Building2, FileText, Users, Settings, Hotel, BedDouble, UserSquare2, BrushCleaning,
   Bell, Menu, Truck, LogOut, ChevronDown, ChevronRight, ShieldCheck,
   Package, PackagePlus, PackageMinus, Clock, Settings2, Link2, SlidersHorizontal, Sliders, BarChart3,
   Warehouse, Ruler, ArrowRightLeft, ClipboardList, BookOpen, BarChart2,
@@ -192,6 +192,17 @@ const maintenanceSubNav: NavDef[] = [
   { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, permKey: "maintenance" },
 ];
 const MAINTENANCE_GROUP_PERMS = ["maintenance"];
+// Hotel ERP — gated by a single `hotel` permission key.
+const hotelSubNav: NavDef[] = [
+  { nameKey: "nav.hotelHub",          href: "/hotel",              icon: Hotel,         permKey: "hotel", exact: true },
+  { nameKey: "nav.hotels",            href: "/hotel/hotels",       icon: Building2,     permKey: "hotel" },
+  { nameKey: "nav.hotelRooms",        href: "/hotel/rooms",        icon: BedDouble,     permKey: "hotel" },
+  { nameKey: "nav.hotelGuests",       href: "/hotel/guests",       icon: UserSquare2,   permKey: "hotel" },
+  { nameKey: "nav.hotelBookings",     href: "/hotel/bookings",     icon: CalendarRange, permKey: "hotel" },
+  { nameKey: "nav.hotelHousekeeping", href: "/hotel/housekeeping", icon: BrushCleaning, permKey: "hotel" },
+  { nameKey: "nav.hotelAI",           href: "/hotel/ai",           icon: Sparkles,      permKey: "hotel" },
+];
+const HOTEL_GROUP_PERMS = ["hotel"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.
 const securitySubNav: NavDef[] = [
   { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
@@ -547,6 +558,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   production:  ["production"],
   contracting: ["contracting"],
   maintenance: ["maintenance"],
+  hotel:       ["hotel"],
   pos:         ["pos"],
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
@@ -1260,6 +1272,39 @@ function MaintenanceNavGroup({
   );
 }
 
+// ─── HotelNavGroup ───────────────────────────────────────────────────────────
+// Collapsible "إدارة الفنادق الذكية" group — mirrors MaintenanceNavGroup, gated
+// by the `hotel` permission key.
+function HotelNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, HOTEL_GROUP_PERMS)) return null;
+  const isOnSub = hotelSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/hotel"
+        icon={Hotel}
+        label={t("nav.hotelGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {hotelSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AIToolsNavGroup ─────────────────────────────────────────────────────────
 // Collapsible "أدوات الذكاء الاصطناعي" group — houses the voice assistant
 // settings, AI reports, sessions admin, work-sessions log, inbox, and the
@@ -1371,6 +1416,8 @@ function SidebarInner({
   onContractingToggle,
   maintenanceOpen,
   onMaintenanceToggle,
+  hotelOpen,
+  onHotelToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1417,6 +1464,8 @@ function SidebarInner({
   onContractingToggle: () => void;
   maintenanceOpen: boolean;
   onMaintenanceToggle: () => void;
+  hotelOpen: boolean;
+  onHotelToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -1651,6 +1700,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "hotel", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <HotelNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={hotelOpen}
+                  onToggle={onHotelToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <PosNavGroup
@@ -1817,6 +1877,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...productionSubNav,
     ...contractingSubNav,
     ...maintenanceSubNav,
+    ...hotelSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -2075,6 +2136,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
   const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
   const [maintenanceOpen, setMaintenanceOpen] = useState(() => location.startsWith("/maintenance"));
+  const [hotelOpen,        setHotelOpen]       = useState(() => location.startsWith("/hotel"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -2101,7 +2163,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel"
     | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2115,6 +2177,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "production")  setProductionOpen(false);
     if (keep !== "contracting") setContractingOpen(false);
     if (keep !== "maintenance") setMaintenanceOpen(false);
+    if (keep !== "hotel")       setHotelOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
@@ -2146,6 +2209,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleProductionToggle  = makeAccordionToggle("production",  productionOpen,  setProductionOpen);
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
   const handleMaintenanceToggle = makeAccordionToggle("maintenance", maintenanceOpen, setMaintenanceOpen);
+  const handleHotelToggle       = makeAccordionToggle("hotel",       hotelOpen,       setHotelOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
@@ -2198,6 +2262,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/inventory")) target = "inventory";
     else if (location.startsWith("/production")) target = "production";
     else if (location.startsWith("/contracting")) target = "contracting";
+    else if (location.startsWith("/maintenance")) target = "maintenance";
+    else if (location.startsWith("/hotel")) target = "hotel";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
@@ -2234,6 +2300,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         production:  setProductionOpen,
         contracting: setContractingOpen,
         maintenance: setMaintenanceOpen,
+        hotel:       setHotelOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
@@ -2280,6 +2347,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onContractingToggle: handleContractingToggle,
     maintenanceOpen,
     onMaintenanceToggle: handleMaintenanceToggle,
+    hotelOpen,
+    onHotelToggle: handleHotelToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

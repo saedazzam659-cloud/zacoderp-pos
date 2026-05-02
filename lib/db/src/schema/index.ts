@@ -50,3 +50,4 @@ export * from "./deletedRecords";
 export * from "./contracting";
 export * from "./kioskTokens";
 export * from "./maintenance";
+export * from "./hotel";

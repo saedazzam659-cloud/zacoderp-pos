@@ -119,6 +119,12 @@ export const SYSTEM_MODULES: SystemModule[] = [
     monthlyPrice: 50,
     permissions: ["maintenance"],
   },
+  {
+    key: "hotel", nameAr: "إدارة الفنادق الذكية", nameEn: "Hotel Smart AI ERP", descAr: "الفنادق، الغرف، النزلاء، الحجوزات، خدمة الغرف وتسعير ديناميكي بالذكاء الاصطناعي",
+    emoji: "🏨", category: "operations", categoryAr: "العمليات",
+    monthlyPrice: 75,
+    permissions: ["hotel"],
+  },
 
   // ── Compliance ───────────────────────────────────────────────────
   {

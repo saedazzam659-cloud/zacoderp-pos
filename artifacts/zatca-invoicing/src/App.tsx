@@ -96,6 +96,13 @@ import MaintenanceHub from "@/pages/maintenance/MaintenanceHub";
 import MaintenanceAssets from "@/pages/maintenance/MaintenanceAssets";
 import MaintenanceTechnicians from "@/pages/maintenance/MaintenanceTechnicians";
 import MaintenanceOrders from "@/pages/maintenance/MaintenanceOrders";
+import HotelHub from "@/pages/hotel/HotelHub";
+import Hotels from "@/pages/hotel/Hotels";
+import HotelRooms from "@/pages/hotel/HotelRooms";
+import HotelGuests from "@/pages/hotel/HotelGuests";
+import HotelBookings from "@/pages/hotel/HotelBookings";
+import HotelHousekeeping from "@/pages/hotel/HotelHousekeeping";
+import HotelAI from "@/pages/hotel/HotelAI";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -493,6 +500,15 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/maintenance/assets"           module="maintenance"    component={MaintenanceAssets} />}
             {!isSuperAdmin && <PermRoute path="/maintenance/technicians"      module="maintenance"    component={MaintenanceTechnicians} />}
             {!isSuperAdmin && <PermRoute path="/maintenance/orders"           module="maintenance"    component={MaintenanceOrders} />}
+
+            {/* Hotel Smart AI ERP — gated by `hotel` permission. */}
+            {!isSuperAdmin && <PermRoute path="/hotel"                         module="hotel"          component={HotelHub} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/hotels"                  module="hotel"          component={Hotels} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/rooms"                   module="hotel"          component={HotelRooms} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/guests"                  module="hotel"          component={HotelGuests} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/bookings"                module="hotel"          component={HotelBookings} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/housekeeping"            module="hotel"          component={HotelHousekeeping} />}
+            {!isSuperAdmin && <PermRoute path="/hotel/ai"                      module="hotel"          component={HotelAI} />}
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

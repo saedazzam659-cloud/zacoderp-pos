@@ -28,6 +28,7 @@ const G = {
   production:  "perms.groups.production",
   contracting: "perms.groups.contracting",
   maintenance: "perms.groups.maintenance",
+  hotel:       "perms.groups.hotel",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
 };
@@ -100,6 +101,11 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // Maintenance ERP — backend key is "maintenance"; covers assets, technicians,
   // work orders, and spare-parts consumption behind a single permission.
   { key: "maintenance",          label: "perms.modules.maintenance",          group: G.maintenance, actions: ALL },
+
+  // Hotel ERP — backend key is "hotel"; covers hotels, rooms, guests,
+  // bookings, payments, housekeeping, and AI engines (dynamic pricing,
+  // recommendations, forecasting, maintenance prediction).
+  { key: "hotel",                label: "perms.modules.hotel",                group: G.hotel,       actions: ALL },
 
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.
