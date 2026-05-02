@@ -9,6 +9,7 @@ import SupermarketPage from "@/pages/Supermarket";
 import RestaurantHub from "@/pages/RestaurantHub";
 import WaiterApp from "@/pages/WaiterApp";
 import KitchenDisplay from "@/pages/KitchenDisplay";
+import RestaurantSettings from "@/pages/RestaurantSettings";
 
 const queryClient = new QueryClient();
 
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/restaurant" component={RestaurantHub} />
       <Route path="/waiter" component={WaiterApp} />
       <Route path="/kitchen" component={KitchenDisplay} />
+      <Route path="/restaurant-settings" component={RestaurantSettings} />
       <Route component={NotFound} />
     </Switch>
   );
