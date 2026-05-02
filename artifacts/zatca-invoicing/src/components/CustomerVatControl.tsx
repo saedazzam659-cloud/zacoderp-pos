@@ -77,6 +77,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newVat, setNewVat] = useState("");
+  const [newPhone, setNewPhone] = useState("");
   // National Address (العنوان الوطني) — all optional, used by ZATCA & B2B invoices
   const [newBuildingNumber, setNewBuildingNumber] = useState("");
   const [newStreet,         setNewStreet]         = useState("");
@@ -85,7 +86,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
   const [newPostalCode,     setNewPostalCode]     = useState("");
 
   function resetForm() {
-    setNewName(""); setNewVat("");
+    setNewName(""); setNewVat(""); setNewPhone("");
     setNewBuildingNumber(""); setNewStreet(""); setNewDistrict("");
     setNewCity(""); setNewPostalCode("");
   }
@@ -101,6 +102,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
           companyId: user?.companyId,
           nameAr,
           vatNumber:      newVat.trim()            || undefined,
+          phone:          newPhone.trim()          || undefined,
           buildingNumber: newBuildingNumber.trim() || undefined,
           street:         newStreet.trim()         || undefined,
           district:       newDistrict.trim()       || undefined,
@@ -152,7 +154,7 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
         <DialogContent dir="rtl" className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>إضافة عميل جديد</DialogTitle>
-            <DialogDescription>أدخل اسم العميل ورقمه الضريبي والعنوان الوطني (اختياري) لإضافته بسرعة. سيتم إنشاء حساب له تلقائياً في شجرة الحسابات.</DialogDescription>
+            <DialogDescription>أدخل اسم العميل ورقمه الضريبي ورقم هاتفه والعنوان الوطني (اختياري) لإضافته بسرعة. سيتم إنشاء حساب له تلقائياً في شجرة الحسابات.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
@@ -162,6 +164,18 @@ export function CustomerVatControl({ customers, customerId, onCustomerChange }: 
             <div className="space-y-1.5">
               <Label className="text-sm">الرقم الضريبي (VAT)</Label>
               <Input value={newVat} onChange={(e) => setNewVat(e.target.value)} placeholder="310000000000003" dir="ltr" className="text-left font-mono" maxLength={15} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">رقم الهاتف</Label>
+              <Input
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="0501234567"
+                dir="ltr"
+                inputMode="tel"
+                className="text-left font-mono"
+                maxLength={20}
+              />
             </div>
 
             {/* National Address — العنوان الوطني (Saudi Post) */}
