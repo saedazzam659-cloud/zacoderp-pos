@@ -243,21 +243,31 @@ export default function Customers() {
       <div className="rounded-xl border bg-card overflow-hidden">
 
         {(() => {
+          // overLimit takes precedence over debit (so the same customer is not
+          // double-counted): a row with bal>0 AND limit>0 AND bal>limit shows
+          // up only in the "تجاوز الائتمان" chip.
+          const isOver = (c: any) => {
+            const lim = Number(c.creditLimit ?? 0);
+            return lim > 0 && Number(balMap[c.id] ?? 0) > lim;
+          };
           const items: LegendItem[] = [
-            { kind: "active",   count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && c.vatNumber).length,
+            { kind: "active",    count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && c.vatNumber).length,
               labelOverride: "مسجَّل ضريبياً بدون رصيد",
               hintOverride: "عميل لديه رقم تسجيل ضريبي ورصيده صفر — جاهز للتعامل" },
-            { kind: "inactive", count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && !c.vatNumber).length,
+            { kind: "inactive",  count: filtered.filter((c: any) => (Number(balMap[c.id] ?? 0) === 0) && !c.vatNumber).length,
               labelOverride: "غير مسجَّل بدون رصيد",
               hintOverride: "عميل بدون تسجيل ضريبي ورصيده صفر — لا يصدر له فاتورة ضريبية" },
-            { kind: "debit",    count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) > 0).length,
+            { kind: "debit",     count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) > 0 && !isOver(c)).length,
               labelOverride: "مدين (له علينا)",
-              hintOverride: "عملاء عليهم رصيد مدين — مستحقات لم تُحصَّل" },
-            { kind: "credit",   count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) < 0).length,
+              hintOverride: "عملاء عليهم رصيد مدين ضمن الحد الائتماني" },
+            { kind: "credit",    count: filtered.filter((c: any) => Number(balMap[c.id] ?? 0) < 0).length,
               labelOverride: "دائن (له عليهم)",
               hintOverride: "عملاء لهم رصيد دائن — دفعوا أكثر من المستحق" },
+            { kind: "overLimit", count: filtered.filter(isOver).length,
+              labelOverride: "تجاوز الائتمان",
+              hintOverride: "تجاوز رصيدهم المدين الحدَّ الائتماني المحدد لهم — يُمنع إصدار فواتير جديدة" },
           ];
-          return <div className="px-4 pt-2"><DocColorLegend items={items} /></div>;
+          return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}
 
         {/* Search bar */}
@@ -329,13 +339,31 @@ export default function Customers() {
               ) : (
                 pager.pagedItems.map((customer: any) => {
                   const bal = Number(balMap[customer.id] ?? 0);
-                  const dictStatus = bal > 0 ? "debit" : bal < 0 ? "credit" : (customer.vatNumber ? "active" : "inactive");
+                  // Credit limit: 0/null means "no limit set" — only flag when
+                  // a positive limit exists AND the receivable balance exceeds it.
+                  const limit = Number(customer.creditLimit ?? 0);
+                  const overLimit = limit > 0 && bal > limit;
+                  // Over-limit beats every other dictionary status — it's a
+                  // collection-risk warning the user should not be able to miss.
+                  const dictStatus = overLimit
+                    ? "overLimit"
+                    : bal > 0
+                      ? "debit"
+                      : bal < 0
+                        ? "credit"
+                        : customer.vatNumber
+                          ? "active"
+                          : "inactive";
+                  const overTooltip = overLimit
+                    ? `تجاوز حد الائتمان (${bal.toLocaleString()} > ${limit.toLocaleString()})`
+                    : "";
                   return (
                   <tr
                     key={customer.id}
                     data-status={dictStatus}
+                    data-over-limit={overLimit ? "true" : undefined}
                     className={cn("border-b transition-colors group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
-                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
+                    title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}
                   >
                     {/* Customer name */}
                     <td className="px-5 py-3">

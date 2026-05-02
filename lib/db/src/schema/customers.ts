@@ -25,6 +25,7 @@ export const customersTable = pgTable("customers", {
   locationLink: text("location_link"),
   accountId: integer("account_id"),
   salesRepId: integer("sales_rep_id"),
+  creditLimit: numeric("credit_limit", { precision: 15, scale: 2 }).default("0"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

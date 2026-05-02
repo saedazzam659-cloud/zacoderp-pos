@@ -404,21 +404,34 @@ export default function Suppliers() {
         </div>
 
         {(() => {
+          // For suppliers the AP balance is stored as a negative number
+          // (لنا عليهم), so a credit (نحن مدينون لهم) means balance < 0 and
+          // the magnitude that matters for the credit-limit check is |balance|.
+          // overLimit takes precedence over the plain "credit" chip so a
+          // supplier we've over-borrowed from is not double-counted.
+          const isOver = (s: any) => {
+            const lim = Number(s.creditLimit ?? 0);
+            const owed = Math.max(0, -Number(balanceMap[s.id] ?? 0));
+            return lim > 0 && owed > lim;
+          };
           const items: LegendItem[] = [
-            { kind: "active",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length,
+            { kind: "active",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && s.vatNumber).length,
               labelOverride: "مسجَّل ضريبياً بدون رصيد",
               hintOverride: "مورد لديه رقم تسجيل ضريبي ورصيده صفر — جاهز للتعامل" },
-            { kind: "inactive", count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length,
+            { kind: "inactive",  count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) === 0 && !s.vatNumber).length,
               labelOverride: "غير مسجَّل بدون رصيد",
               hintOverride: "مورد بدون تسجيل ضريبي ورصيده صفر — لا تُخصم منه ضريبة مدخلات" },
-            { kind: "debit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length,
+            { kind: "debit",     count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) > 0).length,
               labelOverride: "مدين (دفعنا له زيادة)",
               hintOverride: "موردون لنا عليهم رصيد مدين — دفعنا أكثر من المستحق" },
-            { kind: "credit",   count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0).length,
+            { kind: "credit",    count: filtered.filter((s: any) => Number(balanceMap[s.id] ?? 0) < 0 && !isOver(s)).length,
               labelOverride: "دائن (لنا عليهم)",
-              hintOverride: "موردون لهم علينا رصيد دائن — مستحقات لم تُسدَّد" },
+              hintOverride: "موردون لهم علينا رصيد دائن ضمن حد الائتمان الممنوح لنا" },
+            { kind: "overLimit", count: filtered.filter(isOver).length,
+              labelOverride: "تجاوز الائتمان",
+              hintOverride: "تجاوزنا حدَّ الائتمان الممنوح لنا منه — يجب السداد قبل أي شراء جديد" },
           ];
-          return <div className="px-4 pt-2"><DocColorLegend items={items} /></div>;
+          return <div className="px-4 pt-2"><DocColorLegend items={items} separatorAfter={[3]} /></div>;
         })()}
 
         {/* Table */}
@@ -460,12 +473,31 @@ export default function Suppliers() {
               ) : (
                 pager.pagedItems.map((supplier: any) => {
                   const bal = Number(balanceMap[supplier.id] ?? 0);
-                  const dictStatus = bal > 0 ? "debit" : bal < 0 ? "credit" : (supplier.vatNumber ? "active" : "inactive");
+                  // Supplier balance is stored negative when we owe them
+                  // (لنا عليهم), so the over-limit check uses |bal| against
+                  // the credit limit they've extended to us. overLimit beats
+                  // every other tone — it's the loudest collection-risk signal.
+                  const limit = Number(supplier.creditLimit ?? 0);
+                  const owed = Math.max(0, -bal);
+                  const overLimit = limit > 0 && owed > limit;
+                  const dictStatus = overLimit
+                    ? "overLimit"
+                    : bal > 0
+                      ? "debit"
+                      : bal < 0
+                        ? "credit"
+                        : supplier.vatNumber
+                          ? "active"
+                          : "inactive";
+                  const overTooltip = overLimit
+                    ? `تجاوز حد الائتمان (${owed.toLocaleString()} > ${limit.toLocaleString()})`
+                    : "";
                   return (
                   <tr key={supplier.id}
                     data-status={dictStatus}
+                    data-over-limit={overLimit ? "true" : undefined}
                     className={cn("border-b transition-colors cursor-pointer group", rowToneFor({ status: dictStatus, statusMap: DICT_TONES }))}
-                    title={buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}>
+                    title={overTooltip || buildToneTooltip({ status: dictStatus, statusMap: DICT_TONES })}>
                     {/* Name — double-click to edit */}
                     <td className="px-5 py-3.5"
                       onDoubleClick={() => openEdit(supplier)}
