@@ -612,7 +612,12 @@
     "subtitle": "إدارة الأحداث الأمنية والتنبيهات",
     "nav": {
       "group": "الأمن والمراقبة",
-      "events": "الأحداث الأمنية"
+      "events": "الأحداث الأمنية",
+      "devices": "أجهزة التسجيل",
+      "cameras": "الكاميرات",
+      "liveView": "العرض المباشر",
+      "ai": "الذكاء الأمني",
+      "reports": "تقارير الأمن"
     },
     "tiles": {
       "events": "كل الأحداث",
@@ -620,7 +625,154 @@
       "openOnly": "الأحداث المفتوحة",
       "investigating": "قيد التحقيق",
       "history": "سجل الأحداث المغلقة",
+      "devices": "أجهزة التسجيل (DVR/NVR)",
+      "cameras": "الكاميرات",
+      "liveView": "العرض المباشر",
+      "ai": "الذكاء الأمني",
+      "reports": "التقارير المتقدمة",
       "notificationRules": "قواعد التنبيهات"
+    },
+    "devices": {
+      "title": "أجهزة التسجيل",
+      "add": "إضافة جهاز",
+      "edit": "تعديل جهاز",
+      "searchPh": "بحث بالكود أو الاسم أو الموقع",
+      "empty": "لا توجد أجهزة بعد",
+      "confirmDelete": "هل تريد حذف هذا الجهاز؟",
+      "col": {
+        "code": "الكود",
+        "name": "الاسم",
+        "type": "النوع",
+        "brand": "الماركة",
+        "model": "الموديل",
+        "channels": "عدد القنوات",
+        "ip": "IP",
+        "port": "المنفذ",
+        "serial": "الرقم التسلسلي",
+        "location": "الموقع",
+        "status": "الحالة"
+      }
+    },
+    "cameras": {
+      "title": "الكاميرات",
+      "add": "إضافة كاميرا",
+      "edit": "تعديل كاميرا",
+      "searchPh": "بحث بالكود أو الاسم أو الموقع",
+      "empty": "لا توجد كاميرات بعد",
+      "linkSection": "ربط الكاميرا بالأنظمة الأخرى",
+      "linkRef": "مرجع الربط",
+      "locType": "نوع الموقع",
+      "proto": "بروتوكول البث",
+      "streamUrl": "رابط البث",
+      "departmentId": "معرف القسم",
+      "productionLineId": "معرف خط الإنتاج",
+      "warehouseId": "معرف المخزن",
+      "employeeId": "معرف الموظف",
+      "loc": {
+        "generic": "عام",
+        "department": "قسم",
+        "production_line": "خط إنتاج",
+        "warehouse": "مخزن",
+        "employee_workstation": "محطة عمل موظف",
+        "entrance": "مدخل",
+        "parking": "موقف"
+      }
+    },
+    "deviceType": {
+      "dvr": "DVR",
+      "nvr": "NVR",
+      "hybrid": "هجين",
+      "camera_ip": "كاميرا IP",
+      "camera_analog": "كاميرا تناظرية"
+    },
+    "deviceStatus": {
+      "active": "نشط",
+      "inactive": "غير نشط",
+      "maintenance": "صيانة"
+    },
+    "liveView": {
+      "title": "العرض المباشر",
+      "tiles": "شاشات",
+      "online": "متصل",
+      "offline": "غير متصل",
+      "empty": "—",
+      "note": "الكاميرات تُعرض كرموز فقط — البث المباشر يتطلب مكوّن RTSP خارجي"
+    },
+    "ai": {
+      "title": "الذكاء الاصطناعي الأمني",
+      "last7": "آخر 7 أيام",
+      "last30": "آخر 30 يوم",
+      "last90": "آخر 90 يوم",
+      "totalEvents": "إجمالي الأحداث",
+      "mttr": "متوسط وقت الإغلاق",
+      "aiSourced": "أحداث من الذكاء الاصطناعي",
+      "actionsTaken": "إجراءات اتخذت",
+      "byModule": "حسب الوحدة",
+      "bySource": "حسب المصدر",
+      "topTypes": "الأنواع الأكثر تكراراً",
+      "heatmap": "الخريطة الحرارية (يوم × ساعة)",
+      "openEventsRec": "أحداث مفتوحة - التحليل والتوصيات",
+      "noOpen": "لا توجد أحداث مفتوحة",
+      "actionsLog": "سجل الإجراءات",
+      "noActions": "لا توجد إجراءات بعد",
+      "evaluateRules": "تنفيذ قواعد التنبيهات",
+      "evaluating": "جاري التنفيذ…",
+      "evaluated": "تم تنفيذ القواعد",
+      "generatedN": "تم توليد {{n}} حدث",
+      "analyze": "تحليل",
+      "analyzing": "جاري التحليل…",
+      "dispatch": "إرسال للوحدة",
+      "dispatched": "تم إرسال الإجراء",
+      "action": "الإجراء",
+      "reasons": "الأسباب",
+      "col": {
+        "when": "الوقت",
+        "kind": "النوع",
+        "module": "الوحدة",
+        "title": "العنوان",
+        "event": "الحدث"
+      },
+      "kind": {
+        "create_task": "إنشاء مهمة",
+        "create_violation": "تسجيل مخالفة",
+        "create_maintenance": "بلاغ صيانة",
+        "notify": "إشعار",
+        "open_ticket": "تذكرة"
+      }
+    },
+    "module": {
+      "hr": "الموارد البشرية",
+      "production": "الإنتاج",
+      "inventory": "المخزون",
+      "branch": "الفرع",
+      "none": "—"
+    },
+    "source": {
+      "manual": "يدوي",
+      "ai": "ذكاء اصطناعي",
+      "rule": "قاعدة آلية",
+      "import": "استيراد"
+    },
+    "reports": {
+      "title": "تقارير الأمن المتقدمة",
+      "hr": "التزام الموظفين",
+      "production": "توقفات الإنتاج",
+      "warehouse": "أمن المخازن ليلاً",
+      "branches": "مقارنة الفروع",
+      "warehouseNote": "نافذة المراقبة الليلية: من الساعة {{from}} إلى {{to}}",
+      "col": {
+        "employee": "الموظف",
+        "line": "خط الإنتاج",
+        "warehouse": "المخزن",
+        "branch": "الفرع",
+        "cameras": "الكاميرات",
+        "total": "الإجمالي",
+        "open": "مفتوحة",
+        "critical": "حرجة",
+        "high": "عالية",
+        "stops": "توقفات",
+        "last": "آخر حدث"
+      }
     },
     "rules": {
       "title": "قواعد التنبيهات الأمنية",

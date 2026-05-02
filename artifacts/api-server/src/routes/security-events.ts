@@ -192,6 +192,16 @@ router.get("/", async (req, res) => {
     if (isSeverity(severity)) conds.push(eq(securityEventsTable.severity, severity));
     if (from) conds.push(gte(securityEventsTable.eventDateTime, from));
     if (to)   conds.push(lte(securityEventsTable.eventDateTime, to));
+    // ── AI/ERP linkage filters ───────────────────────────────────────
+    const linkedModule = String(req.query.linkedModule ?? "");
+    const source       = String(req.query.source ?? "");
+    if (linkedModule) conds.push(eq(securityEventsTable.linkedModule, linkedModule));
+    if (source)       conds.push(eq(securityEventsTable.source, source));
+    if (req.query.cameraId)        conds.push(eq(securityEventsTable.cameraId, Number(req.query.cameraId)));
+    if (req.query.branchId)        conds.push(eq(securityEventsTable.branchId, Number(req.query.branchId)));
+    if (req.query.employeeId)      conds.push(eq(securityEventsTable.employeeId, Number(req.query.employeeId)));
+    if (req.query.productionLineId)conds.push(eq(securityEventsTable.productionLineId, Number(req.query.productionLineId)));
+    if (req.query.warehouseId)     conds.push(eq(securityEventsTable.warehouseId, Number(req.query.warehouseId)));
     if (search) {
       conds.push(or(
         ilike(securityEventsTable.title, `%${search}%`),
@@ -534,6 +544,14 @@ router.post("/", async (req, res) => {
       return;
     }
 
+    // AI/ERP linkage — all optional plain ints; we only constrain the
+    // discriminator strings to the documented vocabularies.
+    const SRC = new Set(["camera", "ai", "user", "erp"]);
+    const MOD = new Set(["hr", "production", "inventory", "branch", "none"]);
+    const sourceVal       = SRC.has(String(b.source)) ? String(b.source) : "user";
+    const linkedModuleVal = MOD.has(String(b.linkedModule)) ? String(b.linkedModule) : "none";
+    const toNullInt = (v: any) => (v === "" || v === null || v === undefined) ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
+
     const [row] = await db.insert(securityEventsTable).values({
       companyId: cid,
       branchId: branchIdSafe,
@@ -551,6 +569,16 @@ router.post("/", async (req, res) => {
       createdByUserId: req.authUser?.id ?? null,
       resolvedAt,
       resolutionNote: b.resolutionNote ? String(b.resolutionNote) : null,
+      source: sourceVal,
+      cameraId: toNullInt(b.cameraId),
+      linkedModule: linkedModuleVal,
+      refId: toNullInt(b.refId),
+      employeeId: toNullInt(b.employeeId),
+      productionLineId: toNullInt(b.productionLineId),
+      warehouseId: toNullInt(b.warehouseId),
+      departmentId: toNullInt(b.departmentId),
+      aiResult: b.aiResult ?? null,
+      actionsTaken: b.actionsTaken ?? null,
     }).returning();
 
     // Fire-and-forget rule evaluation. The helper has its own

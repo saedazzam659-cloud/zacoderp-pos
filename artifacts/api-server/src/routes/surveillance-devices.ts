@@ -128,6 +128,11 @@ router.post("/", async (req, res) => {
     channelsCount:  toInt(d.channelsCount),
     parentDeviceId: toInt(d.parentDeviceId),
     status,
+    locationType:     toStr(d.locationType),
+    departmentId:     toInt(d.departmentId),
+    productionLineId: toInt(d.productionLineId),
+    warehouseId:      toInt(d.warehouseId),
+    employeeId:       toInt(d.employeeId),
     notes:          toStr(d.notes),
   }).returning();
   res.status(201).json(row);
@@ -184,6 +189,11 @@ router.put("/:id", async (req, res) => {
     channelsCount:  d.channelsCount  === undefined ? current.channelsCount  : toInt(d.channelsCount),
     parentDeviceId: d.parentDeviceId === undefined ? current.parentDeviceId : toInt(d.parentDeviceId),
     status,
+    locationType:     d.locationType     === undefined ? current.locationType     : toStr(d.locationType),
+    departmentId:     d.departmentId     === undefined ? current.departmentId     : toInt(d.departmentId),
+    productionLineId: d.productionLineId === undefined ? current.productionLineId : toInt(d.productionLineId),
+    warehouseId:      d.warehouseId      === undefined ? current.warehouseId      : toInt(d.warehouseId),
+    employeeId:       d.employeeId       === undefined ? current.employeeId       : toInt(d.employeeId),
     notes:          d.notes          === undefined ? current.notes          : toStr(d.notes),
     updatedAt:      new Date(),
   }).where(eq(surveillanceDevicesTable.id, id)).returning();

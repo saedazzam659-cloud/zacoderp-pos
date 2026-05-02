@@ -14,6 +14,7 @@ import {
   Activity, MonitorSmartphone, AlertTriangle, Sparkles, MessageSquare, Inbox, BadgeCheck, Stethoscope,
   ScrollText, Database, ListOrdered, HardDrive, Trash2,
   Factory, Cog, ScanFace, Store, ShieldAlert, Briefcase, HardHat, Boxes, Megaphone,
+  Server, Camera, Monitor,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -242,7 +243,12 @@ const crmSubNav: NavDef[] = [
 const CRM_GROUP_PERMS = ["crm"];
 // Sub-items live under the "الأمن والمراقبة" collapsible group.
 const securitySubNav: NavDef[] = [
-  { nameKey: "security.nav.events", href: "/security/events", icon: ShieldAlert, permKey: "security_events" },
+  { nameKey: "security.nav.events",   href: "/security/events",   icon: ShieldAlert, permKey: "security_events" },
+  { nameKey: "security.nav.devices",  href: "/security/devices",  icon: Server,      permKey: "security_events" },
+  { nameKey: "security.nav.cameras",  href: "/security/cameras",  icon: Camera,      permKey: "security_events" },
+  { nameKey: "security.nav.liveView", href: "/security/live",     icon: Monitor,     permKey: "security_events" },
+  { nameKey: "security.nav.ai",       href: "/security/ai",       icon: Sparkles,    permKey: "security_events" },
+  { nameKey: "security.nav.reports",  href: "/security/reports",  icon: BarChart3,   permKey: "security_events" },
 ];
 const SECURITY_GROUP_PERMS = ["security_events"];
 const dashboardSubNav: NavDef[] = [

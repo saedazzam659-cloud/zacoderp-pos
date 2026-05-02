@@ -57,6 +57,17 @@ export const surveillanceDevicesTable = pgTable("surveillance_devices", {
 
   status:           text("status").notNull().default("active"), // 'active' | 'inactive' | 'maintenance'
 
+  // ── Cross-module linkage (AI ERP integration) ────────────────────
+  // What this camera/device is monitoring. All optional — unset means
+  // generic security coverage. Used by AI rules engine to dispatch
+  // events to the right ERP module.
+  // 'generic' | 'department' | 'production_line' | 'warehouse' | 'employee_workstation' | 'entrance' | 'parking'
+  locationType:     text("location_type"),
+  departmentId:     integer("department_id"),       // HR department (free reference, no FK)
+  productionLineId: integer("production_line_id"),  // FK to production_resources.id (line)
+  warehouseId:      integer("warehouse_id"),        // FK to warehouses.id
+  employeeId:       integer("employee_id"),         // FK to employees.id when watching a workstation
+
   notes:            text("notes"),
 
   createdAt:        timestamp("created_at").defaultNow().notNull(),

@@ -38,6 +38,29 @@ export const securityNotificationRulesTable = pgTable("security_notification_rul
   targetMode:      text("target_mode").notNull().default("broadcast"),
   // Used only when targetMode = "users".
   targetUserIds:   integer("target_user_ids").array().notNull().default([] as any),
+
+  // ── AI Business-Rule trigger (NEW) ────────────────────────────────
+  // When set to anything other than "manual", the rule fires from a
+  // recurring evaluator instead of (only) from a posted security_events
+  // row — letting it catch absences / line stops / after-hours moves.
+  //   manual                   → fires only when an event matches above.
+  //   employee_absent          → cameras with employeeId report no
+  //                              motion for `thresholdMinutes` while
+  //                              schedule says employee should be present.
+  //   line_downtime            → no production_event from line for N min.
+  //   warehouse_after_hours    → any motion in warehouse-tagged camera
+  //                              between `windowStartHour` … `windowEndHour`.
+  triggerType:     text("trigger_type").notNull().default("manual"),
+  thresholdMinutes:integer("threshold_minutes"),
+  windowStartHour: integer("window_start_hour"),
+  windowEndHour:   integer("window_end_hour"),
+
+  // What to DO when the rule fires (in addition to the notification).
+  // notify | task | violation | both
+  actionType:      text("action_type").notNull().default("notify"),
+  // Which ERP module the action targets (hr | production | inventory | none).
+  targetModule:    text("target_module").notNull().default("none"),
+
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
   createdAt:       timestamp("created_at").defaultNow().notNull(),
   updatedAt:       timestamp("updated_at").defaultNow().notNull(),

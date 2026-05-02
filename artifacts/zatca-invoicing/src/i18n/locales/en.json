@@ -618,7 +618,12 @@
     "subtitle": "Manage security events and alerts",
     "nav": {
       "group": "Security & Monitoring",
-      "events": "Security Events"
+      "events": "Security Events",
+      "devices": "Recording Devices",
+      "cameras": "Cameras",
+      "liveView": "Live View",
+      "ai": "Security AI",
+      "reports": "Security Reports"
     },
     "tiles": {
       "events": "All Events",
@@ -626,7 +631,103 @@
       "openOnly": "Open Events",
       "investigating": "Under Investigation",
       "history": "Closed Event History",
+      "devices": "Recording Devices (DVR/NVR)",
+      "cameras": "Cameras",
+      "liveView": "Live View",
+      "ai": "Security AI",
+      "reports": "Advanced Reports",
       "notificationRules": "Notification Rules"
+    },
+    "devices": {
+      "title": "Recording Devices",
+      "add": "Add Device",
+      "edit": "Edit Device",
+      "searchPh": "Search by code, name, or location",
+      "empty": "No devices yet",
+      "confirmDelete": "Delete this device?",
+      "col": {
+        "code": "Code", "name": "Name", "type": "Type", "brand": "Brand",
+        "model": "Model", "channels": "Channels", "ip": "IP", "port": "Port",
+        "serial": "Serial", "location": "Location", "status": "Status"
+      }
+    },
+    "cameras": {
+      "title": "Cameras",
+      "add": "Add Camera",
+      "edit": "Edit Camera",
+      "searchPh": "Search by code, name, or location",
+      "empty": "No cameras yet",
+      "linkSection": "Link camera to other modules",
+      "linkRef": "Link Ref",
+      "locType": "Location Type",
+      "proto": "Stream Protocol",
+      "streamUrl": "Stream URL",
+      "departmentId": "Department ID",
+      "productionLineId": "Production Line ID",
+      "warehouseId": "Warehouse ID",
+      "employeeId": "Employee ID",
+      "loc": {
+        "generic": "Generic", "department": "Department", "production_line": "Production Line",
+        "warehouse": "Warehouse", "employee_workstation": "Employee Workstation",
+        "entrance": "Entrance", "parking": "Parking"
+      }
+    },
+    "deviceType": {
+      "dvr": "DVR", "nvr": "NVR", "hybrid": "Hybrid",
+      "camera_ip": "IP Camera", "camera_analog": "Analog Camera"
+    },
+    "deviceStatus": {
+      "active": "Active", "inactive": "Inactive", "maintenance": "Maintenance"
+    },
+    "liveView": {
+      "title": "Live View", "tiles": "tiles", "online": "Online", "offline": "Offline",
+      "empty": "—",
+      "note": "Cameras shown as placeholders only — live RTSP playback requires an external component"
+    },
+    "ai": {
+      "title": "Security AI",
+      "last7": "Last 7 days", "last30": "Last 30 days", "last90": "Last 90 days",
+      "totalEvents": "Total Events", "mttr": "Mean Time To Resolve",
+      "aiSourced": "AI-sourced", "actionsTaken": "Actions Taken",
+      "byModule": "By Module", "bySource": "By Source", "topTypes": "Top Event Types",
+      "heatmap": "Heatmap (day × hour)",
+      "openEventsRec": "Open Events — Analysis & Recommendations",
+      "noOpen": "No open events",
+      "actionsLog": "Actions Log", "noActions": "No actions yet",
+      "evaluateRules": "Evaluate Rules", "evaluating": "Evaluating…",
+      "evaluated": "Rules evaluated", "generatedN": "{{n}} events generated",
+      "analyze": "Analyze", "analyzing": "Analyzing…",
+      "dispatch": "Dispatch", "dispatched": "Action dispatched",
+      "action": "Action", "reasons": "Reasons",
+      "col": { "when": "When", "kind": "Kind", "module": "Module", "title": "Title", "event": "Event" },
+      "kind": {
+        "create_task": "Create task",
+        "create_violation": "Log violation",
+        "create_maintenance": "Maintenance request",
+        "notify": "Notify",
+        "open_ticket": "Open ticket"
+      }
+    },
+    "module": {
+      "hr": "HR", "production": "Production", "inventory": "Inventory",
+      "branch": "Branch", "none": "—"
+    },
+    "source": {
+      "manual": "Manual", "ai": "AI", "rule": "Rule", "import": "Import"
+    },
+    "reports": {
+      "title": "Advanced Security Reports",
+      "hr": "Employee Compliance",
+      "production": "Production Downtime",
+      "warehouse": "Night Warehouse Security",
+      "branches": "Branch Comparison",
+      "warehouseNote": "Night window: from {{from}}:00 to {{to}}:00",
+      "col": {
+        "employee": "Employee", "line": "Production Line", "warehouse": "Warehouse",
+        "branch": "Branch", "cameras": "Cameras",
+        "total": "Total", "open": "Open", "critical": "Critical", "high": "High",
+        "stops": "Stops", "last": "Last event"
+      }
     },
     "rules": {
       "title": "Security Notification Rules",

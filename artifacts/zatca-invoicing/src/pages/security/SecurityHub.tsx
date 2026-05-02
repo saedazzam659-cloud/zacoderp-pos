@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ShieldAlert, ListChecks, BarChart3, AlertOctagon, Activity, ClipboardList, BellRing,
+  Server, Camera, Monitor, Sparkles,
 } from "lucide-react";
 import { MenuHub, type HubTile } from "@/components/MenuHub";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +13,11 @@ const tiles: HubTile[] = [
   { nameKey: "security.tiles.openOnly", href: "/security/events?status=open", icon: AlertOctagon, tone: "orange", permKey: "security_events" },
   { nameKey: "security.tiles.investigating", href: "/security/events?status=investigating", icon: Activity, tone: "amber", permKey: "security_events" },
   { nameKey: "security.tiles.history",  href: "/security/events?status=closed", icon: ClipboardList, tone: "slate",   permKey: "security_events" },
+  { nameKey: "security.tiles.devices",  href: "/security/devices",  icon: Server,   tone: "sky",     permKey: "security_events" },
+  { nameKey: "security.tiles.cameras",  href: "/security/cameras",  icon: Camera,   tone: "emerald", permKey: "security_events" },
+  { nameKey: "security.tiles.liveView", href: "/security/live",     icon: Monitor,  tone: "indigo",  permKey: "security_events" },
+  { nameKey: "security.tiles.ai",       href: "/security/ai",       icon: Sparkles, tone: "violet",  permKey: "security_events" },
+  { nameKey: "security.tiles.reports",  href: "/security/reports",  icon: BarChart3,tone: "amber",   permKey: "security_events" },
   { nameKey: "security.tiles.notificationRules", href: "/security/notification-rules", icon: BellRing, tone: "violet", permKey: "security_events" },
 ];
 

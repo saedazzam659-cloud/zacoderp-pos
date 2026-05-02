@@ -73,6 +73,11 @@ import HrHub from "@/pages/hr/HrHub";
 import SecurityHub from "@/pages/security/SecurityHub";
 import SecurityEvents from "@/pages/security/SecurityEvents";
 import SecurityNotificationRules from "@/pages/security/SecurityNotificationRules";
+import SecurityDevices from "@/pages/security/SecurityDevices";
+import SecurityCameras from "@/pages/security/SecurityCameras";
+import SecurityLiveView from "@/pages/security/SecurityLiveView";
+import SecurityAI from "@/pages/security/SecurityAI";
+import SecurityReports from "@/pages/security/SecurityReports";
 import PosHub from "@/pages/pos/PosHub";
 import ControlPanelHub from "@/pages/ControlPanelHub";
 // HR
@@ -504,6 +509,11 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hr/face/settings"           module="hr_face_attendance" component={FaceAttendanceSettings} />}
             {!isSuperAdmin && <PermRoute path="/security"        module="security_events" component={SecurityHub} />}
             {!isSuperAdmin && <PermRoute path="/security/events" module="security_events" component={SecurityEvents} />}
+            {!isSuperAdmin && <PermRoute path="/security/devices" module="security_events" component={SecurityDevices} />}
+            {!isSuperAdmin && <PermRoute path="/security/cameras" module="security_events" component={SecurityCameras} />}
+            {!isSuperAdmin && <PermRoute path="/security/live"   module="security_events" component={SecurityLiveView} />}
+            {!isSuperAdmin && <PermRoute path="/security/ai"     module="security_events" component={SecurityAI} />}
+            {!isSuperAdmin && <PermRoute path="/security/reports" module="security_events" component={SecurityReports} />}
             {!isSuperAdmin && <PermRoute path="/security/notification-rules" module="security_events" component={SecurityNotificationRules} />}
 
             {!isSuperAdmin && <PermRoute path="/production"                  module="production"     component={ProductionDashboard} />}
