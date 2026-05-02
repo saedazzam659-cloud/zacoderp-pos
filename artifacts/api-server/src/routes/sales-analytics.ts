@@ -1443,4 +1443,289 @@ Respond ONLY in JSON, no extra prose:
   }
 });
 
+// ─── Detailed Daily Sales Report ─────────────────────────────────────────────
+// Mirrors /payment-mix-report shape (totals, rows, byHour, byBranch,
+// topCustomers) AND adds: per-invoice list, per-line item rows, and
+// aggregated by-item totals — all scoped to a single day.
+router.get("/daily-detailed-report", async (req: any, res) => {
+  try {
+    const cid = getCid(req);
+    const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    const bid = getBid(req);
+    if (!cid) {
+      res.json({
+        date,
+        totals: {
+          invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0,
+          totalAmount: 0, methodsCount: 0, lineCount: 0, totalQty: 0,
+          subtotal: 0, discount: 0, vatAmount: 0,
+        },
+        rows: [], byHour: [], byBranch: [], topCustomers: [],
+        invoices: [], lines: [], byItem: [],
+      });
+      return;
+    }
+
+    // 1. Posted invoices for the day (with subtotal/discount/vat + sales rep)
+    const invs = await db.select({
+      id:           salesInvoicesTable.id,
+      docNumber:    salesInvoicesTable.docNumber,
+      createdAt:    salesInvoicesTable.createdAt,
+      createdHour:  sql<number>`EXTRACT(HOUR FROM ${salesInvoicesTable.createdAt})::int`,
+      customerId:   salesInvoicesTable.customerId,
+      branchId:     salesInvoicesTable.branchId,
+      salesRepId:   salesInvoicesTable.salesRepId,
+      subtotal:     salesInvoicesTable.subtotal,
+      discount:     salesInvoicesTable.discountAmount,
+      vatAmount:    salesInvoicesTable.vatAmount,
+      totalAmount:  salesInvoicesTable.totalAmount,
+      paymentType:  salesInvoicesTable.paymentType,
+      status:       salesInvoicesTable.status,
+      zatcaStatus:  salesInvoicesTable.zatcaStatus,
+    }).from(salesInvoicesTable).where(and(
+      eq(salesInvoicesTable.companyId, cid),
+      eq(salesInvoicesTable.invoiceDate, date),
+      eq(salesInvoicesTable.status, "posted"),
+      ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
+    ));
+
+    // 2. Posted customer receipts for the day
+    const recs = await db.select({
+      id:           receiptVouchersTable.id,
+      code:         receiptVouchersTable.code,
+      createdHour:  sql<number>`EXTRACT(HOUR FROM ${receiptVouchersTable.createdAt})::int`,
+      entityId:     receiptVouchersTable.entityId,
+      branchId:     receiptVouchersTable.branchId,
+      amount:       receiptVouchersTable.amount,
+      paymentType:  receiptVouchersTable.paymentType,
+    }).from(receiptVouchersTable).where(and(
+      eq(receiptVouchersTable.companyId, cid),
+      eq(receiptVouchersTable.date, date),
+      eq(receiptVouchersTable.status, "posted"),
+      eq(receiptVouchersTable.entityType, "customer"),
+      ...branchScopeSpread(req, receiptVouchersTable.branchId, bid),
+    ));
+
+    // 3. Item lines for those invoices (tenant-scoped)
+    const invoiceIds = invs.map(i => i.id);
+    const lineRows = invoiceIds.length
+      ? await db.select({
+          id:        salesInvoiceLinesTable.id,
+          invoiceId: salesInvoiceLinesTable.invoiceId,
+          itemId:    salesInvoiceLinesTable.itemId,
+          itemCode:  salesInvoiceLinesTable.itemCode,
+          itemName:  salesInvoiceLinesTable.itemName,
+          unit:      salesInvoiceLinesTable.unit,
+          qty:       salesInvoiceLinesTable.qty,
+          unitPrice: salesInvoiceLinesTable.unitPrice,
+          discount:  salesInvoiceLinesTable.discount,
+          vatRate:   salesInvoiceLinesTable.vatRate,
+          lineTotal: salesInvoiceLinesTable.lineTotal,
+        }).from(salesInvoiceLinesTable).where(and(
+          eq(salesInvoiceLinesTable.companyId, cid),
+          inArray(salesInvoiceLinesTable.invoiceId, invoiceIds),
+        ))
+      : [];
+
+    // 4. Resolve branches + customers + sales reps (tenant-scoped)
+    const allBranchIds = Array.from(new Set([
+      ...invs.map(i => i.branchId).filter((x): x is number => !!x),
+      ...recs.map(r => r.branchId).filter((x): x is number => !!x),
+    ]));
+    const allCustomerIds = Array.from(new Set(invs.map(i => i.customerId).filter((x): x is number => !!x)));
+    const allRepIds      = Array.from(new Set(invs.map(i => i.salesRepId).filter((x): x is number => !!x)));
+
+    const [branchRows, customerRows, repRows] = await Promise.all([
+      allBranchIds.length
+        ? db.select({ id: branchesTable.id, nameAr: branchesTable.nameAr, nameEn: branchesTable.nameEn })
+            .from(branchesTable).where(and(eq(branchesTable.companyId, cid), inArray(branchesTable.id, allBranchIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+      allCustomerIds.length
+        ? db.select({ id: customersTable.id, nameAr: customersTable.nameAr, nameEn: customersTable.nameEn })
+            .from(customersTable).where(and(eq(customersTable.companyId, cid), inArray(customersTable.id, allCustomerIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+      allRepIds.length
+        ? db.select({ id: salesRepsTable.id, nameAr: salesRepsTable.nameAr, nameEn: salesRepsTable.nameEn })
+            .from(salesRepsTable).where(and(eq(salesRepsTable.companyId, cid), inArray(salesRepsTable.id, allRepIds)))
+        : Promise.resolve([] as Array<{ id: number; nameAr: string; nameEn: string | null }>),
+    ]);
+    const bmap = new Map(branchRows.map(b => [b.id, b]));
+    const cmap = new Map(customerRows.map(c => [c.id, c]));
+    const rmap = new Map(repRows.map(r => [r.id, r]));
+
+    // 5. Aggregations identical to payment-mix
+    type MethodAcc = { invoiceCount: number; receiptCount: number; invoicesAmount: number; receiptsAmount: number };
+    const methodMap = new Map<string, MethodAcc>();
+    const norm = (raw: any) => String(raw ?? "other").toLowerCase().trim() || "other";
+    for (const i of invs) {
+      const k = norm(i.paymentType);
+      const e = methodMap.get(k) ?? { invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0 };
+      e.invoiceCount += 1; e.invoicesAmount += Number(i.totalAmount);
+      methodMap.set(k, e);
+    }
+    for (const r of recs) {
+      const k = norm(r.paymentType);
+      const e = methodMap.get(k) ?? { invoiceCount: 0, receiptCount: 0, invoicesAmount: 0, receiptsAmount: 0 };
+      e.receiptCount += 1; e.receiptsAmount += Number(r.amount);
+      methodMap.set(k, e);
+    }
+    const rows = Array.from(methodMap.entries())
+      .map(([method, v]) => ({
+        method, label: methodLabel(method),
+        invoiceCount: v.invoiceCount, receiptCount: v.receiptCount,
+        invoicesAmount: v.invoicesAmount, receiptsAmount: v.receiptsAmount,
+        totalAmount: v.invoicesAmount + v.receiptsAmount,
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+
+    type HourCell = { hour: number; method: string; amount: number; count: number };
+    const hourMap = new Map<string, HourCell>();
+    const hourKey = (h: number, m: string) => `${h}|${m}`;
+    for (const i of invs) {
+      const m = norm(i.paymentType); const k = hourKey(i.createdHour, m);
+      const cell = hourMap.get(k) ?? { hour: i.createdHour, method: m, amount: 0, count: 0 };
+      cell.amount += Number(i.totalAmount); cell.count += 1;
+      hourMap.set(k, cell);
+    }
+    for (const r of recs) {
+      const m = norm(r.paymentType); const k = hourKey(r.createdHour, m);
+      const cell = hourMap.get(k) ?? { hour: r.createdHour, method: m, amount: 0, count: 0 };
+      cell.amount += Number(r.amount); cell.count += 1;
+      hourMap.set(k, cell);
+    }
+    const byHour = Array.from(hourMap.values())
+      .sort((a, b) => a.hour - b.hour || a.method.localeCompare(b.method));
+
+    type BranchAgg = {
+      branchId: number | null; branchNameAr: string; branchNameEn: string | null;
+      methods: Record<string, { count: number; amount: number }>; totalAmount: number;
+    };
+    const branchAggMap = new Map<string, BranchAgg>();
+    function addToBranch(branchId: number | null, method: string, count: number, amount: number) {
+      const key = String(branchId ?? "_none");
+      const b = branchId ? bmap.get(branchId) : null;
+      const cur = branchAggMap.get(key) ?? {
+        branchId, branchNameAr: b?.nameAr ?? "—", branchNameEn: b?.nameEn ?? "—",
+        methods: {}, totalAmount: 0,
+      };
+      const m = cur.methods[method] ?? { count: 0, amount: 0 };
+      m.count += count; m.amount += amount;
+      cur.methods[method] = m; cur.totalAmount += amount;
+      branchAggMap.set(key, cur);
+    }
+    for (const i of invs) addToBranch(i.branchId, norm(i.paymentType), 1, Number(i.totalAmount));
+    for (const r of recs) addToBranch(r.branchId, norm(r.paymentType), 1, Number(r.amount));
+    const byBranch = Array.from(branchAggMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+
+    type CustomerAgg = {
+      customerId: number | null; customerNameAr: string; customerNameEn: string | null;
+      methods: Record<string, { count: number; amount: number }>; totalAmount: number;
+    };
+    const custAggMap = new Map<string, CustomerAgg>();
+    for (const i of invs) {
+      const key = String(i.customerId ?? "_none");
+      const c = i.customerId ? cmap.get(i.customerId) : null;
+      const cur = custAggMap.get(key) ?? {
+        customerId: i.customerId,
+        customerNameAr: c?.nameAr ?? "عميل نقدي",
+        customerNameEn: c?.nameEn ?? "Cash Customer",
+        methods: {}, totalAmount: 0,
+      };
+      const m = norm(i.paymentType);
+      const mEntry = cur.methods[m] ?? { count: 0, amount: 0 };
+      mEntry.count += 1; mEntry.amount += Number(i.totalAmount);
+      cur.methods[m] = mEntry; cur.totalAmount += Number(i.totalAmount);
+      custAggMap.set(key, cur);
+    }
+    const topCustomers = Array.from(custAggMap.values())
+      .sort((a, b) => b.totalAmount - a.totalAmount).slice(0, 15);
+
+    // 6. Detailed invoice rows + line bundle map
+    const linesByInvoice = new Map<number, typeof lineRows>();
+    for (const ln of lineRows) {
+      const arr = linesByInvoice.get(ln.invoiceId) ?? [];
+      arr.push(ln); linesByInvoice.set(ln.invoiceId, arr);
+    }
+    const invoiceDocMap = new Map<number, string | null>(invs.map(i => [i.id, i.docNumber]));
+
+    const invoices = invs.map(i => {
+      const c = i.customerId ? cmap.get(i.customerId) : null;
+      const b = i.branchId ? bmap.get(i.branchId) : null;
+      const r = i.salesRepId ? rmap.get(i.salesRepId) : null;
+      const lns = linesByInvoice.get(i.id) ?? [];
+      const totalQty = lns.reduce((s, l) => s + Number(l.qty), 0);
+      const time = i.createdAt ? new Date(i.createdAt as any).toISOString().slice(11, 16) : "";
+      return {
+        id: i.id, docNumber: i.docNumber, time,
+        customerId: i.customerId,
+        customerNameAr: c?.nameAr ?? "عميل نقدي",
+        customerNameEn: c?.nameEn ?? "Cash Customer",
+        branchId: i.branchId,
+        branchNameAr: b?.nameAr ?? null, branchNameEn: b?.nameEn ?? null,
+        salesRepId: i.salesRepId,
+        salesRepNameAr: r?.nameAr ?? null, salesRepNameEn: r?.nameEn ?? null,
+        paymentType: norm(i.paymentType), status: i.status, zatcaStatus: i.zatcaStatus,
+        lineCount: lns.length, totalQty,
+        subtotal: Number(i.subtotal), discount: Number(i.discount),
+        vatAmount: Number(i.vatAmount), totalAmount: Number(i.totalAmount),
+      };
+    }).sort((a, b) => a.time.localeCompare(b.time));
+
+    // 7. Flat line list with parent invoice doc number
+    const lines = lineRows.map(ln => ({
+      invoiceId: ln.invoiceId,
+      invoiceDocNumber: invoiceDocMap.get(ln.invoiceId) ?? null,
+      lineId: ln.id, itemId: ln.itemId,
+      itemCode: ln.itemCode, itemName: ln.itemName, unit: ln.unit,
+      qty: Number(ln.qty), unitPrice: Number(ln.unitPrice),
+      discount: Number(ln.discount ?? 0), vatRate: Number(ln.vatRate ?? 0),
+      lineTotal: Number(ln.lineTotal),
+    }));
+
+    // 8. Aggregated byItem
+    type ItemAgg = {
+      itemId: number | null; itemCode: string | null; itemName: string; unit: string | null;
+      qty: number; totalSales: number; invoiceSet: Set<number>;
+    };
+    const itemMap = new Map<string, ItemAgg>();
+    for (const ln of lineRows) {
+      const key = String(ln.itemId ?? `_n_${ln.itemName}`);
+      const e = itemMap.get(key) ?? {
+        itemId: ln.itemId, itemCode: ln.itemCode, itemName: ln.itemName, unit: ln.unit,
+        qty: 0, totalSales: 0, invoiceSet: new Set<number>(),
+      };
+      e.qty += Number(ln.qty); e.totalSales += Number(ln.lineTotal);
+      e.invoiceSet.add(ln.invoiceId);
+      itemMap.set(key, e);
+    }
+    const byItem = Array.from(itemMap.values()).map(e => ({
+      itemId: e.itemId, itemCode: e.itemCode, itemName: e.itemName, unit: e.unit,
+      qty: e.qty, totalSales: e.totalSales, invoiceCount: e.invoiceSet.size,
+    })).sort((a, b) => b.totalSales - a.totalSales);
+
+    res.json({
+      date,
+      totals: {
+        invoiceCount:   invs.length,
+        receiptCount:   recs.length,
+        invoicesAmount: invs.reduce((s, x) => s + Number(x.totalAmount), 0),
+        receiptsAmount: recs.reduce((s, x) => s + Number(x.amount), 0),
+        totalAmount:    invs.reduce((s, x) => s + Number(x.totalAmount), 0)
+                      + recs.reduce((s, x) => s + Number(x.amount), 0),
+        methodsCount:   rows.length,
+        lineCount:      lineRows.length,
+        totalQty:       lineRows.reduce((s, l) => s + Number(l.qty), 0),
+        subtotal:       invs.reduce((s, i) => s + Number(i.subtotal), 0),
+        discount:       invs.reduce((s, i) => s + Number(i.discount), 0),
+        vatAmount:      invs.reduce((s, i) => s + Number(i.vatAmount), 0),
+      },
+      rows, byHour, byBranch, topCustomers,
+      invoices, lines, byItem,
+    });
+  } catch (e: any) {
+    req.log?.error?.({ err: e }, "daily-detailed-report failed");
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

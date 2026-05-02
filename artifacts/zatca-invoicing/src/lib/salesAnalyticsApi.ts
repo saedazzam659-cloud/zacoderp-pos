@@ -212,6 +212,81 @@ export const salesAnalyticsApi = {
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
+  dailyDetailedReport: (cid?: number, date?: string, branchId?: number) =>
+    get<DailyDetailedReport>(`/daily-detailed-report${qs({ companyId: cid, date, branchId })}`),
+};
+
+export type DailyDetailedInvoice = {
+  id: number;
+  docNumber: string | null;
+  time: string;
+  customerId: number | null;
+  customerNameAr: string;
+  customerNameEn: string | null;
+  branchId: number | null;
+  branchNameAr: string | null;
+  branchNameEn: string | null;
+  salesRepId: number | null;
+  salesRepNameAr: string | null;
+  salesRepNameEn: string | null;
+  paymentType: string;
+  status: string;
+  zatcaStatus: string | null;
+  lineCount: number;
+  totalQty: number;
+  subtotal: number;
+  discount: number;
+  vatAmount: number;
+  totalAmount: number;
+};
+
+export type DailyDetailedLine = {
+  invoiceId: number;
+  invoiceDocNumber: string | null;
+  lineId: number;
+  itemId: number | null;
+  itemCode: string | null;
+  itemName: string;
+  unit: string | null;
+  qty: number;
+  unitPrice: number;
+  discount: number;
+  vatRate: number;
+  lineTotal: number;
+};
+
+export type DailyDetailedItemRow = {
+  itemId: number | null;
+  itemCode: string | null;
+  itemName: string;
+  unit: string | null;
+  qty: number;
+  totalSales: number;
+  invoiceCount: number;
+};
+
+export type DailyDetailedReport = {
+  date: string;
+  totals: {
+    invoiceCount: number;
+    receiptCount: number;
+    invoicesAmount: number;
+    receiptsAmount: number;
+    totalAmount: number;
+    methodsCount: number;
+    lineCount: number;
+    totalQty: number;
+    subtotal: number;
+    discount: number;
+    vatAmount: number;
+  };
+  rows: PaymentMixMethodRow[];
+  byHour: PaymentMixHourCell[];
+  byBranch: PaymentMixBranchRow[];
+  topCustomers: PaymentMixCustomerRow[];
+  invoices: DailyDetailedInvoice[];
+  lines: DailyDetailedLine[];
+  byItem: DailyDetailedItemRow[];
 };
 
 export type PaymentMixMethodRow = {

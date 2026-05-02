@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft, ChevronRight, FileText, Wallet, AlertTriangle, Users, Package,
-  CalendarRange, TrendingUp, RotateCcw, Receipt, Sun, CreditCard,
+  CalendarRange, TrendingUp, RotateCcw, Receipt, Sun, CreditCard, ListChecks,
 } from "lucide-react";
 
 export default function SalesReportsHub() {
@@ -25,6 +25,13 @@ export default function SalesReportsHub() {
       desc: tr("paymentMixDesc"),
       icon: CreditCard,
       color: "from-violet-50 to-fuchsia-100/40 text-violet-700 border-violet-200",
+    },
+    {
+      href: "/sales/reports/daily-detailed",
+      title: tr("dailyDetailedTitle"),
+      desc: tr("dailyDetailedDesc"),
+      icon: ListChecks,
+      color: "from-teal-50 to-teal-100/40 text-teal-700 border-teal-200",
     },
     {
       href: "/sales/reports/customer-statement",

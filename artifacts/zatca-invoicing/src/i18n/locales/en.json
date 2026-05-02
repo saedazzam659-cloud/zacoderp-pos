@@ -805,7 +805,8 @@
     "purchasesByItem": "Purchases by Item",
     "purchasesByPeriod": "Daily / Monthly Purchases",
     "topSuppliers": "Top Suppliers",
-    "purchaseReturnsReport": "Purchase Returns"
+    "purchaseReturnsReport": "Purchase Returns",
+    "dailyDetailedReport": "Detailed Daily Sales Report"
   },
   "topbar": {
     "home": "Home",
@@ -4734,7 +4735,9 @@
       "dailyTitle": "Daily Sales Report",
       "dailyDesc": "Full snapshot of a single day: invoices, items, customers, branches, and cash collection",
       "paymentMixTitle": "Sales by Payment Method (AI)",
-      "paymentMixDesc": "AI-powered breakdown of sales and collections across all payment methods (cash, card, credit, transfer, cheque, other) with smart insights"
+      "paymentMixDesc": "AI-powered breakdown of sales and collections across all payment methods (cash, card, credit, transfer, cheque, other) with smart insights",
+      "dailyDetailedTitle": "Detailed Daily Sales Report",
+      "dailyDetailedDesc": "Everything in the payment-mix report + a full list of the day's invoices, line-item drilldown per invoice, and aggregated item totals"
     },
     "customerStatementDetailed": {
       "title": "Customer Statement (Detailed)",
@@ -5162,6 +5165,69 @@
       "colBranch": "Branch",
       "colCustomer": "Customer",
       "colMixUsed": "Payment Methods Used"
+    },
+    "dailyDetailed": {
+      "title": "Detailed Daily Sales Report",
+      "subtitle": "A complete breakdown of the day's sales: payment methods, detailed invoices, per-invoice line items, and aggregated item totals",
+      "date": "Date",
+      "backToToday": "Back to today",
+      "exportFilename": "detailed-daily-sales-report",
+      "exportTitle": "Detailed Daily Sales Report",
+      "exportSubtitle": "Date {{date}} — Total {{value}}",
+      "totalLabel": "Total",
+      "kpi": {
+        "totalAmount": "Day Total",
+        "totalHint": "Across {{n}} payment method(s)",
+        "invoicesAmount": "Invoice Sales",
+        "invoicesCount": "{{n}} invoice(s)",
+        "receiptsAmount": "Receipt Collections",
+        "receiptsCount": "{{n}} receipt(s)",
+        "itemsSold": "Items Sold",
+        "linesHint": "{{n}} invoice line(s)"
+      },
+      "sections": {
+        "ai": "AI Insights",
+        "invoices": "Daily Invoices (Detailed)",
+        "byItem": "Items Sold (Aggregated)"
+      },
+      "empty": {
+        "noInvoices": "No invoices for this day",
+        "noItems": "No items sold on this day"
+      },
+      "inv": {
+        "time": "Time",
+        "doc": "Invoice #",
+        "customer": "Customer",
+        "branch": "Branch",
+        "salesRep": "Sales Rep",
+        "method": "Payment",
+        "lineCount": "Lines",
+        "qty": "Qty",
+        "subtotal": "Subtotal",
+        "discount": "Discount",
+        "vat": "VAT",
+        "total": "Total",
+        "expand": "Show line items",
+        "collapse": "Hide line items"
+      },
+      "ln": {
+        "code": "Item Code",
+        "name": "Item Name",
+        "unit": "Unit",
+        "qty": "Qty",
+        "unitPrice": "Unit Price",
+        "discount": "Discount",
+        "vatRate": "VAT %",
+        "total": "Line Total"
+      },
+      "itm": {
+        "code": "Item Code",
+        "name": "Item Name",
+        "unit": "Unit",
+        "qty": "Qty Sold",
+        "invoiceCount": "Invoice Count",
+        "totalSales": "Total Sales"
+      }
     }
   },
   "hrPages": {
