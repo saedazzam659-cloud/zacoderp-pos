@@ -110,6 +110,13 @@ import HospitalPatients from "@/pages/hospital/HospitalPatients";
 import HospitalAppointments from "@/pages/hospital/HospitalAppointments";
 import HospitalInvoices from "@/pages/hospital/HospitalInvoices";
 import HospitalAI from "@/pages/hospital/HospitalAI";
+import CrmHub from "@/pages/crm/CrmHub";
+import CrmLeads from "@/pages/crm/CrmLeads";
+import CrmOpportunities from "@/pages/crm/CrmOpportunities";
+import CrmActivities from "@/pages/crm/CrmActivities";
+import CrmCampaigns from "@/pages/crm/CrmCampaigns";
+import CrmPipeline from "@/pages/crm/CrmPipeline";
+import CrmAI from "@/pages/crm/CrmAI";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -525,6 +532,15 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/hospital/appointments"         module="hospital"       component={HospitalAppointments} />}
             {!isSuperAdmin && <PermRoute path="/hospital/invoices"             module="hospital"       component={HospitalInvoices} />}
             {!isSuperAdmin && <PermRoute path="/hospital/ai"                   module="hospital"       component={HospitalAI} />}
+
+            {/* CRM module — gated by `crm` permission. */}
+            {!isSuperAdmin && <PermRoute path="/crm"                            module="crm"            component={CrmHub} />}
+            {!isSuperAdmin && <PermRoute path="/crm/leads"                      module="crm"            component={CrmLeads} />}
+            {!isSuperAdmin && <PermRoute path="/crm/opportunities"              module="crm"            component={CrmOpportunities} />}
+            {!isSuperAdmin && <PermRoute path="/crm/activities"                 module="crm"            component={CrmActivities} />}
+            {!isSuperAdmin && <PermRoute path="/crm/campaigns"                  module="crm"            component={CrmCampaigns} />}
+            {!isSuperAdmin && <PermRoute path="/crm/pipeline"                   module="crm"            component={CrmPipeline} />}
+            {!isSuperAdmin && <PermRoute path="/crm/ai"                         module="crm"            component={CrmAI} />}
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

@@ -30,6 +30,7 @@ const G = {
   maintenance: "perms.groups.maintenance",
   hotel:       "perms.groups.hotel",
   hospital:    "perms.groups.hospital",
+  crm:         "perms.groups.crm",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
 };
@@ -115,6 +116,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // this module ships the FHIR R4 generator and an offline blueprint
   // dashboard so the workflow can be exercised end-to-end.
   { key: "hospital",             label: "perms.modules.hospital",             group: G.hospital,    actions: ALL },
+
+  // CRM — backend key is "crm"; covers Leads, Opportunities, Activities,
+  // Campaigns, Pipeline, plus AI helpers (lead scoring, forecast, alerts).
+  { key: "crm",                  label: "perms.modules.crm",                  group: G.crm,         actions: ALL },
 
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.

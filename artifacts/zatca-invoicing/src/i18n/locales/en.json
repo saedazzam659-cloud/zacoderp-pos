@@ -578,6 +578,14 @@
     "hospitalAppointments": "Appointments & Visits",
     "hospitalInvoices": "Medical Invoices",
     "hospitalAI": "AI & NPHIES",
+    "crmGroup": "Customer Relationship Management",
+    "crmHub": "CRM Dashboard",
+    "crmLeads": "Leads",
+    "crmOpportunities": "Opportunities",
+    "crmActivities": "Activities",
+    "crmCampaigns": "Campaigns",
+    "crmPipeline": "Pipeline",
+    "crmAI": "CRM AI",
     "contractingGroup": "Contracting",
     "contractingDashboard": "Contracting Dashboard",
     "contractingProjects": "Projects",
@@ -781,6 +789,7 @@
     "maintenanceSubtitle": "Assets, technicians, work orders, and spare parts",
     "hotelSubtitle": "Hotels, rooms, guests, bookings, and AI-powered dynamic pricing",
     "hospitalSubtitle": "Hospitals, clinics, doctors, patients, appointments, billing & NPHIES blueprint (FHIR R4)",
+    "crmSubtitle": "Leads, opportunities, activities, marketing campaigns, sales pipeline, and AI-powered scoring",
     "controlPanelSubtitle": "System settings, permissions, subscription, and audit",
     "inventoryTitle": "Warehouse Management",
     "inventorySubtitle": "All warehouse screens in one place"
@@ -1916,6 +1925,7 @@
       "maintenance": "Maintenance Management",
       "hotel": "Hotel Smart AI ERP",
       "hospital": "Hospital & Clinic Management",
+      "crm": "Customer Relationship Management (CRM)",
       "security": "Security & Surveillance",
       "aiTools": "AI Tools"
     },
@@ -1980,6 +1990,7 @@
       "maintenance": "Maintenance Management (Assets, Technicians, Work Orders, Spare Parts)",
       "hotel": "Hotel Smart AI ERP (Hotels, Rooms, Guests, Bookings, Housekeeping, AI)",
       "hospital": "Hospital & Clinic Management (Facilities, Doctors, Patients, Appointments, Medical Billing, NPHIES FHIR R4)",
+      "crm": "Customer Relationship Management (Leads, Opportunities, Activities, Campaigns, Pipeline, AI Lead Scoring)",
       "security_events": "Security & Surveillance (Events, Notification Rules)"
     }
   },

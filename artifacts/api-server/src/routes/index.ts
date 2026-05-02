@@ -71,6 +71,8 @@ import hotelRouter from "./hotel";
 import hotelAiRouter from "./hotel-ai";
 import hospitalRouter from "./hospital";
 import hospitalAiRouter from "./hospital-ai";
+import crmRouter from "./crm";
+import crmAiRouter from "./crm-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 
@@ -153,5 +155,7 @@ router.use("/hotel", hotelRouter);
 router.use("/hotel-ai", hotelAiRouter);
 router.use("/hospital", hospitalRouter);
 router.use("/hospital-ai", hospitalAiRouter);
+router.use("/crm", crmRouter);
+router.use("/crm-ai", crmAiRouter);
 
 export default router;

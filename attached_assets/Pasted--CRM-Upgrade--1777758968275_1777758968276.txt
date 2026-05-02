@@ -1,0 +1,206 @@
+📁 تحديث موديل CRM مدمج مع العملاء والمبيعات (Upgrade)
+
+🧩 فكرة التحديث:
+
+هذا ليس موديل منفصل، بل توسعة ذكية على:
+
+- موديل العملاء (Customers)
+- موديل المبيعات (Sales)
+
+بحيث يصبح النظام يدعم دورة المبيعات الكاملة:
+Lead → Opportunity → Quotation → Invoice
+
+---
+
+🎯 الهدف:
+
+- منع تكرار البيانات
+- تحسين إدارة المبيعات
+- إضافة تتبع رحلة العميل
+- دعم التحليل والذكاء الاصطناعي
+
+---
+
+🏗️ أولاً: التعديلات على الجداول الحالية
+
+✳️ تحديث جدول العملاء (Customers)
+
+إضافة الحقول التالية:
+
+- CustomerCategory (VIP / عادي / ضعيف)
+- LeadSource (Facebook / Google / Referral)
+- Industry (نشاط العميل)
+- Rating (تقييم من 1 إلى 5)
+- LastContactDate
+- AssignedSalesRep
+- CustomerSegment
+- NotesCRM
+
+---
+
+✳️ تحديث جدول المبيعات (Sales / Quotations)
+
+إضافة:
+
+- OpportunityID (ربط بالفرصة)
+- CampaignID (ربط بالحملة)
+- LeadID (لو جاي من Lead)
+
+---
+
+🆕 ثانياً: الجداول الجديدة (CRM Layer)
+
+1️⃣ جدول Leads (العملاء المحتملين)
+
+- LeadID
+- LeadName
+- Mobile
+- Email
+- Source
+- InterestLevel (بارد / دافئ / ساخن)
+- AssignedTo
+- Status (جديد / تواصل / مؤهل / مرفوض / تم التحويل)
+- ConversionScore (AI)
+- CreatedDate
+
+---
+
+2️⃣ جدول Opportunities (الفرص)
+
+- OpportunityID
+- LeadID (اختياري)
+- CustomerID (اختياري)
+- DealValue
+- Stage (عرض / تفاوض / إغلاق)
+- SuccessProbability
+- ExpectedCloseDate
+- Status
+- CreatedDate
+
+---
+
+3️⃣ جدول Activities (الأنشطة)
+
+- ActivityID
+- Type (Call / Meeting / Task / Visit)
+- RelatedType (Lead / Customer / Opportunity)
+- RelatedID
+- UserID
+- Date
+- Notes
+
+---
+
+4️⃣ جدول Campaigns (الحملات)
+
+- CampaignID
+- CampaignName
+- Channel
+- Budget
+- StartDate
+- EndDate
+- ExpectedRevenue
+- ActualRevenue
+
+---
+
+5️⃣ جدول Pipeline (اختياري لكن مهم)
+
+- StageID
+- StageName
+- ترتيب المرحلة
+
+---
+
+🔗 ثالثاً: العلاقات (بدون تكرار بيانات)
+
+- Lead يتحول إلى Customer (يتم نقل البيانات)
+- Opportunity مرتبطة بـ Lead أو Customer
+- Quotation مرتبطة بـ Opportunity
+- Invoice مرتبطة بـ Quotation
+- Activities مرتبطة بالجميع
+
+---
+
+🔄 رابعاً: Workflow النظام
+
+1. إدخال Lead
+
+2. متابعة Lead (Activities)
+
+3. تحويل Lead → Customer
+
+4. إنشاء Opportunity
+
+5. إنشاء Quotation
+
+6. تحويل إلى Invoice
+
+7. تسجيل القيد المحاسبي
+
+8. متابعة العميل
+
+---
+
+💰 القيود المحاسبية (تلقائي)
+
+عند إنشاء فاتورة:
+
+مدين: حساب العملاء
+دائن: حساب الإيرادات
+
+---
+
+🖥️ خامساً: الشاشات المطلوبة
+
+شاشات جديدة:
+
+- شاشة Leads
+- شاشة Opportunities
+- شاشة Pipeline
+- شاشة Activities
+- شاشة Campaigns
+
+---
+
+شاشات يتم تحديثها:
+
+- شاشة العملاء → إضافة بيانات CRM
+- شاشة العروض → ربط Opportunity
+- شاشة المستخدمين → إضافة صلاحيات CRM
+
+---
+
+🔐 سادساً: الصلاحيات
+
+في Super Admin:
+
+- إضافة CRM Module
+
+صلاحيات المستخدم:
+
+- Leads (عرض / تعديل)
+- Opportunities
+- Activities
+- Campaigns
+- التقارير
+
+---
+
+🤖 سابعاً: الذكاء الاصطناعي
+
+- Lead Scoring (تحديد العملاء المحتملين الأفضل)
+- توقع المبيعات
+- تحليل أداء المندوبين
+- اقتراح مواعيد التواصل
+- تنبيهات تلقائية
+
+---
+
+📊 ثامناً: التقارير
+
+- تقرير Leads
+- تقرير Conversion Rate
+- تقرير Pipeline
+- تقرير الفرص
+- تقرير أداء المندوبي�
