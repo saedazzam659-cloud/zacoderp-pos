@@ -53,3 +53,4 @@ export * from "./maintenance";
 export * from "./hotel";
 export * from "./hospital";
 export * from "./crm";
+export * from "./fixedAssets";

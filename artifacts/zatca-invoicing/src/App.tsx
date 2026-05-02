@@ -117,6 +117,15 @@ import CrmActivities from "@/pages/crm/CrmActivities";
 import CrmCampaigns from "@/pages/crm/CrmCampaigns";
 import CrmPipeline from "@/pages/crm/CrmPipeline";
 import CrmAI from "@/pages/crm/CrmAI";
+import FixedAssetsHub from "@/pages/fixed-assets/FixedAssetsHub";
+import FixedAssets from "@/pages/fixed-assets/FixedAssets";
+import FaCategories from "@/pages/fixed-assets/FaCategories";
+import FaMaintenance from "@/pages/fixed-assets/FaMaintenance";
+import FaTransfers from "@/pages/fixed-assets/FaTransfers";
+import FaDepreciation from "@/pages/fixed-assets/FaDepreciation";
+import FaDisposals from "@/pages/fixed-assets/FaDisposals";
+import FaReports from "@/pages/fixed-assets/FaReports";
+import FaAI from "@/pages/fixed-assets/FaAI";
 import HRCalculators from "@/pages/hr/HRCalculators";
 import HRSettings from "@/pages/hr/HRSettings";
 import HRReportsHub from "@/pages/hr/reports/HRReportsHub";
@@ -541,6 +550,18 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/crm/campaigns"                  module="crm"            component={CrmCampaigns} />}
             {!isSuperAdmin && <PermRoute path="/crm/pipeline"                   module="crm"            component={CrmPipeline} />}
             {!isSuperAdmin && <PermRoute path="/crm/ai"                         module="crm"            component={CrmAI} />}
+
+            {/* Fixed Assets module — gated by `fixed_assets` permission. */}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets"                   module="fixed_assets"   component={FixedAssetsHub} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/assets"            module="fixed_assets"   component={FixedAssets} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/categories"        module="fixed_assets"   component={FaCategories} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/maintenance"       module="fixed_assets"   component={FaMaintenance} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/transfers"         module="fixed_assets"   component={FaTransfers} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/depreciation"      module="fixed_assets"   component={FaDepreciation} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/disposals"         module="fixed_assets"   component={FaDisposals} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/reports"           module="fixed_assets"   component={FaReports} />}
+            {!isSuperAdmin && <PermRoute path="/fixed-assets/ai"                module="fixed_assets"   component={FaAI} />}
+
             {/* HR reports — all gated against hr_employees permission */}
             {!isSuperAdmin && <PermRoute path="/hr/reports"                 module="hr_employees"   component={HRReportsHub} />}
             {!isSuperAdmin && <PermRoute path="/hr/reports/employees"       module="hr_employees"   component={HRReportEmployees} />}

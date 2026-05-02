@@ -53,6 +53,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "crm",                label: "إدارة علاقات العملاء (CRM)", section: "إدارة CRM" },
 
+  { key: "fixed_assets",       label: "إدارة الأصول الثابتة",       section: "الأصول الثابتة" },
+
   { key: "security_events",    label: "الأمن والمراقبة",            section: "الأمن والمراقبة" },
 
   { key: "seo_dashboard",      label: "إدارة SEO",                  section: "تحليلات SEO" },
@@ -104,6 +106,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   hotel:              "hotel",
   hospital:           "hospital",
   crm:                "crm",
+  fixed_assets:       "fixed_assets",
   security_events:    "security",
   seo_dashboard:      null,           // SuperAdmin tool, not billed per-company
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
@@ -140,6 +143,7 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "إدارة الفنادق":         { bg: "bg-teal-50",     text: "text-teal-700",     border: "border-teal-200" },
   "إدارة المستشفيات":      { bg: "bg-sky-50",      text: "text-sky-700",      border: "border-sky-200" },
   "إدارة CRM":             { bg: "bg-pink-50",     text: "text-pink-700",     border: "border-pink-200" },
+  "الأصول الثابتة":        { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200" },
   "الأمن والمراقبة":       { bg: "bg-slate-50",    text: "text-slate-700",    border: "border-slate-200" },
   "تحليلات SEO":           { bg: "bg-fuchsia-50",  text: "text-fuchsia-700",  border: "border-fuchsia-200" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },

@@ -216,6 +216,20 @@ const hospitalSubNav: NavDef[] = [
 const HOSPITAL_GROUP_PERMS = ["hospital"];
 
 // CRM — gated by a single `crm` permission key.
+// Fixed Assets — gated by a single `fixed_assets` permission key.
+const fixedAssetsSubNav: NavDef[] = [
+  { nameKey: "nav.faHub",          href: "/fixed-assets",              icon: Boxes,         permKey: "fixed_assets", exact: true },
+  { nameKey: "nav.faAssets",       href: "/fixed-assets/assets",       icon: Package,       permKey: "fixed_assets" },
+  { nameKey: "nav.faCategories",   href: "/fixed-assets/categories",   icon: Tag,           permKey: "fixed_assets" },
+  { nameKey: "nav.faMaintenance",  href: "/fixed-assets/maintenance",  icon: Wrench,        permKey: "fixed_assets" },
+  { nameKey: "nav.faTransfers",    href: "/fixed-assets/transfers",    icon: ArrowRightLeft,permKey: "fixed_assets" },
+  { nameKey: "nav.faDepreciation", href: "/fixed-assets/depreciation", icon: TrendingUp,    permKey: "fixed_assets" },
+  { nameKey: "nav.faDisposals",    href: "/fixed-assets/disposals",    icon: Trash2,        permKey: "fixed_assets" },
+  { nameKey: "nav.faReports",      href: "/fixed-assets/reports",      icon: BarChart3,     permKey: "fixed_assets" },
+  { nameKey: "nav.faAI",           href: "/fixed-assets/ai",           icon: Sparkles,      permKey: "fixed_assets" },
+];
+const FIXED_ASSETS_GROUP_PERMS = ["fixed_assets"];
+
 const crmSubNav: NavDef[] = [
   { nameKey: "nav.crmHub",           href: "/crm",               icon: Users,         permKey: "crm", exact: true },
   { nameKey: "nav.crmLeads",         href: "/crm/leads",         icon: UserSquare2,   permKey: "crm" },
@@ -584,6 +598,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   hotel:       ["hotel"],
   hospital:    ["hospital"],
   crm:         ["crm"],
+  fixedAssets: ["fixed_assets"],
   pos:         ["pos"],
   security:    ["security", "security_events"],
   aiTools:     ["ai_tools"],
@@ -1363,6 +1378,40 @@ function HospitalNavGroup({
   );
 }
 
+// ─── FixedAssetsNavGroup ─────────────────────────────────────────────────────
+// Collapsible "الأصول الثابتة" group — Assets, Categories, Maintenance,
+// Transfers, Depreciation, Disposals, Reports, AI helpers. Single
+// `fixed_assets` permission key.
+function FixedAssetsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, FIXED_ASSETS_GROUP_PERMS)) return null;
+  const isOnSub = fixedAssetsSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/fixed-assets"
+        icon={Boxes}
+        label={t("nav.fixedAssetsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {fixedAssetsSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── CrmNavGroup ─────────────────────────────────────────────────────────────
 // Collapsible "إدارة علاقات العملاء" group — Leads, Opportunities, Activities,
 // Campaigns, Pipeline + AI helpers. Single `crm` permission key.
@@ -1513,6 +1562,8 @@ function SidebarInner({
   onHospitalToggle,
   crmOpen,
   onCrmToggle,
+  fixedAssetsOpen,
+  onFixedAssetsToggle,
   posOpen,
   onPosToggle,
   securityOpen,
@@ -1565,6 +1616,8 @@ function SidebarInner({
   onHospitalToggle: () => void;
   crmOpen: boolean;
   onCrmToggle: () => void;
+  fixedAssetsOpen: boolean;
+  onFixedAssetsToggle: () => void;
   posOpen: boolean;
   onPosToggle: () => void;
   securityOpen: boolean;
@@ -1832,6 +1885,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "fixedAssets", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <FixedAssetsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={fixedAssetsOpen}
+                  onToggle={onFixedAssetsToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "pos", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <PosNavGroup
@@ -2001,6 +2065,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...hotelSubNav,
     ...hospitalSubNav,
     ...crmSubNav,
+    ...fixedAssetsSubNav,
   ];
   for (const item of all) {
     map[item.href] = {
@@ -2262,6 +2327,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [hotelOpen,        setHotelOpen]       = useState(() => location.startsWith("/hotel"));
   const [hospitalOpen,     setHospitalOpen]    = useState(() => location.startsWith("/hospital"));
   const [crmOpen,          setCrmOpen]         = useState(() => location.startsWith("/crm"));
+  const [fixedAssetsOpen,  setFixedAssetsOpen] = useState(() => location.startsWith("/fixed-assets"));
   // Auto-expand the POS group when the user lands directly on any of the
   // pos-monitoring / pos-terminals / pos-settings routes.
   const [posOpen,        setPosOpen]          = useState(() =>
@@ -2288,7 +2354,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel" | "hospital" | "crm"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel" | "hospital" | "crm" | "fixedAssets"
     | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2305,6 +2371,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "hotel")       setHotelOpen(false);
     if (keep !== "hospital")    setHospitalOpen(false);
     if (keep !== "crm")         setCrmOpen(false);
+    if (keep !== "fixedAssets") setFixedAssetsOpen(false);
     if (keep !== "pos")         setPosOpen(false);
     if (keep !== "security")    setSecurityOpen(false);
     if (keep !== "aiTools")     setAiToolsOpen(false);
@@ -2339,6 +2406,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleHotelToggle       = makeAccordionToggle("hotel",       hotelOpen,       setHotelOpen);
   const handleHospitalToggle    = makeAccordionToggle("hospital",    hospitalOpen,    setHospitalOpen);
   const handleCrmToggle         = makeAccordionToggle("crm",         crmOpen,         setCrmOpen);
+  const handleFixedAssetsToggle = makeAccordionToggle("fixedAssets", fixedAssetsOpen, setFixedAssetsOpen);
   const handlePosToggle         = makeAccordionToggle("pos",         posOpen,         setPosOpen);
   const handleSecurityToggle   = makeAccordionToggle("security",   securityOpen,   setSecurityOpen);
   const handleAiToolsToggle    = makeAccordionToggle("aiTools",    aiToolsOpen,    setAiToolsOpen);
@@ -2395,6 +2463,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/hotel")) target = "hotel";
     else if (location.startsWith("/hospital")) target = "hospital";
     else if (location.startsWith("/crm")) target = "crm";
+    else if (location.startsWith("/fixed-assets")) target = "fixedAssets";
     else if (location.startsWith("/hr/") || location === "/hr") target = "hr";
     else if (location.startsWith("/security")) target = "security";
     else if (
@@ -2434,6 +2503,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         hotel:       setHotelOpen,
         hospital:    setHospitalOpen,
         crm:         setCrmOpen,
+        fixedAssets: setFixedAssetsOpen,
         pos:         setPosOpen,
         security:    setSecurityOpen,
         aiTools:     setAiToolsOpen,
@@ -2486,6 +2556,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onHospitalToggle: handleHospitalToggle,
     crmOpen,
     onCrmToggle: handleCrmToggle,
+    fixedAssetsOpen,
+    onFixedAssetsToggle: handleFixedAssetsToggle,
     posOpen,
     onPosToggle: handlePosToggle,
     securityOpen,

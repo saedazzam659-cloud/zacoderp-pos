@@ -31,6 +31,7 @@ const G = {
   hotel:       "perms.groups.hotel",
   hospital:    "perms.groups.hospital",
   crm:         "perms.groups.crm",
+  fixedAssets: "perms.groups.fixedAssets",
   security:    "perms.groups.security",
   aiTools:     "perms.groups.aiTools",
 };
@@ -120,6 +121,10 @@ export const PERMISSION_MODULES: ModuleDef[] = [
   // CRM — backend key is "crm"; covers Leads, Opportunities, Activities,
   // Campaigns, Pipeline, plus AI helpers (lead scoring, forecast, alerts).
   { key: "crm",                  label: "perms.modules.crm",                  group: G.crm,         actions: ALL },
+
+  // Fixed Assets — backend key "fixed_assets"; covers asset register,
+  // categories, maintenance log, transfers, depreciation runs, and disposals.
+  { key: "fixed_assets",         label: "perms.modules.fixed_assets",         group: G.fixedAssets, actions: ALL },
 
   // Security & Surveillance — backend key is "security_events"; covers the
   // security hub, events log, and notification rules.

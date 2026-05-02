@@ -68,6 +68,7 @@ export const COMPANY_MODULE_GATE: Record<string, string> = {
   maintenance: "maintenance",
   hotel: "hotel",
   hospital: "hospital",
+  fixed_assets: "fixed_assets",
   security_events: "security_events",
   // SEO Manager — site analytics dashboard granted per company.
   seo_dashboard: "seo_dashboard",

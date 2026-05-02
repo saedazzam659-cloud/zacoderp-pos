@@ -57,6 +57,7 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   // ── إدارة المستشفيات والمستوصفات ──
   "hospital",
   "crm",
+  "fixed_assets",
   // ── الأمن والمراقبة ──
   "security_events",
   // ── تحليلات SEO (SuperAdmin only — no parent billable module) ──
