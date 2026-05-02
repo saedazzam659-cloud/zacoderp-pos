@@ -90,6 +90,13 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 250, 0] as const;
 type PageSize = typeof PAGE_SIZE_OPTIONS[number];
 const DEFAULT_PAGE_SIZE: PageSize = 25;
 import { cn } from "@/lib/utils";
+import {
+  rowToneFor as sharedRowToneFor,
+  SEL_TONE,
+  DocColorLegend,
+  buildToneTooltip,
+  type LegendItem,
+} from "@/lib/docRowTone";
 
 // ── Column descriptor ─────────────────────────────────────────────────────
 // Drives header, per-column filter row, and footer alignment. Keys match the
@@ -1160,33 +1167,16 @@ export default function SalesAuditGrid() {
    * The ZATCA dimension is rendered as a thin end-border (border-l in RTL =
    * the visual end of the row) so it never fights the status background.
    */
+  // Thin wrapper over the shared `rowToneFor` so existing call sites in this
+  // file (which pass `(inv, hasReturn)`) keep working without churn. All real
+  // styling logic lives in `lib/docRowTone.tsx` so every audit grid stays in
+  // visual sync as the palette evolves.
   function rowToneFor(inv: any, hasReturn: boolean): string {
-    let tone = "";
-    let leftBar = "";
-    if (inv.status === "cancelled") {
-      tone    = "bg-slate-100 hover:bg-slate-200/70 text-slate-500 line-through decoration-slate-400/60";
-      leftBar = "border-s-2 border-s-slate-400";
-    } else if (inv.status === "draft") {
-      tone    = "bg-amber-50/70 hover:bg-amber-100/80";
-      leftBar = "border-s-[3px] border-s-amber-400";
-    } else if (inv.status === "posted") {
-      tone    = "bg-emerald-50/50 hover:bg-emerald-100/70";
-      leftBar = "border-s-[3px] border-s-emerald-400";
-    } else {
-      tone    = "hover:bg-amber-50/60";
-    }
-    // Returned overlay — rose tint + thicker border. We replace `tone` (not
-    // append) so the rose really stands out instead of muddying with green.
-    if (hasReturn && inv.status !== "cancelled") {
-      tone    = "bg-rose-50/70 hover:bg-rose-100/80";
-      leftBar = "border-s-[3px] border-s-rose-500";
-    }
-    // ZATCA acknowledgement — thin marker on the trailing edge of the row.
-    let endBar = "";
-    const z = String(inv.zatcaStatus ?? "");
-    if (z === "approved") endBar = "border-e-2 border-e-emerald-400";
-    else if (z === "rejected") endBar = "border-e-2 border-e-rose-500";
-    return cn(tone, leftBar, endBar);
+    return sharedRowToneFor({
+      status: inv.status,
+      hasReturn,
+      zatcaStatus: inv.zatcaStatus,
+    });
   }
 
   const filteredFindings = audit?.findings.filter(f =>
@@ -1688,38 +1678,19 @@ export default function SalesAuditGrid() {
           zatcaOk:   filtered.filter((i: any) => i.zatcaStatus === "approved").length,
           zatcaBad:  filtered.filter((i: any) => i.zatcaStatus === "rejected").length,
         };
-        const chip = (cls: string, label: string, n: number, hint: string) => (
-          <button
-            type="button"
-            title={hint}
-            data-testid={`legend-${label}`}
-            className={cn(
-              "group inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10.5px] font-medium transition-all hover:scale-[1.02] hover:shadow-sm cursor-help",
-              cls,
-            )}
-          >
-            <span className="inline-block h-2.5 w-2.5 rounded-sm shadow-inner shrink-0" style={{ background: "currentColor", opacity: 0.65 }} />
-            <span>{label}</span>
-            <span className="font-mono text-[10px] tabular-nums opacity-80 group-hover:opacity-100">({n})</span>
-          </button>
-        );
-        return (
-          <div
-            data-testid="row-color-legend"
-            className="flex items-center gap-1.5 flex-wrap px-3 py-1.5 bg-gradient-to-l from-slate-50 to-white border-x border-t border-slate-300 text-slate-600"
-          >
-            <span className="text-[10.5px] font-semibold text-slate-500 me-1">دلالة الألوان:</span>
-            {chip("border-amber-300  bg-amber-50/70  text-amber-800",  "مسودة",   counts.draft,     "الفواتير التي لم تُرحَّل بعد — قابلة للتعديل والحذف")}
-            {chip("border-emerald-300 bg-emerald-50/60 text-emerald-800", "مُرحَّلة", counts.posted,    "تم ترحيلها في القيود — لا يمكن حذفها")}
-            {chip("border-slate-300  bg-slate-100   text-slate-600",   "ملغاة",   counts.cancelled, "فواتير ألغيت — تظهر بخط داخلي")}
-            {chip("border-rose-300   bg-rose-50/70  text-rose-700",    "بها مرتجع", counts.returned, "صدر لها مستند مرتجع كلي أو جزئي")}
-            <span className="mx-1 text-slate-300">|</span>
-            {chip("border-emerald-300 bg-white text-emerald-700 border-e-4 border-e-emerald-400",
-                  "مؤكَّدة زاتكا", counts.zatcaOk,  "تأكدت من زاتكا — شريط أخضر في طرف السطر")}
-            {chip("border-rose-300   bg-white text-rose-700 border-e-4 border-e-rose-500",
-                  "مرفوضة زاتكا", counts.zatcaBad, "رفضت من زاتكا — شريط أحمر في طرف السطر")}
-          </div>
-        );
+        // Legend now reuses the shared DocColorLegend so colors/labels/tooltips
+        // stay in lockstep with every other audit grid in the app. The vertical
+        // separator after the 4th chip groups status chips visually apart from
+        // the ZATCA acknowledgement chips (which mark the row's trailing edge).
+        const items: LegendItem[] = [
+          { kind: "draft",     count: counts.draft },
+          { kind: "posted",    count: counts.posted },
+          { kind: "cancelled", count: counts.cancelled },
+          { kind: "returned",  count: counts.returned },
+          { kind: "zatca-ok",  count: counts.zatcaOk },
+          { kind: "zatca-bad", count: counts.zatcaBad },
+        ];
+        return <DocColorLegend items={items} separatorAfter={[3]} />;
       })()}
 
       {/* ─── Wide spreadsheet grid ─────────────────────────────────────── */}
@@ -1967,16 +1938,14 @@ export default function SalesAuditGrid() {
                   // Build a human-readable "why is this row tinted" tooltip,
                   // stitched together from the active flags so the user
                   // instantly knows what each color means.
-                  const toneReasons: string[] = [];
-                  if (inv.status === "draft")     toneReasons.push("مسودة — لم تُرحَّل بعد");
-                  if (inv.status === "posted")    toneReasons.push("مُرحَّلة في القيود");
-                  if (inv.status === "cancelled") toneReasons.push("ملغاة");
-                  if (hasReturn)                  toneReasons.push("بها مرتجع");
-                  if (inv.zatcaStatus === "approved") toneReasons.push("مؤكَّدة من زاتكا ✓");
-                  if (inv.zatcaStatus === "rejected") toneReasons.push("مرفوضة من زاتكا ✗");
-                  const rowTitle = toneReasons.length
-                    ? `${toneReasons.join(" · ")} — اضغط للتحديد، مرتين للفتح`
-                    : "اضغط لتحديد الصف، أو مرتين لفتح الفاتورة";
+                  // Hand the same row signals to the shared tooltip builder
+                  // so audit grids across the app phrase "why is this row
+                  // tinted?" identically.
+                  const rowTitle = buildToneTooltip({
+                    status: inv.status,
+                    hasReturn,
+                    zatcaStatus: inv.zatcaStatus,
+                  });
                   return (
                     <tr
                       key={inv.id}
@@ -1987,7 +1956,7 @@ export default function SalesAuditGrid() {
                       className={cn(
                         "transition-colors cursor-pointer",
                         // Selection wins — preserves the previous bulk-select feel.
-                        isSel ? "bg-emerald-100/70 hover:bg-emerald-100 border-s-[3px] border-s-emerald-600" : rowToneFor(inv, hasReturn),
+                        isSel ? SEL_TONE : rowToneFor(inv, hasReturn),
                       )}
                       onClick={(e) => {
                         // Don't toggle when clicking interactive children (links, buttons, inputs).

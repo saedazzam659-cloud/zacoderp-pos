@@ -70,6 +70,34 @@ export default function PurchaseInvoices() {
     enabled: !!user,
   });
 
+  // Pull purchase returns to flag invoices that have at least one return doc
+  // — a critical audit signal so users can spot "this invoice has a مرتجع"
+  // at a glance without opening it. We only need invoiceIds, so a Set keeps
+  // the per-row check O(1). `.catch(() => [])` keeps the page rendering even
+  // if the returns endpoint is temporarily down.
+  const { data: purchaseReturns = [] } = useQuery<any[]>({
+    queryKey: ["purchase-returns-flag", cid],
+    queryFn: async () => {
+      const url = cid
+        ? `${API}/api/purchasing/purchase-returns?companyId=${cid}`
+        : `${API}/api/purchasing/purchase-returns`;
+      try {
+        const r = await fetch(url, { headers: authH });
+        if (!r.ok) return [];
+        return await r.json();
+      } catch { return []; }
+    },
+    enabled: !!user,
+  });
+  const returnedInvoiceIds = useMemo(
+    () => new Set<number>(
+      (purchaseReturns as any[])
+        .map((r: any) => Number(r.invoiceId))
+        .filter((n) => Number.isFinite(n))
+    ),
+    [purchaseReturns],
+  );
+
   const invalidate = () => qc.invalidateQueries({ queryKey: ["purchase-invoices"] });
 
   const postMut = useMutation({
@@ -652,6 +680,7 @@ ${sections}
           { kind: "draft",     count: filteredInvoices.filter((i: any) => i.status === "draft").length },
           { kind: "posted",    count: filteredInvoices.filter((i: any) => i.status === "posted").length },
           { kind: "cancelled", count: filteredInvoices.filter((i: any) => i.status === "cancelled").length },
+          { kind: "returned",  count: filteredInvoices.filter((i: any) => returnedInvoiceIds.has(Number(i.id))).length },
         ];
         return <DocColorLegend items={items} />;
       })()}
@@ -843,13 +872,15 @@ ${sections}
                         return <td key={col.key} className="px-2 py-1 border border-slate-200" />;
                     }
                   };
+                  const hasReturn = returnedInvoiceIds.has(Number(inv.id));
                   return (
                     <tr key={inv.id}
                       data-testid={`row-purchase-invoice-${inv.id}`}
                       data-status={inv.status}
+                      data-has-return={hasReturn ? "1" : "0"}
                       className={cn(
                         "transition-colors cursor-pointer",
-                        isSel ? SEL_TONE : rowToneFor({ status: inv.status }),
+                        isSel ? SEL_TONE : rowToneFor({ status: inv.status, hasReturn }),
                       )}
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
@@ -857,7 +888,7 @@ ${sections}
                         toggleRow(rid);
                       }}
                       onDoubleClick={() => navigate(`/purchasing/invoices/${inv.id}`)}
-                      title={buildToneTooltip({ status: inv.status })}
+                      title={buildToneTooltip({ status: inv.status, hasReturn })}
                     >
                       {visibleColumns.map(renderCell)}
                     </tr>
