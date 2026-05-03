@@ -863,19 +863,11 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
     const grossSubtotalAmt = subtotalAmt + lineDiscountTotal;
     const discountAmt      = headerDiscAmt + lineDiscountTotal;
 
-    // POS-originated invoices defer the SALES side (party/discount/sales/VAT)
-    // to the consolidated journal entry created on shift close — that's the
-    // standard POS accounting pattern: book one summary JE per shift instead
-    // of N tiny per-receipt JEs. Per-invoice JE here only carries COGS +
-    // Inventory so the cost-of-goods side stays synchronised with stock
-    // movements (each sale must reduce inventory and recognise cost).
-    const isPos = !!inv.posSessionId;
-
-    const partyAccountId = isPos ? null :
+    const partyAccountId =
       inv.paymentType === "cash" ? await getCashBoxAccountId(cid, inv.cashBoxId)
       : inv.paymentType === "bank" ? await getBankAccountAccountId(cid, (inv as any).bankAccountId)
       : await getCustomerAccountId(cid, inv.customerId);
-    if (!isPos && !partyAccountId) {
+    if (!partyAccountId) {
       res.status(400).json({ error:
         inv.paymentType === "cash" ? "الخزنة لا تحتوي على حساب محاسبي مرتبط"
         : inv.paymentType === "bank" ? "الحساب البنكي لا يحتوي على حساب محاسبي مرتبط"
@@ -883,45 +875,15 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       return;
     }
 
-    if (!isPos && discountAmt > 0 && !discountAccId) {
+    if (discountAmt > 0 && !discountAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)" }); return;
     }
-    if (!isPos && vatAmt > 0 && !taxAccId) {
+    if (vatAmt > 0 && !taxAccId) {
       res.status(400).json({ error: "لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)" }); return;
     }
 
-    // POS invoices: build a slim COGS-only JE so the cost side stays in the
-    // books on each sale, while the sales/cash side is consolidated by the
-    // shift-close handler. If the invoice has no cost (service items, zero
-    // avg-cost), skip JE creation entirely — there's literally nothing to
-    // book here, and the shift-close JE will pick up the sales side.
     let journalId: number | null = null;
-    if (isPos) {
-      if (totalCogs > 0 && cogsAccId) {
-        journalId = await createJournalEntry({
-          companyId: cid,
-          branchId: inv.branchId,
-          date: inv.invoiceDate,
-          docNumber: inv.docNumber,
-          entryType: "sales_invoice",
-          exchangeRate: inv.exchangeRate,
-          description: `تكلفة بضاعة فاتورة نقاط بيع رقم ${inv.docNumber || inv.id}`,
-          lines: [
-            { accountId: cogsAccId, debit: totalCogs, description: "تكلفة البضاعة المباعة (نقاط بيع)" },
-            ...Object.entries(cogsByWarehouse)
-              .filter(([, amt]) => amt > 0)
-              .map(([widStr, amt]) => {
-                const wid = Number(widStr);
-                return {
-                  accountId: whInfo[wid]!.accountId!,
-                  credit: amt,
-                  description: `إنقاص المخزون — ${whInfo[wid]?.nameAr ?? "مخزن"}`,
-                };
-              }),
-          ],
-        });
-      }
-    } else {
+    {
     // GDN-sourced invoices: replace the revenue + inventory credits with a
     // single CREDIT to Delivery Clearing. The clearing account was DEBITED
     // at GDN-post time (Dr Clearing / Cr Inventory), so this credit unwinds
@@ -965,7 +927,7 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
               }),
           ],
     });
-    }  // end else (non-POS JE)
+    }  // end JE block
 
     // ─── ACTUAL STOCK MUTATION ───
     // Now that all validations passed AND the journal entry was created
