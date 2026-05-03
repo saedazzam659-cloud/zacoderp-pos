@@ -60,10 +60,15 @@ export default function SupportCall() {
   const winRef = useRef<Window | null>(null);
 
   // Host URL — pre-fills the agent's display name and forces the pre-join
-  // page so the browser's permission prompt fires reliably.
+  // page so the browser's permission prompt fires reliably. We also
+  // disable the lobby on the host side: Jitsi's lobby setting is decided
+  // by whoever creates the room first, so the HOST must declare it off
+  // — otherwise customers who open the share link land in a "waiting for
+  // moderator approval" screen.
   const hostUrl = useMemo(() => {
     const hash = [
       `config.prejoinPageEnabled=true`,
+      `config.lobby.enabled=false`,
       `config.startWithAudioMuted=false`,
       `config.startWithVideoMuted=false`,
       `userInfo.displayName=%22${encodeURIComponent(displayName)}%22`,
@@ -264,21 +269,27 @@ export default function SupportCall() {
             <Label className="text-xs">رابط دعوة العميل</Label>
             <div className="flex gap-2 mt-1 flex-wrap">
               <Input value={shareUrl} readOnly dir="ltr" className="font-mono text-xs flex-1 min-w-[260px]" data-testid="input-share-url" />
-              <Button variant="outline" onClick={() => copy(shareUrl, "الرابط")} className="gap-1" data-testid="btn-copy-link">
+              <Button variant="outline" onClick={() => copy(shareUrl, "الرابط")} disabled={!callActive} className="gap-1" data-testid="btn-copy-link">
                 <Copy className="h-4 w-4" /> نسخ
               </Button>
-              <Button variant="outline" onClick={sendWhatsapp} className="gap-1" data-testid="btn-send-whatsapp">
+              <Button variant="outline" onClick={sendWhatsapp} disabled={!callActive} className="gap-1" data-testid="btn-send-whatsapp">
                 <Send className="h-4 w-4" /> واتساب
               </Button>
-              <Button variant="outline" asChild className="gap-1">
+              <Button variant="outline" asChild disabled={!callActive} className="gap-1">
                 <a href={shareUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4" /> فتح
                 </a>
               </Button>
             </div>
-            <div className="text-[11px] text-muted-foreground mt-1">
-              نصيحة: عندما يفتح العميل الرابط لأول مرة سيطلب المتصفح إذن الكاميرا والميكروفون — اطلب منه السماح ليتمكن من المشاركة.
-            </div>
+            {!callActive ? (
+              <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <strong>مهم جدًا:</strong> افتح الاجتماع أولًا من الزر الأخضر أعلاه، ثم انسخ الرابط وأرسله للعميل. لو أرسلت الرابط قبل دخولك، سيعلق العميل في شاشة <em>«انتظار موافقة المضيف»</em>.
+              </div>
+            ) : (
+              <div className="text-[11px] text-muted-foreground mt-1">
+                ✓ أنت داخل الغرفة الآن — يمكنك إرسال الرابط بأمان. عندما يفتح العميل الرابط لأول مرة سيطلب المتصفح إذن الكاميرا والميكروفون.
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
