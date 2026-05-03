@@ -88,9 +88,21 @@ export default function SupportCall() {
     }
   };
 
-  // The link we share with the customer — strip our display-name hash so the
-  // customer can enter their own name when they join.
-  const shareUrl = useMemo(() => `https://meet.jit.si/${encodeURIComponent(room)}`, [room]);
+  // The link we share with the customer. We explicitly disable the lobby
+  // (`lobby.enabled=false`) and the pre-join screen (`prejoinPageEnabled=false`)
+  // so anyone with the link drops straight into the room without waiting for
+  // moderator approval. The browser will still ask for camera + microphone
+  // permission once Jitsi initialises the media tracks — that's a hard
+  // browser requirement and cannot be bypassed.
+  const shareUrl = useMemo(() => {
+    const hash = [
+      `config.prejoinPageEnabled=false`,
+      `config.lobby.enabled=false`,
+      `config.startWithAudioMuted=false`,
+      `config.startWithVideoMuted=false`,
+    ].join("&");
+    return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
+  }, [room]);
 
   // Reset "joined" state whenever the room changes so the iframe remounts.
   useEffect(() => { setJoined(false); }, [room]);
