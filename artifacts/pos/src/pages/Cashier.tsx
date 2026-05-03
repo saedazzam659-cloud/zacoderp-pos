@@ -47,7 +47,6 @@ import {
   type AuthUser,
   type SalesInvoice,
   type CreateInvoiceLine,
-  getToken,
 } from "@/lib/api";
 
 type CartLine = {

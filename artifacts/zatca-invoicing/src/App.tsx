@@ -255,8 +255,8 @@ import PaymentVouchersReport   from "@/pages/cash/reports/PaymentVouchersReport"
 import TransfersReport         from "@/pages/cash/reports/TransfersReport";
 // Sales
 // SalesInvoices replaced by SalesAuditGrid as the main /sales/invoices screen
+// (SalesAuditGrid is already imported above for the PosOperations alias)
 import SalesInvoiceForm     from "@/pages/sales/SalesInvoiceForm";
-import SalesAuditGrid       from "@/pages/sales/SalesAuditGrid";
 import SalesQuotations      from "@/pages/sales/SalesQuotations";
 import SalesQuotationForm   from "@/pages/sales/SalesQuotationForm";
 import SalesOrders          from "@/pages/sales/SalesOrders";
