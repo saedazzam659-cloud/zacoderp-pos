@@ -179,9 +179,9 @@ export default function PosOperations() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate("/inventory/stock-counts")}
+            onClick={() => navigate("/sales/invoices")}
             className="gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50"
-            title={isRtl ? "الجرد الخارجي للأصناف" : "Stocktake"}
+            title={isRtl ? "الجرد الخارجي لفواتير المبيعات — مراجعة وتدقيق شامل" : "Sales Invoices Stocktake"}
           >
             <ClipboardCheck className="w-4 h-4" />
             {isRtl ? "الجرد الخارجي" : "Stocktake"}
