@@ -138,7 +138,10 @@ router.get("/branches", async (req, res) => {
         .select({ branchId: userBranchesTable.branchId })
         .from(userBranchesTable)
         .where(eq(userBranchesTable.userId, req.authUser.id));
-      allowed = links.map(l => l.branchId);
+      // Only restrict when the user has at least one explicit link. Zero
+      // links means "no restriction was set" → fall back to the legacy
+      // role-based filter (admins keep seeing all branches).
+      if (links.length > 0) allowed = links.map(l => l.branchId);
     }
 
     // Restricted user with zero linked branches → return empty list immediately.
