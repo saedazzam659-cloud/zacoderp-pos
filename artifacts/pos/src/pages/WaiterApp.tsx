@@ -128,9 +128,35 @@ export default function WaiterApp() {
           {tablesQ.isLoading ? (
             <Loader2 className="animate-spin mx-auto mt-12" />
           ) : (tablesQ.data ?? []).length === 0 ? (
-            <div className="text-center text-white/60 mt-12">
-              لا توجد طاولات معرّفة.
-              <div className="text-xs mt-2">يجب إضافة الطاولات من إعدادات نظام الفواتير.</div>
+            // Empty-state CTA: turn the dead-end "no tables" message into an
+            // actionable starting point. Primary button jumps straight to the
+            // restaurant settings tables tab; secondary button refetches so
+            // the waiter sees newly-added tables without a full page reload.
+            <div className="text-center mt-16 px-4">
+              <div className="inline-grid place-items-center h-16 w-16 rounded-full bg-white/10 mb-4">
+                <Users className="h-8 w-8 text-white/70" />
+              </div>
+              <div className="text-white text-lg font-bold">لا توجد طاولات معرّفة بعد</div>
+              <div className="text-white/60 text-sm mt-1 max-w-md mx-auto">
+                لتبدأ استقبال الطلبات في الصالة، أضف أسماء وأرقام الطاولات من شاشة إعدادات المطعم.
+              </div>
+              <div className="flex items-center justify-center gap-2 mt-5 flex-wrap">
+                <Button
+                  onClick={() => setLocation("/restaurant-settings?tab=tables")}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white gap-1"
+                  data-testid="btn-add-tables-cta"
+                >
+                  <Plus className="h-4 w-4" /> إضافة طاولات الآن
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => qc.invalidateQueries({ queryKey: ["r-tables"] })}
+                  className="bg-white/5 text-white border-white/20 hover:bg-white/10 gap-1"
+                  data-testid="btn-refresh-tables"
+                >
+                  <RefreshCw className="h-4 w-4" /> تحديث
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
