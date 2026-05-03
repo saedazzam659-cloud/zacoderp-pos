@@ -328,6 +328,8 @@ export const api = {
     req<{ id: number }>("PATCH", `/api/sales/sales-returns/${id}/post`),
 
   // POS Terminals (طرق البيع) — for the login picker.
+  unpairPosTerminal: (id: number) =>
+    req<PosTerminal>("POST", `/api/pos-terminals/${id}/unpair`),
   getPosTerminals: (opts?: { branchId?: number; activeOnly?: boolean }) => {
     const qs = new URLSearchParams();
     if (opts?.branchId)   qs.set("branchId", String(opts.branchId));

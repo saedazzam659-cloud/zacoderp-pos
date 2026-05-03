@@ -27,6 +27,7 @@ import {
   setStoredUser,
   setPosSessionId,
   getToken,
+  getStoredUser,
   type Branch,
   type PosTerminal,
 } from "@/lib/api";
@@ -448,6 +449,7 @@ export default function LoginPage() {
                       branchId={branchId}
                       setBranchId={setBranchId}
                       terminals={terminals}
+                      setTerminals={setTerminals}
                       terminalId={terminalId}
                       setTerminalId={setTerminalId}
                       terminalsLoading={terminalsLoading}
@@ -693,7 +695,7 @@ export default function LoginPage() {
 // ─── Branch + Terminal selection stage ────────────────────────────────────
 function SelectStage({
   branches, branchId, setBranchId,
-  terminals, terminalId, setTerminalId,
+  terminals, setTerminals, terminalId, setTerminalId,
   terminalsLoading, deviceId,
   onBack, onContinue, loading, error,
 }: {
@@ -701,6 +703,7 @@ function SelectStage({
   branchId: number | null;
   setBranchId: (id: number) => void;
   terminals: PosTerminal[];
+  setTerminals: (t: PosTerminal[]) => void;
   terminalId: number | null;
   setTerminalId: (id: number) => void;
   terminalsLoading: boolean;
@@ -710,6 +713,23 @@ function SelectStage({
   loading: boolean;
   error: string | null;
 }) {
+  const [unpairing, setUnpairing] = useState<number | null>(null);
+  const [unpairErr, setUnpairErr] = useState<string | null>(null);
+  const me = getStoredUser();
+  const isAdmin = me?.role === "admin" || me?.role === "superadmin";
+
+  const handleUnpair = async (id: number) => {
+    if (unpairing) return;
+    if (!confirm("سيتم فك ربط هذه المحطة من الجهاز السابق. متابعة؟")) return;
+    setUnpairing(id); setUnpairErr(null);
+    try {
+      const updated = await api.unpairPosTerminal(id);
+      setTerminals(terminals.map((t) => (t.id === id ? { ...t, machineCode: updated.machineCode, busyUserId: updated.busyUserId } : t)));
+    } catch (e: any) {
+      setUnpairErr(e?.message || "تعذّر إلغاء الربط");
+    } finally { setUnpairing(null); }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -776,35 +796,57 @@ function SelectStage({
               const selected  = terminalId === t.id;
               const disabled  = isBusy || isOther;
               return (
-                <button
-                  key={t.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setTerminalId(t.id)}
-                  data-testid={`btn-terminal-${t.id}`}
-                  className={`text-right rounded-xl border p-2.5 transition-all ${
-                    selected
-                      ? "border-primary bg-primary/5 ring-2 ring-primary/30"
-                      : disabled
-                        ? "border-border bg-muted/40 opacity-60 cursor-not-allowed"
-                        : "border-border bg-card hover-elevate active-elevate-2"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-mono text-muted-foreground">{t.code}</p>
-                    {isMine && <span className="text-[9px] font-bold text-emerald-600">جهازك</span>}
-                    {isBusy && <span className="text-[9px] font-bold text-amber-600">قيد الاستخدام</span>}
-                    {isOther && !isBusy && <span className="text-[9px] font-bold text-destructive">جهاز آخر</span>}
-                    {!t.machineCode && <span className="text-[9px] font-bold text-blue-600">جديدة</span>}
-                  </div>
-                  <p className="text-xs font-bold mt-1 leading-tight truncate">{t.nameAr}</p>
-                </button>
+                <div key={t.id} className="relative">
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setTerminalId(t.id)}
+                    data-testid={`btn-terminal-${t.id}`}
+                    className={`w-full text-right rounded-xl border p-2.5 transition-all ${
+                      selected
+                        ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                        : disabled
+                          ? "border-border bg-muted/40 opacity-60 cursor-not-allowed"
+                          : "border-border bg-card hover-elevate active-elevate-2"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-mono text-muted-foreground">{t.code}</p>
+                      {isMine && <span className="text-[9px] font-bold text-emerald-600">جهازك</span>}
+                      {isBusy && <span className="text-[9px] font-bold text-amber-600">قيد الاستخدام</span>}
+                      {isOther && !isBusy && <span className="text-[9px] font-bold text-destructive">جهاز آخر</span>}
+                      {!t.machineCode && <span className="text-[9px] font-bold text-blue-600">جديدة</span>}
+                    </div>
+                    <p className="text-xs font-bold mt-1 leading-tight truncate">{t.nameAr}</p>
+                  </button>
+                  {isOther && !isBusy && isAdmin && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void handleUnpair(t.id); }}
+                      disabled={unpairing === t.id}
+                      className="absolute bottom-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50"
+                      title="فك ربط المحطة من الجهاز السابق"
+                    >
+                      {unpairing === t.id ? "..." : "إلغاء الربط"}
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
         )}
       </div>
 
+      {unpairErr && (
+        <div className="text-xs font-semibold text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-1.5">
+          {unpairErr}
+        </div>
+      )}
+      {!isAdmin && terminals.some((t) => !!t.machineCode && t.machineCode !== deviceId) && (
+        <div className="text-[11px] text-muted-foreground bg-muted/30 border border-border rounded-lg px-3 py-1.5">
+          ملاحظة: فك ربط المحطات من جهاز آخر يتطلب حساب مدير.
+        </div>
+      )}
       <AnimatePresence>
         {error && (
           <motion.div
