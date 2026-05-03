@@ -125,3 +125,9 @@ id = "JAFtd3Kp5p1rMnUU0Sdid"
 uri = "file://.local/exports/deployment-guide.docx"
 type = "word_document"
 title = "دليل النشر على سيرفر محلي وسحابي (Word)"
+
+[[outputs]]
+id = "2kxROpcbWHg7lzIDxsrBL"
+uri = "file://.local/exports/database.sql.gz"
+type = "unspecified"
+title = "قاعدة البيانات مضغوطة (215KB — فكّ الضغط لتحصل على database.sql)"
