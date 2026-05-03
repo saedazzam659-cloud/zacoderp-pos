@@ -28,11 +28,16 @@ export default function PosAiPanel(props: Props) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 left-6 z-40 flex items-center gap-2 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 hover:scale-105 transition"
+          // Compact icon-only floating action button. Placed at bottom-left
+          // (out of the cart's payment-button area), hidden when printing,
+          // with a tooltip so the purpose stays discoverable.
+          title="مساعد الذكاء الاصطناعي"
+          aria-label="مساعد الذكاء الاصطناعي"
+          className="fixed bottom-4 left-4 z-40 grid place-items-center h-11 w-11 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-500/30 hover:scale-110 transition print:hidden"
           dir="rtl"
         >
           <Sparkles className="h-5 w-5" />
-          مساعد الذكاء الاصطناعي
+          <span className="sr-only">مساعد الذكاء الاصطناعي</span>
         </button>
       )}
       {open && (

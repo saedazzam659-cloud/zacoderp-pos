@@ -801,6 +801,70 @@ export default function CashierPage() {
   );
 }
 
+// ─── Thermal receipt printing ────────────────────────────────────────────────
+// Injects a transient @page + visibility stylesheet so a single window.print()
+// call sends ONLY the receipt content to a thermal roll printer (typically
+// 80mm for restaurants / supermarkets, 58mm for compact handhelds). The
+// stylesheet is removed right after the print dialog closes so the next
+// browser print (e.g. plain "طباعة") still uses the user's default A4 setup.
+function printThermal(widthMm: 58 | 80 = 80) {
+  const css = `
+    @page { size: ${widthMm}mm auto; margin: 2mm; }
+    @media print {
+      html, body { background: #fff !important; }
+      body * { visibility: hidden !important; }
+      [data-thermal-root], [data-thermal-root] * { visibility: visible !important; }
+      [data-thermal-root] {
+        position: absolute !important;
+        inset: 0 !important;
+        width: ${widthMm}mm !important;
+        max-width: ${widthMm}mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+        color: #000 !important;
+        font-size: 11px !important;
+        line-height: 1.35 !important;
+      }
+      /* Compress padding inside the receipt so it fits the narrow roll. */
+      [data-thermal-root] .p-6 { padding: 6px !important; }
+      [data-thermal-root] .py-2 { padding-top: 4px !important; padding-bottom: 4px !important; }
+      [data-thermal-root] .pt-2 { padding-top: 4px !important; }
+      [data-thermal-root] .pt-3 { padding-top: 6px !important; }
+      [data-thermal-root] .pb-2 { padding-bottom: 4px !important; }
+      /* Drop the gradient header background — thermal printers can't render
+         colour, and the dark fill wastes ink-ribbon-equivalent paper darkness. */
+      [data-thermal-root] .bg-gradient-to-br,
+      [data-thermal-root] .bg-gradient-to-tr { background: #fff !important; color: #000 !important; }
+      [data-thermal-root] .text-primary,
+      [data-thermal-root] .text-primary-foreground { color: #000 !important; }
+      [data-thermal-root] .text-muted-foreground { color: #333 !important; }
+      [data-thermal-root] .ring-4, [data-thermal-root] .border-4 { box-shadow: none !important; }
+      [data-thermal-root] .rounded-3xl,
+      [data-thermal-root] .rounded-2xl,
+      [data-thermal-root] .rounded-xl { border-radius: 0 !important; }
+    }
+  `;
+  const tag = document.createElement("style");
+  tag.setAttribute("data-thermal-print", "1");
+  tag.textContent = css;
+  document.head.appendChild(tag);
+
+  const cleanup = () => {
+    tag.remove();
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  // Safety net: also remove after a delay in case `afterprint` doesn't
+  // fire on some browsers (older Safari).
+  setTimeout(cleanup, 4000);
+
+  window.print();
+}
+
 function methodArabic(method: string) {
   return (
     {
@@ -1128,6 +1192,10 @@ function ReceiptModal(props: {
         exit={{ scale: 0.95, opacity: 0 }}
         transition={{ type: "spring", damping: 22, stiffness: 250 }}
         className="bg-card rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-card-border"
+        // `data-thermal-root` is targeted by the thermal-print stylesheet
+        // (injected on demand) so only the receipt content reaches the
+        // 80mm/58mm thermal printer — everything else on the page is hidden.
+        data-thermal-root
       >
         {/*
           Print-only company header — hidden on screen (the modal already
@@ -1219,19 +1287,38 @@ function ReceiptModal(props: {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 pt-2">
+          <div className="grid grid-cols-3 gap-2 pt-2 print:hidden">
             <button
               onClick={onClose}
-              className="h-11 rounded-xl border border-border bg-card font-bold text-sm hover-elevate active-elevate-2"
+              className="h-11 rounded-xl border border-border bg-card font-bold text-xs hover-elevate active-elevate-2"
             >
               فاتورة جديدة
             </button>
             <button
               onClick={() => window.print()}
-              className="h-11 rounded-xl bg-primary text-primary-foreground font-bold text-sm inline-flex items-center justify-center gap-1.5 hover-elevate active-elevate-2"
+              className="h-11 rounded-xl bg-primary text-primary-foreground font-bold text-xs inline-flex items-center justify-center gap-1 hover-elevate active-elevate-2"
+              title="طباعة A4 على الطابعة الافتراضية"
             >
               <Receipt className="w-4 h-4" />
               طباعة
+            </button>
+            <button
+              onClick={() => printThermal(80)}
+              className="h-11 rounded-xl bg-emerald-600 text-white font-bold text-xs inline-flex items-center justify-center gap-1 hover-elevate active-elevate-2"
+              title="طباعة على طابعة الإيصالات الحرارية 80مم (سوبر ماركت / مطاعم)"
+              data-testid="btn-thermal-print"
+            >
+              <Receipt className="w-4 h-4" />
+              حرارية 80
+            </button>
+          </div>
+          <div className="text-[10px] text-muted-foreground text-center print:hidden">
+            <button
+              onClick={() => printThermal(58)}
+              className="underline hover:text-foreground"
+              data-testid="btn-thermal-print-58"
+            >
+              طباعة بطول 58مم بدلاً من 80مم
             </button>
           </div>
         </div>
