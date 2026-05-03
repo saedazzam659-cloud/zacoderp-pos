@@ -73,6 +73,16 @@ export default function ReceiptVoucherForm() {
   // create-mode URL in edit mode.
   const rawId  = matchEdit && !isNew ? (params as any).id : null;
   const editId = rawId && /^\d+$/.test(String(rawId)) ? Number(rawId) : null;
+  // "Duplicate" support: `/new?from=123` loads voucher #123, copies its
+  // values into the form, but stays in NEW mode so saving creates a fresh
+  // voucher (server gets POST, not PUT). isNew stays true → docNumber will
+  // be re-issued from the sequence engine, status starts as draft.
+  const fromId = useMemo(() => {
+    if (!isNew) return null;
+    const q = new URLSearchParams(window.location.search).get("from");
+    return q && /^\d+$/.test(q) ? Number(q) : null;
+  }, [isNew]);
+  const sourceId = editId ?? fromId;
 
   const NS = "receiptVouchers";
   const cid = user?.companyId;
@@ -135,11 +145,13 @@ export default function ReceiptVoucherForm() {
     staleTime: 30_000,
   });
 
-  // ── Edit-mode: load the single voucher ─────────────────────────
+  // ── Edit-mode (or duplicate-from): load the single voucher ────
+  // We use the same query for both editing and duplicating; only the
+  // save path differs (POST when fromId, PUT when editId).
   const { data: existing, isLoading: loadingEdit } = useQuery<any>({
-    queryKey: ["receipt-voucher", editId],
-    queryFn: () => fetch(`${API}/api/receipt-vouchers/${editId}`, { headers: h }).then(r => r.json()),
-    enabled: !!editId,
+    queryKey: ["receipt-voucher", sourceId],
+    queryFn: () => fetch(`${API}/api/receipt-vouchers/${sourceId}`, { headers: h }).then(r => r.json()),
+    enabled: !!sourceId,
   });
 
   useEffect(() => {

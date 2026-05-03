@@ -94,6 +94,17 @@ export default function JournalEntryForm() {
   const [matchEdit, params] = useRoute("/accounting/journals/:id");
   const isNew    = !!matchNew;
   const editId   = matchEdit ? Number((params as any).id) : null;
+  // "Duplicate" support: `/new?from=123` loads entry #123 and copies it
+  // into a brand-new draft. isNew stays true → save POSTs to create a
+  // fresh entry with a freshly-issued doc number.
+  const fromId = (() => {
+    if (!isNew) return null;
+    const q = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("from")
+      : null;
+    return q && /^\d+$/.test(q) ? Number(q) : null;
+  })();
+  const sourceId = editId ?? fromId;
   const qc       = useQueryClient();
   const { toast } = useToast();
   const { t }     = useTranslation();
@@ -185,9 +196,9 @@ export default function JournalEntryForm() {
   }, [isNew, defaultCurrency?.code]);
 
   const { data: existing, isLoading: loadingEdit } = useQuery({
-    queryKey: ["journal-entry", editId],
-    queryFn:  () => journalEntriesApi.get(editId!, cid),
-    enabled:  !!editId,
+    queryKey: ["journal-entry", sourceId],
+    queryFn:  () => journalEntriesApi.get(sourceId!, cid),
+    enabled:  !!sourceId,
   });
 
   // ── Document navigation (سابق / تالي / بحث) ──────────────────────
@@ -274,8 +285,14 @@ export default function JournalEntryForm() {
 
   useEffect(() => {
     if (!existing) return;
-    setDocNumber(existing.docNumber ?? "");
-    setEntryDate(existing.entryDate ?? today());
+    // When duplicating (fromId), keep the freshly-issued sequence number
+    // and today's date — only copy the editable header & lines. When
+    // editing, restore the original doc number and entry date.
+    const isDuplicate = !editId && !!fromId;
+    if (!isDuplicate) {
+      setDocNumber(existing.docNumber ?? "");
+      setEntryDate(existing.entryDate ?? today());
+    }
     setCurrency(existing.currency ?? "SAR");
     setExchangeRate(String(existing.exchangeRate ?? "1"));
     setDescription(existing.description ?? "");

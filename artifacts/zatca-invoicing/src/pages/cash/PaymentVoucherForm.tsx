@@ -73,6 +73,14 @@ export default function PaymentVoucherForm() {
   // create-mode URL in edit mode.
   const rawId  = matchEdit && !isNew ? (params as any).id : null;
   const editId = rawId && /^\d+$/.test(String(rawId)) ? Number(rawId) : null;
+  // "Duplicate" support: `/new?from=123` loads voucher #123 and copies it
+  // into a brand-new draft (POST on save, fresh sequence number).
+  const fromId = useMemo(() => {
+    if (!isNew) return null;
+    const q = new URLSearchParams(window.location.search).get("from");
+    return q && /^\d+$/.test(q) ? Number(q) : null;
+  }, [isNew]);
+  const sourceId = editId ?? fromId;
 
   const NS = "paymentVouchers";
   const cid = user?.companyId;
@@ -135,11 +143,11 @@ export default function PaymentVoucherForm() {
     staleTime: 30_000,
   });
 
-  // ── Edit-mode: load the single voucher ─────────────────────────
+  // ── Edit-mode (or duplicate-from): load the single voucher ────
   const { data: existing, isLoading: loadingEdit } = useQuery<any>({
-    queryKey: ["payment-voucher", editId],
-    queryFn: () => fetch(`${API}/api/payment-vouchers/${editId}`, { headers: h }).then(r => r.json()),
-    enabled: !!editId,
+    queryKey: ["payment-voucher", sourceId],
+    queryFn: () => fetch(`${API}/api/payment-vouchers/${sourceId}`, { headers: h }).then(r => r.json()),
+    enabled: !!sourceId,
   });
 
   useEffect(() => {

@@ -14,7 +14,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Plus, Pencil, Trash2, BookOpen, ArrowUpDown, CheckCircle2, FileText, Printer,
+  Plus, Pencil, Trash2, BookOpen, ArrowUpDown, CheckCircle2, FileText, Printer, Copy,
   FileSpreadsheet, FileDown, X, Calendar, Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -886,9 +886,17 @@ ${entrySections}
                                 variant="ghost" size="icon"
                                 className="h-6 w-6 text-muted-foreground hover:text-primary"
                                 onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${entry.id}`); }}
-                                title={t("journalEntries.actions")}
+                                title={t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/new?from=${entry.id}`); }}
+                                title="نسخة مماثلة"
+                              >
+                                <Copy className="h-3.5 w-3.5" />
                               </Button>
                               <Button
                                 variant="ghost" size="icon"

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { TablePagination, usePagination } from "@/components/TablePagination";
-import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2 } from "lucide-react";
+import { ArrowUpCircle, Plus, Pencil, Trash2, Search, CheckCircle2, Clock, Send, Undo2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   rowToneFor, DocColorLegend, buildToneTooltip, type LegendItem,
@@ -195,10 +195,13 @@ export default function PaymentVouchers() {
                   <td className="px-4 py-3 text-center">
                     <div className="flex justify-center gap-1">
                       {row.status === "draft" ? <>
-                        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title={t("cashCommon.edit")}><Pencil className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title={t("cashCommon.edit", { defaultValue: "تعديل (خصائص)" })}><Pencil className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => navigate(`/cash/payment-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setPostRow(row)} className="p-1.5 rounded hover:bg-green-50 text-muted-foreground hover:text-green-600 transition-colors" title={t(`${NS}.postBtn`)}><Send className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setDelRow(row)} className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-600 transition-colors" title={t("cashCommon.delete")}><Trash2 className="h-3.5 w-3.5" /></button>
                       </> : <>
+                        <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="عرض / خصائص"><Pencil className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => navigate(`/cash/payment-vouchers/new?from=${row.id}`)} className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors" title="نسخة مماثلة"><Copy className="h-3.5 w-3.5" /></button>
                         <button onClick={() => setUnpostRow(row)} className="p-1.5 rounded hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors" title={t(`${NS}.unpostBtn`)}><Undo2 className="h-3.5 w-3.5" /></button>
                       </>}
                     </div>
