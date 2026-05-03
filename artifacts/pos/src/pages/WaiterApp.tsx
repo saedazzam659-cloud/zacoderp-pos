@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import VoiceSearchButton from "@/components/VoiceSearchButton";
 import {
   api, getToken, getStoredUser,
   type RTable, type RMenuCategory, type RMenuItem, type ROrder, type ROrderItem,
@@ -158,10 +159,24 @@ export default function WaiterApp() {
           <div className="md:col-span-2 flex flex-col border-l border-white/10">
             <div className="p-2 border-b border-white/10 bg-slate-900 flex gap-2 items-center">
               <Input
-                placeholder="بحث في القائمة..."
+                placeholder="بحث في القائمة... (أو اضغط الميكروفون)"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="bg-slate-800 border-slate-700"
+              />
+              <VoiceSearchButton
+                onResult={(text) => {
+                  setSearch(text);
+                  // Auto-add if exactly one match (after applying filter)
+                  const all = itemsQ.data ?? [];
+                  const matches = all.filter(i =>
+                    i.nameAr.includes(text) || text.includes(i.nameAr)
+                  );
+                  if (matches.length === 1 && activeOrder) {
+                    addItem.mutate({ orderId: activeOrder.id, menuItemId: matches[0].id });
+                    setSearch("");
+                  }
+                }}
               />
             </div>
             <div className="flex gap-2 p-2 overflow-x-auto bg-slate-900/50 border-b border-white/10">
