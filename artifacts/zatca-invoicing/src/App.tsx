@@ -101,6 +101,12 @@ import MaintenanceHub from "@/pages/maintenance/MaintenanceHub";
 import MaintenanceAssets from "@/pages/maintenance/MaintenanceAssets";
 import MaintenanceTechnicians from "@/pages/maintenance/MaintenanceTechnicians";
 import MaintenanceOrders from "@/pages/maintenance/MaintenanceOrders";
+import InstallmentsHub from "@/pages/installments/InstallmentsHub";
+import InstallmentContracts from "@/pages/installments/InstallmentContracts";
+import InstallmentContractDetails from "@/pages/installments/InstallmentContractDetails";
+import InstallmentCollection from "@/pages/installments/InstallmentCollection";
+import InstallmentReports from "@/pages/installments/InstallmentReports";
+import InstallmentSettings from "@/pages/installments/InstallmentSettings";
 import HotelHub from "@/pages/hotel/HotelHub";
 import Hotels from "@/pages/hotel/Hotels";
 import HotelRooms from "@/pages/hotel/HotelRooms";
@@ -300,7 +306,7 @@ const PUBLIC_PATHS = ["/login", "/register", "/pending-approval", "/pricing", "/
 const PROTECTED_PREFIXES = [
   "/accounting", "/admin", "/ai-reports", "/cash", "/companies",
   "/contracting", "/control-panel", "/customers", "/general-settings",
-  "/hospital", "/hotel", "/hr", "/inbox", "/inventory", "/invoices", "/maintenance",
+  "/hospital", "/hotel", "/hr", "/inbox", "/installments", "/inventory", "/invoices", "/maintenance",
   "/notifications", "/org", "/pos-management", "/pos-monitoring",
   "/pos-settings", "/pos-terminals", "/production", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
@@ -534,6 +540,14 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/maintenance/assets"           module="maintenance"    component={MaintenanceAssets} />}
             {!isSuperAdmin && <PermRoute path="/maintenance/technicians"      module="maintenance"    component={MaintenanceTechnicians} />}
             {!isSuperAdmin && <PermRoute path="/maintenance/orders"           module="maintenance"    component={MaintenanceOrders} />}
+
+            {/* Smart Installment Sales — gated by `installments` permission. */}
+            {!isSuperAdmin && <PermRoute path="/installments"                  module="installments"   component={InstallmentsHub} />}
+            {!isSuperAdmin && <PermRoute path="/installments/contracts"        module="installments"   component={InstallmentContracts} />}
+            {!isSuperAdmin && <PermRoute path="/installments/contracts/:id"    module="installments"   component={InstallmentContractDetails} />}
+            {!isSuperAdmin && <PermRoute path="/installments/collection"       module="installments"   component={InstallmentCollection} />}
+            {!isSuperAdmin && <PermRoute path="/installments/reports"          module="installments"   component={InstallmentReports} />}
+            {!isSuperAdmin && <PermRoute path="/installments/settings"         module="installments"   component={InstallmentSettings} />}
 
             {/* Hotel Smart AI ERP — gated by `hotel` permission. */}
             {!isSuperAdmin && <PermRoute path="/hotel"                         module="hotel"          component={HotelHub} />}

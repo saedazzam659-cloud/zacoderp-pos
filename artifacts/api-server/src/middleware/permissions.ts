@@ -78,6 +78,7 @@ const COMPANY_MODULE_GATE: Record<string, string> = {
   contracting: "contracting",
   production: "production",
   maintenance: "maintenance",
+  installments: "installments",
   hotel: "hotel",
   hospital: "hospital",
   crm: "crm",

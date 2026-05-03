@@ -193,6 +193,15 @@ const maintenanceSubNav: NavDef[] = [
   { nameKey: "nav.maintenanceOrders",      href: "/maintenance/orders",      icon: ClipboardList, permKey: "maintenance" },
 ];
 const MAINTENANCE_GROUP_PERMS = ["maintenance"];
+// Smart Installment Sales — gated by a single `installments` permission key.
+const installmentsSubNav: NavDef[] = [
+  { nameKey: "nav.installmentsHub",        href: "/installments",            icon: CreditCard, permKey: "installments", exact: true },
+  { nameKey: "nav.installmentsContracts",  href: "/installments/contracts",  icon: FileText,   permKey: "installments" },
+  { nameKey: "nav.installmentsCollection", href: "/installments/collection", icon: Wallet,     permKey: "installments" },
+  { nameKey: "nav.installmentsReports",    href: "/installments/reports",    icon: BarChart3,  permKey: "installments" },
+  { nameKey: "nav.installmentsSettings",   href: "/installments/settings",   icon: Settings,   permKey: "installments" },
+];
+const INSTALLMENTS_GROUP_PERMS = ["installments"];
 // Hotel ERP — gated by a single `hotel` permission key.
 const hotelSubNav: NavDef[] = [
   { nameKey: "nav.hotelHub",          href: "/hotel",              icon: Hotel,         permKey: "hotel", exact: true },
@@ -601,6 +610,7 @@ const GROUP_PERMISSION_KEYS: Record<string, readonly string[]> = {
   production:  ["production"],
   contracting: ["contracting"],
   maintenance: ["maintenance"],
+  installments: ["installments"],
   hotel:       ["hotel"],
   hospital:    ["hospital"],
   crm:         ["crm"],
@@ -1318,6 +1328,39 @@ function MaintenanceNavGroup({
   );
 }
 
+// ─── InstallmentsNavGroup ────────────────────────────────────────────────────
+// Collapsible "البيع بالتقسيط الذكي" group — mirrors MaintenanceNavGroup, gated
+// by the `installments` permission key.
+function InstallmentsNavGroup({
+  location, onNavigate, open, onToggle,
+}: { location: string; onNavigate: () => void; open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  if (!groupVisible(user, INSTALLMENTS_GROUP_PERMS)) return null;
+  const isOnSub = installmentsSubNav.some(i => location.startsWith(i.href));
+  return (
+    <div>
+      <HubGroupButton
+        hubHref="/installments"
+        icon={CreditCard}
+        label={t("nav.installmentsGroup")}
+        isOn={isOnSub}
+        open={open}
+        onToggle={onToggle}
+        onNavigate={onNavigate}
+      />
+      {open && (
+        <div className="mt-0.5 space-y-0.5 relative">
+          <div className="absolute top-0 bottom-0 start-[26px] w-px bg-sidebar-border/60" />
+          {installmentsSubNav.map(item => (
+            <NavItem key={item.href} item={item} location={location} onClick={onNavigate} indent />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── HotelNavGroup ───────────────────────────────────────────────────────────
 // Collapsible "إدارة الفنادق الذكية" group — mirrors MaintenanceNavGroup, gated
 // by the `hotel` permission key.
@@ -1562,6 +1605,8 @@ function SidebarInner({
   onContractingToggle,
   maintenanceOpen,
   onMaintenanceToggle,
+  installmentsOpen,
+  onInstallmentsToggle,
   hotelOpen,
   onHotelToggle,
   hospitalOpen,
@@ -1616,6 +1661,8 @@ function SidebarInner({
   onContractingToggle: () => void;
   maintenanceOpen: boolean;
   onMaintenanceToggle: () => void;
+  installmentsOpen: boolean;
+  onInstallmentsToggle: () => void;
   hotelOpen: boolean;
   onHotelToggle: () => void;
   hospitalOpen: boolean;
@@ -1858,6 +1905,17 @@ function SidebarInner({
               </div>
             )}
 
+            {isGroupAllowed(menuPerms, "installments", isSuperAdmin) && (
+              <div className="space-y-0.5">
+                <InstallmentsNavGroup
+                  location={location}
+                  onNavigate={onNavigate}
+                  open={installmentsOpen}
+                  onToggle={onInstallmentsToggle}
+                />
+              </div>
+            )}
+
             {isGroupAllowed(menuPerms, "hotel", isSuperAdmin) && (
               <div className="space-y-0.5">
                 <HotelNavGroup
@@ -2068,6 +2126,7 @@ const ROUTE_MAP: Record<string, CrumbInfo> = (() => {
     ...productionSubNav,
     ...contractingSubNav,
     ...maintenanceSubNav,
+    ...installmentsSubNav,
     ...hotelSubNav,
     ...hospitalSubNav,
     ...crmSubNav,
@@ -2330,6 +2389,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [productionOpen, setProductionOpen]   = useState(() => location.startsWith("/production"));
   const [contractingOpen, setContractingOpen] = useState(() => location.startsWith("/contracting"));
   const [maintenanceOpen, setMaintenanceOpen] = useState(() => location.startsWith("/maintenance"));
+  const [installmentsOpen, setInstallmentsOpen] = useState(() => location.startsWith("/installments"));
   const [hotelOpen,        setHotelOpen]       = useState(() => location.startsWith("/hotel"));
   const [hospitalOpen,     setHospitalOpen]    = useState(() => location.startsWith("/hospital"));
   const [crmOpen,          setCrmOpen]         = useState(() => location.startsWith("/crm"));
@@ -2360,7 +2420,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // and their own open/closed state is independent.
   type TopLevelGroup =
     | "dashboard" | "zatcaGroup" | "inventory" | "accounting"
-    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "hotel" | "hospital" | "crm" | "fixedAssets"
+    | "purchasing" | "sales" | "cash" | "hr" | "production" | "contracting" | "maintenance" | "installments" | "hotel" | "hospital" | "crm" | "fixedAssets"
     | "pos" | "security" | "aiTools";
   const closeOtherTopLevelGroups = (keep: TopLevelGroup) => {
     if (keep !== "dashboard")  setDashboardOpen(false);
@@ -2374,6 +2434,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (keep !== "production")  setProductionOpen(false);
     if (keep !== "contracting") setContractingOpen(false);
     if (keep !== "maintenance") setMaintenanceOpen(false);
+    if (keep !== "installments") setInstallmentsOpen(false);
     if (keep !== "hotel")       setHotelOpen(false);
     if (keep !== "hospital")    setHospitalOpen(false);
     if (keep !== "crm")         setCrmOpen(false);
@@ -2409,6 +2470,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleProductionToggle  = makeAccordionToggle("production",  productionOpen,  setProductionOpen);
   const handleContractingToggle = makeAccordionToggle("contracting", contractingOpen, setContractingOpen);
   const handleMaintenanceToggle = makeAccordionToggle("maintenance", maintenanceOpen, setMaintenanceOpen);
+  const handleInstallmentsToggle = makeAccordionToggle("installments", installmentsOpen, setInstallmentsOpen);
   const handleHotelToggle       = makeAccordionToggle("hotel",       hotelOpen,       setHotelOpen);
   const handleHospitalToggle    = makeAccordionToggle("hospital",    hospitalOpen,    setHospitalOpen);
   const handleCrmToggle         = makeAccordionToggle("crm",         crmOpen,         setCrmOpen);
@@ -2466,6 +2528,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     else if (location.startsWith("/production")) target = "production";
     else if (location.startsWith("/contracting")) target = "contracting";
     else if (location.startsWith("/maintenance")) target = "maintenance";
+    else if (location.startsWith("/installments")) target = "installments";
     else if (location.startsWith("/hotel")) target = "hotel";
     else if (location.startsWith("/hospital")) target = "hospital";
     else if (location.startsWith("/crm")) target = "crm";
@@ -2506,6 +2569,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         production:  setProductionOpen,
         contracting: setContractingOpen,
         maintenance: setMaintenanceOpen,
+        installments: setInstallmentsOpen,
         hotel:       setHotelOpen,
         hospital:    setHospitalOpen,
         crm:         setCrmOpen,
@@ -2556,6 +2620,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     onContractingToggle: handleContractingToggle,
     maintenanceOpen,
     onMaintenanceToggle: handleMaintenanceToggle,
+    installmentsOpen,
+    onInstallmentsToggle: handleInstallmentsToggle,
     hotelOpen,
     onHotelToggle: handleHotelToggle,
     hospitalOpen,

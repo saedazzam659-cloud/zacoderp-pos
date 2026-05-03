@@ -817,6 +817,7 @@ router.post("/register", async (req, res) => {
     // Maintenance / Asset Management — single permission key matching the
     // requirePermission("maintenance") guard in routes/maintenance.ts.
     maintenance: ["maintenance"],
+    installments: ["installments"],
     // Hotel ERP — single permission key matching the
     // requireModulePermission("hotel") guard in routes/hotel.ts + hotel-ai.ts.
     hotel: ["hotel"],
