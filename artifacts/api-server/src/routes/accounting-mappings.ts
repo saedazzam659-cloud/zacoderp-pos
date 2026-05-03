@@ -12,6 +12,7 @@ const DOCUMENT_TYPE_ROLES: Record<string, string[]> = {
   purchase_return:       ["inventory", "vat_input", "payable", "discount"],
   supplier_settlement:   ["payable", "cash", "bank", "discount"],
   sales_invoice:         ["receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
+  pos_invoice:           ["cash", "bank", "receivable", "revenue", "vat_output", "cogs", "inventory", "discount"],
   sales_return:          ["receivable", "revenue_return", "vat_output", "cogs", "inventory", "discount"],
   customer_settlement:   ["receivable", "cash", "bank", "discount"],
   warehouse:             ["inventory", "opening_balance"],

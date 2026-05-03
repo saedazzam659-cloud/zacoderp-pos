@@ -61,6 +61,21 @@ export const DOCUMENT_TYPES: DocumentTypeDef[] = [
     ],
   },
   {
+    key: "pos_invoice",
+    label: "فواتير نقاط البيع",
+    description: "قيد بيع نقاط البيع: مدين الخزينة/البنك/العميل، دائن الإيراد وضريبة المخرجات، وقيد تكلفة البضاعة المباعة. روابط مستقلة عن فواتير المبيعات لتمييز قيود المتجر عن قيود البيع التقليدي.",
+    roles: [
+      { key: "cash",       label: "الخزينة (مدين) — افتراضي للبيع النقدي", description: "حساب النقدية الافتراضي إذا لم تكن خزنة المحطة مرتبطة بحساب محاسبي.", defaultHintCode: "1110", accountType: "asset" },
+      { key: "bank",       label: "البنك (مدين) — افتراضي للبيع البنكي/الكاش-إن", description: "حساب البنك الافتراضي إذا لم يكن الحساب البنكي للمحطة مرتبطاً بحساب محاسبي.", defaultHintCode: "1130", accountType: "asset" },
+      { key: "receivable", label: "حساب العملاء (مدين) — افتراضي للبيع الآجل", description: "حساب الذمم المدينة الافتراضي إذا لم يكن العميل مرتبطاً بحساب محاسبي.", defaultHintCode: "1210", accountType: "asset" },
+      { key: "revenue",    label: "إيرادات مبيعات نقاط البيع (دائن)", description: "الحساب الدائن لإيرادات البيع من نقاط البيع.", defaultHintCode: "4110", accountType: "revenue" },
+      { key: "vat_output", label: "ضريبة المخرجات (دائن)", description: "الحساب الدائن للضريبة المحصلة من العميل.", defaultHintCode: "2140", accountType: "liability" },
+      { key: "cogs",       label: "تكلفة البضاعة المباعة (مدين)", description: "تسجيل تكلفة المخزون المباع عبر نقاط البيع.", defaultHintCode: "5110", accountType: "expense" },
+      { key: "inventory",  label: "المخزون (دائن لأجل COGS)", description: "تخفيض المخزون بمقدار تكلفة المباع.", defaultHintCode: "1220", accountType: "asset" },
+      { key: "discount",   label: "خصم مسموح به (مدين)", description: "الحساب المدين لقيمة الخصم الممنوح للعميل في نقاط البيع.", defaultHintCode: "5103", accountType: "expense" },
+    ],
+  },
+  {
     key: "sales_return",
     label: "مرتجع المبيعات",
     description: "قيد استلام بضاعة مرتجعة من العميل: مدين مرتجعات المبيعات وضريبة المخرجات، دائن العميل، مع عكس قيد التكلفة.",

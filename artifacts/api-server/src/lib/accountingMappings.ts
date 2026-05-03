@@ -94,6 +94,16 @@ export const DEFAULT_MAPPINGS: DefaultMapping[] = [
   { documentType: "sales_invoice",        roleKey: "inventory",              accountCode: "11051" },
   { documentType: "sales_invoice",        roleKey: "discount",               accountCode: "5103"  },
 
+  // فواتير نقاط البيع — روابط مستقلة عن فواتير المبيعات
+  { documentType: "pos_invoice",          roleKey: "cash",                   accountCode: "11011" },
+  { documentType: "pos_invoice",          roleKey: "bank",                   accountCode: "11021" },
+  { documentType: "pos_invoice",          roleKey: "receivable",             accountCode: "11031" },
+  { documentType: "pos_invoice",          roleKey: "revenue",                accountCode: "4101"  },
+  { documentType: "pos_invoice",          roleKey: "vat_output",             accountCode: "21041" },
+  { documentType: "pos_invoice",          roleKey: "cogs",                   accountCode: "5101"  },
+  { documentType: "pos_invoice",          roleKey: "inventory",              accountCode: "11051" },
+  { documentType: "pos_invoice",          roleKey: "discount",               accountCode: "5103"  },
+
   // مرتجع المبيعات
   { documentType: "sales_return",         roleKey: "revenue_return",         accountCode: "4101"  },
   { documentType: "sales_return",         roleKey: "vat_output",             accountCode: "21041" },

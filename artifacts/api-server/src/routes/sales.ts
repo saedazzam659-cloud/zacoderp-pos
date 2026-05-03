@@ -795,11 +795,19 @@ router.patch("/sales-invoices/:id/post", async (req, res) => {
       }
     }
 
+    // POS invoices prefer the dedicated `pos_invoice` mapping so the operator
+    // can route POS revenue/discount/VAT to separate GL accounts from manual
+    // sales when desired. Falls back to `sales_invoice` for any role left
+    // unconfigured under POS so a missing POS mapping never breaks posting.
+    const isPos = !!inv.posSessionId;
     const mapSi = await loadMappings(cid, "sales_invoice");
-    const salesAccId    = pickAccount(inv.salesAccountId,    mapSi("sales_invoice", "revenue"));
-    const cogsAccId     = pickAccount(inv.cogsAccountId,     mapSi("sales_invoice", "cogs"));
-    const taxAccId      = pickAccount(inv.taxAccountId,      mapSi("sales_invoice", "vat_output"));
-    const discountAccId = pickAccount(inv.discountAccountId, mapSi("sales_invoice", "discount"));
+    const mapPos = isPos ? await loadMappings(cid, "pos_invoice") : null;
+    const pick = (role: string): number | null =>
+      (mapPos ? mapPos("pos_invoice", role) : null) ?? mapSi("sales_invoice", role);
+    const salesAccId    = pickAccount(inv.salesAccountId,    pick("revenue"));
+    const cogsAccId     = pickAccount(inv.cogsAccountId,     pick("cogs"));
+    const taxAccId      = pickAccount(inv.taxAccountId,      pick("vat_output"));
+    const discountAccId = pickAccount(inv.discountAccountId, pick("discount"));
     // Revenue / COGS / per-warehouse inventory accounts are NOT required for
     // GDN-sourced invoices — they post against Delivery Clearing instead.
     if (!gdnSourced) {
