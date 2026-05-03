@@ -30,7 +30,7 @@ import {
   type Branch,
   type PosTerminal,
 } from "@/lib/api";
-import { Cpu, MonitorSmartphone, Loader2 } from "lucide-react";
+import { Cpu, MonitorSmartphone, Loader2, Building2 } from "lucide-react";
 
 // Stable per-browser device fingerprint used to pair this device with a POS
 // terminal (machineCode). Stored once in localStorage; never changes unless
@@ -71,7 +71,12 @@ const features = [
   },
 ];
 
+const COMPANY_CODE_KEY = "pos_company_code";
+
 export default function LoginPage() {
+  const [companyCode, setCompanyCode] = useState(
+    () => (typeof localStorage !== "undefined" ? (localStorage.getItem(COMPANY_CODE_KEY) ?? "") : "")
+  );
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -207,7 +212,11 @@ export default function LoginPage() {
     }
     setLoading(true);
     try {
-      const res = await api.login(username.trim(), password);
+      const code = companyCode.trim().toUpperCase();
+      if (code) {
+        try { localStorage.setItem(COMPANY_CODE_KEY, code); } catch {}
+      }
+      const res = await api.login(username.trim(), password, code || undefined);
       setToken(res.token);
       setStoredUser(res.user);
       if (res.user.companyId) {
@@ -461,6 +470,24 @@ export default function LoginPage() {
                       >
                         <div className="space-y-1.5">
                           <Label className="text-xs font-semibold text-muted-foreground">
+                            كود الشركة
+                          </Label>
+                          <div className="relative">
+                            <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Input
+                              type="text"
+                              dir="ltr"
+                              value={companyCode}
+                              onChange={(e) => setCompanyCode(e.target.value.toUpperCase())}
+                              placeholder="ZTC-6"
+                              className="h-12 pr-10 text-base font-medium uppercase tracking-wide"
+                              autoComplete="organization"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-muted-foreground">
                             اسم المستخدم
                           </Label>
                           <div className="relative">
@@ -470,7 +497,7 @@ export default function LoginPage() {
                               dir="ltr"
                               value={username}
                               onChange={(e) => setUsername(e.target.value)}
-                              placeholder="superadmin"
+                              placeholder="amirazzam"
                               className="h-12 pr-10 text-base font-medium"
                               autoComplete="username"
                             />

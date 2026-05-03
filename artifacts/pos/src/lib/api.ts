@@ -279,8 +279,8 @@ export type CreateReturnBody = {
 
 export const api = {
   // Auth
-  login: (username: string, password: string) =>
-    req<LoginResponse>("POST", "/api/auth/login", { username, password }),
+  login: (username: string, password: string, companyCode?: string) =>
+    req<LoginResponse>("POST", "/api/auth/login", { username, password, companyCode }),
   me: () => req<AuthUser>("GET", "/api/auth/me"),
   logout: () => req<{ ok: true }>("POST", "/api/auth/logout"),
 
