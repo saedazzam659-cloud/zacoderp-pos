@@ -59,15 +59,20 @@ export default function SupportCall() {
   // the user closed it externally.
   const winRef = useRef<Window | null>(null);
 
-  // Host URL — pre-fills the agent's display name and forces the pre-join
-  // page so the browser's permission prompt fires reliably. We also
-  // disable the lobby on the host side: Jitsi's lobby setting is decided
-  // by whoever creates the room first, so the HOST must declare it off
-  // — otherwise customers who open the share link land in a "waiting for
-  // moderator approval" screen.
+  // Host URL — pre-fills the agent's display name and drops them straight
+  // into the room (no pre-join screen). The pre-join screen was causing
+  // hosts to get stuck on the "click Join" button without realising they
+  // hadn't entered the room yet, leaving the customer alone with a "1
+  // participant" counter. Skipping pre-join is safe because Jitsi will
+  // still ask the browser for camera + microphone permission the moment
+  // it tries to attach the local media tracks. We also disable the lobby
+  // on the host side: Jitsi's lobby setting is decided by whoever creates
+  // the room first, so the HOST must declare it off — otherwise customers
+  // who open the share link land in a "waiting for moderator approval"
+  // screen.
   const hostUrl = useMemo(() => {
     const hash = [
-      `config.prejoinPageEnabled=true`,
+      `config.prejoinPageEnabled=false`,
       `config.lobby.enabled=false`,
       `config.startWithAudioMuted=false`,
       `config.startWithVideoMuted=false`,
