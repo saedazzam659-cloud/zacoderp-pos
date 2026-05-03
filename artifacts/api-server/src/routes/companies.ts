@@ -226,11 +226,17 @@ router.patch("/:id/zatca-settings", async (req, res) => {
 });
 
 // Authorization helper: only superadmin or an admin of this same company.
-function authorizePosSettings(req: any, res: any, id: number): boolean {
+// Pass `readOnly=true` for GET endpoints — cashiers in the same company also
+// need to read POS settings so they can map payment methods to the right
+// cashbox/bank account when ringing up a sale.
+function authorizePosSettings(req: any, res: any, id: number, readOnly = false): boolean {
   const u = req.authUser;
   if (!u) { res.status(401).json({ error: "غير مصرّح" }); return false; }
   if (u.role === "superadmin") return true;
-  if (u.role === "admin" && u.companyId === id) return true;
+  if (u.companyId === id) {
+    if (readOnly) return true;
+    if (u.role === "admin") return true;
+  }
   res.status(403).json({ error: "ليست لديك صلاحية لهذه العملية" });
   return false;
 }
@@ -247,7 +253,7 @@ function toNullableId(v: unknown): number | null | "invalid" {
 router.get("/:id/pos-settings", extractAuth, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!Number.isFinite(id) || id <= 0) { res.status(400).json({ error: "معرّف الشركة غير صالح" }); return; }
-  if (!authorizePosSettings(req, res, id)) return;
+  if (!authorizePosSettings(req, res, id, true)) return;
   const [c] = await db.select({
     posCashCashBoxId:       companiesTable.posCashCashBoxId,
     posCardBankAccountId:   companiesTable.posCardBankAccountId,

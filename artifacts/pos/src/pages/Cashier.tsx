@@ -47,6 +47,7 @@ import {
   type AuthUser,
   type SalesInvoice,
   type CreateInvoiceLine,
+  getToken,
 } from "@/lib/api";
 
 type CartLine = {
@@ -66,7 +67,11 @@ function formatSAR(n: number) {
 function imageSrc(item: Item): string | null {
   const u = item.imageUrl;
   if (!u) return null;
-  return u.startsWith("/objects/") ? `/api/storage${u}` : u;
+  if (!u.startsWith("/objects/")) return u;
+  // <img src="..."> can't send Authorization headers, so pass the bearer
+  // token via ?token=… (the storage route promotes it to Authorization).
+  const tok = getToken();
+  return `/api/storage${u}${tok ? `?token=${encodeURIComponent(tok)}` : ""}`;
 }
 
 function emojiFor(item: Item): string {

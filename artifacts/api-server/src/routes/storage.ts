@@ -93,6 +93,14 @@ router.get("/storage/public-objects/*filePath", async (req: Request, res: Respon
  * These are served from a separate path from /public-objects and can optionally
  * be protected with authentication or ACL checks based on the use case.
  */
+// Allow `?token=<bearer>` so it can be used in <img src="..."> tags where the
+// browser cannot send an Authorization header. The token is passed through to
+// extractAuth via the standard Authorization header on a per-request basis.
+router.use("/storage/objects", (req, _res, next) => {
+  const t = typeof req.query.token === "string" ? req.query.token : null;
+  if (t && !req.headers.authorization) req.headers.authorization = `Bearer ${t}`;
+  next();
+});
 router.get("/storage/objects/*path", extractAuth, requireAuthed, async (req: Request, res: Response) => {
   try {
     const raw = req.params.path;
