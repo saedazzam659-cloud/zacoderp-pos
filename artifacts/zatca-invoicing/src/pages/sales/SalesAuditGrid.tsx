@@ -333,7 +333,7 @@ function buildBulkPrintHtml(invoices: any[], maps: LookupMaps): string {
 </html>`;
 }
 
-export default function SalesAuditGrid() {
+export default function SalesAuditGrid({ source = "manual", titleOverride }: { source?: "manual" | "pos" | "all"; titleOverride?: string } = {}) {
   const { user, token } = useAuth() as any;
   const { toast } = useToast();
   const { fmt, isRtl } = useFormatters();
@@ -635,8 +635,12 @@ export default function SalesAuditGrid() {
   }
 
   const { data: invoices = [], isLoading, refetch, isFetching, error: invoicesError } = useQuery<any[]>({
-    queryKey: ["sales-invoices", cid, "audit-grid"],
-    queryFn: () => getList(cid ? `${API}/api/sales/sales-invoices?companyId=${cid}` : `${API}/api/sales/sales-invoices`),
+    queryKey: ["sales-invoices", cid, "audit-grid", source],
+    queryFn: () => getList(
+      cid
+        ? `${API}/api/sales/sales-invoices?companyId=${cid}&source=${source}`
+        : `${API}/api/sales/sales-invoices?source=${source}`
+    ),
     enabled: !!user,
   });
 
