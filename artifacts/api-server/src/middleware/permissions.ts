@@ -137,10 +137,16 @@ export function requirePermission(module: string, action: PermAction) {
     const ok = !!map[module]?.[action];
     if (ok) { next(); return; }
     // POS bypass: cashiers acting through the POS app naturally need to
-    // create AND post sales invoices/returns (and look up customers).
-    // If the user holds the `pos` module with `create`, treat that as
-    // sufficient for sales_invoices and customers actions.
-    if ((module === "sales_invoices" || module === "customers") && map["pos"]?.create) {
+    // create, post, view, and edit sales invoices/returns (and look up
+    // customers). If the user holds the `pos` module with `create`, treat
+    // that as sufficient for the full sales_invoices/customers action set
+    // a cashier needs (create, post, view, edit). `delete` still requires
+    // explicit sales_invoices permission.
+    if (
+      (module === "sales_invoices" || module === "customers") &&
+      map["pos"]?.create &&
+      (action === "create" || action === "post" || action === "view" || action === "edit")
+    ) {
       next(); return;
     }
     // Fire-and-forget denial audit (don't block the response)
