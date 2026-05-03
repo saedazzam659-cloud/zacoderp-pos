@@ -80,6 +80,8 @@ import crmRouter from "./crm";
 import crmAiRouter from "./crm-ai";
 import fixedAssetsRouter from "./fixed-assets";
 import fixedAssetsAiRouter from "./fixed-assets-ai";
+import onlineStoreRouter from "./online-store";
+import onlineStoreAiRouter from "./online-store-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 
@@ -171,5 +173,7 @@ router.use("/crm", crmRouter);
 router.use("/crm-ai", crmAiRouter);
 router.use("/fixed-assets", fixedAssetsRouter);
 router.use("/fixed-assets-ai", fixedAssetsAiRouter);
+router.use("/online-store", onlineStoreRouter);
+router.use("/online-store-ai", onlineStoreAiRouter);
 
 export default router;

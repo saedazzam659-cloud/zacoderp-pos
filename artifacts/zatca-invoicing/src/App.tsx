@@ -158,6 +158,7 @@ import HRReportLeaves from "@/pages/hr/reports/LeavesReport";
 import PosMonitoring from "@/pages/pos/Monitoring";
 import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
+import OnlineStore from "@/pages/online-store/OnlineStore";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ScreenActionsProvider } from "@/contexts/ScreenActionsContext";
 import { Loader2 } from "lucide-react";
@@ -490,6 +491,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/pos-monitoring" module="pos" component={PosMonitoring} />}
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
             {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
+            {!isSuperAdmin && <PermRoute path="/online-store" module="online_store" component={OnlineStore} />}
             {/* Control-Panel hub: any tenant user can land here; tile-level perm gating filters which tiles render. */}
             {!isSuperAdmin && <Route path="/control-panel" component={ControlPanelHub} />}
 

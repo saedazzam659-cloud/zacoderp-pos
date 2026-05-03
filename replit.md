@@ -63,3 +63,10 @@ The frontend uses React with Vite and TailwindCSS, supporting bilingual (Arabic/
 - **qrcode.react:** For QR code generation.
 - **jsbarcode:** For barcode generation (Code128).
 - **html5-qrcode:** For camera-based barcode scanning.
+
+## Online Store Module
+- DB tables (lib/db/src/schema/onlineStore.ts): `stores`, `store_domains`, `store_products` (FK→items), `store_orders` (FK→invoices SET NULL), `store_order_items`, `store_payment_settings`. Auto-created via ensureSchema.ts.
+- Backend: `/api/online-store/*` (CRUD + transactional `POST /orders/:id/confirm` → creates ZATCA invoice STR-{code} with 15% VAT) and `/api/online-store-ai/*` (sales-analysis, recommend-products, low-stock, generate-description; OpenAI gpt-5.4 with deterministic fallbacks).
+- Frontend: `artifacts/zatca-invoicing/src/pages/online-store/OnlineStore.tsx` with 6 tabs (Dashboard/Products/Orders/Domains/Payments/AI). Route `/online-store` gated by permission key `online_store`.
+- Multi-tenant: every table has `company_id` with cascade; routes use `getCid()` for isolation; mutations require admin.
+- Deferred: customer-facing storefront artifact, real payment-gateway integrations, DNS/SSL automation.

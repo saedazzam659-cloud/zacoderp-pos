@@ -57,3 +57,4 @@ export * from "./crm";
 export * from "./fixedAssets";
 export * from "./securityActions";
 export * from "./installments";
+export * from "./onlineStore";

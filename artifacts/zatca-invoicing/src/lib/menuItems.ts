@@ -59,6 +59,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "seo_dashboard",      label: "إدارة SEO",                  section: "تحليلات SEO" },
 
+  { key: "online_store",       label: "المتجر الإلكتروني",          section: "المتجر الإلكتروني" },
+
   { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     section: "أدوات الذكاء الاصطناعي" },
 
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
@@ -109,6 +111,7 @@ export const PERMISSION_TO_MODULE: Record<string, string | null> = {
   fixed_assets:       "fixed_assets",
   security_events:    "security",
   seo_dashboard:      null,           // SuperAdmin tool, not billed per-company
+  online_store:       null,           // included for now (no separate billable module)
   ai_tools:           null,           // SuperAdmin tool, not billed per-company
   zatca:              "zatca",
 };

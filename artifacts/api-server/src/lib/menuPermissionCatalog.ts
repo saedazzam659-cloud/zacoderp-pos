@@ -62,6 +62,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "security_events",
   // ── تحليلات SEO (SuperAdmin only — no parent billable module) ──
   "seo_dashboard",
+  // ── المتجر الإلكتروني ──
+  "online_store",
   // ── أدوات الذكاء الاصطناعي (SuperAdmin only — no parent billable module) ──
   "ai_tools",
   // ── النظام ──

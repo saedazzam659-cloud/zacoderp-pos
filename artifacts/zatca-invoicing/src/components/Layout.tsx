@@ -138,7 +138,12 @@ const superAdminNav: NavDef[] = [
 // user's request they're now grouped under a collapsible "إدارة نقاط البيع"
 // (POS Management) parent group rendered by PosNavGroup, so this list
 // stays empty (kept around for future business-level top-level NavItems).
-const companyBusinessNav: NavDef[] = [];
+const companyBusinessNav: NavDef[] = [
+  // المتجر الإلكتروني — single-page module gated on the `online_store`
+  // menu permission. The page itself contains tabs for products, orders,
+  // domains, payments and AI insights.
+  { nameKey: "nav.onlineStore", href: "/online-store", icon: Store, permKey: "online_store" },
+];
 
 // ── POS Management submenu ──────────────────────────────────────────────
 // Collected from the legacy companyBusinessNav entries; gated on the same
