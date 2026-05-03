@@ -1625,6 +1625,32 @@ ${sections}
           </Button>
           <Button
             type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد مرتجعًا واحدًا فقط للتعديل", variant: "destructive" }); return; }
+              editReturn(Number(selectedReturns[0].id));
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "فتح/تعديل المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط"}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            تعديل
+          </Button>
+          <Button
+            type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد مرتجعًا واحدًا فقط للنسخ", variant: "destructive" }); return; }
+              duplicateReturn(Number(selectedReturns[0].id));
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من المرتجع المحدَّد" : "حدِّد مرتجعًا واحدًا فقط"}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            نسخة مماثلة
+          </Button>
+          <Button
+            type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedPosted.length === 0 || !isAdmin}

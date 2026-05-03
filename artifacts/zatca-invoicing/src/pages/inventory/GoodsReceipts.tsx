@@ -1311,6 +1311,28 @@ ${sections}
             ترحيل ({selectedPostable.length})
           </Button>
           <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد إذنًا واحدًا فقط للتعديل", variant: "destructive" }); return; }
+              startEdit(Number(Array.from(layout.selected)[0]));
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "فتح/تعديل الإذن المحدَّد" : "حدِّد إذنًا واحدًا فقط"}>
+            <Pencil className="h-3.5 w-3.5" />
+            تعديل
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد إذنًا واحدًا فقط للنسخ", variant: "destructive" }); return; }
+              duplicateReceipt(Number(Array.from(layout.selected)[0]));
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الإذن المحدَّد" : "حدِّد إذنًا واحدًا فقط"}>
+            <Copy className="h-3.5 w-3.5" />
+            نسخة مماثلة
+          </Button>
+          <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
             onClick={bulkUnpost}
             disabled={bulkBusy || selectedUnpostable.length === 0}

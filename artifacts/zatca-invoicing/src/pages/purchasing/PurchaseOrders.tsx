@@ -8,7 +8,7 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer, Copy,
+  Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer, Copy, Pencil,
   FileSpreadsheet, FileDown, X, Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -615,6 +615,28 @@ ${sections}
             title={selectedConfirmable.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `تأكيد ${selectedConfirmable.length} أمر`}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}
             تأكيد ({selectedConfirmable.length})
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد أمرًا واحدًا فقط للتعديل", variant: "destructive" }); return; }
+              navigate(`/purchasing/orders/${Array.from(layout.selected)[0]}`);
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "فتح/تعديل الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
+            <Pencil className="h-3.5 w-3.5" />
+            تعديل
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد أمرًا واحدًا فقط للنسخ", variant: "destructive" }); return; }
+              navigate(`/purchasing/orders/new?from=${Array.from(layout.selected)[0]}`);
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الأمر المحدَّد" : "حدِّد أمرًا واحدًا فقط"}>
+            <Copy className="h-3.5 w-3.5" />
+            نسخة مماثلة
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"

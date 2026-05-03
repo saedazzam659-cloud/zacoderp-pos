@@ -8,7 +8,7 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, ShoppingCart, Eye, Trash2, CheckCircle2, RotateCcw, Printer, Undo2, Copy,
+  Plus, ShoppingCart, Eye, Trash2, CheckCircle2, RotateCcw, Printer, Undo2, Copy, Pencil,
   FileSpreadsheet, FileDown, X, Loader2, Send,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -648,6 +648,28 @@ ${sections}
             title={selectedDrafts.length === 0 ? "لا توجد مسوّدات ضمن المحدَّد" : `ترحيل ${selectedDrafts.length} فاتورة`}>
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             ترحيل ({selectedDrafts.length})
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد فاتورة واحدة فقط للتعديل", variant: "destructive" }); return; }
+              navigate(`/purchasing/invoices/${selectedRows[0].id}`);
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "فتح/تعديل الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}>
+            <Pencil className="h-3.5 w-3.5" />
+            تعديل
+          </Button>
+          <Button type="button" size="sm" variant="outline"
+            className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+            onClick={() => {
+              if (layout.selected.size !== 1) { toast({ title: "حدِّد فاتورة واحدة فقط للنسخ", variant: "destructive" }); return; }
+              navigate(`/purchasing/invoices/new?from=${selectedRows[0].id}`);
+            }}
+            disabled={bulkBusy || layout.selected.size !== 1}
+            title={layout.selected.size === 1 ? "إنشاء نسخة مماثلة من الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}>
+            <Copy className="h-3.5 w-3.5" />
+            نسخة مماثلة
           </Button>
           <Button type="button" size="sm" variant="outline"
             className="h-7 px-3 text-xs gap-1 border-amber-400 text-amber-800 hover:bg-amber-50"
