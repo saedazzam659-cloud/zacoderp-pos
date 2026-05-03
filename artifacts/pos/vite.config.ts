@@ -58,6 +58,18 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    sourcemap: false,
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react/jsx-runtime"],
+          "router": ["wouter"],
+          "query": ["@tanstack/react-query"],
+          "icons": ["lucide-react"],
+        },
+      },
+    },
   },
   server: {
     port,
