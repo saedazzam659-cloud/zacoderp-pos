@@ -119,7 +119,7 @@ export default function LoginPage() {
 
   async function loadBranchesFor(companyId: number) {
     try {
-      const list = await api.getBranches(companyId);
+      const list = await api.getBranches(companyId, { onlyUserBranches: true });
       setBranches(list);
       // Auto-select main branch if available, else the first one. Don't
       // overwrite an explicit user pick.

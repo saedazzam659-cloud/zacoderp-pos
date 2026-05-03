@@ -7,6 +7,7 @@ import {
   branchesTable,
   cashBoxesTable,
   usersTable,
+  userBranchesTable,
 } from "@workspace/db";
 import { and, eq, asc, ne, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -129,7 +130,27 @@ router.get("/", async (req, res) => {
 
   const u = req.authUser!;
   const isAdminLike = u.role === "admin" || u.role === "superadmin";
+
+  // POS terminals are physical devices tied to a specific branch. Even an
+  // admin acting as a cashier should only see terminals on branches they
+  // are explicitly linked to via user_branches. Superadmin remains
+  // unrestricted (cross-tenant operator). When a user has no branch links
+  // at all we treat that as "no restriction" to preserve legacy admin
+  // workflows where branch grants weren't required.
+  let userBranchSet: Set<number> | null = null;
+  if (u.role !== "superadmin") {
+    const links = await db
+      .select({ branchId: userBranchesTable.branchId })
+      .from(userBranchesTable)
+      .where(eq(userBranchesTable.userId, u.id));
+    if (links.length > 0) userBranchSet = new Set(links.map(l => l.branchId));
+  }
+
   const visible = rows.filter(r => {
+    // Branch-level gate (applies to admins too when they have explicit links).
+    if (userBranchSet && r.branchId != null && !userBranchSet.has(r.branchId)) {
+      return false;
+    }
     if (isAdminLike) return true;
     const allow = allowedByTerminal.get(r.id);
     if (!allow || allow.size === 0) return true;       // open to all

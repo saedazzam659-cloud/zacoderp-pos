@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { regionsTable, branchesTable } from "@workspace/db";
+import { regionsTable, branchesTable, userBranchesTable } from "@workspace/db";
 import { eq, and, asc, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId, getAllowedBranchIds } from "../middleware/auth.js";
 import { moduleAudit, requireModulePermission } from "../middleware/permissions.js";
@@ -128,7 +128,18 @@ router.get("/branches", async (req, res) => {
   try {
     const cid = getCompanyId(req);
     const regionId = req.query.regionId ? Number(req.query.regionId) : undefined;
-    const allowed = getAllowedBranchIds(req);
+    // POS / per-cashier callers pass ?onlyUserBranches=1 so we strictly filter
+    // by user_branches even for admins (admins can be cashiers too, and a
+    // cashier should only see the branches they're explicitly linked to).
+    const onlyUserBranches = req.query.onlyUserBranches === "1" || req.query.onlyUserBranches === "true";
+    let allowed = getAllowedBranchIds(req);
+    if (onlyUserBranches && req.authUser) {
+      const links = await db
+        .select({ branchId: userBranchesTable.branchId })
+        .from(userBranchesTable)
+        .where(eq(userBranchesTable.userId, req.authUser.id));
+      allowed = links.map(l => l.branchId);
+    }
 
     // Restricted user with zero linked branches → return empty list immediately.
     if (allowed !== null && allowed.length === 0) {

@@ -293,8 +293,12 @@ export const api = {
     req<Warehouse[]>("GET", `/api/inventory/warehouses?companyId=${companyId}`),
 
   // Org
-  getBranches: (companyId: number) =>
-    req<Branch[]>("GET", `/api/org/branches?companyId=${companyId}`),
+  getBranches: (companyId: number, opts?: { onlyUserBranches?: boolean }) =>
+    req<Branch[]>(
+      "GET",
+      `/api/org/branches?companyId=${companyId}` +
+        (opts?.onlyUserBranches ? `&onlyUserBranches=1` : ``),
+    ),
   getCashBoxes: (companyId: number) =>
     req<CashBox[]>("GET", `/api/cash-boxes?companyId=${companyId}`),
 
