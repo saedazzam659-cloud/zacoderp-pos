@@ -8,6 +8,7 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from "@/components/ui/popover";
+import { advanceFocusFrom } from "@/hooks/useEnterAdvances";
 
 export interface ComboboxItem {
   value: string;
@@ -54,12 +55,6 @@ export function SearchCombobox({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlight, setHighlight] = React.useState(0);
-  // Tracks whether the user has actively navigated the list (typed a query
-  // or used arrow keys). Without this, a stray Enter right after focusing
-  // the combobox would auto-select the first item (popover auto-opens with
-  // highlight=0) and silently overwrite the field.
-  const [hasNavigated, setHasNavigated] = React.useState(false);
-  React.useEffect(() => { if (!open) setHasNavigated(false); }, [open]);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
 
@@ -115,14 +110,19 @@ export function SearchCombobox({
 
   const flatList = filteredItems;
 
-  const handleSelect = (val: string) => {
+  const handleSelect = (val: string, advance: boolean = false) => {
     const it = items.find(i => i.value === val);
     if (it?.disabled) return;
     onValueChange(val);
     setOpen(false);
     setSearch("");
-    // Keep focus on the combobox input so the next Enter press bubbles to
-    // the parent form navigator and advances to the following field.
+    if (advance) {
+      // After committing a selection via Enter, jump to the next form
+      // control just like a normal Enter-as-Tab would. Defer one tick so
+      // React commits the value/close before focus moves.
+      const el = inputRef.current;
+      setTimeout(() => advanceFocusFrom(el), 0);
+    }
   };
 
   const moveHighlight = (dir: 1 | -1) => {
@@ -146,20 +146,23 @@ export function SearchCombobox({
     if (e.key === "ArrowDown") {
       e.preventDefault();
       if (!open) setOpen(true);
-      setHasNavigated(true);
       moveHighlight(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHasNavigated(true);
       moveHighlight(-1);
     } else if (e.key === "Enter") {
-      // Only consume Enter as a selection when the user has actually
-      // engaged with the list (typed a query or arrowed). Otherwise let
-      // the event bubble so the parent form's navigation handler can
-      // advance focus to the next field.
-      if (open && hasNavigated && flatList[highlight]) {
+      // Enter when the popover is open: pick the currently highlighted row
+      // (defaults to the first enabled item, so opening + Enter immediately
+      // selects the first option) and then advance to the next form field.
+      // Enter when closed: let the event bubble so the global handler
+      // advances focus normally.
+      if (open && flatList[highlight]) {
         e.preventDefault();
-        handleSelect(flatList[highlight].value);
+        e.stopPropagation();
+        handleSelect(flatList[highlight].value, /*advance*/ true);
+      } else if (open) {
+        // Open with no items — just close and let the global handler run.
+        setOpen(false);
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -225,7 +228,6 @@ export function SearchCombobox({
             onClick={() => setOpen(true)}
             onChange={e => {
               setSearch(e.target.value);
-              setHasNavigated(true);
               if (!open) setOpen(true);
             }}
             onKeyDown={onKeyDown}

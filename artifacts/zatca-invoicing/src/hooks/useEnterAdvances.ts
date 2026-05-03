@@ -1,6 +1,56 @@
 import { useEffect } from "react";
 
 /**
+ * Move focus from `from` to the next focusable form control inside its
+ * nearest <form> / [role="dialog"] / [data-enter-scope] (falls back to
+ * <body>). When the next control is a submit button, it is clicked.
+ *
+ * Exported so non-input widgets (e.g. a custom combobox after a selection)
+ * can hand off focus exactly like a real Enter-as-Tab keystroke would.
+ */
+export function advanceFocusFrom(from: HTMLElement | null | undefined): boolean {
+  if (!from) return false;
+  const scope =
+    (from.closest("form, [role='dialog'], [data-enter-scope]") as HTMLElement | null)
+    ?? document.body;
+
+  const selector = [
+    'input:not([disabled]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="image"]):not([type="checkbox"]):not([type="radio"]):not([tabindex="-1"])',
+    'select:not([disabled]):not([tabindex="-1"])',
+    '[role="combobox"]:not([aria-disabled="true"]):not([disabled])',
+    'button[type="submit"]:not([disabled])',
+  ].join(",");
+
+  const nodes = Array.from(scope.querySelectorAll<HTMLElement>(selector))
+    .filter(el => {
+      if (el.offsetParent === null && el.getClientRects().length === 0) return false;
+      if (el.closest("[data-no-enter-advance]")) return false;
+      if (el.getAttribute("aria-hidden") === "true") return false;
+      return true;
+    });
+
+  const idx = nodes.indexOf(from);
+  if (idx < 0) return false;
+
+  const next = nodes[idx + 1];
+  if (!next) return false;
+
+  if (next.tagName === "BUTTON" && (next as HTMLButtonElement).type === "submit") {
+    next.click();
+    return true;
+  }
+
+  next.focus();
+  if (next instanceof HTMLInputElement) {
+    const t = next.type;
+    if (/^(text|number|email|search|tel|url|password|date|time|datetime-local|month|week)$/.test(t)) {
+      try { next.select(); } catch { /* ignore */ }
+    }
+  }
+  return true;
+}
+
+/**
  * Global Enter-as-Tab navigation.
  *
  * Pressing Enter inside a text/number/date/email/select/combobox jumps focus
@@ -13,12 +63,9 @@ import { useEffect } from "react";
  *   - Buttons, links, contenteditable
  *   - File / checkbox / radio / submit / button / reset inputs
  *   - Any element inside [data-no-enter-advance]
- *   - Open comboboxes (aria-expanded="true") and listbox options — so the
- *     Enter keystroke still confirms a dropdown selection.
+ *   - Open comboboxes (aria-expanded="true") and listbox options — those
+ *     own their Enter behaviour (select + advance) themselves.
  *   - Modifier-key combos (Ctrl/Alt/Shift/Meta + Enter) and IME composition
- *
- * Scope: nearest <form>, [role="dialog"], or [data-enter-scope]. Falls back
- * to <body> so single-page forms work without changes.
  */
 export function useEnterAdvances(enabled: boolean = true): void {
   useEffect(() => {
@@ -35,14 +82,12 @@ export function useEnterAdvances(enabled: boolean = true): void {
       if (target.isContentEditable) return;
       if (target.closest("[data-no-enter-advance]")) return;
 
-      // Open combobox / listbox option → Enter confirms selection. Bail out.
       if (target.getAttribute("aria-expanded") === "true") return;
       if (target.getAttribute("role") === "option") return;
 
       const role = target.getAttribute("role") ?? "";
       const isCombobox = role === "combobox";
-      const isFormCtrl =
-        tag === "INPUT" || tag === "SELECT" || isCombobox;
+      const isFormCtrl = tag === "INPUT" || tag === "SELECT" || isCombobox;
       if (!isFormCtrl) return;
 
       if (tag === "INPUT") {
@@ -54,43 +99,8 @@ export function useEnterAdvances(enabled: boolean = true): void {
         ) return;
       }
 
-      const scope =
-        (target.closest("form, [role='dialog'], [data-enter-scope]") as HTMLElement | null)
-        ?? document.body;
-
-      const selector = [
-        'input:not([disabled]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="image"]):not([type="checkbox"]):not([type="radio"]):not([tabindex="-1"])',
-        'select:not([disabled]):not([tabindex="-1"])',
-        '[role="combobox"]:not([aria-disabled="true"]):not([disabled])',
-        'button[type="submit"]:not([disabled])',
-      ].join(",");
-
-      const nodes = Array.from(scope.querySelectorAll<HTMLElement>(selector))
-        .filter(el => {
-          if (el.offsetParent === null && el.getClientRects().length === 0) return false;
-          if (el.closest("[data-no-enter-advance]")) return false;
-          if (el.getAttribute("aria-hidden") === "true") return false;
-          return true;
-        });
-
-      const idx = nodes.indexOf(target);
-      if (idx < 0) return;
-
-      e.preventDefault();
-      const next = nodes[idx + 1];
-      if (!next) return;
-
-      if (next.tagName === "BUTTON" && (next as HTMLButtonElement).type === "submit") {
-        next.click();
-        return;
-      }
-
-      next.focus();
-      if (next instanceof HTMLInputElement) {
-        const t = next.type;
-        if (/^(text|number|email|search|tel|url|password|date|time|datetime-local|month|week)$/.test(t)) {
-          try { next.select(); } catch { /* ignore */ }
-        }
+      if (advanceFocusFrom(target)) {
+        e.preventDefault();
       }
     }
 
