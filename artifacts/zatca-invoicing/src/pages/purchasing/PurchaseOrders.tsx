@@ -8,7 +8,7 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer,
+  Plus, ClipboardList, Eye, Trash2, CheckCircle, XCircle, FileCheck2, Printer, Copy,
   FileSpreadsheet, FileDown, X, Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -767,6 +767,11 @@ ${sections}
                                 title={t("purchasingPages.purchaseOrders.tooltips.viewEdit")}
                                 onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/orders/${ord.id}`); }}>
                                 <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                title="نسخة مماثلة"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/orders/new?from=${ord.id}`); }}>
+                                <Copy className="h-3.5 w-3.5" />
                               </Button>
                               {ord.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-700 hover:bg-blue-50"

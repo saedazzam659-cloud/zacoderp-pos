@@ -8,7 +8,7 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, FileSignature, Eye, Trash2, ArrowRightLeft, CheckCircle, XCircle, Send, Printer,
+  Plus, FileSignature, Eye, Trash2, ArrowRightLeft, CheckCircle, XCircle, Send, Printer, Copy,
   FileSpreadsheet, FileDown, X, Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -782,6 +782,11 @@ ${sections}
                                 title="طباعة"
                                 onClick={(e) => { e.stopPropagation(); openPrint(q); }}>
                                 <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                title="نسخة مماثلة"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/sales/quotations/new?from=${q.id}`); }}>
+                                <Copy className="h-3.5 w-3.5" />
                               </Button>
                               {q.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600"

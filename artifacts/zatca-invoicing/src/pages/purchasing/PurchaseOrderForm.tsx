@@ -287,6 +287,55 @@ export default function PurchaseOrderForm() {
     })) : [newLine()]);
   }, [existing]);
 
+  // ── Duplicate from another purchase order (?from=<id> on /new) ──
+  const duplicatedRef = useRef(false);
+  useEffect(() => {
+    if (!isNew || duplicatedRef.current || !cid) return;
+    const sp = new URLSearchParams(window.location.search);
+    const fromId = sp.get("from");
+    if (!fromId) return;
+    duplicatedRef.current = true;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/api/purchasing/purchase-orders/${fromId}?companyId=${cid}`, { headers: authH });
+        if (!r.ok) return;
+        const src = await r.json();
+        // Keep freshly-issued sequence number, today's date, blank delivery
+        // date, blank supplier-invoice-number, draft status — only copy
+        // header content + lines.
+        setSupplierId(src.supplierId ? String(src.supplierId) : "");
+        setBranchId(src.branchId ? String(src.branchId) : "");
+        setPaymentType(src.paymentType ?? "credit");
+        setCurrencyCode(src.currencyCode ?? "SAR");
+        setExchangeRate(String(src.exchangeRate ?? "1"));
+        setNotes(src.notes ?? "");
+        setDocDiscount(String(src.discountAmount ?? "0"));
+        setPriceIncludesVat(!!src.priceIncludesVat);
+        setLines(src.lines?.length ? src.lines.map((l: any) => ({
+          _id: crypto.randomUUID(),
+          itemId:      l.itemId      ? String(l.itemId)      : "",
+          itemName:    l.itemName    ?? "",
+          itemCode:    l.itemCode    ?? "",
+          unitId:      l.unitId      ? String(l.unitId)      : "",
+          unit:        l.unit        ?? "",
+          conversionFactor: String(l.conversionFactor ?? "1"),
+          warehouseId: l.warehouseId ? String(l.warehouseId) : "",
+          qty:         String(l.qty),
+          unitPrice:   String(l.unitPrice),
+          discount:    String(l.discount ?? "0"),
+          vatRate:     (Number(l.vatRate) > 0 ? String(l.vatRate) : "15"),
+          lineTotal:   String(l.lineTotal),
+          notes:       l.notes ?? "",
+        })) : [newLine()]);
+        toast({ title: tr("duplicatedFromSource", { defaultValue: "تم إنشاء نسخة مماثلة" }) });
+        const url = new URL(window.location.href);
+        url.searchParams.delete("from");
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, cid]);
+
   // Per-item unit list (for the unit picker on each line). Mirrors the
   // invoice form so unit & cost auto-populate from the selected item
   // without an extra round-trip per keystroke.

@@ -8,7 +8,7 @@ import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Plus, ClipboardList, Eye, Trash2,
+  Plus, ClipboardList, Eye, Trash2, Copy,
   ArrowRightLeft, CheckCircle, XCircle, Printer,
   FileSpreadsheet, FileDown, X, Loader2,
 } from "lucide-react";
@@ -786,6 +786,11 @@ ${sections}
                                 title={t("common.print")}
                                 onClick={(e) => { e.stopPropagation(); openPrint(o); }}>
                                 <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                                title="نسخة مماثلة"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/sales/orders/new?from=${o.id}`); }}>
+                                <Copy className="h-3.5 w-3.5" />
                               </Button>
                               {o.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-green-700"
