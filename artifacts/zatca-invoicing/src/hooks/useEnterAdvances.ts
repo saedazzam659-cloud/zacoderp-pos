@@ -26,6 +26,11 @@ export function advanceFocusFrom(from: HTMLElement | null | undefined): boolean 
       if (el.offsetParent === null && el.getClientRects().length === 0) return false;
       if (el.closest("[data-no-enter-advance]")) return false;
       if (el.getAttribute("aria-hidden") === "true") return false;
+      // Exclude landmark chrome (sidebar, top-nav, breadcrumbs, banners,
+      // footers, pagination ...). Without this, when an invoice form has
+      // no <form> wrapper the search falls back to <body> and Enter would
+      // jump from a field into the sidebar instead of the next field.
+      if (el.closest('aside, nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"], [role="menubar"], [role="menu"], [role="tablist"], [role="toolbar"]')) return false;
       return true;
     });
 
