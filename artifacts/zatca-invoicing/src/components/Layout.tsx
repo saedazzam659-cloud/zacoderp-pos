@@ -150,6 +150,7 @@ const companyBusinessNav: NavDef[] = [
 // `pos` permission they had individually.
 const posSubNav: NavDef[] = [
   { nameKey: "nav.posMonitoring", href: "/pos-monitoring", icon: Activity,          permKey: "pos" },
+  { nameKey: "nav.posOperations", href: "/pos-operations", icon: ClipboardList,     permKey: "pos" },
   { nameKey: "nav.posTerminals",  href: "/pos-terminals",  icon: MonitorSmartphone, permKey: "pos" },
   { nameKey: "nav.posSettings",   href: "/pos-settings",   icon: Settings,          permKey: "pos" },
 ];

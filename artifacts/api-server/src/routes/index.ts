@@ -82,6 +82,8 @@ import fixedAssetsRouter from "./fixed-assets";
 import fixedAssetsAiRouter from "./fixed-assets-ai";
 import onlineStoreRouter from "./online-store";
 import onlineStoreAiRouter from "./online-store-ai";
+import posOperationsRouter from "./pos-operations";
+import posOperationsAiRouter from "./pos-operations-ai";
 import reportInvitationsRouter from "./report-invitations";
 import realtimeRouter from "./realtime";
 
@@ -175,5 +177,7 @@ router.use("/fixed-assets", fixedAssetsRouter);
 router.use("/fixed-assets-ai", fixedAssetsAiRouter);
 router.use("/online-store", onlineStoreRouter);
 router.use("/online-store-ai", onlineStoreAiRouter);
+router.use("/pos-operations", posOperationsRouter);
+router.use("/pos-operations-ai", posOperationsAiRouter);
 
 export default router;
