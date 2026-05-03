@@ -285,7 +285,7 @@ export default function PosOperations() {
                       <InvoiceRow
                         key={r.id} row={r} locale={locale} isRtl={isRtl}
                         isAdmin={isAdmin} busyId={busyId}
-                        onView={() => navigate(`/invoices/${r.id}`)}
+                        onView={() => navigate(`/sales/invoices/${r.id}`)}
                         onPost={() => doPostInvoice(r.id)}
                         onUnpost={() => doUnpostInvoice(r.id)}
                         pickName={pickName} tr={tr}
