@@ -168,11 +168,11 @@ export default function SupermarketPage() {
     return sorted.map(([id]) => items.find((i) => i.id === id)).filter(Boolean) as Item[];
   }, [cart, items]);
 
-  const addItem = (p: Item) => {
+  const addItem = (p: Item, qty = 1) => {
     setCart((c) => {
       const ex = c.find((l) => l.item.id === p.id);
-      if (ex) return c.map((l) => l.item.id === p.id ? { ...l, qty: l.qty + 1 } : l);
-      return [...c, { item: p, qty: 1 }];
+      if (ex) return c.map((l) => l.item.id === p.id ? { ...l, qty: l.qty + qty } : l);
+      return [...c, { item: p, qty }];
     });
     setSearch("");
     searchRef.current?.focus();
@@ -182,9 +182,62 @@ export default function SupermarketPage() {
   const removeLine = (id: number) => setCart((c) => c.filter((l) => l.item.id !== id));
   const clearAll = () => { setCart([]); setMode("sale"); setSourceInvoice(null); };
 
-  // Barcode: Enter on search picks first match
+  /**
+   * Parse a scale-printed weight barcode (EAN-13 starting with "2").
+   * Common Saudi/EU format:
+   *   prefix(1) "2" + itemCode(6) + weight-grams(5) + checkDigit(1) = 13 digits
+   * Returns { itemCode, weightKg } or null.
+   */
+  const parseWeightBarcode = (raw: string): { itemCode: string; weightKg: number } | null => {
+    const s = raw.trim();
+    if (!/^2\d{12}$/.test(s)) return null;
+    const itemCode = s.slice(1, 7);          // 6-digit PLU
+    const grams = parseInt(s.slice(7, 12), 10); // 5-digit weight (grams)
+    if (!Number.isFinite(grams) || grams <= 0) return null;
+    return { itemCode, weightKg: grams / 1000 };
+  };
+
+  // Barcode + scale + quantity-multiplier handler.
+  // Supports:
+  //   • Plain Enter — add first match (qty = 1)
+  //   • "5*<scan>" — multiply qty by 5
+  //   • EAN-13 starting with "2" — parse weight, add by kg
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && suggestions.length > 0) { e.preventDefault(); addItem(suggestions[0]); }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const raw = search.trim();
+    if (!raw) return;
+
+    // Quantity-multiplier prefix: "5*apple" or "5*1234567890123"
+    let qtyMultiplier = 1;
+    let payload = raw;
+    const mult = raw.match(/^(\d+(?:\.\d+)?)\s*[\*xX]\s*(.+)$/);
+    if (mult) {
+      qtyMultiplier = parseFloat(mult[1]) || 1;
+      payload = mult[2].trim();
+    }
+
+    // Weight barcode: lookup by 6-digit PLU, qty = weightKg
+    const wb = parseWeightBarcode(payload);
+    if (wb) {
+      const match = items.find(
+        (p) => p.code === wb.itemCode || p.barcode === wb.itemCode || p.barcode === payload
+      );
+      if (match) {
+        addItem(match, +(wb.weightKg * qtyMultiplier).toFixed(3));
+        return;
+      }
+    }
+
+    // Otherwise: pick first suggestion match for the payload
+    const q = payload.toLowerCase();
+    const list = items.filter((p) =>
+      p.nameAr.toLowerCase().includes(q) ||
+      (p.nameEn || "").toLowerCase().includes(q) ||
+      p.code.toLowerCase().includes(q) ||
+      (p.barcode || "").toLowerCase().includes(q),
+    );
+    if (list.length > 0) addItem(list[0], qtyMultiplier);
   };
 
   const subtotal       = cart.reduce((s, l) => s + Number(l.item.salePrice) * l.qty, 0);
@@ -430,7 +483,7 @@ export default function SupermarketPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={onSearchKeyDown}
-                placeholder={tr("ابحث بالاسم أو الكود أو الباركود… واضغط Enter", "Search by name, code or barcode… press Enter")}
+                placeholder={tr("ابحث / امسح الباركود / 5*كود لكمية × 5", "Search / scan barcode / 5*code for qty × 5")}
                 className={`${dir === "rtl" ? "pr-10" : "pl-10"} h-11 text-base`}
                 autoFocus
               />
