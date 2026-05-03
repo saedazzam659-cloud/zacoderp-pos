@@ -11,6 +11,7 @@ import WaiterApp from "@/pages/WaiterApp";
 import KitchenDisplay from "@/pages/KitchenDisplay";
 import RestaurantSettings from "@/pages/RestaurantSettings";
 import RestaurantAI from "@/pages/RestaurantAI";
+import { useEnterAdvances } from "@/hooks/useEnterAdvances";
 
 const queryClient = new QueryClient();
 
@@ -32,6 +33,10 @@ function Router() {
 }
 
 function App() {
+  // Enter-as-Tab navigation across login + cashier forms — Enter on the last
+  // field triggers the primary action (Login / Save). Open dropdowns and
+  // textareas keep their default Enter behaviour. See useEnterAdvances.
+  useEnterAdvances();
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

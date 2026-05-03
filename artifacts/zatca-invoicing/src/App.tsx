@@ -262,6 +262,7 @@ import PaymentVoucherForm  from "@/pages/cash/PaymentVoucherForm";
 import CashTransfers    from "@/pages/cash/CashTransfers";
 import FinancialTransactions    from "@/pages/cash/FinancialTransactions";
 import FinancialTransactionForm from "@/pages/cash/FinancialTransactionForm";
+import { useEnterAdvances } from "@/hooks/useEnterAdvances";
 
 const queryClient = new QueryClient();
 
@@ -737,6 +738,12 @@ function AppRoutes() {
 }
 
 function App() {
+  // Global Enter-as-Tab navigation across all forms (invoices, vouchers,
+  // settings dialogs, ...). Pressing Enter inside a text/number/date/select/
+  // combobox jumps to the next focusable form control; on the last field
+  // (the submit button) it triggers Save. Textareas and open dropdowns
+  // keep their default Enter behaviour. See useEnterAdvances for details.
+  useEnterAdvances();
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
