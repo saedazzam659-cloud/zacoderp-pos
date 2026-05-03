@@ -53,12 +53,40 @@ export default function SupportCall() {
   const isEmbedded = typeof window !== "undefined" && window.self !== window.top;
 
   const callUrl = useMemo(() => {
-    // `userInfo.displayName` is read by Jitsi from the URL hash — that's the
-    // documented way to pre-fill the participant name without using the IFrame
-    // API. The hash is never sent to the Jitsi server (it stays client-side).
-    const hash = `#userInfo.displayName=%22${encodeURIComponent(displayName)}%22`;
-    return `https://meet.jit.si/${encodeURIComponent(room)}${hash}`;
+    // Force Jitsi to show its pre-join screen — that's the screen that
+    // actually triggers the browser's camera + microphone permission prompt.
+    // Without `prejoinPageEnabled=true` Jitsi may auto-join muted on some
+    // browsers and never request permissions, leaving the user stuck.
+    // `userInfo.displayName` is read by Jitsi from the URL hash — that's
+    // the documented way to pre-fill the participant name without using the
+    // IFrame API. The hash is never sent to the Jitsi server.
+    const hash = [
+      `config.prejoinPageEnabled=true`,
+      `config.startWithAudioMuted=false`,
+      `config.startWithVideoMuted=false`,
+      `userInfo.displayName=%22${encodeURIComponent(displayName)}%22`,
+    ].join("&");
+    return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
   }, [room, displayName]);
+
+  // Trigger the browser's native permission prompt directly (independent of
+  // Jitsi). Useful when the user previously denied permission and needs to
+  // re-grant it, or to verify hardware access before opening the call.
+  const testPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      toast({ title: "تم منح إذن الكاميرا والميكروفون ✓", description: "يمكنك الآن دخول غرفة الدعم." });
+    } catch (e: any) {
+      toast({
+        title: "تعذّر الحصول على الإذن",
+        description: e?.name === "NotAllowedError"
+          ? "الإذن مرفوض من المتصفح. اضغط على أيقونة القفل بجوار العنوان ثم فعّل الكاميرا والميكروفون، ثم أعد تحميل الصفحة."
+          : e?.message ?? "تأكد من توصيل كاميرا وميكروفون.",
+        variant: "destructive",
+      });
+    }
+  };
 
   // The link we share with the customer — strip our display-name hash so the
   // customer can enter their own name when they join.
@@ -177,7 +205,10 @@ export default function SupportCall() {
                 : "اضغط «دخول الغرفة» لبدء البث. سيُطلب إذن الكاميرا والميكروفون من المتصفح."}
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="secondary" onClick={testPermission} className="gap-1" data-testid="btn-test-permission">
+              <Video className="h-4 w-4" /> اختبار إذن الكاميرا
+            </Button>
             <Button asChild variant={isEmbedded ? "default" : "outline"} className="gap-1" data-testid="btn-open-tab">
               <a href={callUrl} target="_blank" rel="noreferrer">
                 <ExternalLink className="h-4 w-4" /> فتح في نافذة جديدة
