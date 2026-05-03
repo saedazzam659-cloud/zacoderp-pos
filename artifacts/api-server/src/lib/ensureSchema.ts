@@ -267,6 +267,21 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_doc_idx ON approval_log (company_id, document_type, document_id)` },
     { label: "approval_log_company_idx",
       sql:   `CREATE INDEX IF NOT EXISTS approval_log_company_idx ON approval_log (company_id, created_at)` },
+    // ─── pos_terminal_users: optional per-terminal user allow-list (see
+    // schema/pos.ts). Same rationale as approval_log — created here because
+    // ensureColumns only ALTERs.
+    { label: "create pos_terminal_users table",
+      sql:   `CREATE TABLE IF NOT EXISTS pos_terminal_users (
+        id              SERIAL PRIMARY KEY,
+        company_id      INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        pos_terminal_id INTEGER NOT NULL REFERENCES pos_terminals(id) ON DELETE CASCADE,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "pos_terminal_users_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS pos_terminal_users_uniq ON pos_terminal_users (pos_terminal_id, user_id)` },
+    { label: "pos_terminal_users_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS pos_terminal_users_company_idx ON pos_terminal_users (company_id)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

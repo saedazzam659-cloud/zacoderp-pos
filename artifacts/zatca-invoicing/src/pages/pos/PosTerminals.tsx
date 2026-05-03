@@ -3,8 +3,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   MonitorSmartphone, Plus, Pencil, Trash2, Loader2, Building2,
-  Cpu, Wifi, WifiOff, Unlink, Power, PowerOff, Search,
+  Cpu, Wifi, WifiOff, Unlink, Power, PowerOff, Search, Users, Check,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +30,7 @@ const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 type Branch  = { id: number; nameAr: string; nameEn?: string | null; code?: string };
 type CashBox = { id: number; nameAr: string; nameEn?: string | null; code?: string };
 type Company = { id: number; nameAr: string; nameEn?: string | null };
+type CoUser  = { id: number; username: string; nameAr?: string | null; nameEn?: string | null; role: string; isActive?: boolean; branchIds?: number[] };
 
 type Terminal = {
   id:          number;
@@ -42,6 +47,7 @@ type Terminal = {
   isActive:    boolean;
   notes:       string | null;
   busyUserId:  number | null;
+  allowedUserCount?: number;
 };
 
 type Draft = {
@@ -79,6 +85,7 @@ export default function PosTerminals() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Draft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Terminal | null>(null);
+  const [usersForTerminal, setUsersForTerminal] = useState<Terminal | null>(null);
 
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
   const cidQS = companyId ? `?companyId=${companyId}` : "";
@@ -98,6 +105,16 @@ export default function PosTerminals() {
     enabled: !!companyId,
     queryFn: async () => {
       const r = await fetch(`${API}/api/org/branches${cidQS}`, { headers });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const usersQ = useQuery<CoUser[]>({
+    queryKey: ["pt-users", companyId],
+    enabled: !!companyId,
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/users${cidQS}`, { headers });
       if (!r.ok) return [];
       return r.json();
     },
@@ -313,10 +330,26 @@ export default function PosTerminals() {
               onEdit={() => openEdit(tt)}
               onDelete={() => setConfirmDelete(tt)}
               onUnpair={() => unpairMut.mutate(tt.id)}
+              onManageUsers={() => setUsersForTerminal(tt)}
               unpairing={unpairMut.isPending}
             />
           ))}
         </div>
+      )}
+
+      {/* Users assignment dialog */}
+      {usersForTerminal && (
+        <TerminalUsersDialog
+          terminal={usersForTerminal}
+          users={(usersQ.data ?? []).filter(u => u.isActive !== false)}
+          headers={headers}
+          apiBase={API}
+          onClose={() => setUsersForTerminal(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["pt-terminals", companyId] });
+            setUsersForTerminal(null);
+          }}
+        />
       )}
 
       {/* Delete confirm */}
@@ -359,12 +392,13 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
 }
 
 function TerminalCard({
-  t: tt, onEdit, onDelete, onUnpair, unpairing,
+  t: tt, onEdit, onDelete, onUnpair, onManageUsers, unpairing,
 }: {
   t: Terminal;
   onEdit: () => void;
   onDelete: () => void;
   onUnpair: () => void;
+  onManageUsers: () => void;
   unpairing: boolean;
 }) {
   const { t, i18n } = useTranslation();
@@ -428,11 +462,29 @@ function TerminalCard({
               <span className="text-xs">{cashBoxDisplay}</span>
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <Users className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground text-xs">{tr("usersLabel")}</span>
+            {tt.allowedUserCount && tt.allowedUserCount > 0 ? (
+              <Badge variant="outline" className="text-[11px] gap-1 border-blue-200 bg-blue-50 text-blue-700">
+                {tr("usersBoundCount", { count: tt.allowedUserCount })}
+              </Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">{tr("usersOpenToAll")}</span>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-t pt-2">
           <Button size="sm" variant="outline" className="h-8" onClick={onEdit} data-testid={`btn-edit-${tt.id}`}>
             <Pencil className="w-3.5 h-3.5 me-1" /> {tr("edit")}
+          </Button>
+          <Button
+            size="sm" variant="outline" className="h-8"
+            onClick={onManageUsers}
+            data-testid={`btn-users-${tt.id}`}
+          >
+            <Users className="w-3.5 h-3.5 me-1" /> {tr("manageUsers")}
           </Button>
           {tt.machineCode && (
             <Button
@@ -586,5 +638,147 @@ function TerminalEditor({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function TerminalUsersDialog({
+  terminal, users, headers, apiBase, onClose, onSaved,
+}: {
+  terminal: Terminal;
+  users: CoUser[];
+  headers: Record<string, string>;
+  apiBase: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === "ar";
+  const tr = (k: string, opts?: any) => t(`posPages.terminals.${k}`, opts) as string;
+  const { toast } = useToast();
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${apiBase}/api/pos-terminals/${terminal.id}/users`, { headers });
+        const j = await r.json();
+        if (!cancelled) setSelected(new Set<number>((j?.userIds ?? []) as number[]));
+      } catch {
+        if (!cancelled) setSelected(new Set());
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [terminal.id, apiBase]);
+
+  const toggle = (uid: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  };
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(u =>
+      [u.username, u.nameAr, u.nameEn].some(v => v && String(v).toLowerCase().includes(q)),
+    );
+  }, [users, search]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await fetch(`${apiBase}/api/pos-terminals/${terminal.id}/users`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: Array.from(selected) }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error(e?.error || tr("usersSaveErr"));
+      }
+      toast({ title: tr("usersSaveOk") });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: tr("toastError"), description: e?.message, variant: "destructive" });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent dir={isRtl ? "rtl" : "ltr"} className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-primary" />
+            {tr("usersDialogTitle", { name: isRtl ? terminal.nameAr : (terminal.nameEn ?? terminal.nameAr) })}
+          </DialogTitle>
+          <DialogDescription>{tr("usersDialogDesc")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="relative">
+          <Search className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-2.5 text-muted-foreground pointer-events-none" />
+          <Input
+            className="ps-8"
+            placeholder={tr("usersSearchPh")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            data-testid="input-user-search"
+          />
+        </div>
+
+        <div className="rounded-lg border max-h-[320px] overflow-y-auto divide-y">
+          {loading ? (
+            <div className="p-6 text-center text-muted-foreground text-sm inline-flex items-center gap-2 justify-center w-full">
+              <Loader2 className="w-4 h-4 animate-spin" /> {tr("loading")}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-center text-muted-foreground text-sm">{tr("usersEmpty")}</div>
+          ) : (
+            filtered.map(u => {
+              const checked = selected.has(u.id);
+              const display = isRtl ? (u.nameAr ?? u.username) : (u.nameEn ?? u.nameAr ?? u.username);
+              return (
+                <label
+                  key={u.id}
+                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 ${checked ? "bg-primary/5" : ""}`}
+                  data-testid={`row-user-${u.id}`}
+                >
+                  <Checkbox checked={checked} onCheckedChange={() => toggle(u.id)} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{display}</div>
+                    <div className="text-[11px] font-mono text-muted-foreground truncate">
+                      {u.username} · {u.role}
+                    </div>
+                  </div>
+                  {checked && <Check className="w-4 h-4 text-primary" />}
+                </label>
+              );
+            })
+          )}
+        </div>
+
+        <div className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md px-2 py-1.5">
+          {selected.size === 0
+            ? tr("usersHintEmpty")
+            : tr("usersHintCount", { count: selected.size })}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>{tr("cancel")}</Button>
+          <Button onClick={save} disabled={saving || loading} data-testid="btn-save-users">
+            {saving && <Loader2 className="w-4 h-4 me-1 animate-spin" />}
+            {tr("save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

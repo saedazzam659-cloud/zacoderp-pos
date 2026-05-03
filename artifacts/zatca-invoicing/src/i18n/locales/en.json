@@ -4569,7 +4569,20 @@
       "errLoadTerminals": "Failed to load POS terminals",
       "errSave": "Failed to save",
       "errDelete": "Failed to delete",
-      "errUnpair": "Failed to unpair"
+      "errUnpair": "Failed to unpair",
+      "usersLabel": "Users:",
+      "usersOpenToAll": "Open to all users",
+      "usersBoundCount": "{{count}} users assigned",
+      "manageUsers": "Assign Users",
+      "usersDialogTitle": "Assign users to terminal \"{{name}}\"",
+      "usersDialogDesc": "Pick the users who are allowed to open a session on this terminal. If you save with no selections, the terminal stays open to everyone in the company.",
+      "usersSearchPh": "Search by username...",
+      "usersEmpty": "No matching users",
+      "usersHintEmpty": "Note: saving with no users selected leaves the terminal open to everyone.",
+      "usersHintCount": "{{count}} users selected",
+      "usersSaveOk": "Terminal users saved",
+      "usersSaveErr": "Failed to save users",
+      "loading": "Loading..."
     },
     "settings": {
       "title": "Link Payment Methods to Ledger Accounts",

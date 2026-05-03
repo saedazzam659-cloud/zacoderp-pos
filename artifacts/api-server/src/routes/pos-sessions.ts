@@ -7,6 +7,7 @@ import {
   branchesTable,
   usersTable,
   posTerminalsTable,
+  posTerminalUsersTable,
 } from "@workspace/db";
 import { eq, and, sql, desc, isNull, gte, lte } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -108,6 +109,22 @@ router.post("/open", async (req, res) => {
         if (busy) {
           throw Object.assign(new Error("محطة البيع قيد الاستخدام بواسطة مستخدم آخر"),
             { status: 409, busyUserId: busy.userId });
+        }
+
+        // Per-terminal user allow-list. When at least one row exists for this
+        // terminal, only the listed users (plus admins of the company) may
+        // open a session on it.
+        if (u.role !== "admin" && u.role !== "superadmin") {
+          const allow = await tx.select({ userId: posTerminalUsersTable.userId })
+            .from(posTerminalUsersTable)
+            .where(and(
+              eq(posTerminalUsersTable.companyId, u.companyId),
+              eq(posTerminalUsersTable.posTerminalId, Number(posTerminalId)),
+            ));
+          if (allow.length > 0 && !allow.some(a => a.userId === u.id)) {
+            throw Object.assign(new Error("ليس لديك صلاحية استخدام هذه المحطة. اطلب من المسؤول إضافتك."),
+              { status: 403 });
+          }
         }
 
         // Pair / verify device under lock — first writer wins.

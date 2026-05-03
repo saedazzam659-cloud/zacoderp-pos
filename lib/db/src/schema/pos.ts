@@ -31,6 +31,21 @@ export const posTerminalsTable = pgTable("pos_terminals", {
   uniqCodePerCompany: uniqueIndex("pos_terminals_company_code_uniq").on(t.companyId, t.code),
 }));
 
+// ─── POS terminal ↔ users allow-list ────────────────────────────────────────
+// Optional access control for POS terminals. When at least one row exists for
+// a terminal, only the listed users (plus admins/superadmins of the company)
+// may open a session on that terminal. When no rows exist, the terminal is
+// open to anyone in the company (legacy behaviour).
+export const posTerminalUsersTable = pgTable("pos_terminal_users", {
+  id:           serial("id").primaryKey(),
+  companyId:    integer("company_id").notNull().references(() => companiesTable.id, { onDelete: "cascade" }),
+  posTerminalId: integer("pos_terminal_id").notNull().references(() => posTerminalsTable.id, { onDelete: "cascade" }),
+  userId:       integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uniqTerminalUser: uniqueIndex("pos_terminal_users_uniq").on(t.posTerminalId, t.userId),
+}));
+
 export const posSessionStatusEnum = pgEnum("pos_session_status", ["open", "closed", "force_closed"]);
 
 export const posSessionsTable = pgTable("pos_sessions", {

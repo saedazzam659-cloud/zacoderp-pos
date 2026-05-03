@@ -2,11 +2,13 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import {
   posTerminalsTable,
+  posTerminalUsersTable,
   posSessionsTable,
   branchesTable,
   cashBoxesTable,
+  usersTable,
 } from "@workspace/db";
-import { and, eq, asc, ne, sql } from "drizzle-orm";
+import { and, eq, asc, ne, sql, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 
 const router = Router();
@@ -112,7 +114,87 @@ router.get("/", async (req, res) => {
   const busy = new Map<number, number>();
   for (const s of openSessions) if (s.posTerminalId) busy.set(s.posTerminalId, s.userId);
 
-  res.json(rows.map(r => ({ ...r, busyUserId: busy.get(r.id) ?? null })));
+  // Per-terminal allow-list counts + (for non-admin callers) filter to only
+  // terminals the user is permitted to use. When a terminal has zero allow-list
+  // rows it's considered open to anyone in the company (legacy behaviour).
+  const allowRows = await db
+    .select({ posTerminalId: posTerminalUsersTable.posTerminalId, userId: posTerminalUsersTable.userId })
+    .from(posTerminalUsersTable)
+    .where(eq(posTerminalUsersTable.companyId, cid));
+  const allowedByTerminal = new Map<number, Set<number>>();
+  for (const a of allowRows) {
+    if (!allowedByTerminal.has(a.posTerminalId)) allowedByTerminal.set(a.posTerminalId, new Set());
+    allowedByTerminal.get(a.posTerminalId)!.add(a.userId);
+  }
+
+  const u = req.authUser!;
+  const isAdminLike = u.role === "admin" || u.role === "superadmin";
+  const visible = rows.filter(r => {
+    if (isAdminLike) return true;
+    const allow = allowedByTerminal.get(r.id);
+    if (!allow || allow.size === 0) return true;       // open to all
+    return allow.has(u.id);
+  });
+
+  res.json(visible.map(r => ({
+    ...r,
+    busyUserId: busy.get(r.id) ?? null,
+    allowedUserCount: allowedByTerminal.get(r.id)?.size ?? 0,
+  })));
+});
+
+// ─── GET /pos-terminals/:id/users ───────────────────────────────────────────
+// List the user IDs allowed to use this terminal (admin-only).
+router.get("/:id/users", requireAdmin, async (req, res) => {
+  const cid = getCid(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const [t] = await db.select({ id: posTerminalsTable.id })
+    .from(posTerminalsTable)
+    .where(and(eq(posTerminalsTable.id, id), eq(posTerminalsTable.companyId, cid)))
+    .limit(1);
+  if (!t) { res.status(404).json({ error: "غير موجود" }); return; }
+  const links = await db.select({ userId: posTerminalUsersTable.userId })
+    .from(posTerminalUsersTable)
+    .where(and(eq(posTerminalUsersTable.companyId, cid), eq(posTerminalUsersTable.posTerminalId, id)));
+  res.json({ userIds: links.map(l => l.userId) });
+});
+
+// ─── PUT /pos-terminals/:id/users ───────────────────────────────────────────
+// Replace the allow-list for this terminal with the supplied user IDs.
+// Sending an empty array clears the allow-list (terminal becomes open to all).
+router.put("/:id/users", requireAdmin, async (req, res) => {
+  const cid = getCid(req, res); if (!cid) return;
+  const id = Number(req.params.id);
+  const incoming = Array.isArray(req.body?.userIds) ? (req.body.userIds as unknown[]).map(Number).filter(Number.isFinite) : null;
+  if (!incoming) { res.status(400).json({ error: "userIds مطلوب" }); return; }
+
+  const [t] = await db.select({ id: posTerminalsTable.id })
+    .from(posTerminalsTable)
+    .where(and(eq(posTerminalsTable.id, id), eq(posTerminalsTable.companyId, cid)))
+    .limit(1);
+  if (!t) { res.status(404).json({ error: "غير موجود" }); return; }
+
+  // Validate every user belongs to this company.
+  if (incoming.length > 0) {
+    const found = await db.select({ id: usersTable.id })
+      .from(usersTable)
+      .where(and(eq(usersTable.companyId, cid), inArray(usersTable.id, incoming)));
+    if (found.length !== new Set(incoming).size) {
+      res.status(400).json({ error: "بعض المستخدمين لا ينتمون لهذه الشركة" });
+      return;
+    }
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(posTerminalUsersTable)
+      .where(and(eq(posTerminalUsersTable.companyId, cid), eq(posTerminalUsersTable.posTerminalId, id)));
+    if (incoming.length > 0) {
+      await tx.insert(posTerminalUsersTable).values(
+        Array.from(new Set(incoming)).map(uid => ({ companyId: cid, posTerminalId: id, userId: uid })),
+      );
+    }
+  });
+  res.json({ ok: true, userIds: Array.from(new Set(incoming)) });
 });
 
 // ─── POST /pos-terminals ────────────────────────────────────────────────────
