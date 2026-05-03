@@ -327,6 +327,9 @@ function StoreDialog({ store, headers, onClose, onSaved }: {
               data-testid="input-store-slug"
               dir="ltr"
             />
+            <div className="text-[11px] text-muted-foreground mt-1">
+              يُستخدم كنطاق فرعي للمتجر، لذا يقبل الحروف الإنجليزية الصغيرة والأرقام والشرطة (-) فقط. الحروف العربية والمسافات تُحذف تلقائياً.
+            </div>
             {(slug || name) && (
               <div className="text-[11px] text-muted-foreground mt-1 font-mono" dir="ltr">
                 {(slug || autoSlug(name))}.zacoderp.com
