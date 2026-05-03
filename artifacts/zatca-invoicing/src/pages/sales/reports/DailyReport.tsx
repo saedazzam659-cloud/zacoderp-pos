@@ -38,10 +38,11 @@ export default function DailyReport() {
 
   const [date, setDate] = useState(today);
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [source, setSource] = useState<"all" | "manual" | "pos">("all");
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sales-daily-report", cid, date, branchId],
-    queryFn: () => salesAnalyticsApi.dailyReport(cid, date, branchId),
+    queryKey: ["sales-daily-report", cid, date, branchId, source],
+    queryFn: () => salesAnalyticsApi.dailyReport(cid, date, branchId, source),
   });
 
   const summary = data?.summary;
@@ -136,7 +137,7 @@ export default function DailyReport() {
       </div>
 
       {/* ───── Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="space-y-1.5">
           <Label>{tr("date")}</Label>
           <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
@@ -144,6 +145,25 @@ export default function DailyReport() {
         <div className="space-y-1.5">
           <Label>{t("common.branch")}</Label>
           <BranchFilter value={branchId} onChange={setBranchId} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{isAr ? "المصدر" : "Source"}</Label>
+          <div className="flex rounded-md border overflow-hidden h-10 bg-card">
+            {([
+              ["all",    isAr ? "الكل"      : "All"],
+              ["manual", isAr ? "يدوي"      : "Manual"],
+              ["pos",    isAr ? "نقاط البيع" : "POS"],
+            ] as const).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                className={`flex-1 text-xs transition-colors ${source === v ? "bg-primary text-primary-foreground" : "hover:bg-muted/30"}`}
+                onClick={() => setSource(v)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label className="invisible">.</Label>

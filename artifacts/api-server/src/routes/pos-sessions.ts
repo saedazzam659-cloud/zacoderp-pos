@@ -8,9 +8,14 @@ import {
   usersTable,
   posTerminalsTable,
   posTerminalUsersTable,
+  customersTable,
+  bankAccountsTable,
+  journalEntriesTable,
+  journalEntryLinesTable,
 } from "@workspace/db";
-import { eq, and, sql, desc, isNull, gte, lte } from "drizzle-orm";
+import { eq, and, sql, desc, isNull, gte, lte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
+import { loadMappings, pickAccount } from "../lib/accountingMappings.js";
 
 const router = Router();
 router.use(extractAuth);
@@ -207,7 +212,181 @@ router.post("/:id/close", async (req, res) => {
     closedAt:     new Date(),
     closedNotes:  notes ?? null,
   }).where(eq(posSessionsTable.id, id)).returning();
-  res.json(row);
+
+  // ── Consolidated journal entry for the shift ─────────────────────────────
+  // Pulls every posted invoice in this session and books one summary JE:
+  //   Dr Cash (cashbox)              ── total of cash sales
+  //   Dr Bank (per bank account)     ── total of bank/card sales
+  //   Dr Customer A/R (per customer) ── total of credit sales
+  //   Dr Sales Discount              ── sum of header discounts
+  //   Cr Sales Revenue               ── sum of subtotals (gross of discount)
+  //   Cr VAT Output                  ── sum of VAT
+  // The COGS / inventory side is already booked per-invoice at /post time, so
+  // the close JE only handles the sales side. Failures here do NOT roll the
+  // session back — the cashier has already counted the drawer; we surface the
+  // error in `journalError` so the operator can fix mappings and retry later.
+  let journalEntryId: number | null = null;
+  let journalError: string | null = null;
+  try {
+    const sessionInvoices = await db.select({
+      id:             salesInvoicesTable.id,
+      docNumber:      salesInvoicesTable.docNumber,
+      customerId:     salesInvoicesTable.customerId,
+      paymentType:    salesInvoicesTable.paymentType,
+      cashBoxId:      salesInvoicesTable.cashBoxId,
+      bankAccountId:  salesInvoicesTable.bankAccountId,
+      branchId:       salesInvoicesTable.branchId,
+      subtotal:       salesInvoicesTable.subtotal,
+      discountAmount: salesInvoicesTable.discountAmount,
+      vatAmount:      salesInvoicesTable.vatAmount,
+      totalAmount:    salesInvoicesTable.totalAmount,
+    }).from(salesInvoicesTable).where(and(
+      eq(salesInvoicesTable.companyId, s.companyId),
+      eq(salesInvoicesTable.posSessionId, id),
+      eq(salesInvoicesTable.status, "posted"),
+    ));
+
+    if (sessionInvoices.length > 0) {
+      const totalSubtotal = sessionInvoices.reduce((t, i) => t + Number(i.subtotal || 0), 0);
+      const totalDiscount = sessionInvoices.reduce((t, i) => t + Number(i.discountAmount || 0), 0);
+      const totalVat      = sessionInvoices.reduce((t, i) => t + Number(i.vatAmount || 0), 0);
+
+      // Group by destination party-account so the JE has one debit line per
+      // distinct cashbox / bank / customer instead of one per invoice — that's
+      // the whole point of consolidation.
+      const cashByBox    = new Map<number, number>();
+      const bankByAcc    = new Map<number, number>();
+      const arByCustomer = new Map<number, number>();
+
+      for (const inv of sessionInvoices) {
+        const total = Number(inv.totalAmount || 0);
+        if (inv.paymentType === "cash" && inv.cashBoxId) {
+          cashByBox.set(inv.cashBoxId, (cashByBox.get(inv.cashBoxId) ?? 0) + total);
+        } else if (inv.paymentType === "bank" && inv.bankAccountId) {
+          bankByAcc.set(inv.bankAccountId, (bankByAcc.get(inv.bankAccountId) ?? 0) + total);
+        } else if (inv.customerId) {
+          // credit (or any non-cash/non-bank) → customer receivable
+          arByCustomer.set(inv.customerId, (arByCustomer.get(inv.customerId) ?? 0) + total);
+        }
+      }
+
+      // Resolve the GL accounts behind each cashbox / bank / customer in one
+      // query each — tenant-scoped to prevent cross-company FK leakage.
+      const cashBoxIds = [...cashByBox.keys()];
+      const bankAccIds = [...bankByAcc.keys()];
+      const custIds    = [...arByCustomer.keys()];
+
+      const [cbRows, baRows, custRows, mapSi] = await Promise.all([
+        cashBoxIds.length
+          ? db.select({ id: cashBoxesTable.id, accountId: cashBoxesTable.accountId, nameAr: cashBoxesTable.nameAr })
+              .from(cashBoxesTable)
+              .where(and(eq(cashBoxesTable.companyId, s.companyId), inArray(cashBoxesTable.id, cashBoxIds)))
+          : Promise.resolve([] as Array<{ id: number; accountId: number | null; nameAr: string }>),
+        bankAccIds.length
+          ? db.select({ id: bankAccountsTable.id, accountId: bankAccountsTable.accountId, nameAr: bankAccountsTable.nameAr })
+              .from(bankAccountsTable)
+              .where(and(eq(bankAccountsTable.companyId, s.companyId), inArray(bankAccountsTable.id, bankAccIds)))
+          : Promise.resolve([] as Array<{ id: number; accountId: number | null; nameAr: string }>),
+        custIds.length
+          ? db.select({ id: customersTable.id, accountId: customersTable.accountId, nameAr: customersTable.nameAr })
+              .from(customersTable)
+              .where(and(eq(customersTable.companyId, s.companyId), inArray(customersTable.id, custIds)))
+          : Promise.resolve([] as Array<{ id: number; accountId: number | null; nameAr: string }>),
+        loadMappings(s.companyId, "sales_invoice"),
+      ]);
+
+      const cbMap = new Map(cbRows.map(r => [r.id, r]));
+      const baMap = new Map(baRows.map(r => [r.id, r]));
+      const cuMap = new Map(custRows.map(r => [r.id, r]));
+
+      const salesAccId    = pickAccount(null, mapSi("sales_invoice", "revenue"));
+      const taxAccId      = pickAccount(null, mapSi("sales_invoice", "vat_output"));
+      const discountAccId = pickAccount(null, mapSi("sales_invoice", "discount"));
+
+      type JLine = { accountId: number; debit?: number; credit?: number; description?: string };
+      const lines: JLine[] = [];
+
+      // ── Debits: cash boxes ───────────────────────────────────────────────
+      for (const [cbId, amt] of cashByBox) {
+        const cb = cbMap.get(cbId);
+        if (!cb?.accountId) throw new Error(`الخزنة "${cb?.nameAr ?? cbId}" لا تحتوي على حساب محاسبي مرتبط`);
+        if (amt > 0) lines.push({ accountId: cb.accountId, debit: amt, description: `تحصيل نقدي — ${cb.nameAr}` });
+      }
+      for (const [baId, amt] of bankByAcc) {
+        const ba = baMap.get(baId);
+        if (!ba?.accountId) throw new Error(`الحساب البنكي "${ba?.nameAr ?? baId}" لا يحتوي على حساب محاسبي مرتبط`);
+        if (amt > 0) lines.push({ accountId: ba.accountId, debit: amt, description: `تحصيل بنكي — ${ba.nameAr}` });
+      }
+      for (const [cuId, amt] of arByCustomer) {
+        const cu = cuMap.get(cuId);
+        if (!cu?.accountId) throw new Error(`العميل "${cu?.nameAr ?? cuId}" لا يحتوي على حساب ذمم مرتبط`);
+        if (amt > 0) lines.push({ accountId: cu.accountId, debit: amt, description: `ذمم العميل — ${cu.nameAr}` });
+      }
+
+      // Discount debit (one consolidated line)
+      if (totalDiscount > 0) {
+        if (!discountAccId) throw new Error("لم يتم تحديد حساب الخصم المسموح به (اضبطه من ربط القيود المحاسبية)");
+        lines.push({ accountId: discountAccId, debit: totalDiscount, description: "خصم مسموح به (نقاط بيع)" });
+      }
+
+      // ── Credits ──────────────────────────────────────────────────────────
+      // In this schema `subtotal` is already net of header discount and VAT,
+      // and `totalAmount = subtotal + vat - headerDiscount`. So crediting sales
+      // at `totalSubtotal` together with the `totalDiscount` debit balances:
+      //   Dr cash (=Σ totalAmount = Σ(subtotal+vat-disc)) + Dr discount (=Σdisc)
+      //     = Σ(subtotal + vat)
+      //   Cr sales (=Σsubtotal) + Cr vat (=Σvat) = Σ(subtotal + vat)  ✓
+      // Crediting at gross (subtotal+discount) — as an earlier draft did — would
+      // overstate revenue by the discount amount and fail the balance check.
+      if (totalSubtotal > 0) {
+        if (!salesAccId) throw new Error("لم يتم تحديد حساب إيراد المبيعات (اضبطه من ربط القيود المحاسبية)");
+        lines.push({ accountId: salesAccId, credit: totalSubtotal, description: "إيراد مبيعات نقاط البيع" });
+      }
+      if (totalVat > 0) {
+        if (!taxAccId) throw new Error("لم يتم تحديد حساب ضريبة القيمة المضافة مخرجات (اضبطه من ربط القيود المحاسبية)");
+        lines.push({ accountId: taxAccId, credit: totalVat, description: "ضريبة القيمة المضافة (مخرجات) — نقاط بيع" });
+      }
+
+      // Sanity: balance check before insert (defensive — schema also enforces).
+      const dr = lines.reduce((t, l) => t + (l.debit  ?? 0), 0);
+      const cr = lines.reduce((t, l) => t + (l.credit ?? 0), 0);
+      if (Math.abs(dr - cr) > 0.01) {
+        throw new Error(`القيد غير متوازن: مدين ${dr.toFixed(2)} ≠ دائن ${cr.toFixed(2)}`);
+      }
+
+      if (lines.length >= 2) {
+        const docNumber = `POS-${id}`;
+        const closeDate = new Date().toISOString().slice(0, 10);
+        const [entry] = await db.insert(journalEntriesTable).values({
+          companyId:    s.companyId,
+          branchId:     s.branchId ?? null,
+          docNumber,
+          entryDate:    closeDate,
+          currency:     "SAR",
+          exchangeRate: "1",
+          description:  `قيد إقفال وردية نقاط البيع رقم ${id} (${sessionInvoices.length} فاتورة)`,
+          entryType:    "pos_session_close",
+          status:       "posted",
+        }).returning();
+        await db.insert(journalEntryLinesTable).values(
+          lines.map((l, i) => ({
+            entryId:     entry.id,
+            accountId:   l.accountId,
+            debit:       String((l.debit  ?? 0).toFixed(2)),
+            credit:      String((l.credit ?? 0).toFixed(2)),
+            description: l.description ?? `إقفال وردية ${id}`,
+            sortOrder:   i,
+          }))
+        );
+        journalEntryId = entry.id;
+      }
+    }
+  } catch (e: any) {
+    journalError = e?.message ?? String(e);
+    req.log?.warn?.({ sessionId: id, err: journalError }, "pos-session close: consolidated JE failed");
+  }
+
+  res.json({ ...row, journalEntryId, journalError });
 });
 
 // ─── GET /pos-sessions ────────────────────────────────────────────────────────

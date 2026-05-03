@@ -799,6 +799,22 @@ router.get("/daily-report", async (req, res) => {
     }
     const bid = getBid(req);
     const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    // Source filter — `manual` (default) excludes POS rows, `pos` shows POS only,
+    // `all` returns everything. The same filter is applied to returns below so
+    // KPI tiles like net-sales stay coherent within the chosen source.
+    const source = String(req.query.source ?? "all").toLowerCase();
+    const invSourceFilter =
+      source === "pos"    ? [sql`${salesInvoicesTable.posSessionId} IS NOT NULL`] :
+      source === "manual" ? [sql`${salesInvoicesTable.posSessionId} IS NULL`] :
+      [];
+    const retSourceFilter =
+      source === "pos" ? [sql`${salesReturnsTable.invoiceId} IN (
+        SELECT id FROM sales_invoices WHERE company_id = ${cid} AND pos_session_id IS NOT NULL
+      )`] :
+      source === "manual" ? [sql`(${salesReturnsTable.invoiceId} IS NULL OR ${salesReturnsTable.invoiceId} IN (
+        SELECT id FROM sales_invoices WHERE company_id = ${cid} AND pos_session_id IS NULL
+      ))`] :
+      [];
 
     // ── 1. Invoices on the day (any status — show what happened).
     // Time string is built in SQL with to_char so the bucket reflects the
@@ -824,6 +840,7 @@ router.get("/daily-report", async (req, res) => {
       .where(and(
         eq(salesInvoicesTable.companyId, cid),
         eq(salesInvoicesTable.invoiceDate, date),
+        ...invSourceFilter,
         ...branchScopeSpread(req, salesInvoicesTable.branchId, bid),
       ));
 
@@ -916,6 +933,7 @@ router.get("/daily-report", async (req, res) => {
         eq(salesReturnsTable.companyId, cid),
         eq(salesReturnsTable.returnDate, date),
         eq(salesReturnsTable.status, "posted"),
+        ...retSourceFilter,
         ...branchScopeSpread(req, salesReturnsTable.branchId, bid),
       ));
 

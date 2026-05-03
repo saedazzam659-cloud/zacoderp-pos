@@ -199,8 +199,8 @@ export const salesAnalyticsApi = {
     get<AgingRow[]>(`/aging${qs({ companyId: cid, asOf, branchId })}`),
   returnsByCustomer: (cid?: number, from?: string, to?: string, branchId?: number) =>
     get<ReturnsByCustomerRow[]>(`/returns-by-customer${qs({ companyId: cid, from, to, branchId })}`),
-  dailyReport:       (cid?: number, date?: string, branchId?: number) =>
-    get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId })}`),
+  dailyReport:       (cid?: number, date?: string, branchId?: number, source?: "all" | "manual" | "pos") =>
+    get<DailyReport>(`/daily-report${qs({ companyId: cid, date, branchId, source })}`),
   paymentMixReport:  (cid?: number, date?: string, branchId?: number) =>
     get<PaymentMixReport>(`/payment-mix-report${qs({ companyId: cid, date, branchId })}`),
   paymentMixAiInsights: async (payload: PaymentMixReport & { language?: "ar" | "en" }): Promise<PaymentMixAiInsights> => {

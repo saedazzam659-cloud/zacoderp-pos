@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import {
   ClipboardList, ReceiptText, Undo2, Sparkles, RefreshCw,
   CheckCircle2, RotateCcw, Pencil, Eye, AlertTriangle, TrendingUp,
-  FileText, Search, Filter, Loader2,
+  FileText, Search, Filter, Loader2, ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -176,6 +176,16 @@ export default function PosOperations() {
           <p className="text-sm text-muted-foreground mt-1">{tr("subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/inventory/stock-counts")}
+            className="gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50"
+            title={isRtl ? "الجرد الخارجي للأصناف" : "Stocktake"}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            {isRtl ? "الجرد الخارجي" : "Stocktake"}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => {
             summary.refetch(); invoices.refetch(); returns.refetch(); insights.refetch();
           }} className="gap-1">
