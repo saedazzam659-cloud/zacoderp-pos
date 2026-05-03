@@ -823,16 +823,6 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <div className="flex items-center justify-center gap-0.5">
-                              <Button variant="ghost" size="icon" className="h-6 w-6"
-                                title={t("purchasingPages.purchaseInvoices.tooltips.viewEdit")}
-                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/${inv.id}`); }}>
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                title={t("purchasingPages.purchaseInvoices.tooltips.duplicate")}
-                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/new?from=${inv.id}`); }}>
-                                <Copy className="h-3.5 w-3.5" />
-                              </Button>
                               <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
                                 title={t("purchasingPages.purchaseInvoices.tooltips.print")}
                                 onClick={(e) => { e.stopPropagation(); openPrint(inv); }}>
@@ -845,18 +835,28 @@ ${sections}
                                   <RotateCcw className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              {inv.status === "draft" && (
-                                <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50"
-                                  title={t("purchasingPages.purchaseInvoices.tooltips.post")}
-                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseInvoices.confirms.post"))) postMut.mutate(inv.id); }}>
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
                               {inv.status === "posted" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
                                   title={t("purchasingPages.purchaseInvoices.tooltips.unpost")}
                                   onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseInvoices.confirms.unpost"))) unpostMut.mutate(inv.id); }}>
                                   <Undo2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="h-6 w-6"
+                                title={t("purchasingPages.purchaseInvoices.tooltips.viewEdit")}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/${inv.id}`); }}>
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                title={t("purchasingPages.purchaseInvoices.tooltips.duplicate")}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/purchasing/invoices/new?from=${inv.id}`); }}>
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                              {inv.status === "draft" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50"
+                                  title={t("purchasingPages.purchaseInvoices.tooltips.post")}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("purchasingPages.purchaseInvoices.confirms.post"))) postMut.mutate(inv.id); }}>
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {inv.status === "draft" && (

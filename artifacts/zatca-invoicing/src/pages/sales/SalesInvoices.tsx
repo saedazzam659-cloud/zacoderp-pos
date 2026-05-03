@@ -266,19 +266,10 @@ export default function SalesInvoices() {
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" title={t("common.openEdit")}
-                            onClick={() => navigate(`/sales/invoices/${inv.id}`)}>
-                            <Eye className="h-3.5 w-3.5" />
-                          </Button>
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:text-primary hover:bg-muted"
                             title="طباعة"
                             onClick={() => openPrint(inv)}>
                             <Printer className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                            title={t("common.duplicate")}
-                            onClick={() => navigate(`/sales/invoices/new?from=${inv.id}`)}>
-                            <Copy className="h-3.5 w-3.5" />
                           </Button>
                           {inv.status === "posted" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
@@ -294,6 +285,15 @@ export default function SalesInvoices() {
                               <Undo2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title={t("common.openEdit")}
+                            onClick={() => navigate(`/sales/invoices/${inv.id}`)}>
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            title={t("common.duplicate")}
+                            onClick={() => navigate(`/sales/invoices/new?from=${inv.id}`)}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
                           {inv.status === "draft" && (
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-green-700" title={t("common.post")}
                               onClick={() => { if (confirm(t("salesInvoices.confirmPost"))) postMut.mutate(inv.id); }}>

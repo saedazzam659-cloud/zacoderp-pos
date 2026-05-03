@@ -1782,6 +1782,18 @@ ${sections}
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <div className="flex items-center justify-center gap-0.5">
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
+                                title="طباعة"
+                                onClick={(e) => { e.stopPropagation(); openPrint(r); }}>
+                                <Printer className="h-3.5 w-3.5" />
+                              </Button>
+                              {r.status === "posted" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                  title={t("salesReturns.actionUnpost")}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmUnpost"))) unpostMut.mutate(r.id); }}>
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               {r.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                                   title={t("salesReturns.actionEdit")}
@@ -1789,11 +1801,6 @@ ${sections}
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-700 hover:text-primary hover:bg-muted"
-                                title="طباعة"
-                                onClick={(e) => { e.stopPropagation(); openPrint(r); }}>
-                                <Printer className="h-3.5 w-3.5" />
-                              </Button>
                               <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                                 title={t("salesReturns.actionDuplicate")}
                                 onClick={(e) => { e.stopPropagation(); duplicateReturn(r.id); }}>
@@ -1803,13 +1810,6 @@ ${sections}
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-emerald-700 hover:bg-emerald-50" title={t("salesReturns.actionPost")}
                                   onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmPost"))) postMut.mutate(r.id); }}>
                                   <CheckCircle2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              {r.status === "posted" && (
-                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                                  title={t("salesReturns.actionUnpost")}
-                                  onClick={(e) => { e.stopPropagation(); if (confirm(t("salesReturns.confirmUnpost"))) unpostMut.mutate(r.id); }}>
-                                  <Undo2 className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {r.status === "draft" && (

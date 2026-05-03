@@ -1823,6 +1823,14 @@ ${sections}
                                 title={tr("printTip")} onClick={(e) => { e.stopPropagation(); openPrint(r); }}>
                                 <Printer className="h-3.5 w-3.5" />
                               </Button>
+                              {r.status === "posted" && (
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-50"
+                                  title={tr("unpostShort")}
+                                  disabled={unpostMut.isPending}
+                                  onClick={(e) => { e.stopPropagation(); if (confirm(tr("confirmUnpost"))) unpostMut.mutate(r.id); }}>
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               {r.status === "draft" && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-700 hover:bg-blue-50"
                                   title={tr("editTip")} onClick={(e) => { e.stopPropagation(); startEdit(r.id); }}>
@@ -1839,14 +1847,6 @@ ${sections}
                                   disabled={postMut.isPending}
                                   onClick={(e) => { e.stopPropagation(); postMut.mutate(r.id); }}>
                                   <CheckCircle2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              {r.status === "posted" && (
-                                <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-700 hover:bg-amber-50"
-                                  title={tr("unpostShort")}
-                                  disabled={unpostMut.isPending}
-                                  onClick={(e) => { e.stopPropagation(); if (confirm(tr("confirmUnpost"))) unpostMut.mutate(r.id); }}>
-                                  <Undo2 className="h-3.5 w-3.5" />
                                 </Button>
                               )}
                               {r.status === "draft" && (
