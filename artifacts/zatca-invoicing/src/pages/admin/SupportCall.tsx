@@ -44,6 +44,14 @@ export default function SupportCall() {
   const [joined, setJoined]   = useState(false);
   const [displayName, setDisplayName] = useState<string>(user?.fullName ?? user?.username ?? "الدعم الفني");
 
+  // True whenever the page is loaded inside a parent iframe (e.g. Replit
+  // preview / embedded). Browsers block camera + microphone permission
+  // prompts from nested iframes unless the OUTER iframe also delegates the
+  // permission via its `allow=` attribute — which we cannot control. In
+  // that case the only reliable way to get the prompt is to open the call
+  // in a real top-level browser tab, so we surface a prominent CTA.
+  const isEmbedded = typeof window !== "undefined" && window.self !== window.top;
+
   const callUrl = useMemo(() => {
     // `userInfo.displayName` is read by Jitsi from the URL hash — that's the
     // documented way to pre-fill the participant name without using the IFrame
@@ -169,17 +177,29 @@ export default function SupportCall() {
                 : "اضغط «دخول الغرفة» لبدء البث. سيُطلب إذن الكاميرا والميكروفون من المتصفح."}
             </CardDescription>
           </div>
-          {!joined ? (
-            <Button onClick={() => setJoined(true)} className="gap-1" data-testid="btn-join-room">
-              <Video className="h-4 w-4" /> دخول الغرفة
+          <div className="flex items-center gap-2">
+            <Button asChild variant={isEmbedded ? "default" : "outline"} className="gap-1" data-testid="btn-open-tab">
+              <a href={callUrl} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" /> فتح في نافذة جديدة
+              </a>
             </Button>
-          ) : (
-            <Button variant="outline" onClick={() => setJoined(false)} data-testid="btn-leave-room">
-              مغادرة
-            </Button>
-          )}
+            {!joined ? (
+              <Button onClick={() => setJoined(true)} variant={isEmbedded ? "outline" : "default"} className="gap-1" data-testid="btn-join-room">
+                <Video className="h-4 w-4" /> دخول داخل الصفحة
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={() => setJoined(false)} data-testid="btn-leave-room">
+                مغادرة
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
+          {isEmbedded && !joined && (
+            <div className="m-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <strong>ملاحظة:</strong> أنت تعرض النظام داخل إطار مدمج، والمتصفح يمنع طلب إذن الكاميرا والميكروفون من داخل إطار متداخل. للحصول على المكالمة كاملة، استخدم زر <strong>«فتح في نافذة جديدة»</strong> أعلاه.
+            </div>
+          )}
           {joined ? (
             <iframe
               ref={iframeRef}
