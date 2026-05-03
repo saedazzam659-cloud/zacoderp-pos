@@ -1,0 +1,16 @@
+{
+  "name": "نقاط البيع - POS",
+  "short_name": "POS",
+  "description": "نظام نقاط البيع الذكي",
+  "start_url": "/pos/",
+  "scope": "/pos/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#10b981",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -28,6 +28,8 @@ import {
   ChefHat,
 } from "lucide-react";
 import RestaurantOrdersDialog from "@/components/RestaurantOrdersDialog";
+import PosAiPanel from "@/components/PosAiPanel";
+import { enqueueInvoice, syncNow, countQueued } from "@/lib/offlineQueue";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -132,8 +134,14 @@ export default function CashierPage() {
 
   // Online + clock
   useEffect(() => {
-    const onO = () => setOnline(true);
+    const onO = () => {
+      setOnline(true);
+      // Auto-sync any queued offline invoices.
+      void syncNow(getToken()).catch(() => {});
+    };
     const onF = () => setOnline(false);
+    // On mount, attempt sync if any queued ops exist.
+    void countQueued().then((n) => { if (n > 0 && navigator.onLine) void syncNow(getToken()).catch(() => {}); });
     window.addEventListener("online", onO);
     window.addEventListener("offline", onF);
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -372,7 +380,7 @@ export default function CashierPage() {
             // ignore — invoice will be created without session linkage.
           }
         }
-        const inv = await api.createSalesInvoice({
+        const invoiceBody = {
           invoiceDate: today,
           branchId,
           paymentType,
@@ -386,19 +394,31 @@ export default function CashierPage() {
           notes: `POS — ${methodArabic(method)}`,
           lines,
           posSessionId,
-        });
-        // Try to post (creates journal entry + decrements stock).
-        // If posting fails (e.g. missing accounts), keep the draft so the
-        // cashier still sees the receipt.
+        };
         try {
-          const posted = await api.postSalesInvoice(inv.id);
-          setLastInvoice(posted);
-        } catch (postErr: any) {
-          setLastInvoice(inv);
-          setSubmitError(
-            "تم حفظ الفاتورة كمسودة، لكن تعذّر ترحيلها: " +
-              (postErr?.message || ""),
-          );
+          const inv = await api.createSalesInvoice(invoiceBody);
+          // Try to post (creates journal entry + decrements stock).
+          try {
+            const posted = await api.postSalesInvoice(inv.id);
+            setLastInvoice(posted);
+          } catch (postErr: any) {
+            setLastInvoice(inv);
+            setSubmitError(
+              "تم حفظ الفاتورة كمسودة، لكن تعذّر ترحيلها: " + (postErr?.message || ""),
+            );
+          }
+        } catch (netErr: any) {
+          // Offline fallback: queue locally and show a soft receipt.
+          if (!navigator.onLine || /Failed to fetch|NetworkError|الاتصال/.test(netErr?.message || "")) {
+            const op = await enqueueInvoice(invoiceBody as any);
+            setLastInvoice({
+              id: 0, docNumber: `OFFLINE-${op.clientId.slice(0, 8)}`,
+              invoiceDate: today, totalAmount: String(grandTotal), status: "queued_offline",
+            } as any);
+            setSubmitError("تم حفظ الفاتورة محلياً (وضع عدم الاتصال) — ستتم المزامنة تلقائياً عند عودة الإنترنت.");
+          } else {
+            throw netErr;
+          }
         }
         setPaidMethod(method);
         setPaid(true);
@@ -758,6 +778,19 @@ export default function CashierPage() {
         cashCashBoxId={posSettings?.posCashCashBoxId ?? defaultCashBoxId ?? null}
         cardBankAccountId={posSettings?.posCardBankAccountId ?? null}
         defaultWarehouseId={defaultWarehouseId ?? null}
+      />
+
+      <PosAiPanel
+        cart={cart}
+        totalAmount={grandTotal}
+        discountPct={discountPct}
+        paymentType="cash"
+        allItems={items}
+        onAddItem={(it) => setCart((c) => {
+          const ex = c.find((l) => l.item.id === it.id);
+          return ex ? c.map((l) => l.item.id === it.id ? { ...l, qty: l.qty + 1 } : l) : [...c, { item: it, qty: 1 }];
+        })}
+        onApplyDiscount={(pct) => setDiscountPct(pct)}
       />
     </div>
   );
