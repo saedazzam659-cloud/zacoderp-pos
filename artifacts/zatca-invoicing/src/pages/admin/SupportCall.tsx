@@ -176,6 +176,24 @@ export default function SupportCall() {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   };
 
+  // Smart share — guarantees the host has entered the room BEFORE the
+  // customer's link is shared. This eliminates the lobby/wait problem at
+  // its root: the customer can never reach the room before the host now.
+  // Flow: if no call yet, open the host window, wait ~3s for Jitsi to
+  // bootstrap, then copy the link (or hand off to WhatsApp).
+  const smartShare = async (mode: "copy" | "whatsapp") => {
+    if (!callActive) {
+      openCallWindow();
+      toast({
+        title: "جاري فتح الاجتماع أولًا...",
+        description: "سيتم نسخ الرابط بعد لحظات لضمان دخولك قبل العميل.",
+      });
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (mode === "copy") await copy(shareUrl, "الرابط");
+    else sendWhatsapp();
+  };
+
   const winIsClosed = callActive && (!winRef.current || winRef.current.closed);
 
   return (
@@ -333,10 +351,10 @@ export default function SupportCall() {
             <Label className="text-xs">رابط دعوة العميل</Label>
             <div className="flex gap-2 mt-1 flex-wrap">
               <Input value={shareUrl} readOnly dir="ltr" className="font-mono text-xs flex-1 min-w-[260px]" data-testid="input-share-url" />
-              <Button variant="outline" onClick={() => copy(shareUrl, "الرابط")} disabled={!callActive} className="gap-1" data-testid="btn-copy-link">
-                <Copy className="h-4 w-4" /> نسخ
+              <Button onClick={() => smartShare("copy")} className="gap-1 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-copy-link">
+                <Copy className="h-4 w-4" /> {callActive ? "نسخ" : "افتح ثم انسخ"}
               </Button>
-              <Button variant="outline" onClick={sendWhatsapp} disabled={!callActive} className="gap-1" data-testid="btn-send-whatsapp">
+              <Button variant="outline" onClick={() => smartShare("whatsapp")} className="gap-1" data-testid="btn-send-whatsapp">
                 <Send className="h-4 w-4" /> واتساب
               </Button>
               <Button variant="outline" asChild disabled={!callActive} className="gap-1">
@@ -346,12 +364,12 @@ export default function SupportCall() {
               </Button>
             </div>
             {!callActive ? (
-              <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <strong>مهم جدًا:</strong> افتح الاجتماع أولًا من الزر الأخضر أعلاه، ثم انسخ الرابط وأرسله للعميل. لو أرسلت الرابط قبل دخولك، سيعلق العميل في شاشة <em>«انتظار موافقة المضيف»</em>.
+              <div className="mt-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                <strong>نسخ ذكي:</strong> عند الضغط على «افتح ثم انسخ» أو «واتساب»، سيفتح النظام الاجتماع تلقائيًا من جانبك أولًا، ثم بعد 3 ثوانٍ ينسخ/يرسل الرابط — هذا يضمن أن العميل لن يعلق أبدًا في شاشة الانتظار.
               </div>
             ) : (
-              <div className="text-[11px] text-muted-foreground mt-1">
-                ✓ أنت داخل الغرفة الآن — يمكنك إرسال الرابط بأمان. عندما يفتح العميل الرابط لأول مرة سيطلب المتصفح إذن الكاميرا والميكروفون.
+              <div className="text-[11px] text-emerald-700 mt-1">
+                ✓ أنت داخل الغرفة الآن — العميل سيدخل مباشرة بدون انتظار موافقة.
               </div>
             )}
           </div>
