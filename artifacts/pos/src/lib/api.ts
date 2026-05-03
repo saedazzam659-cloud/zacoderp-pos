@@ -411,6 +411,16 @@ export const api = {
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
 
+  rWaiterPerformance: (days = 30) =>
+    req<{
+      rangeDays: number;
+      waiters: {
+        waiterId: number; waiterName: string | null;
+        orders: number; revenue: string; avgTicket: string;
+        guests: number; avgPrepMin: string; cancelled: number; score: number;
+      }[];
+    }>("GET", `/api/pos-restaurant/ai/waiter-performance?days=${days}`),
+
   rPeakHours: (days = 30) =>
     req<{
       rangeDays: number; totalOrders: number; totalRevenue: number;

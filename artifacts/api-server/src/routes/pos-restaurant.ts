@@ -8,6 +8,7 @@ import {
   posOrderItemsTable,
   posSuspiciousOpsTable,
   salesInvoicesTable,
+  usersTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -606,6 +607,47 @@ router.get("/ai/peak-hours", async (req, res) => {
     rangeDays: days, totalOrders, totalRevenue,
     byHour, byDow, peakHour, peakDow, recommendations,
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// AI: waiter performance scoring (last 30 days)
+// ════════════════════════════════════════════════════════════════════════
+router.get("/ai/waiter-performance", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const days = Math.min(90, Math.max(1, Number(req.query.days ?? 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const rows = await db.select({
+    waiterId:    posOrdersTable.waiterId,
+    waiterName:  usersTable.fullName,
+    orders:      sql<number>`COUNT(*)::int`,
+    revenue:     sql<string>`COALESCE(SUM(${posOrdersTable.total}::numeric), 0)::text`,
+    avgTicket:   sql<string>`COALESCE(AVG(${posOrdersTable.total}::numeric), 0)::text`,
+    guests:      sql<number>`COALESCE(SUM(${posOrdersTable.guestCount}), 0)::int`,
+    avgPrepMin:  sql<string>`COALESCE(AVG(EXTRACT(EPOCH FROM (${posOrdersTable.closedAt} - ${posOrdersTable.openedAt}))/60), 0)::text`,
+    cancelled:   sql<number>`SUM(CASE WHEN ${posOrdersTable.status} = 'cancelled' THEN 1 ELSE 0 END)::int`,
+  }).from(posOrdersTable)
+    .leftJoin(usersTable, eq(usersTable.id, posOrdersTable.waiterId))
+    .where(and(
+      eq(posOrdersTable.companyId, cid),
+      gte(posOrdersTable.openedAt, since),
+      sql`${posOrdersTable.waiterId} IS NOT NULL`,
+    ))
+    .groupBy(posOrdersTable.waiterId, usersTable.fullName)
+    .orderBy(sql`SUM(${posOrdersTable.total}::numeric) DESC NULLS LAST`);
+
+  // Score 0-100 = 60% revenue rank + 30% orders rank + 10% low-cancel
+  const maxRev = Math.max(1, ...rows.map(r => Number(r.revenue)));
+  const maxOrd = Math.max(1, ...rows.map(r => r.orders));
+  const ranked = rows.map(r => {
+    const revScore = (Number(r.revenue) / maxRev) * 60;
+    const ordScore = (r.orders / maxOrd) * 30;
+    const cancelRate = r.orders > 0 ? r.cancelled / r.orders : 0;
+    const reliabilityScore = (1 - cancelRate) * 10;
+    return { ...r, score: Math.round(revScore + ordScore + reliabilityScore) };
+  });
+
+  res.json({ rangeDays: days, waiters: ranked });
 });
 
 router.put("/ai/suspicious/:id/ack", async (req, res) => {

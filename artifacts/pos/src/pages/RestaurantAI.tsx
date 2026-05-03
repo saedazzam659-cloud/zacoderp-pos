@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, ChevronRight, TrendingUp, Clock, AlertTriangle,
-  Loader2, RefreshCw, CheckCheck, ShieldAlert, Users, Crown,
+  Loader2, RefreshCw, CheckCheck, ShieldAlert, Users, Crown, Award,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, getToken } from "@/lib/api";
@@ -19,6 +19,7 @@ export default function RestaurantAI() {
   const peaksQ = useQuery({ queryKey: ["r-peaks"],   queryFn: () => api.rPeakHours(30) });
   const topQ   = useQuery({ queryKey: ["r-top"],     queryFn: () => api.rRecommend(10) });
   const suspQ  = useQuery({ queryKey: ["r-susp"],    queryFn: () => api.rSuspicious() });
+  const perfQ  = useQuery({ queryKey: ["r-perf"],    queryFn: () => api.rWaiterPerformance(30) });
 
   const scan = useMutation({
     mutationFn: () => api.rSuspiciousScan(),
@@ -47,6 +48,7 @@ export default function RestaurantAI() {
           qc.invalidateQueries({ queryKey: ["r-peaks"] });
           qc.invalidateQueries({ queryKey: ["r-top"] });
           qc.invalidateQueries({ queryKey: ["r-susp"] });
+          qc.invalidateQueries({ queryKey: ["r-perf"] });
         }}>
           <RefreshCw className="h-4 w-4" />
         </Button>
@@ -141,6 +143,60 @@ export default function RestaurantAI() {
                     <div className="text-amber-400 font-bold">{Number(it.revenue).toFixed(0)} ر.س</div>
                   </div>
                 ))}
+              </div>
+            )}
+        </Card>
+
+        {/* Waiter performance */}
+        <Card title="أداء النوادل (آخر 30 يوم)" icon={Award}>
+          {perfQ.isLoading ? <Loader2 className="animate-spin mx-auto my-6" /> :
+            (perfQ.data?.waiters ?? []).length === 0 ? (
+              <Empty msg="لا توجد طلبات منسوبة لنوادل بعد" />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-white/70 text-xs">
+                    <tr>
+                      <th className="p-2 text-right">#</th>
+                      <th className="p-2 text-right">النادل</th>
+                      <th className="p-2 text-right">الطلبات</th>
+                      <th className="p-2 text-right">الإيراد</th>
+                      <th className="p-2 text-right">متوسط الفاتورة</th>
+                      <th className="p-2 text-right">الضيوف</th>
+                      <th className="p-2 text-right">متوسط الوقت</th>
+                      <th className="p-2 text-right">ملغية</th>
+                      <th className="p-2 text-right">الدرجة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perfQ.data!.waiters.map((w, i) => (
+                      <tr key={w.waiterId} className="border-t border-white/5">
+                        <td className="p-2">
+                          <div className={`w-6 h-6 rounded-full grid place-items-center text-xs font-bold ${
+                            i === 0 ? "bg-amber-500 text-slate-900" : i === 1 ? "bg-slate-300 text-slate-900" : i === 2 ? "bg-amber-700" : "bg-slate-700"
+                          }`}>{i + 1}</div>
+                        </td>
+                        <td className="p-2 font-semibold">{w.waiterName ?? `#${w.waiterId}`}</td>
+                        <td className="p-2">{w.orders}</td>
+                        <td className="p-2 text-amber-400 font-bold">{Number(w.revenue).toFixed(0)}</td>
+                        <td className="p-2 text-white/70">{Number(w.avgTicket).toFixed(2)}</td>
+                        <td className="p-2 text-white/70">{w.guests}</td>
+                        <td className="p-2 text-white/70">{Number(w.avgPrepMin).toFixed(0)} د</td>
+                        <td className={`p-2 ${w.cancelled > 0 ? "text-rose-400" : "text-white/40"}`}>{w.cancelled}</td>
+                        <td className="p-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-slate-800 rounded h-2 overflow-hidden min-w-[60px]">
+                              <div className={`h-full ${
+                                w.score >= 75 ? "bg-emerald-500" : w.score >= 50 ? "bg-amber-500" : "bg-rose-500"
+                              }`} style={{ width: `${w.score}%` }} />
+                            </div>
+                            <span className="font-bold w-8 text-left">{w.score}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
         </Card>
