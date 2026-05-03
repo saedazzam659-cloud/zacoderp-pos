@@ -411,6 +411,18 @@ export const api = {
   rKitchenSetStatus: (lineId: number, status: "preparing" | "ready" | "served") =>
     req<{ ok: true }>("PUT", `/api/pos-restaurant/kitchen/items/${lineId}/status`, { status }),
 
+  rInventoryForecast: (days = 30) =>
+    req<{
+      rangeDays: number;
+      items: {
+        menuItemId: number; itemId: number | null; name: string;
+        onHand: number; avgDailyConsumption: number; qtyConsumed: number;
+        daysUntilZero: number | null; reorderQty: number;
+        status: "stockout" | "critical" | "low" | "ok";
+      }[];
+      summary: { stockout: number; critical: number; low: number; ok: number };
+    }>("GET", `/api/pos-restaurant/ai/inventory-forecast?days=${days}`),
+
   rWaiterPerformance: (days = 30) =>
     req<{
       rangeDays: number;

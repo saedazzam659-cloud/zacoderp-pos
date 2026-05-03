@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles, ChevronRight, TrendingUp, Clock, AlertTriangle,
-  Loader2, RefreshCw, CheckCheck, ShieldAlert, Users, Crown, Award,
+  Loader2, RefreshCw, CheckCheck, ShieldAlert, Users, Crown, Award, Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, getToken } from "@/lib/api";
@@ -20,6 +20,7 @@ export default function RestaurantAI() {
   const topQ   = useQuery({ queryKey: ["r-top"],     queryFn: () => api.rRecommend(10) });
   const suspQ  = useQuery({ queryKey: ["r-susp"],    queryFn: () => api.rSuspicious() });
   const perfQ  = useQuery({ queryKey: ["r-perf"],    queryFn: () => api.rWaiterPerformance(30) });
+  const invQ   = useQuery({ queryKey: ["r-inv"],     queryFn: () => api.rInventoryForecast(30) });
 
   const scan = useMutation({
     mutationFn: () => api.rSuspiciousScan(),
@@ -49,6 +50,7 @@ export default function RestaurantAI() {
           qc.invalidateQueries({ queryKey: ["r-top"] });
           qc.invalidateQueries({ queryKey: ["r-susp"] });
           qc.invalidateQueries({ queryKey: ["r-perf"] });
+          qc.invalidateQueries({ queryKey: ["r-inv"] });
         }}>
           <RefreshCw className="h-4 w-4" />
         </Button>
@@ -144,6 +146,62 @@ export default function RestaurantAI() {
                   </div>
                 ))}
               </div>
+            )}
+        </Card>
+
+        {/* Inventory forecast */}
+        <Card title="توقعات المخزون والنفاد" icon={Package}>
+          {invQ.isLoading ? <Loader2 className="animate-spin mx-auto my-6" /> :
+            (invQ.data?.items ?? []).length === 0 ? (
+              <Empty msg="لا توجد أصناف مرتبطة بالمخزون" />
+            ) : (
+              <>
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  <SummaryPill label="نفد" value={invQ.data!.summary.stockout} color="bg-rose-600" />
+                  <SummaryPill label="حرج" value={invQ.data!.summary.critical} color="bg-rose-500" />
+                  <SummaryPill label="منخفض" value={invQ.data!.summary.low} color="bg-amber-500" />
+                  <SummaryPill label="جيد" value={invQ.data!.summary.ok} color="bg-emerald-500" />
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-white/70 text-xs">
+                      <tr>
+                        <th className="p-2 text-right">الصنف</th>
+                        <th className="p-2 text-right">المتاح</th>
+                        <th className="p-2 text-right">استهلاك يومي</th>
+                        <th className="p-2 text-right">أيام للنفاد</th>
+                        <th className="p-2 text-right">كمية إعادة الطلب</th>
+                        <th className="p-2 text-right">الحالة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invQ.data!.items.map(it => (
+                        <tr key={it.menuItemId} className="border-t border-white/5">
+                          <td className="p-2 font-semibold">{it.name}</td>
+                          <td className="p-2">{it.onHand.toFixed(1)}</td>
+                          <td className="p-2 text-white/70">{it.avgDailyConsumption.toFixed(1)}</td>
+                          <td className="p-2 font-bold">
+                            {it.daysUntilZero === null ? "—" : `${it.daysUntilZero} يوم`}
+                          </td>
+                          <td className="p-2 text-amber-400">{it.reorderQty || "—"}</td>
+                          <td className="p-2">
+                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
+                              it.status === "stockout" ? "bg-rose-700 text-white" :
+                              it.status === "critical" ? "bg-rose-500 text-white" :
+                              it.status === "low" ? "bg-amber-500 text-slate-900" :
+                              "bg-emerald-600 text-white"
+                            }`}>
+                              {it.status === "stockout" ? "نفد" :
+                               it.status === "critical" ? "حرج" :
+                               it.status === "low" ? "منخفض" : "جيد"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
         </Card>
 
@@ -268,6 +326,15 @@ function Card({ title, icon: Icon, action, children }: { title: string; icon: an
         {action}
       </div>
       <div className="p-3">{children}</div>
+    </div>
+  );
+}
+
+function SummaryPill({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className={`${color} rounded-lg p-2 text-center text-white`}>
+      <div className="text-xl font-bold">{value}</div>
+      <div className="text-[11px] opacity-90">{label}</div>
     </div>
   );
 }

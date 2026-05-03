@@ -9,6 +9,7 @@ import {
   posSuspiciousOpsTable,
   salesInvoicesTable,
   usersTable,
+  stockBalanceTable,
 } from "@workspace/db";
 import { and, eq, sql, desc, asc, isNull, gte, inArray } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
@@ -648,6 +649,82 @@ router.get("/ai/waiter-performance", async (req, res) => {
   });
 
   res.json({ rangeDays: days, waiters: ranked });
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// AI: inventory depletion prediction (per stock-linked menu item)
+// ════════════════════════════════════════════════════════════════════════
+router.get("/ai/inventory-forecast", async (req, res) => {
+  const cid = cidOr401(req, res); if (!cid) return;
+  const days = Math.min(90, Math.max(7, Number(req.query.days ?? 30)));
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const consumption = await db.select({
+    menuItemId: posOrderItemsTable.menuItemId,
+    nameSnapshot: posMenuItemsTable.nameAr,
+    itemId: posMenuItemsTable.itemId,
+    qtyConsumed: sql<string>`COALESCE(SUM(${posOrderItemsTable.qty}::numeric), 0)::text`,
+  }).from(posOrderItemsTable)
+    .innerJoin(posOrdersTable, eq(posOrdersTable.id, posOrderItemsTable.orderId))
+    .innerJoin(posMenuItemsTable, eq(posMenuItemsTable.id, posOrderItemsTable.menuItemId))
+    .where(and(
+      eq(posOrdersTable.companyId, cid),
+      gte(posOrdersTable.openedAt, since),
+      sql`${posOrderItemsTable.status} != 'cancelled'`,
+      sql`${posMenuItemsTable.itemId} IS NOT NULL`,
+    ))
+    .groupBy(posOrderItemsTable.menuItemId, posMenuItemsTable.nameAr, posMenuItemsTable.itemId);
+
+  const itemIds = consumption.map(c => c.itemId).filter((x): x is number => x != null);
+  const stocks = itemIds.length > 0 ? await db.select({
+    itemId: stockBalanceTable.itemId,
+    onHand: sql<string>`COALESCE(SUM(${stockBalanceTable.qty}::numeric), 0)::text`,
+  }).from(stockBalanceTable)
+    .where(and(
+      eq(stockBalanceTable.companyId, cid),
+      inArray(stockBalanceTable.itemId, itemIds),
+    ))
+    .groupBy(stockBalanceTable.itemId) : [];
+  const stockMap = new Map(stocks.map(s => [s.itemId, Number(s.onHand)]));
+
+  const forecast = consumption.map(c => {
+    const consumed = Number(c.qtyConsumed);
+    const avgDaily = consumed / days;
+    const onHand = stockMap.get(c.itemId!) ?? 0;
+    const daysUntilZero = avgDaily > 0 ? Math.floor(onHand / avgDaily) : null;
+    const status: "critical" | "low" | "ok" | "stockout" =
+      onHand <= 0 ? "stockout" :
+      daysUntilZero === null ? "ok" :
+      daysUntilZero <= 3 ? "critical" :
+      daysUntilZero <= 7 ? "low" : "ok";
+    const reorderQty = avgDaily > 0 ? Math.ceil(avgDaily * 14) : 0; // suggest 14-day buffer
+    return {
+      menuItemId: c.menuItemId,
+      itemId: c.itemId,
+      name: c.nameSnapshot,
+      onHand,
+      avgDailyConsumption: +avgDaily.toFixed(2),
+      qtyConsumed: consumed,
+      daysUntilZero,
+      reorderQty,
+      status,
+    };
+  }).sort((a, b) => {
+    const order = { stockout: 0, critical: 1, low: 2, ok: 3 };
+    if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+    return (a.daysUntilZero ?? 999) - (b.daysUntilZero ?? 999);
+  });
+
+  res.json({
+    rangeDays: days,
+    items: forecast,
+    summary: {
+      stockout: forecast.filter(f => f.status === "stockout").length,
+      critical: forecast.filter(f => f.status === "critical").length,
+      low: forecast.filter(f => f.status === "low").length,
+      ok: forecast.filter(f => f.status === "ok").length,
+    },
+  });
 });
 
 router.put("/ai/suspicious/:id/ack", async (req, res) => {
