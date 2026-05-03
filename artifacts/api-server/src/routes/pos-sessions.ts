@@ -127,13 +127,13 @@ router.post("/open", async (req, res) => {
           }
         }
 
-        // Pair / verify device under lock — first writer wins.
+        // Pair / re-pair device under lock. Since the busy check above
+        // already confirmed no other session is currently open on this
+        // terminal, a different incoming device is allowed to take it over —
+        // we simply re-write machine_code. This makes swapping the physical
+        // device (browser reset, new tablet, replaced PC) self-service.
         const incoming = machineCode ? String(machineCode).trim() : null;
-        if (t.machine_code && incoming && t.machine_code !== incoming) {
-          throw Object.assign(new Error("هذه المحطة مرتبطة بجهاز آخر. اطلب من المسؤول إلغاء الربط أولاً."),
-            { status: 409 });
-        }
-        if (!t.machine_code && incoming) {
+        if (incoming && t.machine_code !== incoming) {
           await tx.update(posTerminalsTable)
             .set({ machineCode: incoming, updatedAt: new Date() })
             .where(eq(posTerminalsTable.id, Number(posTerminalId)));
