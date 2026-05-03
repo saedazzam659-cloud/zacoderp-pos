@@ -107,3 +107,21 @@ id = "j8GSBnyXm6Nd5qxBl5ld5"
 uri = "file://exports/zatca-database-20260428.sql.gz"
 type = "unspecified"
 title = "قاعدة البيانات الكاملة (مضغوطة - 125ك)"
+
+[[outputs]]
+id = "dp0he7mFQn07IPdfsNVX_"
+uri = "file://.local/exports/source-code.tar.gz"
+type = "unspecified"
+title = "الكود المصدري الكامل (source-code.tar.gz — 139MB)"
+
+[[outputs]]
+id = "H8xyyKI20B47AxNeN0PSG"
+uri = "file://.local/exports/database.sql.txt"
+type = "text"
+title = "نسخة قاعدة البيانات (database.sql — غيّر الامتداد إلى .sql)"
+
+[[outputs]]
+id = "JAFtd3Kp5p1rMnUU0Sdid"
+uri = "file://.local/exports/deployment-guide.docx"
+type = "word_document"
+title = "دليل النشر على سيرفر محلي وسحابي (Word)"
