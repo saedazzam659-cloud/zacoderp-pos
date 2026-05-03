@@ -136,6 +136,13 @@ export function requirePermission(module: string, action: PermAction) {
     const map = (u as any).permissions ?? {};
     const ok = !!map[module]?.[action];
     if (ok) { next(); return; }
+    // POS bypass: cashiers acting through the POS app naturally need to
+    // create AND post sales invoices/returns (and look up customers).
+    // If the user holds the `pos` module with `create`, treat that as
+    // sufficient for sales_invoices and customers actions.
+    if ((module === "sales_invoices" || module === "customers") && map["pos"]?.create) {
+      next(); return;
+    }
     // Fire-and-forget denial audit (don't block the response)
     void writeAudit({
       userId: u.id, username: u.username, role: u.role, companyId: u.companyId,
