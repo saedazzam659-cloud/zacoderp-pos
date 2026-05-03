@@ -71,8 +71,14 @@ export default function SupportCall() {
   // who open the share link land in a "waiting for moderator approval"
   // screen.
   const hostUrl = useMemo(() => {
+    // We pass BOTH the legacy `prejoinPageEnabled` flag and the new
+    // `prejoinConfig.enabled` flag — recent meet.jit.si releases renamed the
+    // option and the old one is ignored. We also set `requireDisplayName=false`
+    // so Jitsi doesn't show its own name-prompt overlay.
     const hash = [
       `config.prejoinPageEnabled=false`,
+      `config.prejoinConfig.enabled=false`,
+      `config.requireDisplayName=false`,
       `config.lobby.enabled=false`,
       `config.startWithAudioMuted=false`,
       `config.startWithVideoMuted=false`,
@@ -86,6 +92,8 @@ export default function SupportCall() {
   const shareUrl = useMemo(() => {
     const hash = [
       `config.prejoinPageEnabled=false`,
+      `config.prejoinConfig.enabled=false`,
+      `config.requireDisplayName=false`,
       `config.lobby.enabled=false`,
       `config.startWithAudioMuted=false`,
       `config.startWithVideoMuted=false`,
@@ -214,20 +222,71 @@ export default function SupportCall() {
               : "اضغط الزر أدناه لفتح غرفة الدعم في نافذة منفصلة. سيُطلب إذن الكاميرا والميكروفون."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          {!callActive ? (
-            <Button onClick={openCallWindow} size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-start-call">
-              <Video className="h-5 w-5" /> فتح الاجتماع في نافذة منفصلة
-            </Button>
-          ) : (
-            <>
-              <Button onClick={reopenCallWindow} variant={winIsClosed ? "default" : "outline"} className="gap-2" data-testid="btn-reopen-call">
-                <ExternalLink className="h-4 w-4" /> {winIsClosed ? "إعادة فتح النافذة" : "إحضار النافذة للأمام"}
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {!callActive ? (
+              <Button onClick={openCallWindow} size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-start-call">
+                <Video className="h-5 w-5" /> فتح الاجتماع في نافذة منفصلة
               </Button>
-              <Button onClick={endCall} variant="destructive" className="gap-2" data-testid="btn-end-call">
-                <PhoneOff className="h-4 w-4" /> إنهاء الاجتماع
-              </Button>
-            </>
+            ) : (
+              <>
+                <Button onClick={reopenCallWindow} variant={winIsClosed ? "default" : "outline"} className="gap-2" data-testid="btn-reopen-call">
+                  <ExternalLink className="h-4 w-4" /> {winIsClosed ? "إعادة فتح النافذة" : "إحضار النافذة للأمام"}
+                </Button>
+                <Button onClick={endCall} variant="destructive" className="gap-2" data-testid="btn-end-call">
+                  <PhoneOff className="h-4 w-4" /> إنهاء الاجتماع
+                </Button>
+              </>
+            )}
+          </div>
+
+          {/* Smart step-by-step join guide — shown only before the call is
+              active. This visually walks the host through exactly what
+              they'll see in the Jitsi popup and what to click, so they
+              don't get stuck on the pre-join screen and leave the customer
+              alone. Each step has an explicit tip in case meet.jit.si
+              ignores our config flags and shows extra prompts. */}
+          {!callActive && (
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-1.5">
+                <Radio className="h-3.5 w-3.5 text-emerald-600" /> ماذا يحدث بعد ضغط الزر؟
+              </div>
+              <ol className="space-y-2.5">
+                <JoinStep
+                  num={1}
+                  title="تفتح نافذة جديدة لـ Jitsi"
+                  hint="إذا منع المتصفح النافذة المنبثقة، اسمح بها من أيقونة العنوان."
+                />
+                <JoinStep
+                  num={2}
+                  title="المتصفح سيطلب إذن الكاميرا والميكروفون"
+                  hint="اضغط «السماح» (Allow) — هذا الإذن مطلوب مرة واحدة فقط."
+                  highlight
+                />
+                <JoinStep
+                  num={3}
+                  title="قد تظهر شاشة «Join meeting» باللون الأزرق"
+                  hint="إذا ظهرت، اضغط الزر الأزرق «Join meeting» مباشرة لدخول الغرفة."
+                  highlight
+                />
+                <JoinStep
+                  num={4}
+                  title="ستدخل الغرفة وستصبح المضيف"
+                  hint="ارجع لهذه الصفحة وانسخ رابط الدعوة من قسم «دعوة العميل» وأرسله."
+                />
+              </ol>
+            </div>
+          )}
+
+          {callActive && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <div className="font-semibold flex items-center gap-1.5">
+                <Radio className="h-4 w-4 animate-pulse" /> أنت في الغرفة الآن
+              </div>
+              <div className="text-xs mt-1">
+                انسخ رابط الدعوة من الأسفل وأرسله للعميل عبر الواتساب أو أي وسيلة أخرى. سينضم مباشرة بمجرد فتح الرابط.
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -349,5 +408,27 @@ function FeatureChip({ icon: Icon, label }: { icon: any; label: string }) {
       <Icon className="h-4 w-4 text-emerald-600" />
       <span>{label}</span>
     </div>
+  );
+}
+
+function JoinStep({
+  num, title, hint, highlight = false,
+}: { num: number; title: string; hint: string; highlight?: boolean }) {
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        className={`shrink-0 inline-grid place-items-center h-6 w-6 rounded-full text-xs font-bold ${
+          highlight ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"
+        }`}
+      >
+        {num}
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{title}</div>
+        <div className={`text-xs mt-0.5 ${highlight ? "text-amber-700" : "text-muted-foreground"}`}>
+          {hint}
+        </div>
+      </div>
+    </li>
   );
 }
