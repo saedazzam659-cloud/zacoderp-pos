@@ -406,6 +406,57 @@ async function ensureTenantIdentityIndexes(): Promise<string[]> {
       )` },
     { label: "store_payment_settings_uniq",
       sql:   `CREATE UNIQUE INDEX IF NOT EXISTS store_payment_settings_uniq ON store_payment_settings (store_id, gateway)` },
+
+    // ─── Internal Chat module (see lib/db/src/schema/chat.ts).
+    { label: "create chat_conversations table",
+      sql:   `CREATE TABLE IF NOT EXISTS chat_conversations (
+        id                 SERIAL PRIMARY KEY,
+        company_id         INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        kind               TEXT NOT NULL DEFAULT 'direct',
+        title              TEXT,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_message_at    TIMESTAMP NOT NULL DEFAULT NOW()
+      )` },
+    { label: "chat_conv_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS chat_conv_company_idx ON chat_conversations (company_id, last_message_at DESC)` },
+
+    { label: "create chat_participants table",
+      sql:   `CREATE TABLE IF NOT EXISTS chat_participants (
+        id                    SERIAL PRIMARY KEY,
+        conversation_id       INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+        user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role                  TEXT NOT NULL DEFAULT 'member',
+        joined_at             TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_read_message_id  INTEGER,
+        last_read_at          TIMESTAMP
+      )` },
+    { label: "chat_participants_uniq",
+      sql:   `CREATE UNIQUE INDEX IF NOT EXISTS chat_participants_uniq ON chat_participants (conversation_id, user_id)` },
+    { label: "chat_participants_user_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS chat_participants_user_idx ON chat_participants (user_id)` },
+
+    { label: "create chat_messages table",
+      sql:   `CREATE TABLE IF NOT EXISTS chat_messages (
+        id                SERIAL PRIMARY KEY,
+        conversation_id   INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+        company_id        INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        sender_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        kind              TEXT NOT NULL DEFAULT 'text',
+        body              TEXT NOT NULL DEFAULT '',
+        attachment_url    TEXT,
+        attachment_name   TEXT,
+        attachment_mime   TEXT,
+        attachment_size   INTEGER,
+        reply_to_id       INTEGER,
+        created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+        edited_at         TIMESTAMP,
+        deleted_at        TIMESTAMP
+      )` },
+    { label: "chat_messages_conv_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS chat_messages_conv_idx ON chat_messages (conversation_id, created_at)` },
+    { label: "chat_messages_company_idx",
+      sql:   `CREATE INDEX IF NOT EXISTS chat_messages_company_idx ON chat_messages (company_id, created_at)` },
   ];
   for (const { label, sql: stmt } of stmts) {
     try {

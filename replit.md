@@ -64,6 +64,13 @@ The frontend uses React with Vite and TailwindCSS, supporting bilingual (Arabic/
 - **jsbarcode:** For barcode generation (Code128).
 - **html5-qrcode:** For camera-based barcode scanning.
 
+## Internal Chat Module (Phase 1)
+Real-time text messaging between company colleagues, scoped per tenant (companyId on conversations and messages). Tables: `chat_conversations`, `chat_participants` (with `last_read_message_id` for read receipts), `chat_messages` (with soft-delete via `deleted_at`). Direct (1:1) and group conversations supported; direct chats are auto-deduped.
+
+REST under `/api/chat/*` (list/create conv, list/send messages with `?since=&before=` cursors, /read marker, DELETE soft, /unread-count, /users) and `/api/chat-ai/*` (summarize, suggest-replies, translate ar↔en, extract-tasks, transcribe-stub→503, ILIKE search). Real-time delivery via React Query polling (3s for active conversation, 10s for the list) — Socket.io upgrade is deferred. Attachments use the existing presigned upload flow (`/api/storage/uploads/request-url`).
+
+UI: `/chat` — sidebar of conversations + message panel + composer (file/image attach, Enter-to-send) + AI tools side-sheet (Sparkles button) hosting all six AI features. Permission-gated by the `chat` module key (admins bypass). Sidebar nav entry under "أدوات الذكاء الاصطناعي" with green theme. AI calls go through the OpenAI integrations proxy (gpt-5.4, max_completion_tokens, response_format JSON for structured outputs); endpoints fall back to rule-based responses when the proxy is unavailable and report `source: "ai"|"rule"` honestly.
+
 ## Online Store Module
 - DB tables (lib/db/src/schema/onlineStore.ts): `stores`, `store_domains`, `store_products` (FK→items), `store_orders` (FK→invoices SET NULL), `store_order_items`, `store_payment_settings`. Auto-created via ensureSchema.ts.
 - Backend: `/api/online-store/*` (CRUD + transactional `POST /orders/:id/confirm` → creates ZATCA invoice STR-{code} with 15% VAT) and `/api/online-store-ai/*` (sales-analysis, recommend-products, low-stock, generate-description; OpenAI gpt-5.4 with deterministic fallbacks).

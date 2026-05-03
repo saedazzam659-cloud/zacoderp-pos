@@ -63,6 +63,8 @@ export const MENU_ITEMS: MenuItem[] = [
 
   { key: "ai_tools",           label: "أدوات الذكاء الاصطناعي",     section: "أدوات الذكاء الاصطناعي" },
 
+  { key: "chat",               label: "الاتصال الداخلي",            section: "الاتصال الداخلي" },
+
   { key: "zatca",              label: "ربط ZATCA",                   section: "النظام" },
 ];
 
@@ -151,4 +153,5 @@ export const SECTION_THEME: Record<string, { bg: string; text: string; border: s
   "تحليلات SEO":           { bg: "bg-fuchsia-50",  text: "text-fuchsia-700",  border: "border-fuchsia-200" },
   "أدوات الذكاء الاصطناعي": { bg: "bg-violet-50",   text: "text-violet-700",   border: "border-violet-200" },
   "النظام":               { bg: "bg-purple-50",   text: "text-purple-700",   border: "border-purple-200" },
+  "الاتصال الداخلي":       { bg: "bg-green-50",    text: "text-green-700",    border: "border-green-200" },
 };

@@ -157,6 +157,7 @@ import HRReportEmployeeCost from "@/pages/hr/reports/EmployeeCostReport";
 import HRReportLeaves from "@/pages/hr/reports/LeavesReport";
 import PosMonitoring from "@/pages/pos/Monitoring";
 import PosOperations from "@/pages/pos/Operations";
+import Chat from "@/pages/Chat";
 import PosSettings from "@/pages/pos/PosSettings";
 import PosTerminals from "@/pages/pos/PosTerminals";
 import OnlineStore from "@/pages/online-store/OnlineStore";
@@ -309,7 +310,7 @@ const PROTECTED_PREFIXES = [
   "/accounting", "/admin", "/ai-reports", "/cash", "/companies",
   "/contracting", "/control-panel", "/customers", "/general-settings",
   "/hospital", "/hotel", "/hr", "/inbox", "/installments", "/inventory", "/invoices", "/maintenance",
-  "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
+  "/chat", "/notifications", "/org", "/pos-management", "/pos-monitoring", "/pos-operations",
   "/pos-settings", "/pos-terminals", "/production", "/purchasing",
   "/sales", "/security", "/seo", "/sessions", "/settings", "/suppliers",
   "/users", "/vat-declaration", "/voice-assistant", "/work-sessions",
@@ -491,6 +492,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/pos-management"  module="pos" component={PosHub} />}
             {!isSuperAdmin && <PermRoute path="/pos-monitoring" module="pos" component={PosMonitoring} />}
             {!isSuperAdmin && <PermRoute path="/pos-operations" module="pos" component={PosOperations} />}
+            {!isSuperAdmin && <PermRoute path="/chat" module="chat" component={Chat} />}
             {!isSuperAdmin && <PermRoute path="/pos-settings"   module="pos" component={PosSettings} />}
             {!isSuperAdmin && <PermRoute path="/pos-terminals"  module="pos" component={PosTerminals} />}
             {!isSuperAdmin && <PermRoute path="/online-store" module="online_store" component={OnlineStore} />}

@@ -66,6 +66,8 @@ export const CANONICAL_MENU_PERMISSION_KEYS: ReadonlySet<string> = new Set([
   "online_store",
   // ── أدوات الذكاء الاصطناعي (SuperAdmin only — no parent billable module) ──
   "ai_tools",
+  // ── الاتصال الداخلي ──
+  "chat",
   // ── النظام ──
   "zatca",
 ]);

@@ -310,6 +310,8 @@ const aiToolsSubNav: NavDef[] = [
   { nameKey: "nav.workSessions",    href: "/work-sessions",       icon: Clock },
   // In-app inbox — every company user has one (reports, system messages).
   { nameKey: "nav.inbox",           href: "/inbox",               icon: Inbox },
+  // Internal Chat — real-time messaging between company colleagues.
+  { nameKey: "nav.chat",            href: "/chat",                icon: MessageSquare, permKey: "chat" },
   // Import / export the company's data sets — gated by the data_io permission.
   { nameKey: "nav.dataIo",          href: "/settings/data-io",    icon: Database,  permKey: "data_io" },
 ];

@@ -58,3 +58,4 @@ export * from "./fixedAssets";
 export * from "./securityActions";
 export * from "./installments";
 export * from "./onlineStore";
+export * from "./chat";
