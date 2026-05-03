@@ -26,6 +26,7 @@ import {
   ListChecks, AlertTriangle, AlertCircle, Info, Loader2, Eye,
   CheckCircle2, FileText, Plus, Send, Undo2, RotateCcw, X, Filter,
   Trash2, Settings2, ArrowUp, ArrowDown, RotateCw, EyeOff, Palette, Check,
+  Copy, Pencil,
 } from "lucide-react";
 
 // ── Header color theme palette ────────────────────────────────────────────
@@ -1580,6 +1581,42 @@ export default function SalesAuditGrid({ source = "manual", titleOverride }: { s
             >
               {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               ترحيل ({selectedDrafts.length})
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+              onClick={() => {
+                if (selected.size !== 1) {
+                  toast({ title: "يجب تحديد فاتورة واحدة فقط للتعديل", variant: "destructive" });
+                  return;
+                }
+                navigate(`/sales/invoices/${selectedInvoices[0].id}`);
+              }}
+              disabled={bulkBusy || selected.size !== 1}
+              title={selected.size === 1 ? "فتح/تعديل الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              تعديل
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-3 text-xs gap-1 border-blue-400 text-blue-800 hover:bg-blue-50"
+              onClick={() => {
+                if (selected.size !== 1) {
+                  toast({ title: "يجب تحديد فاتورة واحدة فقط للنسخ", variant: "destructive" });
+                  return;
+                }
+                navigate(`/sales/invoices/new?from=${selectedInvoices[0].id}`);
+              }}
+              disabled={bulkBusy || selected.size !== 1}
+              title={selected.size === 1 ? "إنشاء نسخة مماثلة من الفاتورة المحدَّدة" : "حدِّد فاتورة واحدة فقط"}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              نسخة مماثلة
             </Button>
             <Button
               type="button"
