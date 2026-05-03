@@ -111,6 +111,15 @@ export const itemsTable = pgTable("items", {
   // is intentional — different industries need different attribute sets.
   parentItemId:       integer("parent_item_id").references((): AnyPgColumn => itemsTable.id, { onDelete: "cascade" }),
   variantAttributes:  jsonb("variant_attributes"),
+  // Whether the item appears in POS (cashier / supermarket / restaurant)
+  // item lists. Defaults to true so existing items keep showing up. The
+  // POS items endpoint filters on this so unchecked items are hidden from
+  // the cashier UI without affecting inventory or sales documents.
+  showInPos:        boolean("show_in_pos").default(true).notNull(),
+  // Optional expiry date — primarily meaningful for manufactured items
+  // (those with a BOM / bundle composition) but stored on every item so
+  // future workflows (lot tracking, batch posting) can read it uniformly.
+  expiryDate:       date("expiry_date"),
   costAccountId:    integer("cost_account_id"),
   revenueAccountId: integer("revenue_account_id"),
   createdAt:        timestamp("created_at").defaultNow().notNull(),

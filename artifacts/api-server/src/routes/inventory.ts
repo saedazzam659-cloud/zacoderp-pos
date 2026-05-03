@@ -363,17 +363,24 @@ router.get("/items", async (req, res) => {
   // bulk labels, bundle-component child dropdown, ...) needs to see them.
   // Hiding variants from the catalog list is a UI-only concern handled by
   // the Items master page client-side via `it.parentItemId == null`.
+  // The POS apps (cashier / supermarket / restaurant) hit this same endpoint
+  // and should only see items flagged `show_in_pos = true`. The main
+  // inventory page in zatca-invoicing passes `?includeHidden=1` to see all.
+  const includeHidden = String(req.query.includeHidden ?? "") === "1"
+    || String(req.query.includeHidden ?? "").toLowerCase() === "true";
+  const visibleFilter = includeHidden ? undefined : eq(itemsTable.showInPos, true);
   const rows = cid
     ? await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
-        .where(eq(itemsTable.companyId, cid))
+        .where(visibleFilter ? and(eq(itemsTable.companyId, cid), visibleFilter) : eq(itemsTable.companyId, cid))
         .orderBy(asc(itemsTable.code))
     : await db.select({ item: itemsTable, group: itemGroupsTable, unit: unitsTable })
         .from(itemsTable)
         .leftJoin(itemGroupsTable, eq(itemsTable.groupId, itemGroupsTable.id))
         .leftJoin(unitsTable, eq(itemsTable.unitId, unitsTable.id))
+        .where(visibleFilter)
         .orderBy(asc(itemsTable.code));
   res.json(rows.map(r => ({ ...r.item, group: r.group, unit: r.unit })));
 });
@@ -554,7 +561,7 @@ function normalizeDiscount(rawType: unknown, rawValue: unknown): { type: "none"|
 
 router.post("/items", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, imageUrl, tags, discountType, discountValue, isBundle, parentItemId, variantAttributes, showInPos, expiryDate } = req.body;
   if (!code || !nameAr) { res.status(400).json({ error: "كود واسم الصنف مطلوبان" }); return; }
   const existing = await db.select().from(itemsTable).where(eq(itemsTable.companyId, cid));
   if (existing.some(i => i.code?.trim().toLowerCase() === String(code).trim().toLowerCase())) {
@@ -607,6 +614,8 @@ router.post("/items", async (req, res) => {
     isBundle: isBundle === true,
     parentItemId: parentRowForVariant ? parentRowForVariant.id : null,
     variantAttributes: variantAttrsCheck.value,
+    showInPos: showInPos === undefined ? true : showInPos === true,
+    expiryDate: expiryDate || null,
   }).returning();
   void writeAudit({
     userId:     (req as any).authUser?.id ?? null,
@@ -630,7 +639,7 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   const cid = guard(req, res); if (!cid) return;
   const id = Number(req.params.id);
-  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes } = req.body;
+  const { code, nameAr, nameEn, barcode, itemType, groupId, unitId, costPrice, salePrice, vatRate, reorderLevel, maxLevel, costMethod, description, status, imageUrl, tags, discountType, discountValue, isBundle, variantAttributes, showInPos, expiryDate } = req.body;
   // PRO Extension #20 — variantAttributes is editable; parentItemId is
   // set-once at create time (re-parenting requires DELETE + recreate so
   // we don't have to reason about stock-balance migration).
@@ -681,6 +690,8 @@ router.put("/items/:id", async (req, res) => {
     // PRO Extension #20 — only touch variantAttributes if client sent it.
     // `null` is a valid value (clears all attributes); `undefined` skips.
     ...(variantAttrsCheck.value !== undefined ? { variantAttributes: variantAttrsCheck.value } : {}),
+    ...(showInPos !== undefined ? { showInPos: showInPos === true } : {}),
+    ...(expiryDate !== undefined ? { expiryDate: expiryDate || null } : {}),
     status: status || "active", updatedAt: new Date(),
   }).where(and(eq(itemsTable.id, id), eq(itemsTable.companyId, cid))).returning();
   if (!row) { res.status(404).json({ error: "غير موجود" }); return; }

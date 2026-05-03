@@ -22,7 +22,7 @@ import {
   TrendingUp, Calendar, DollarSign, BarChart3,
   ScanLine, FileText, Upload, ExternalLink,
   Truck, Check, Boxes, Layers,
-  Building2, Cog, Bell,
+  Building2, Cog, Bell, Store,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import BulkLabelDialog from "@/components/BulkLabelDialog";
@@ -51,6 +51,13 @@ const EMPTY = {
   // are added/removed via the Components panel, but can also be ticked
   // manually here so the panel becomes visible before the first add.
   isBundle: false as boolean,
+  // POS visibility — when false, the item is hidden from cashier/POS lists
+  // (it stays in inventory, sales documents, etc). Defaults to true so
+  // existing items keep showing up.
+  showInPos: true as boolean,
+  // Optional expiry date. Most useful for manufactured items (those that
+  // have a BOM / bundle composition) but stored on every item uniformly.
+  expiryDate: "" as string,
 };
 
 // ─── Helpers: tags as array ↔ string ─────────────────────────────────────────
@@ -992,6 +999,8 @@ export default function Items() {
       tags: item.tags ?? "",
       discountType:  (item.discountType ?? "none") as "none" | "percent" | "amount",
       discountValue: item.discountValue != null ? String(item.discountValue) : "0",
+      showInPos: item.showInPos !== false,
+      expiryDate: item.expiryDate ?? "",
     });
     setEditId(item.id);
     setShowForm(true);
@@ -1145,6 +1154,7 @@ export default function Items() {
             <TabsList className="w-full h-9 mb-5">
               <TabsTrigger value="basic"    className="flex-1 text-xs gap-1.5"><Package   className="h-3.5 w-3.5" />{t("pages.items.basicData")}</TabsTrigger>
               <TabsTrigger value="pricing"  className="flex-1 text-xs gap-1.5"><Ruler      className="h-3.5 w-3.5" />{t("pages.items.pricingAndControl")}</TabsTrigger>
+              <TabsTrigger value="pos"      className="flex-1 text-xs gap-1.5"><Store      className="h-3.5 w-3.5" />نقطة البيع</TabsTrigger>
               <TabsTrigger value="accounts" className="flex-1 text-xs gap-1.5"><BookMarked className="h-3.5 w-3.5" />{t("pages.items.accountingLink")}</TabsTrigger>
             </TabsList>
             <TabsContent value="basic" className="mt-0">
@@ -1241,6 +1251,44 @@ export default function Items() {
                   <Field label={t("pages.items.reorderLevel")}><Input type="number" step="any" dir="ltr" className="text-left" value={form.reorderLevel} onChange={e => setForm((p: any) => ({ ...p, reorderLevel: e.target.value }))} /></Field>
                   <Field label={t("pages.items.maxStockLevel")}><Input type="number" step="any" placeholder={t("pages.items.optional")} dir="ltr" className="text-left" value={form.maxLevel} onChange={e => setForm((p: any) => ({ ...p, maxLevel: e.target.value }))} /></Field>
                   <Field label={t("pages.items.notesDescription")} className="md:col-span-2"><Input placeholder={t("pages.items.descriptionPlaceholder")} value={form.description} onChange={e => setForm((p: any) => ({ ...p, description: e.target.value }))} /></Field>
+                </FormGrid>
+              </div>
+            </TabsContent>
+            <TabsContent value="pos" className="mt-0 space-y-6">
+              <div>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">إعدادات نقطة البيع</p>
+                <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <Checkbox
+                      checked={form.showInPos !== false}
+                      onCheckedChange={(v) => setForm((p: any) => ({ ...p, showInPos: v === true }))}
+                      className="mt-0.5"
+                    />
+                    <div className="space-y-0.5">
+                      <div className="text-sm font-medium">إظهار الصنف في شاشة نقاط البيع (POS)</div>
+                      <div className="text-xs text-muted-foreground">
+                        عند إلغاء التحديد، لن يظهر هذا الصنف في شاشات الكاشير والسوبرماركت والمطاعم،
+                        لكنه يبقى متوفّراً في المخزون وفواتير المبيعات والمشتريات.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-muted-foreground mb-3 tracking-wider">تاريخ الانتهاء (للأصناف ذات قائمة المكوّنات / BOM)</p>
+                <FormGrid>
+                  <Field
+                    label="تاريخ انتهاء الصنف"
+                    hint={form.isBundle ? "صنف مركَّب (BOM) — يمكن تسجيل تاريخ الانتهاء." : "متاح لكل الأصناف، لكنه يُستخدم عادةً للأصناف المُصنّعة (التي لها مكوّنات BOM)."}
+                  >
+                    <Input
+                      type="date"
+                      dir="ltr"
+                      className="text-left"
+                      value={form.expiryDate ?? ""}
+                      onChange={(e) => setForm((p: any) => ({ ...p, expiryDate: e.target.value }))}
+                    />
+                  </Field>
                 </FormGrid>
               </div>
             </TabsContent>
