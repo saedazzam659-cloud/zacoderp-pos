@@ -5,28 +5,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   Video, Copy, ExternalLink, RefreshCw, Mic, Camera,
   MonitorUp, Users, ShieldCheck, MessageSquare, Phone,
+  PhoneOff, Radio, StickyNote, Send,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SupportCall — Zoom-style audio/video/screen-share room for tech support.
+// SupportCall — live audio/video/screen-share room for tech support.
 //
-// We embed the public Jitsi Meet service (https://meet.jit.si) via iframe so
-// no signaling/STUN/TURN servers need to be self-hosted and no SDK keys are
-// required — perfect for an in-app support channel that needs to "just work"
-// for both the agent and the customer.
+// IMPORTANT design decision: Jitsi runs in a SEPARATE top-level browser
+// window opened via window.open(), NOT inside an embedded iframe. The
+// reason is that browsers block camera + microphone permission requests
+// from nested iframes (our app may itself be loaded inside the Replit
+// preview iframe, and Permissions-Policy delegation only chains one level
+// deep). A real top-level window is the only reliable way to get the
+// permission prompt across all browsers and embedding contexts.
 //
-// The iframe must declare the relevant Permissions-Policy delegations for
-// camera, microphone, display-capture (screen share), autoplay, and
-// fullscreen — without these the browser blocks Jitsi's media access even if
-// the user grants permission at the prompt.
-//
-// Room name strategy: prefix with the company brand + a short random id so
-// rooms don't collide with random Jitsi traffic and are guessable only to
-// people who receive the link from the agent.
+// Inside this page we keep a control-panel UI: meeting timer, "live" dot,
+// re-open button if the user closed the popup, an invite link that the
+// agent can paste to the customer, and a notes textarea so the agent can
+// jot down what they did during the call.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function makeRoomName(prefix = "zacoderp-support"): string {
@@ -35,31 +36,32 @@ function makeRoomName(prefix = "zacoderp-support"): string {
   return `${prefix}-${rand}`;
 }
 
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
 export default function SupportCall() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  const [room, setRoom]       = useState<string>(() => makeRoomName());
-  const [joined, setJoined]   = useState(false);
+  const [room, setRoom]               = useState<string>(() => makeRoomName());
   const [displayName, setDisplayName] = useState<string>(user?.fullName ?? user?.username ?? "الدعم الفني");
+  const [callActive, setCallActive]   = useState(false);
+  const [startedAt, setStartedAt]     = useState<number | null>(null);
+  const [elapsed, setElapsed]         = useState(0);
+  const [notes, setNotes]             = useState("");
 
-  // True whenever the page is loaded inside a parent iframe (e.g. Replit
-  // preview / embedded). Browsers block camera + microphone permission
-  // prompts from nested iframes unless the OUTER iframe also delegates the
-  // permission via its `allow=` attribute — which we cannot control. In
-  // that case the only reliable way to get the prompt is to open the call
-  // in a real top-level browser tab, so we surface a prominent CTA.
-  const isEmbedded = typeof window !== "undefined" && window.self !== window.top;
+  // Reference to the popup window so we can re-focus it or detect that
+  // the user closed it externally.
+  const winRef = useRef<Window | null>(null);
 
-  const callUrl = useMemo(() => {
-    // Force Jitsi to show its pre-join screen — that's the screen that
-    // actually triggers the browser's camera + microphone permission prompt.
-    // Without `prejoinPageEnabled=true` Jitsi may auto-join muted on some
-    // browsers and never request permissions, leaving the user stuck.
-    // `userInfo.displayName` is read by Jitsi from the URL hash — that's
-    // the documented way to pre-fill the participant name without using the
-    // IFrame API. The hash is never sent to the Jitsi server.
+  // Host URL — pre-fills the agent's display name and forces the pre-join
+  // page so the browser's permission prompt fires reliably.
+  const hostUrl = useMemo(() => {
     const hash = [
       `config.prejoinPageEnabled=true`,
       `config.startWithAudioMuted=false`,
@@ -69,31 +71,8 @@ export default function SupportCall() {
     return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
   }, [room, displayName]);
 
-  // Trigger the browser's native permission prompt directly (independent of
-  // Jitsi). Useful when the user previously denied permission and needs to
-  // re-grant it, or to verify hardware access before opening the call.
-  const testPermission = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      stream.getTracks().forEach(t => t.stop());
-      toast({ title: "تم منح إذن الكاميرا والميكروفون ✓", description: "يمكنك الآن دخول غرفة الدعم." });
-    } catch (e: any) {
-      toast({
-        title: "تعذّر الحصول على الإذن",
-        description: e?.name === "NotAllowedError"
-          ? "الإذن مرفوض من المتصفح. اضغط على أيقونة القفل بجوار العنوان ثم فعّل الكاميرا والميكروفون، ثم أعد تحميل الصفحة."
-          : e?.message ?? "تأكد من توصيل كاميرا وميكروفون.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // The link we share with the customer. We explicitly disable the lobby
-  // (`lobby.enabled=false`) and the pre-join screen (`prejoinPageEnabled=false`)
-  // so anyone with the link drops straight into the room without waiting for
-  // moderator approval. The browser will still ask for camera + microphone
-  // permission once Jitsi initialises the media tracks — that's a hard
-  // browser requirement and cannot be bypassed.
+  // Customer share URL — no lobby, no pre-join screen, drops them straight
+  // into the room. Browser will still ask for cam/mic once.
   const shareUrl = useMemo(() => {
     const hash = [
       `config.prejoinPageEnabled=false`,
@@ -104,10 +83,63 @@ export default function SupportCall() {
     return `https://meet.jit.si/${encodeURIComponent(room)}#${hash}`;
   }, [room]);
 
-  // Reset "joined" state whenever the room changes so the iframe remounts.
-  useEffect(() => { setJoined(false); }, [room]);
+  // Meeting timer: tick every second while the call is active, and poll
+  // whether the popup window was closed externally so we can flip the UI
+  // back to "not active" without the agent having to click "End meeting".
+  useEffect(() => {
+    if (!callActive || startedAt == null) return;
+    const tick = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+      if (winRef.current && winRef.current.closed) {
+        winRef.current = null;
+      }
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [callActive, startedAt]);
+
+  const openCallWindow = () => {
+    // Use a named window so that calling open() twice with the same name
+    // re-focuses the existing tab instead of opening a duplicate.
+    const win = window.open(
+      hostUrl,
+      `zacoderp-support-${room}`,
+      "width=1200,height=800,noopener=no",
+    );
+    if (!win) {
+      toast({
+        title: "تعذّر فتح نافذة الاجتماع",
+        description: "المتصفح منع النوافذ المنبثقة. اسمح بالنوافذ المنبثقة لهذا الموقع وحاول مرة أخرى.",
+        variant: "destructive",
+      });
+      return;
+    }
+    winRef.current = win;
+    win.focus();
+    if (!callActive) {
+      setCallActive(true);
+      setStartedAt(Date.now());
+      setElapsed(0);
+    }
+  };
+
+  const reopenCallWindow = () => openCallWindow();
+
+  const endCall = () => {
+    if (winRef.current && !winRef.current.closed) {
+      try { winRef.current.close(); } catch { /* cross-origin close may fail silently */ }
+    }
+    winRef.current = null;
+    setCallActive(false);
+    setStartedAt(null);
+    setElapsed(0);
+    toast({ title: "تم إنهاء الاجتماع" });
+  };
 
   const newRoom = () => {
+    if (callActive) {
+      toast({ title: "أنهِ الاجتماع الحالي أولًا قبل إنشاء غرفة جديدة", variant: "destructive" });
+      return;
+    }
     setRoom(makeRoomName());
     toast({ title: "تم إنشاء غرفة جديدة", description: "أرسل الرابط للعميل ليتمكن من الانضمام." });
   };
@@ -121,8 +153,16 @@ export default function SupportCall() {
     }
   };
 
+  const sendWhatsapp = () => {
+    const text = `رابط دعوتك للاجتماع المباشر مع الدعم الفني:\n${shareUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  };
+
+  const winIsClosed = callActive && (!winRef.current || winRef.current.closed);
+
   return (
     <div className="space-y-4 p-4 md:p-6">
+      {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -137,17 +177,59 @@ export default function SupportCall() {
           <Badge variant="outline" className="text-emerald-700 border-emerald-300 bg-emerald-50 gap-1">
             <ShieldCheck className="h-3.5 w-3.5" /> اتصال مشفّر (E2E)
           </Badge>
+          {callActive && (
+            <Badge className="bg-red-600 hover:bg-red-600 text-white gap-1.5">
+              <Radio className="h-3.5 w-3.5 animate-pulse" /> مباشر · {formatDuration(elapsed)}
+            </Badge>
+          )}
         </div>
       </div>
 
-      {/* Room controls + share link */}
+      {/* Why a separate window? — short banner */}
+      <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+        <strong>لماذا تفتح نافذة منفصلة؟</strong> المتصفح يمنع منح إذن الكاميرا والميكروفون لإطار مدمج داخل إطار آخر. لذلك يفتح النظام الاجتماع في نافذة مستقلة تستطيع طلب الإذن بشكل صحيح، بينما تبقى لوحة التحكم هنا داخل النظام.
+      </div>
+
+      {/* Big call-to-action panel */}
+      <Card className={callActive ? "border-emerald-300" : ""}>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Phone className="h-4 w-4" /> {callActive ? "الاجتماع نشط" : "بدء اجتماع جديد"}
+          </CardTitle>
+          <CardDescription>
+            {callActive
+              ? winIsClosed
+                ? "نافذة الاجتماع مغلقة. اضغط «إعادة فتح النافذة» للعودة للمكالمة."
+                : "نافذة الاجتماع مفتوحة في تبويب منفصل. لا تغلق هذه الصفحة لتحتفظ بلوحة التحكم وملاحظاتك."
+              : "اضغط الزر أدناه لفتح غرفة الدعم في نافذة منفصلة. سيُطلب إذن الكاميرا والميكروفون."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2">
+          {!callActive ? (
+            <Button onClick={openCallWindow} size="lg" className="gap-2 bg-emerald-600 hover:bg-emerald-500" data-testid="btn-start-call">
+              <Video className="h-5 w-5" /> فتح الاجتماع في نافذة منفصلة
+            </Button>
+          ) : (
+            <>
+              <Button onClick={reopenCallWindow} variant={winIsClosed ? "default" : "outline"} className="gap-2" data-testid="btn-reopen-call">
+                <ExternalLink className="h-4 w-4" /> {winIsClosed ? "إعادة فتح النافذة" : "إحضار النافذة للأمام"}
+              </Button>
+              <Button onClick={endCall} variant="destructive" className="gap-2" data-testid="btn-end-call">
+                <PhoneOff className="h-4 w-4" /> إنهاء الاجتماع
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Room + invite link */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Phone className="h-4 w-4" /> إعدادات الغرفة ومشاركة الرابط
+            <Users className="h-4 w-4" /> دعوة العميل
           </CardTitle>
           <CardDescription>
-            انسخ الرابط وأرسله للعميل عبر الواتساب أو البريد. يمكنه الانضمام مباشرة من المتصفح بدون تسجيل دخول.
+            انسخ الرابط وأرسله للعميل. يمكنه الانضمام مباشرة من المتصفح بدون تسجيل دخول.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -159,9 +241,10 @@ export default function SupportCall() {
                 onChange={(e) => setRoom(e.target.value.replace(/[^A-Za-z0-9-]/g, ""))}
                 dir="ltr"
                 className="font-mono text-xs"
+                disabled={callActive}
                 data-testid="input-support-room"
               />
-              <Button variant="outline" size="icon" onClick={newRoom} title="غرفة جديدة" data-testid="btn-new-room">
+              <Button variant="outline" size="icon" onClick={newRoom} title="غرفة جديدة" disabled={callActive} data-testid="btn-new-room">
                 <RefreshCw className="h-4 w-4" />
               </Button>
             </div>
@@ -172,16 +255,20 @@ export default function SupportCall() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               className="mt-1"
+              disabled={callActive}
               data-testid="input-display-name"
             />
           </div>
 
           <div className="md:col-span-2">
             <Label className="text-xs">رابط دعوة العميل</Label>
-            <div className="flex gap-2 mt-1">
-              <Input value={shareUrl} readOnly dir="ltr" className="font-mono text-xs" data-testid="input-share-url" />
-              <Button variant="outline" onClick={() => copy(shareUrl, "الرابط")} className="gap-1">
+            <div className="flex gap-2 mt-1 flex-wrap">
+              <Input value={shareUrl} readOnly dir="ltr" className="font-mono text-xs flex-1 min-w-[260px]" data-testid="input-share-url" />
+              <Button variant="outline" onClick={() => copy(shareUrl, "الرابط")} className="gap-1" data-testid="btn-copy-link">
                 <Copy className="h-4 w-4" /> نسخ
+              </Button>
+              <Button variant="outline" onClick={sendWhatsapp} className="gap-1" data-testid="btn-send-whatsapp">
+                <Send className="h-4 w-4" /> واتساب
               </Button>
               <Button variant="outline" asChild className="gap-1">
                 <a href={shareUrl} target="_blank" rel="noreferrer">
@@ -196,77 +283,44 @@ export default function SupportCall() {
         </CardContent>
       </Card>
 
-      {/* Quick "what you can do" guide */}
+      {/* Features grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <FeatureChip icon={Camera}     label="كاميرا" />
-        <FeatureChip icon={Mic}        label="صوت ثنائي الاتجاه" />
-        <FeatureChip icon={MonitorUp}  label="مشاركة الشاشة" />
+        <FeatureChip icon={Camera}        label="كاميرا" />
+        <FeatureChip icon={Mic}           label="صوت ثنائي الاتجاه" />
+        <FeatureChip icon={MonitorUp}     label="مشاركة الشاشة" />
         <FeatureChip icon={MessageSquare} label="دردشة نصية أثناء المكالمة" />
       </div>
 
-      {/* The call frame */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Users className="h-4 w-4" /> المكالمة المباشرة
-            </CardTitle>
-            <CardDescription>
-              {joined
-                ? "أنت داخل الغرفة الآن. لإنهاء المكالمة استخدم زر الإغلاق داخل الإطار."
-                : "اضغط «دخول الغرفة» لبدء البث. سيُطلب إذن الكاميرا والميكروفون من المتصفح."}
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="secondary" onClick={testPermission} className="gap-1" data-testid="btn-test-permission">
-              <Video className="h-4 w-4" /> اختبار إذن الكاميرا
-            </Button>
-            <Button asChild variant={isEmbedded ? "default" : "outline"} className="gap-1" data-testid="btn-open-tab">
-              <a href={callUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-4 w-4" /> فتح في نافذة جديدة
-              </a>
-            </Button>
-            {!joined ? (
-              <Button onClick={() => setJoined(true)} variant={isEmbedded ? "outline" : "default"} className="gap-1" data-testid="btn-join-room">
-                <Video className="h-4 w-4" /> دخول داخل الصفحة
-              </Button>
-            ) : (
-              <Button variant="outline" onClick={() => setJoined(false)} data-testid="btn-leave-room">
-                مغادرة
-              </Button>
-            )}
-          </div>
+      {/* Meeting notes */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <StickyNote className="h-4 w-4" /> ملاحظات الاجتماع
+          </CardTitle>
+          <CardDescription>
+            دوّن ما تم خلال المكالمة (المشكلة، الحل، الخطوات التالية). الملاحظات محفوظة محليًا في هذه الجلسة.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          {isEmbedded && !joined && (
-            <div className="m-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              <strong>ملاحظة:</strong> أنت تعرض النظام داخل إطار مدمج، والمتصفح يمنع طلب إذن الكاميرا والميكروفون من داخل إطار متداخل. للحصول على المكالمة كاملة، استخدم زر <strong>«فتح في نافذة جديدة»</strong> أعلاه.
-            </div>
-          )}
-          {joined ? (
-            <iframe
-              ref={iframeRef}
-              key={room}
-              src={callUrl}
-              title="Support video call"
-              // Permissions-Policy delegations required by the embedded
-              // Jitsi Meet client to access camera/mic/screen capture.
-              allow="camera; microphone; display-capture; autoplay; clipboard-write; fullscreen; picture-in-picture; speaker-selection"
-              allowFullScreen
-              className="w-full border-0"
-              style={{ height: "min(75vh, 720px)" }}
-              data-testid="iframe-jitsi"
-            />
-          ) : (
-            <div className="h-[480px] bg-muted/40 grid place-items-center text-center px-6">
-              <div className="max-w-md space-y-2">
-                <Video className="h-10 w-10 text-muted-foreground mx-auto" />
-                <div className="text-sm text-muted-foreground">
-                  الغرفة جاهزة. شارك الرابط مع العميل ثم اضغط «دخول الغرفة» لبدء البث.
-                </div>
-              </div>
-            </div>
-          )}
+        <CardContent>
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="مثال: العميل لم يستطع طباعة الفاتورة — أعدنا تثبيت تعريف الطابعة الحرارية وتم الحل."
+            rows={6}
+            data-testid="textarea-call-notes"
+          />
+          <div className="flex justify-end mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copy(notes, "الملاحظات")}
+              disabled={!notes.trim()}
+              className="gap-1"
+              data-testid="btn-copy-notes"
+            >
+              <Copy className="h-4 w-4" /> نسخ الملاحظات
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
