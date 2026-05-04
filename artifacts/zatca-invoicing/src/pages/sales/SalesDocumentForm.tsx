@@ -1976,10 +1976,11 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
               });
               return;
             }
-            // Early gate: if the device has no preferred printer set, show
-            // the "no printer connected" toast immediately instead of
-            // making the user navigate to the list page just to see it.
-            if (!ensurePrinterReady(toast, navigate)) return;
+            // No preferred-printer gate: the browser's system print
+            // dialog is the real selector. The localStorage "preferred
+            // printer name" is just a UX hint (browsers cannot
+            // enumerate physical printers anyway), so gating on it
+            // silently blocked users who never set a name.
             // Use sessionStorage so the hint survives wouter's navigate()
             // (which would otherwise overwrite window.history.state).
             try {
