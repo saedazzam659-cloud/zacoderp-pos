@@ -980,12 +980,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
       // and chosen template to the list page via history.state. The
       // list page reads it once on mount and triggers the print modal.
       if (autoPrintSalesInvoice && saved?.id) {
+        // Use sessionStorage instead of window.history.state because
+        // `wouter`'s navigate() pushes a fresh history entry whose state
+        // would otherwise overwrite ours, causing the auto-print hint
+        // to be lost before the list page can read it.
         try {
-          window.history.replaceState(
-            { autoPrintInvoiceId: saved.id, autoPrintTemplate: salesTemplate },
-            "",
+          sessionStorage.setItem(
+            "autoPrintSalesInvoice",
+            JSON.stringify({ id: saved.id, template: salesTemplate, ts: Date.now() }),
           );
-        } catch { /* ignore history failures */ }
+        } catch { /* ignore storage failures */ }
       }
       navigate(basePath);
     },
@@ -1976,10 +1980,14 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
             // the "no printer connected" toast immediately instead of
             // making the user navigate to the list page just to see it.
             if (!ensurePrinterReady(toast, navigate)) return;
-            window.history.replaceState(
-              { autoPrintInvoiceId: editId, autoPrintTemplate: salesTemplate },
-              "",
-            );
+            // Use sessionStorage so the hint survives wouter's navigate()
+            // (which would otherwise overwrite window.history.state).
+            try {
+              sessionStorage.setItem(
+                "autoPrintSalesInvoice",
+                JSON.stringify({ id: editId, template: salesTemplate, ts: Date.now() }),
+              );
+            } catch { /* ignore storage failures */ }
             navigate(basePath);
           }}
           disabled={saveMut.isPending}

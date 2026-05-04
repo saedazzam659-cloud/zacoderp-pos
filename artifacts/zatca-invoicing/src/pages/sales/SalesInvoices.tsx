@@ -72,22 +72,32 @@ export default function SalesInvoices() {
   });
 
   // Pick up the auto-print hint planted by SalesDocumentForm via
-  // window.history.state when redirecting back here after save. We
-  // wait until invoices and customers have loaded so the invoice
-  // lookup and the customer enrichment in openPrint both succeed,
-  // then clear the marker so refresh / re-visits don't re-print.
+  // sessionStorage when redirecting back here after save. We wait
+  // until invoices and customers have loaded so the invoice lookup
+  // and customer enrichment in openPrint both succeed, then clear
+  // the marker so refresh / re-visits don't re-print. We use
+  // sessionStorage rather than window.history.state because
+  // wouter's navigate() pushes a fresh state object which would
+  // otherwise wipe the hint.
   useEffect(() => {
     if (autoPrintHandledRef.current) return;
     if (!invoices || invoices.length === 0) return;
     if (!customers) return;
-    const st = (typeof window !== "undefined" ? window.history.state : null) as any;
-    const id = st?.autoPrintInvoiceId;
+    let hint: { id: number; template?: string; ts?: number } | null = null;
+    try {
+      const raw = sessionStorage.getItem("autoPrintSalesInvoice");
+      if (raw) hint = JSON.parse(raw);
+    } catch { /* ignore parse failures */ }
+    // Stale hints (>2 minutes old) are ignored to avoid printing on
+    // accidental back-navigations long after the original save.
+    if (hint?.ts && Date.now() - hint.ts > 2 * 60 * 1000) hint = null;
+    const id = hint?.id;
     if (!id) return;
-    const tpl: "a4" | "thermal" = st?.autoPrintTemplate === "thermal" ? "thermal" : "a4";
+    const tpl: "a4" | "thermal" = hint?.template === "thermal" ? "thermal" : "a4";
     const inv = invoices.find((x: any) => Number(x.id) === Number(id));
     if (!inv) return;
     autoPrintHandledRef.current = true;
-    try { window.history.replaceState({}, ""); } catch { /* noop */ }
+    try { sessionStorage.removeItem("autoPrintSalesInvoice"); } catch { /* noop */ }
     openPrint(inv, { template: tpl, autoPrint: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoices, customers]);

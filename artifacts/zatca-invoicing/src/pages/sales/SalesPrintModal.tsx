@@ -816,12 +816,38 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
     const tmpl = TEMPLATES.find(t => t.id === selected);
     if (!tmpl) return;
     const html = tmpl.fn(data);
-    const win = window.open("", "_blank", "width=900,height=700");
-    if (!win) return;
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => { win.print(); };
+    // Use a hidden same-origin iframe instead of `window.open` so popup
+    // blockers don't kill auto-print after save (no user-gesture path)
+    // and so the print preview always shows up — even when the print
+    // call is fired from a setTimeout / async flow.
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.cssText =
+      "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+    iframe.srcdoc = html;
+    iframe.onload = () => {
+      try {
+        const win = iframe.contentWindow;
+        if (!win) {
+          toast({ title: "تعذَّر فتح معاينة الطباعة", variant: "destructive" });
+          return;
+        }
+        win.focus();
+        win.print();
+      } catch (err: any) {
+        toast({
+          title: "تعذَّر بدء الطباعة",
+          description: err?.message ?? String(err),
+          variant: "destructive",
+        });
+      } finally {
+        // Give the browser time to capture the print job before we
+        // tear the iframe down. Without this, some engines abort the
+        // queued print dialog when the document is removed.
+        setTimeout(() => { try { iframe.remove(); } catch { /* noop */ } }, 2000);
+      }
+    };
+    document.body.appendChild(iframe);
   }
 
   if (!data) return null;
