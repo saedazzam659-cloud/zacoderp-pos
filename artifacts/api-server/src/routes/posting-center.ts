@@ -29,9 +29,13 @@ import {
   purchaseInvoicesTable, purchaseReturnsTable,
   receiptVouchersTable, paymentVouchersTable,
   customersTable, suppliersTable,
-  journalEntriesTable,
+  journalEntriesTable, journalEntryLinesTable,
+  goodsReceiptsTable, goodsDeliveriesTable,
+  cashTransfersTable,
+  stockTransfersTable, stockAdjustmentsTable, stockCountsTable,
+  warehousesTable, cashBoxesTable, bankAccountsTable,
 } from "@workspace/db";
-import { eq, and, desc, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
 import { requireModulePermission } from "../middleware/permissions.js";
 
@@ -60,6 +64,13 @@ const MODULES = [
   "purchase_returns",
   "receipt_vouchers",
   "payment_vouchers",
+  "journal_entries",
+  "goods_receipts",
+  "goods_deliveries",
+  "cash_transfers",
+  "stock_transfers",
+  "stock_adjustments",
+  "stock_counts",
 ] as const;
 type ModuleKey = typeof MODULES[number];
 
@@ -70,6 +81,13 @@ const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   purchase_returns:  "مرتجعات المشتريات",
   receipt_vouchers:  "سندات القبض",
   payment_vouchers:  "سندات الصرف",
+  journal_entries:   "القيود المحاسبية",
+  goods_receipts:    "إيصالات الاستلام",
+  goods_deliveries:  "إذونات التسليم",
+  cash_transfers:    "التحويلات النقدية",
+  stock_transfers:   "تحويلات المخزون",
+  stock_adjustments: "تسويات المخزون",
+  stock_counts:      "جرد المخزون",
 };
 
 // Unified row shape returned to the client. Every module is mapped onto this
@@ -117,24 +135,19 @@ router.get("/list", async (req, res) => {
     let rows: PostingRow[] = [];
 
     switch (mod) {
-      case "sales_invoices":
-        rows = await listSalesInvoices(cid, dateFrom, dateTo);
-        break;
-      case "sales_returns":
-        rows = await listSalesReturns(cid, dateFrom, dateTo);
-        break;
-      case "purchase_invoices":
-        rows = await listPurchaseInvoices(cid, dateFrom, dateTo);
-        break;
-      case "purchase_returns":
-        rows = await listPurchaseReturns(cid, dateFrom, dateTo);
-        break;
-      case "receipt_vouchers":
-        rows = await listReceiptVouchers(cid, dateFrom, dateTo);
-        break;
-      case "payment_vouchers":
-        rows = await listPaymentVouchers(cid, dateFrom, dateTo);
-        break;
+      case "sales_invoices":    rows = await listSalesInvoices(cid, dateFrom, dateTo); break;
+      case "sales_returns":     rows = await listSalesReturns(cid, dateFrom, dateTo); break;
+      case "purchase_invoices": rows = await listPurchaseInvoices(cid, dateFrom, dateTo); break;
+      case "purchase_returns":  rows = await listPurchaseReturns(cid, dateFrom, dateTo); break;
+      case "receipt_vouchers":  rows = await listReceiptVouchers(cid, dateFrom, dateTo); break;
+      case "payment_vouchers":  rows = await listPaymentVouchers(cid, dateFrom, dateTo); break;
+      case "journal_entries":   rows = await listJournalEntries(cid, dateFrom, dateTo); break;
+      case "goods_receipts":    rows = await listGoodsReceipts(cid, dateFrom, dateTo); break;
+      case "goods_deliveries":  rows = await listGoodsDeliveries(cid, dateFrom, dateTo); break;
+      case "cash_transfers":    rows = await listCashTransfers(cid, dateFrom, dateTo); break;
+      case "stock_transfers":   rows = await listStockTransfers(cid, dateFrom, dateTo); break;
+      case "stock_adjustments": rows = await listStockAdjustments(cid, dateFrom, dateTo); break;
+      case "stock_counts":      rows = await listStockCounts(cid, dateFrom, dateTo); break;
     }
 
     // Resolve journal-entry doc numbers in one extra round-trip when any
@@ -236,6 +249,13 @@ router.get("/ai-summary", async (req, res) => {
       case "purchase_returns":  rows = await listPurchaseReturns(cid);  break;
       case "receipt_vouchers":  rows = await listReceiptVouchers(cid);  break;
       case "payment_vouchers":  rows = await listPaymentVouchers(cid);  break;
+      case "journal_entries":   rows = await listJournalEntries(cid);   break;
+      case "goods_receipts":    rows = await listGoodsReceipts(cid);    break;
+      case "goods_deliveries":  rows = await listGoodsDeliveries(cid);  break;
+      case "cash_transfers":    rows = await listCashTransfers(cid);    break;
+      case "stock_transfers":   rows = await listStockTransfers(cid);   break;
+      case "stock_adjustments": rows = await listStockAdjustments(cid); break;
+      case "stock_counts":      rows = await listStockCounts(cid);      break;
     }
 
     const unposted = rows.filter(r => !r.posted && r.status !== "cancelled");
@@ -493,6 +513,296 @@ async function listPaymentVouchers(
     status: d.status,
     posted: d.status === "posted",
     journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Journal Entries ────────────────────────────────────────────────────────
+// Manual JEs that the accountant created directly.
+//
+// Auto-generated JEs (entryType IN LOCKED_JE_TYPES) are EXCLUDED from this
+// list because:
+//   1) they're already posted by their source document, and
+//   2) the JE post/unpost endpoint refuses to flip them — they must be
+//      unposted via the source document (invoice/voucher/etc.).
+// Surfacing them here would let the user select them and trigger a wave of
+// 403 errors on bulk-unpost. Their source documents already appear in the
+// posting center under their own modules.
+//
+// Amount = sum of debits (== sum of credits when balanced). We use a
+// subquery aggregate so the outer SELECT stays scalar and groupBy-safe.
+const LOCKED_JE_TYPES = [
+  "purchase_invoice", "purchase_return",
+  "sales_invoice", "sales_return",
+  "receipt_voucher", "payment_voucher", "receipt", "payment",
+  "stock_transfer", "stock_adjustment",
+  "supplier_settlement", "customer_settlement",
+  "payroll_run", "employee_loan", "eos_payment",
+];
+
+async function listJournalEntries(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(journalEntriesTable.companyId, cid),
+    // Only manual JEs — null entryType is treated as "general" and kept.
+    sql`(${journalEntriesTable.entryType} IS NULL OR ${journalEntriesTable.entryType} NOT IN ${LOCKED_JE_TYPES})`,
+  ];
+  if (dateFrom) conds.push(gte(journalEntriesTable.entryDate, dateFrom));
+  if (dateTo)   conds.push(lte(journalEntriesTable.entryDate, dateTo));
+
+  const docs = await db.select().from(journalEntriesTable)
+    .where(and(...conds))
+    .orderBy(desc(journalEntriesTable.entryDate));
+
+  if (docs.length === 0) return [];
+
+  // Per-entry debit totals in one query — keyed by entryId for O(1) lookup.
+  const totals = await db
+    .select({
+      entryId:    journalEntryLinesTable.entryId,
+      totalDebit: sql<string>`COALESCE(SUM(${journalEntryLinesTable.debit}), 0)`.as("total_debit"),
+    })
+    .from(journalEntryLinesTable)
+    .where(inArray(journalEntryLinesTable.entryId, docs.map(d => d.id)))
+    .groupBy(journalEntryLinesTable.entryId);
+  const totalMap = new Map(totals.map(t => [t.entryId, parseFloat(t.totalDebit || "0")] as const));
+
+  return docs.map(d => ({
+    id: d.id,
+    module: "journal_entries",
+    docNumber: d.docNumber,
+    date: d.entryDate,
+    type: MODULE_LABELS_AR.journal_entries,
+    description: d.description,
+    party: null,
+    amount: totalMap.get(d.id) ?? 0,
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.id,            // self-reference: the JE is itself
+    journalEntryDocNumber: d.docNumber,
+  }));
+}
+
+// ─── Goods Receipts ─────────────────────────────────────────────────────────
+async function listGoodsReceipts(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(goodsReceiptsTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(goodsReceiptsTable.receiptDate, dateFrom));
+  if (dateTo)   conds.push(lte(goodsReceiptsTable.receiptDate, dateTo));
+  const docs = await db.select().from(goodsReceiptsTable)
+    .where(and(...conds))
+    .orderBy(desc(goodsReceiptsTable.receiptDate));
+  const supMap = await loadSupplierMap(cid, docs.map(d => d.supplierId).filter((x): x is number => !!x));
+  return docs.map(d => ({
+    id: d.id,
+    module: "goods_receipts",
+    docNumber: d.docNumber,
+    date: d.receiptDate,
+    type: MODULE_LABELS_AR.goods_receipts,
+    description: d.notes,
+    party: d.supplierId ? (supMap.get(d.supplierId) ?? null) : null,
+    amount: parseFloat(d.totalAmount || "0"),
+    status: d.status,
+    posted: d.status === "posted" || d.status === "invoiced",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Goods Deliveries ───────────────────────────────────────────────────────
+async function listGoodsDeliveries(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(goodsDeliveriesTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(goodsDeliveriesTable.deliveryDate, dateFrom));
+  if (dateTo)   conds.push(lte(goodsDeliveriesTable.deliveryDate, dateTo));
+  const docs = await db.select().from(goodsDeliveriesTable)
+    .where(and(...conds))
+    .orderBy(desc(goodsDeliveriesTable.deliveryDate));
+  const cusMap = await loadCustomerMap(cid, docs.map(d => d.customerId).filter((x): x is number => !!x));
+  return docs.map(d => ({
+    id: d.id,
+    module: "goods_deliveries",
+    docNumber: d.docNumber,
+    date: d.deliveryDate,
+    type: MODULE_LABELS_AR.goods_deliveries,
+    description: d.notes,
+    party: d.customerId ? (cusMap.get(d.customerId) ?? null) : null,
+    amount: parseFloat(d.totalAmount || "0"),
+    status: d.status,
+    posted: d.status === "posted" || d.status === "invoiced",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Cash Transfers ─────────────────────────────────────────────────────────
+// Note: cash_transfers has only POST /post (no unpost endpoint server-side).
+// Frontend disables the unpost button for this module.
+async function listCashTransfers(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(cashTransfersTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(cashTransfersTable.date, dateFrom));
+  if (dateTo)   conds.push(lte(cashTransfersTable.date, dateTo));
+  const docs = await db.select().from(cashTransfersTable)
+    .where(and(...conds))
+    .orderBy(desc(cashTransfersTable.date));
+
+  // Resolve cash-box and bank names for the from/to fields so the "party"
+  // column shows a useful "From → To" string instead of bare IDs.
+  const cashBoxIds = new Set<number>();
+  const bankIds    = new Set<number>();
+  for (const d of docs) {
+    if (d.fromCashBoxId) cashBoxIds.add(d.fromCashBoxId);
+    if (d.toCashBoxId)   cashBoxIds.add(d.toCashBoxId);
+    if (d.fromBankId)    bankIds.add(d.fromBankId);
+    if (d.toBankId)      bankIds.add(d.toBankId);
+  }
+  const cashBoxRows = cashBoxIds.size > 0
+    ? await db.select({ id: cashBoxesTable.id, nameAr: cashBoxesTable.nameAr, nameEn: cashBoxesTable.nameEn })
+        .from(cashBoxesTable)
+        .where(and(eq(cashBoxesTable.companyId, cid), inArray(cashBoxesTable.id, Array.from(cashBoxIds))))
+    : [];
+  const bankRows = bankIds.size > 0
+    ? await db.select({ id: bankAccountsTable.id, nameAr: bankAccountsTable.nameAr, nameEn: bankAccountsTable.nameEn })
+        .from(bankAccountsTable)
+        .where(and(eq(bankAccountsTable.companyId, cid), inArray(bankAccountsTable.id, Array.from(bankIds))))
+    : [];
+  const cashBoxMap = new Map(cashBoxRows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+  const bankMap    = new Map(bankRows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+  const fromName = (d: typeof docs[number]) =>
+    (d.fromCashBoxId && cashBoxMap.get(d.fromCashBoxId)) ||
+    (d.fromBankId    && bankMap.get(d.fromBankId)) || "—";
+  const toName = (d: typeof docs[number]) =>
+    (d.toCashBoxId && cashBoxMap.get(d.toCashBoxId)) ||
+    (d.toBankId    && bankMap.get(d.toBankId))    || "—";
+
+  return docs.map(d => ({
+    id: d.id,
+    module: "cash_transfers",
+    docNumber: d.code,
+    date: d.date,
+    type: MODULE_LABELS_AR.cash_transfers,
+    description: d.description ?? d.notes,
+    party: `${fromName(d)} ← ${toName(d)}`,
+    amount: parseFloat(d.amount || "0"),
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: null,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Stock Transfers ────────────────────────────────────────────────────────
+// Note: stock_transfers / stock_adjustments / stock_counts have post-only
+// endpoints in inventory.ts. Frontend hides the unpost button for these.
+async function listStockTransfers(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(stockTransfersTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(stockTransfersTable.transferDate, dateFrom));
+  if (dateTo)   conds.push(lte(stockTransfersTable.transferDate, dateTo));
+  const docs = await db.select().from(stockTransfersTable)
+    .where(and(...conds))
+    .orderBy(desc(stockTransfersTable.transferDate));
+
+  const whIds = new Set<number>();
+  for (const d of docs) {
+    if (d.fromWarehouseId) whIds.add(d.fromWarehouseId);
+    if (d.toWarehouseId)   whIds.add(d.toWarehouseId);
+  }
+  const whRows = whIds.size > 0
+    ? await db.select({ id: warehousesTable.id, nameAr: warehousesTable.nameAr, nameEn: warehousesTable.nameEn })
+        .from(warehousesTable)
+        .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, Array.from(whIds))))
+    : [];
+  const whMap = new Map(whRows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+
+  return docs.map(d => ({
+    id: d.id,
+    module: "stock_transfers",
+    docNumber: d.transferNumber,
+    date: d.transferDate,
+    type: MODULE_LABELS_AR.stock_transfers,
+    description: d.notes,
+    party: `${whMap.get(d.fromWarehouseId) ?? "—"} ← ${whMap.get(d.toWarehouseId) ?? "—"}`,
+    amount: 0,                       // header has no total — derived from items
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Stock Adjustments ──────────────────────────────────────────────────────
+async function listStockAdjustments(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(stockAdjustmentsTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(stockAdjustmentsTable.adjustmentDate, dateFrom));
+  if (dateTo)   conds.push(lte(stockAdjustmentsTable.adjustmentDate, dateTo));
+  const docs = await db.select().from(stockAdjustmentsTable)
+    .where(and(...conds))
+    .orderBy(desc(stockAdjustmentsTable.adjustmentDate));
+
+  const whIds = Array.from(new Set(docs.map(d => d.warehouseId).filter((x): x is number => !!x)));
+  const whRows = whIds.length > 0
+    ? await db.select({ id: warehousesTable.id, nameAr: warehousesTable.nameAr, nameEn: warehousesTable.nameEn })
+        .from(warehousesTable)
+        .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, whIds)))
+    : [];
+  const whMap = new Map(whRows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+
+  return docs.map(d => ({
+    id: d.id,
+    module: "stock_adjustments",
+    docNumber: d.adjustmentNumber,
+    date: d.adjustmentDate,
+    type: MODULE_LABELS_AR.stock_adjustments,
+    description: d.reason || d.notes,
+    party: whMap.get(d.warehouseId) ?? null,
+    amount: 0,
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// ─── Stock Counts ───────────────────────────────────────────────────────────
+async function listStockCounts(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [eq(stockCountsTable.companyId, cid)];
+  if (dateFrom) conds.push(gte(stockCountsTable.countDate, dateFrom));
+  if (dateTo)   conds.push(lte(stockCountsTable.countDate, dateTo));
+  const docs = await db.select().from(stockCountsTable)
+    .where(and(...conds))
+    .orderBy(desc(stockCountsTable.countDate));
+
+  const whIds = Array.from(new Set(docs.map(d => d.warehouseId).filter((x): x is number => !!x)));
+  const whRows = whIds.length > 0
+    ? await db.select({ id: warehousesTable.id, nameAr: warehousesTable.nameAr, nameEn: warehousesTable.nameEn })
+        .from(warehousesTable)
+        .where(and(eq(warehousesTable.companyId, cid), inArray(warehousesTable.id, whIds)))
+    : [];
+  const whMap = new Map(whRows.map(r => [r.id, r.nameAr || r.nameEn || `#${r.id}`] as const));
+
+  return docs.map(d => ({
+    id: d.id,
+    module: "stock_counts",
+    docNumber: d.countNumber,
+    date: d.countDate,
+    type: MODULE_LABELS_AR.stock_counts,
+    description: d.notes,
+    party: whMap.get(d.warehouseId) ?? null,
+    amount: 0,
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: null,
     journalEntryDocNumber: null,
   }));
 }

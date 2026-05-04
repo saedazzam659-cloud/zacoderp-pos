@@ -356,6 +356,76 @@ router.put("/:id", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── POST /:id/post — flip status from draft → posted ───────────────────────
+// Used by the unified Posting Center. We require the entry to be balanced
+// (sum debit === sum credit) and not auto-locked. Auto-generated JEs are
+// already posted by their source document, so manually flipping their status
+// is rejected.
+router.post("/:id/post", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+
+    const lockCheck = await ensureNotLocked(id, cid);
+    if (!lockCheck.ok) {
+      res.status(403).json({ error: "هذا القيد تم إنشاؤه تلقائياً من مستند مصدر — غير قابل للترحيل اليدوي" });
+      return;
+    }
+
+    const [existing] = await db.select().from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    if (existing.status === "posted") { res.json({ ok: true, alreadyPosted: true }); return; }
+
+    // Balance check — sum debit must equal sum credit. We pull the lines
+    // raw (numeric → string) and parseFloat so the comparison is float-safe
+    // up to two decimal places (Saudi accounting precision).
+    const lines = await db.select({
+      debit:  journalEntryLinesTable.debit,
+      credit: journalEntryLinesTable.credit,
+    }).from(journalEntryLinesTable).where(eq(journalEntryLinesTable.entryId, id));
+    const totalDebit  = lines.reduce((s, l) => s + parseFloat(l.debit  || "0"), 0);
+    const totalCredit = lines.reduce((s, l) => s + parseFloat(l.credit || "0"), 0);
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      res.status(400).json({ error: `القيد غير متوازن — مدين: ${totalDebit.toFixed(2)} / دائن: ${totalCredit.toFixed(2)}` });
+      return;
+    }
+    if (totalDebit === 0 && totalCredit === 0) {
+      res.status(400).json({ error: "لا يمكن ترحيل قيد بقيمة صفرية" });
+      return;
+    }
+
+    await db.update(journalEntriesTable)
+      .set({ status: "posted", updatedAt: new Date() })
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── POST /:id/unpost — flip status from posted → draft ─────────────────────
+router.post("/:id/unpost", async (req, res) => {
+  try {
+    const cid = guard(req, res); if (!cid) return;
+    const id  = Number(req.params.id);
+
+    const lockCheck = await ensureNotLocked(id, cid);
+    if (!lockCheck.ok) {
+      res.status(403).json({ error: "هذا القيد تم إنشاؤه تلقائياً من مستند مصدر — لفك ترحيله قم بفك ترحيل المستند الأصلي" });
+      return;
+    }
+
+    const [existing] = await db.select().from(journalEntriesTable)
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    if (!existing) { res.status(404).json({ error: "القيد غير موجود" }); return; }
+    if (existing.status !== "posted") { res.json({ ok: true, alreadyUnposted: true }); return; }
+
+    await db.update(journalEntriesTable)
+      .set({ status: "draft", updatedAt: new Date() })
+      .where(and(eq(journalEntriesTable.id, id), eq(journalEntriesTable.companyId, cid)));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── DELETE ───────────────────────────────────────────────────────────────────
 router.delete("/:id", async (req, res) => {
   try {

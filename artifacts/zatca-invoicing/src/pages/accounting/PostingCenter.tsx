@@ -40,54 +40,43 @@ import { cn } from "@/lib/utils";
 // REST path used to post / unpost a single document, and (3) the HTTP method
 // (sales/purchase use PATCH, vouchers use POST).
 type ModuleKey =
-  | "sales_invoices"  | "sales_returns"
+  | "sales_invoices"   | "sales_returns"
   | "purchase_invoices" | "purchase_returns"
-  | "receipt_vouchers"  | "payment_vouchers";
+  | "receipt_vouchers"  | "payment_vouchers"
+  | "journal_entries"
+  | "goods_receipts"    | "goods_deliveries"
+  | "cash_transfers"
+  | "stock_transfers"   | "stock_adjustments" | "stock_counts";
 
 type ModuleDef = {
   key: ModuleKey;
   label: string;
   endpoint: (id: number, action: "post" | "unpost") => string;
   method: "PATCH" | "POST";
+  // Some inventory/cash modules only expose a "post" endpoint; bulk-unpost
+  // is hidden for those so the user never gets stuck with a 404.
+  supportsUnpost?: boolean;
 };
 
 const MODULES: ModuleDef[] = [
-  {
-    key: "sales_invoices",
-    label: "فواتير المبيعات",
-    endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,
-    method: "PATCH",
-  },
-  {
-    key: "sales_returns",
-    label: "مرتجعات المبيعات",
-    endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,
-    method: "PATCH",
-  },
-  {
-    key: "purchase_invoices",
-    label: "فواتير المشتريات",
-    endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`,
-    method: "PATCH",
-  },
-  {
-    key: "purchase_returns",
-    label: "مرتجعات المشتريات",
-    endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,
-    method: "PATCH",
-  },
-  {
-    key: "receipt_vouchers",
-    label: "سندات القبض",
-    endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,
-    method: "POST",
-  },
-  {
-    key: "payment_vouchers",
-    label: "سندات الصرف",
-    endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,
-    method: "POST",
-  },
+  // ── Sales ──
+  { key: "sales_invoices",    label: "فواتير المبيعات",    endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
+  { key: "sales_returns",     label: "مرتجعات المبيعات",   endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true },
+  // ── Purchasing ──
+  { key: "purchase_invoices", label: "فواتير المشتريات",   endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true },
+  { key: "purchase_returns",  label: "مرتجعات المشتريات",  endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,  method: "PATCH", supportsUnpost: true },
+  // ── Cash ──
+  { key: "receipt_vouchers",  label: "سندات القبض",        endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
+  { key: "payment_vouchers",  label: "سندات الصرف",        endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
+  { key: "cash_transfers",    label: "التحويلات النقدية",  endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false },
+  // ── Accounting ──
+  { key: "journal_entries",   label: "القيود المحاسبية",   endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
+  // ── Inventory documents ──
+  { key: "goods_receipts",    label: "إيصالات الاستلام",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true },
+  { key: "goods_deliveries",  label: "إذونات التسليم",     endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true },
+  { key: "stock_transfers",   label: "تحويلات المخزون",    endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false },
+  { key: "stock_adjustments", label: "تسويات المخزون",     endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false },
+  { key: "stock_counts",      label: "جرد المخزون",        endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false },
 ];
 
 type StatusFilter = "all" | "posted" | "unposted";
@@ -233,6 +222,19 @@ export default function PostingCenter() {
   // floating Cancel button mid-run).
   async function runBulk(action: "post" | "unpost") {
     const def = MODULES.find(m => m.key === selectedModule)!;
+
+    // Some modules (cash transfers, stock transfers/adjustments/counts) only
+    // expose a "post" endpoint server-side. Block unpost early with a clear
+    // message so the user isn't left with a wall of failed-row toasts.
+    if (action === "unpost" && def.supportsUnpost === false) {
+      toast({
+        title: "فك الترحيل غير مدعوم لهذا الموديول",
+        description: `${def.label} لا تدعم فك الترحيل من مركز الترحيل — قم بإلغاء أو حذف المستند الأصلي بدلاً من ذلك.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     const ids = Array.from(selected);
     const eligible = ids.filter(id => {
       const row = allRows.find(r => r.id === id);
@@ -533,11 +535,13 @@ export default function PostingCenter() {
                   className="bg-teal-600 hover:bg-teal-700 text-white" data-testid="button-bulk-post">
             <Send className="size-4 me-1.5" /> الترحيل
           </Button>
-          <Button onClick={() => runBulk("unpost")} disabled={bulkBusy || selected.size === 0}
-                  variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-50"
-                  data-testid="button-bulk-unpost">
-            <Undo2 className="size-4 me-1.5" /> فك الترحيل
-          </Button>
+          {(MODULES.find(m => m.key === selectedModule)?.supportsUnpost !== false) && (
+            <Button onClick={() => runBulk("unpost")} disabled={bulkBusy || selected.size === 0}
+                    variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-50"
+                    data-testid="button-bulk-unpost">
+              <Undo2 className="size-4 me-1.5" /> فك الترحيل
+            </Button>
+          )}
           <div className="h-6 w-px bg-slate-300 mx-1" />
           <Button onClick={selectAllPostable} disabled={bulkBusy}
                   variant="outline" className="border-teal-300 text-teal-800 hover:bg-teal-50"
