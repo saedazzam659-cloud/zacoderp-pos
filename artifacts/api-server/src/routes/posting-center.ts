@@ -37,15 +37,38 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, gte, lte, inArray, sql } from "drizzle-orm";
 import { extractAuth, resolveCompanyId } from "../middleware/auth.js";
-import { requireModulePermission } from "../middleware/permissions.js";
+import { requirePermission } from "../middleware/permissions.js";
 
 const router = Router();
-// Auth + RBAC gate matches `journalEntries.ts`: every request must come from
-// an authenticated user whose company has `journal_entries` enabled. This
-// closes the unauthenticated `?companyId=…` data-exposure path that an
-// `extractAuth`-only setup would leave open on GETs.
+// Auth gate at the router level — closes the unauthenticated
+// `?companyId=…` data-exposure path that an `extractAuth`-only setup
+// would leave open. Per-MODULE permission checks happen inside each
+// handler (see requireModuleView below) once we know which module the
+// caller is asking about — gating the entire router on `journal_entries`
+// would lock users out of "مرتجعات المبيعات" / "سندات القبض" / etc.
+// when their tenant only has Sales/Cash enabled but not Accounting.
 router.use(extractAuth);
-router.use(requireModulePermission("journal_entries"));
+
+// Maps each posting-center module to the permission key the regular
+// per-module routes use. requirePermission(key, "view") then enforces
+// BOTH the company-level menu gate (e.g. sales_module / cash_module)
+// AND the per-user view permission, exactly like the per-module
+// listing endpoint would. Admins/superadmins still bypass.
+const MODULE_PERM_KEY: Record<string, string> = {
+  sales_invoices:    "sales_invoices",
+  sales_returns:     "sales_returns",
+  purchase_invoices: "purchase_invoices",
+  purchase_returns:  "purchase_returns",
+  receipt_vouchers:  "receipt_vouchers",
+  payment_vouchers:  "payment_vouchers",
+  journal_entries:   "journal_entries",
+  goods_receipts:    "purchase_invoices", // GRNs gated under purchases module
+  goods_deliveries:  "sales_invoices",    // delivery notes gated under sales module
+  cash_transfers:    "cash_boxes",
+  stock_transfers:   "stock_transfers",
+  stock_adjustments: "stock_adjustments",
+  stock_counts:      "stock_counts",
+};
 
 // Hard server-side cap on the number of rows returned per list call. The
 // frontend is a non-virtualized table, and the bulk-post action operates on
@@ -108,8 +131,24 @@ type PostingRow = {
   journalEntryDocNumber: string | null;
 };
 
+// Per-module permission gate used as inline middleware on each handler.
+// Resolves the requested module from the query string, validates it, then
+// hands off to requirePermission(modKey, "view") which enforces the
+// company-level menu gate AND the per-user view permission. Centralised
+// here so /list and /ai-summary share the exact same gating logic.
+function gateByModule(req: any, res: any, next: any) {
+  if (!req.authUser) { res.status(401).json({ error: "غير مصرح" }); return; }
+  const moduleParam = (req.query.module as string) || "sales_invoices";
+  if (!MODULES.includes(moduleParam as ModuleKey)) {
+    res.status(400).json({ error: "نوع حركة غير صالح" });
+    return;
+  }
+  const permKey = MODULE_PERM_KEY[moduleParam] || "journal_entries";
+  return requirePermission(permKey, "view")(req, res, next);
+}
+
 // ─── List endpoint ──────────────────────────────────────────────────────────
-router.get("/list", async (req, res) => {
+router.get("/list", gateByModule, async (req, res) => {
   const cid = resolveCompanyId(
     req,
     req.query.companyId ? parseInt(req.query.companyId as string) : undefined,
@@ -119,12 +158,8 @@ router.get("/list", async (req, res) => {
     return;
   }
 
-  const moduleParam = (req.query.module as string) || "sales_invoices";
-  if (!MODULES.includes(moduleParam as ModuleKey)) {
-    res.status(400).json({ error: "نوع حركة غير صالح" });
-    return;
-  }
-  const mod = moduleParam as ModuleKey;
+  // gateByModule already validated the module; safe to cast.
+  const mod = ((req.query.module as string) || "sales_invoices") as ModuleKey;
 
   // posted | unposted | all  (default: unposted — matches "غير مرحل" in the UI)
   const statusFilter = (req.query.status as string) || "unposted";
@@ -224,7 +259,7 @@ router.get("/list", async (req, res) => {
 // totals, anomaly flags. No external AI call required — we keep this fast and
 // deterministic so it never hangs on a missing API key. The frontend renders
 // the result as a friendly Arabic summary card.
-router.get("/ai-summary", async (req, res) => {
+router.get("/ai-summary", gateByModule, async (req, res) => {
   const cid = resolveCompanyId(
     req,
     req.query.companyId ? parseInt(req.query.companyId as string) : undefined,
@@ -234,11 +269,8 @@ router.get("/ai-summary", async (req, res) => {
     return;
   }
 
-  const mod = (req.query.module as string) || "sales_invoices";
-  if (!MODULES.includes(mod as ModuleKey)) {
-    res.status(400).json({ error: "نوع حركة غير صالح" });
-    return;
-  }
+  // gateByModule already validated the module; safe to cast.
+  const mod = ((req.query.module as string) || "sales_invoices") as ModuleKey;
 
   try {
     let rows: PostingRow[] = [];
