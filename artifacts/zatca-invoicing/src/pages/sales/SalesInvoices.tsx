@@ -7,10 +7,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useFormatters } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer } from "lucide-react";
+import { Plus, Search, ShoppingBag, Eye, Trash2, CheckCircle, FileText, RotateCcw, Undo2, Copy, Printer, FileSpreadsheet, FileDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SalesPrintModal from "./SalesPrintModal";
 import { TablePagination, usePagination } from "@/components/TablePagination";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const API = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -146,6 +147,89 @@ export default function SalesInvoices() {
 
   const totalPosted = invoices.filter(i => i.status === "posted").reduce((s, i) => s + Number(i.totalAmount || 0), 0);
 
+  // ─── Excel / PDF export of the currently filtered list ──────────────────
+  // We export `filtered` (search + status filters honoured) instead of the
+  // raw `invoices` so the file matches what the user sees on screen. Each
+  // row mirrors the visible columns; the totals row sums totals/VAT/sub
+  // across the filtered set so the file is self-explanatory.
+  const exportColumns: ExportColumn[] = [
+    { header: t("salesInvoices.colNumber"),         key: "docNumber",       width: 14 },
+    { header: t("salesInvoices.colDate"),           key: "invoiceDate",     width: 12 },
+    { header: t("salesInvoices.colCustomer"),       key: "customerName",    width: 26 },
+    { header: t("salesInvoices.colPaymentType"),    key: "paymentLabel",    width: 12 },
+    { header: t("salesInvoices.colCurrency"),       key: "currencyCode",    width: 8  },
+    { header: t("salesInvoices.colSubtotal"),       key: "subtotal",        width: 14 },
+    { header: t("salesInvoices.colVat"),            key: "vatAmount",       width: 14 },
+    { header: t("salesInvoices.colTotal"),          key: "totalAmount",     width: 14 },
+    { header: t("salesInvoices.colStatus"),         key: "statusLabel",     width: 12 },
+  ];
+  function buildExportRows() {
+    return filtered.map(inv => {
+      const payLabel = inv.paymentType === "cash"
+        ? t("salesInvoices.paymentCash")
+        : inv.paymentType === "bank"
+          ? t("salesInvoices.paymentBank")
+          : t("salesInvoices.paymentCredit");
+      return {
+        docNumber:    inv.docNumber ?? `SI-${inv.id}`,
+        invoiceDate:  inv.invoiceDate ?? "",
+        customerName: cusMap[inv.customerId] ?? "—",
+        paymentLabel: payLabel,
+        currencyCode: inv.currencyCode ?? "SAR",
+        subtotal:     fmt(inv.subtotal),
+        vatAmount:    fmt(inv.vatAmount),
+        totalAmount:  fmt(inv.totalAmount),
+        statusLabel:  STATUS[inv.status]?.label ?? inv.status,
+      };
+    });
+  }
+  function buildTotalsRow() {
+    const sumSub = filtered.reduce((s, i) => s + Number(i.subtotal    || 0), 0);
+    const sumVat = filtered.reduce((s, i) => s + Number(i.vatAmount   || 0), 0);
+    const sumTot = filtered.reduce((s, i) => s + Number(i.totalAmount || 0), 0);
+    return {
+      docNumber:    t("common.total", "الإجمالي"),
+      invoiceDate:  "",
+      customerName: `${filtered.length} ${t("salesInvoices.itemLabel", { defaultValue: "فاتورة" })}`,
+      paymentLabel: "",
+      currencyCode: "",
+      subtotal:     fmt(sumSub),
+      vatAmount:    fmt(sumVat),
+      totalAmount:  fmt(sumTot),
+      statusLabel:  "",
+    };
+  }
+  function exportFilenameBase() {
+    const today = new Date().toISOString().slice(0, 10);
+    return `sales-invoices-${today}`;
+  }
+  function handleExportExcel() {
+    if (filtered.length === 0) {
+      toast({ title: "لا توجد فواتير للتصدير" });
+      return;
+    }
+    exportToExcel(buildExportRows(), exportColumns, exportFilenameBase(), "فواتير المبيعات", buildTotalsRow());
+    toast({ title: `تم تصدير ${filtered.length} فاتورة إلى Excel` });
+  }
+  function handleExportPDF() {
+    if (filtered.length === 0) {
+      toast({ title: "لا توجد فواتير للتصدير" });
+      return;
+    }
+    exportToPDF(
+      buildExportRows(),
+      exportColumns,
+      exportFilenameBase(),
+      "فواتير المبيعات",
+      `إجمالي السجلات المعروضة: ${filtered.length}`,
+      true,
+      buildTotalsRow(),
+      null,
+      (user as any)?.company?.logo ?? null,
+    );
+    toast({ title: `جارٍ فتح ${filtered.length} فاتورة بصيغة PDF` });
+  }
+
   const headerCells: string[] = [
     t("salesInvoices.colNumber"), t("salesInvoices.colDate"), t("salesInvoices.colCustomer"),
     t("salesInvoices.colPaymentType"), t("salesInvoices.colCurrency"), t("salesInvoices.colSubtotal"),
@@ -158,16 +242,42 @@ export default function SalesInvoices() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <ShoppingBag className="h-6 w-6 text-primary" />{t("salesInvoices.title")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t("salesInvoices.subtitle")}</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => navigate("/sales/invoices/new")}>
-          <Plus className="h-4 w-4" />{t("salesInvoices.newInvoice")}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 text-emerald-700 border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+            onClick={() => handleExportExcel()}
+            disabled={filtered.length === 0}
+            title="تصدير الفواتير المعروضة إلى ملف Excel"
+            data-testid="button-export-excel"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            تصدير Excel
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-2 text-rose-700 border-rose-200 hover:bg-rose-50 hover:text-rose-800"
+            onClick={() => handleExportPDF()}
+            disabled={filtered.length === 0}
+            title="تصدير الفواتير المعروضة إلى PDF"
+            data-testid="button-export-pdf"
+          >
+            <FileDown className="h-4 w-4" />
+            تصدير PDF
+          </Button>
+          <Button size="sm" className="gap-2" onClick={() => navigate("/sales/invoices/new")}>
+            <Plus className="h-4 w-4" />{t("salesInvoices.newInvoice")}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
