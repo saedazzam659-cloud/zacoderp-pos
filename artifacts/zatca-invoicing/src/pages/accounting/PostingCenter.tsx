@@ -31,9 +31,11 @@ import {
   RefreshCw, Sparkles, FileSpreadsheet, FileDown, Send, Undo2,
   CheckSquare, Square, Loader2, AlertTriangle, Info, ShieldCheck,
   Filter, X, Layers, Calculator,
+  ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft,
 } from "lucide-react";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { cn } from "@/lib/utils";
+import { SearchCombobox, type ComboboxItem } from "@/components/ui/search-combobox";
 
 // Auth header helper — mirrors the pattern used by every other API client
 // in this app (journalEntriesApi.ts, salesAnalyticsApi.ts, etc.). The
@@ -65,6 +67,10 @@ type ModuleDef = {
   label: string;
   endpoint: (id: number, action: "post" | "unpost") => string;
   method: "PATCH" | "POST";
+  // Group label used by the searchable combobox so the dropdown is
+  // organized into Sales / Purchasing / Cash / Accounting / Inventory
+  // sections instead of one long flat list.
+  group: string;
   // Some inventory/cash modules only expose a "post" endpoint; bulk-unpost
   // is hidden for those so the user never gets stuck with a 404.
   supportsUnpost?: boolean;
@@ -72,29 +78,39 @@ type ModuleDef = {
 
 const MODULES: ModuleDef[] = [
   // ── Sales ──
-  { key: "sales_invoices",    label: "فواتير المبيعات",    endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
+  { key: "sales_invoices",    label: "فواتير المبيعات",    group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
   // POS-originated invoices live in the same salesInvoicesTable as manual
   // sales invoices, so they share the same /post endpoint. We only split
   // them in the listing so the accountant can batch-post POS shifts
   // without drowning in manual invoices.
-  { key: "pos_sales",         label: "فواتير نقاط البيع",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
-  { key: "sales_returns",     label: "مرتجعات المبيعات",   endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true },
+  { key: "pos_sales",         label: "فواتير نقاط البيع",  group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
+  { key: "sales_returns",     label: "مرتجعات المبيعات",   group: "المبيعات",  endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true },
   // ── Purchasing ──
-  { key: "purchase_invoices", label: "فواتير المشتريات",   endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true },
-  { key: "purchase_returns",  label: "مرتجعات المشتريات",  endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,  method: "PATCH", supportsUnpost: true },
+  { key: "purchase_invoices", label: "فواتير المشتريات",   group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true },
+  { key: "purchase_returns",  label: "مرتجعات المشتريات",  group: "المشتريات", endpoint: (id, a) => `/api/purchasing/purchase-returns/${id}/${a}`,  method: "PATCH", supportsUnpost: true },
   // ── Cash ──
-  { key: "receipt_vouchers",  label: "سندات القبض",        endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
-  { key: "payment_vouchers",  label: "سندات الصرف",        endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
-  { key: "cash_transfers",    label: "التحويلات النقدية",  endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false },
+  { key: "receipt_vouchers",  label: "سندات القبض",        group: "النقدية",   endpoint: (id, a) => `/api/receipt-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
+  { key: "payment_vouchers",  label: "سندات الصرف",        group: "النقدية",   endpoint: (id, a) => `/api/payment-vouchers/${id}/${a}`,           method: "POST",  supportsUnpost: true },
+  { key: "cash_transfers",    label: "التحويلات النقدية",  group: "النقدية",   endpoint: (id, a) => `/api/cash-transfers/${id}/${a}`,             method: "POST",  supportsUnpost: false },
   // ── Accounting ──
-  { key: "journal_entries",   label: "القيود المحاسبية",   endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
+  { key: "journal_entries",   label: "القيود المحاسبية",   group: "المحاسبة",  endpoint: (id, a) => `/api/journal-entries/${id}/${a}`,            method: "POST",  supportsUnpost: true },
   // ── Inventory documents ──
-  { key: "goods_receipts",    label: "إيصالات الاستلام",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true },
-  { key: "goods_deliveries",  label: "إذونات التسليم",     endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true },
-  { key: "stock_transfers",   label: "تحويلات المخزون",    endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false },
-  { key: "stock_adjustments", label: "تسويات المخزون",     endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false },
-  { key: "stock_counts",      label: "جرد المخزون",        endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false },
+  { key: "goods_receipts",    label: "إيصالات الاستلام",   group: "المخازن",   endpoint: (id, a) => `/api/goods-receipts/${id}/${a}`,             method: "PATCH", supportsUnpost: true },
+  { key: "goods_deliveries",  label: "إذونات التسليم",     group: "المخازن",   endpoint: (id, a) => `/api/goods-deliveries/${id}/${a}`,           method: "PATCH", supportsUnpost: true },
+  { key: "stock_transfers",   label: "تحويلات المخزون",    group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-transfers/${id}/${a}`,  method: "POST",  supportsUnpost: false },
+  { key: "stock_adjustments", label: "تسويات المخزون",     group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-adjustments/${id}/${a}`, method: "POST",  supportsUnpost: false },
+  { key: "stock_counts",      label: "جرد المخزون",        group: "المخازن",   endpoint: (id, a) => `/api/inventory/stock-counts/${id}/${a}`,     method: "POST",  supportsUnpost: false },
 ];
+
+// Memoization-friendly conversion of MODULES into the SearchCombobox's
+// ComboboxItem shape. Built once at module-load time since the module
+// list is static. Passing `grouped` to SearchCombobox makes it render
+// the items under their `group` headers (المبيعات / المشتريات / …).
+const MODULE_COMBOBOX_ITEMS: ComboboxItem[] = MODULES.map(m => ({
+  value: m.key,
+  label: m.label,
+  group: m.group,
+}));
 
 type StatusFilter = "all" | "posted" | "unposted";
 
@@ -124,6 +140,17 @@ type AiSummary = {
   insights: { level: "info" | "warning" | "danger"; message: string }[];
 };
 
+// ─── Pagination config ─────────────────────────────────────────────────────
+// Page-size choices the accountant can pick from. 50 is a sensible default
+// — comfortable on a laptop screen without forcing scroll-fatigue, but
+// still snappy. The 500/1000 options are deliberately included for power
+// users who want to bulk-select an entire shift's worth of POS invoices
+// without flipping pages. Anything bigger than 1000 noticeably degrades
+// browser DOM performance on the non-virtualized table.
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 500, 1000] as const;
+type PageSize = typeof PAGE_SIZE_OPTIONS[number];
+const DEFAULT_PAGE_SIZE: PageSize = 50;
+
 // ─── Bulk post chunking config ─────────────────────────────────────────────
 // CONCURRENCY = how many simultaneous in-flight requests. 8 is a safe value
 // across the proxy + Express + Postgres pool without thrashing connections.
@@ -145,6 +172,16 @@ export default function PostingCenter() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
+  // Pagination state — pageSize persists in localStorage so the user's
+  // preferred page size sticks across reloads / module switches.
+  const [pageSize, setPageSize] = useState<PageSize>(() => {
+    const stored = Number(localStorage.getItem("posting-center-page-size"));
+    return PAGE_SIZE_OPTIONS.includes(stored as PageSize)
+      ? (stored as PageSize)
+      : DEFAULT_PAGE_SIZE;
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+
   // Selection state — persists across re-renders so the user can scroll, page
   // through filters, and still keep their original selection.
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -164,6 +201,18 @@ export default function PostingCenter() {
   useEffect(() => {
     setSelected(new Set());
   }, [selectedModule, statusFilter, dateFrom, dateTo]);
+
+  // Reset to first page whenever the filter set or page size changes so the
+  // user is never stranded on (e.g.) page 7 of a result set that just shrank
+  // to one page.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedModule, statusFilter, dateFrom, dateTo, search, pageSize]);
+
+  // Persist the user's page-size preference across reloads.
+  useEffect(() => {
+    localStorage.setItem("posting-center-page-size", String(pageSize));
+  }, [pageSize]);
 
   const { data, isLoading, isFetching, refetch, error } = useQuery({
     queryKey: ["posting-center-list", cid, selectedModule, statusFilter, dateFrom, dateTo],
@@ -210,6 +259,20 @@ export default function PostingCenter() {
   const allFilteredIds = useMemo(() => filtered.map(r => r.id), [filtered]);
   const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selected.has(id));
   const someSelected = !allSelected && allFilteredIds.some(id => selected.has(id));
+
+  // ─── Pagination derivations ──────────────────────────────────────────────
+  // Slice the filtered set into the current page. The page-size dropdown
+  // and prev/next controls operate on these. Bulk selection / totals
+  // intentionally still operate on the FULL `filtered` set so the user
+  // can post 5000 rows in one action without paging through them.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStartIdx = (safePage - 1) * pageSize;
+  const pageEndIdx = Math.min(pageStartIdx + pageSize, filtered.length);
+  const pagedRows = useMemo(
+    () => filtered.slice(pageStartIdx, pageEndIdx),
+    [filtered, pageStartIdx, pageEndIdx],
+  );
 
   function toggleRow(id: number) {
     setSelected(prev => {
@@ -477,16 +540,21 @@ export default function PostingCenter() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">نوع الحركة</label>
-            <Select value={selectedModule} onValueChange={(v) => setSelectedModule(v as ModuleKey)}>
-              <SelectTrigger data-testid="select-module">
-                <SelectValue placeholder="اختر نوع الحركة" />
-              </SelectTrigger>
-              <SelectContent>
-                {MODULES.map(m => (
-                  <SelectItem key={m.key} value={m.key}>{m.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Searchable combobox — lets the accountant type "نقاط" or
+                "POS" or "مشتريات" instead of scrolling 13 items. Items
+                are grouped by domain (مبيعات / مشتريات / نقدية / محاسبة /
+                مخازن) and Enter selects the highlighted row. */}
+            <div data-testid="select-module">
+              <SearchCombobox
+                items={MODULE_COMBOBOX_ITEMS}
+                value={selectedModule}
+                onValueChange={(v) => { if (v) setSelectedModule(v as ModuleKey); }}
+                placeholder="اختر نوع الحركة"
+                searchPlaceholder="ابحث عن نوع الحركة..."
+                emptyText="لا يوجد نوع حركة بهذا الاسم"
+                grouped
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">الحالة</label>
@@ -654,7 +722,7 @@ export default function PostingCenter() {
                   </td>
                 </tr>
               )}
-              {filtered.map((r, idx) => {
+              {pagedRows.map((r, idx) => {
                 const isSel = selected.has(r.id);
                 return (
                   <tr key={`${r.module}-${r.id}`}
@@ -674,7 +742,9 @@ export default function PostingCenter() {
                              className="size-4 cursor-pointer accent-teal-600"
                              data-testid={`checkbox-${r.id}`} />
                     </td>
-                    <td className="px-2 py-1.5 text-center text-xs text-slate-500">{idx + 1}</td>
+                    {/* Show absolute index across the full filtered set so
+                        the user can tell what page they're on at a glance. */}
+                    <td className="px-2 py-1.5 text-center text-xs text-slate-500">{pageStartIdx + idx + 1}</td>
                     <td className="px-2 py-1.5 font-mono text-xs">{r.docNumber || "—"}</td>
                     <td className="px-2 py-1.5 text-xs">{r.date}</td>
                     <td className="px-2 py-1.5 text-xs text-slate-600">{r.type}</td>
@@ -722,6 +792,20 @@ export default function PostingCenter() {
             )}
           </table>
         </div>
+
+        {/* ─── Pagination bar ─────────────────────────────────────────── */}
+        {filtered.length > 0 && (
+          <PaginationBar
+            currentPage={safePage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            pageStartIdx={pageStartIdx}
+            pageEndIdx={pageEndIdx}
+            totalRows={filtered.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
+        )}
       </div>
 
       {/* AI Sheet */}
@@ -777,6 +861,187 @@ export default function PostingCenter() {
           </div>
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+// ─── Pagination bar ────────────────────────────────────────────────────────
+// Renders the bottom strip with: page-size selector, "showing X-Y of Z"
+// info, and a smart prev/next/jump-to-page control. Lives at the bottom
+// of the grid card so it scrolls with the table on small screens but stays
+// visually anchored to the data it controls.
+function PaginationBar({
+  currentPage, totalPages, pageSize, pageStartIdx, pageEndIdx, totalRows,
+  onPageChange, onPageSizeChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  pageSize: PageSize;
+  pageStartIdx: number;
+  pageEndIdx: number;
+  totalRows: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (s: PageSize) => void;
+}) {
+  // Build a compact page-number list with ellipses so 100+ pages still fit
+  // on a single line. Always shows: first, last, current, and one neighbor
+  // on each side. Anything in between collapses into "…".
+  const pages = useMemo(() => {
+    const out: (number | "…")[] = [];
+    const window = 1;
+    for (let i = 1; i <= totalPages; i++) {
+      if (
+        i === 1 ||
+        i === totalPages ||
+        (i >= currentPage - window && i <= currentPage + window)
+      ) {
+        out.push(i);
+      } else if (out[out.length - 1] !== "…") {
+        out.push("…");
+      }
+    }
+    return out;
+  }, [currentPage, totalPages]);
+
+  const canPrev = currentPage > 1;
+  const canNext = currentPage < totalPages;
+
+  // Format the "showing" line in Arabic numerals for clarity. The +1 on
+  // pageStartIdx converts from 0-based JS index to 1-based humanese.
+  const startNum = totalRows === 0 ? 0 : pageStartIdx + 1;
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-slate-200 bg-gradient-to-l from-slate-50 to-white">
+      {/* Left: page-size selector + summary */}
+      <div className="flex items-center gap-3 flex-wrap text-xs text-slate-600">
+        <div className="flex items-center gap-2">
+          <span>عرض</span>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => onPageSizeChange(Number(v) as PageSize)}
+          >
+            <SelectTrigger
+              className="h-8 w-[88px] text-xs font-semibold border-teal-200 bg-white focus:ring-teal-400"
+              data-testid="select-page-size"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map(opt => (
+                <SelectItem key={opt} value={String(opt)} className="text-xs">
+                  {opt.toLocaleString("ar-EG")} سطر
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="hidden sm:block h-5 w-px bg-slate-200" />
+        <div className="text-slate-500">
+          عرض{" "}
+          <span className="font-bold text-slate-800">
+            {startNum.toLocaleString("ar-EG")}–{pageEndIdx.toLocaleString("ar-EG")}
+          </span>{" "}
+          من{" "}
+          <span className="font-bold text-teal-700">
+            {totalRows.toLocaleString("ar-EG")}
+          </span>{" "}
+          سجل
+        </div>
+      </div>
+
+      {/* Right: prev/next + page numbers */}
+      <div className="flex items-center gap-1" data-testid="pagination-controls">
+        {/* First page (jumps the user to page 1 in one click — handy when
+            they're deep in a 1000-page set) */}
+        <button
+          type="button"
+          onClick={() => onPageChange(1)}
+          disabled={!canPrev}
+          aria-label="الصفحة الأولى"
+          className={cn(
+            "size-8 rounded-md flex items-center justify-center transition-colors border",
+            canPrev
+              ? "bg-white border-slate-200 text-slate-600 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+              : "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed",
+          )}
+          data-testid="btn-first-page"
+        >
+          <ChevronsRight className="size-4" />
+        </button>
+        {/* Previous page — labeled "السابق" so the user knows what it does
+            even without the icon */}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={!canPrev}
+          className={cn(
+            "h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-semibold transition-colors border",
+            canPrev
+              ? "bg-white border-slate-200 text-slate-700 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+              : "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed",
+          )}
+          data-testid="btn-prev-page"
+        >
+          <ChevronRight className="size-4" />
+          <span className="hidden sm:inline">السابق</span>
+        </button>
+
+        {/* Numbered pages — clickable jumps + ellipses */}
+        <div className="flex items-center gap-1 px-1">
+          {pages.map((p, i) => p === "…" ? (
+            <span key={`gap-${i}`} className="px-1 text-slate-400 text-xs select-none">…</span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPageChange(p)}
+              aria-current={p === currentPage ? "page" : undefined}
+              className={cn(
+                "min-w-8 h-8 px-2 rounded-md flex items-center justify-center text-xs font-semibold transition-all border",
+                p === currentPage
+                  ? "bg-gradient-to-b from-teal-600 to-teal-700 text-white border-teal-700 shadow-sm scale-105"
+                  : "bg-white border-slate-200 text-slate-700 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200",
+              )}
+              data-testid={`btn-page-${p}`}
+            >
+              {p.toLocaleString("ar-EG")}
+            </button>
+          ))}
+        </div>
+
+        {/* Next page */}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={!canNext}
+          className={cn(
+            "h-8 px-2.5 rounded-md flex items-center gap-1 text-xs font-semibold transition-colors border",
+            canNext
+              ? "bg-white border-slate-200 text-slate-700 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+              : "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed",
+          )}
+          data-testid="btn-next-page"
+        >
+          <span className="hidden sm:inline">التالي</span>
+          <ChevronLeft className="size-4" />
+        </button>
+        {/* Last page */}
+        <button
+          type="button"
+          onClick={() => onPageChange(totalPages)}
+          disabled={!canNext}
+          aria-label="الصفحة الأخيرة"
+          className={cn(
+            "size-8 rounded-md flex items-center justify-center transition-colors border",
+            canNext
+              ? "bg-white border-slate-200 text-slate-600 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200"
+              : "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed",
+          )}
+          data-testid="btn-last-page"
+        >
+          <ChevronsLeft className="size-4" />
+        </button>
+      </div>
     </div>
   );
 }
