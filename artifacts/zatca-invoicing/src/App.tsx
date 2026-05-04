@@ -192,6 +192,7 @@ import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
 import Regions  from "@/pages/org/Regions";
 import Branches from "@/pages/org/Branches";
 import JournalEntries from "@/pages/accounting/JournalEntries";
+import PostingCenter from "@/pages/accounting/PostingCenter";
 import JournalEntryForm from "@/pages/accounting/JournalEntryForm";
 import OpeningBalances from "@/pages/accounting/OpeningBalances";
 import TrialBalances from "@/pages/accounting/TrialBalances";
@@ -643,6 +644,7 @@ function AppRoutes() {
             {!isSuperAdmin && <PermRoute path="/accounting/cost-centers"   module="accounts"        component={CostCenters} />}
             {!isSuperAdmin && <PermRoute path="/accounting/fiscal-periods" module="accounts"        component={FiscalPeriods} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals"       module="journal_entries" component={JournalEntries} />}
+            {!isSuperAdmin && <PermRoute path="/accounting/posting-center" module="journal_entries" component={PostingCenter} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals/new"   module="journal_entries" action="create" component={JournalEntryForm} />}
             {!isSuperAdmin && <PermRoute path="/accounting/journals/:id"   module="journal_entries" component={JournalEntryForm} />}
             {!isSuperAdmin && <PermRoute path="/accounting/opening-balances" module="journal_entries" action="create" component={OpeningBalances} />}

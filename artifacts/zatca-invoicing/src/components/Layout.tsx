@@ -363,6 +363,7 @@ const accountingSubNav: NavDef[] = [
   { nameKey: "nav.costCenters",     href: "/accounting/cost-centers",   icon: Target,        permKey: "accounts" },
   { nameKey: "nav.fiscalPeriods",   href: "/accounting/fiscal-periods", icon: CalendarRange, permKey: "accounts" },
   { nameKey: "nav.journals",        href: "/accounting/journals",       icon: BookOpen,      permKey: "journal_entries" },
+  { nameKey: "nav.postingCenter",   href: "/accounting/posting-center", icon: Layers,        permKey: "journal_entries" },
   { nameKey: "nav.accountingMaintenance", href: "/accounting/maintenance", icon: Wrench,    permKey: "accounting_maintenance" },
 ];
 const reportsSubNav: NavDef[] = [
