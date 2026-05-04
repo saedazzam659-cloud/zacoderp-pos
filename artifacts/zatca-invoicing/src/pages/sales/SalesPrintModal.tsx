@@ -757,14 +757,416 @@ function template7(d: PrintData): string {
   </body></html>`;
 }
 
+// ── Template 8: نقي أنيق (Pure & Elegant) ───────────────────────────────────
+function template8(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#0f172a")}
+  <style>
+    body { font-family: 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif; }
+    .top { border-bottom: 1px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-name { font-size: 22px; font-weight: 300; letter-spacing: 4px; color: #0f172a; text-transform: uppercase; }
+    .brand-name b { font-weight: 700; }
+    .doc-title { text-align: left; }
+    .doc-title .word { font-size: 11px; color: #64748b; letter-spacing: 2px; text-transform: uppercase; }
+    .doc-title .num { font-size: 26px; font-weight: 200; color: #0f172a; margin-top: 2px; }
+    .gold-bar { height: 3px; background: linear-gradient(90deg,#0f172a, #d4af37, #0f172a); margin: 0 0 18px; }
+    .meta-strip { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: #e5e7eb; margin-bottom: 16px; }
+    .meta-cell { background: #fff; padding: 10px 14px; }
+    .meta-cell .k { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+    .meta-cell .v { font-size: 13px; color: #0f172a; font-weight: 600; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    .party { padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 2px; }
+    .party h4 { font-size: 9px; color: #d4af37; letter-spacing: 2px; margin-bottom: 6px; text-transform: uppercase; font-weight: 700; }
+    table { font-size: 11px; }
+    thead tr { border-bottom: 2px solid #0f172a; border-top: 2px solid #0f172a; }
+    thead th { padding: 9px 8px; font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+    tbody td { padding: 8px; border-bottom: 1px solid #f1f5f9; }
+    .totals { margin-top: 18px; display: flex; justify-content: flex-start; }
+    .totals-card { min-width: 260px; border-top: 2px solid #d4af37; padding: 12px 0; }
+    .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; color: #475569; }
+    .totals-row.grand { font-size: 16px; font-weight: 700; color: #0f172a; border-top: 1px solid #e2e8f0; margin-top: 6px; padding-top: 8px; }
+    .footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
+  </style>
+  </head><body>
+  <div class="top">
+    <div class="brand">
+      ${safeLogo ? `<img src="${safeLogo}" alt="" style="max-height:50px;max-width:120px;object-fit:contain;display:block;"/>` : ""}
+      <div>
+        <div class="brand-name">${company?.nameAr ?? "اسم الشركة"}</div>
+        ${company?.nameEn ? `<div style="font-size:10px;color:#94a3b8;letter-spacing:3px;">${company.nameEn}</div>` : ""}
+      </div>
+    </div>
+    <div class="doc-title">
+      <div class="word">${docTitle(d.type)}</div>
+      <div class="num">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+    </div>
+  </div>
+  <div class="gold-bar"></div>
+  <div class="meta-strip">
+    <div class="meta-cell"><div class="k">التاريخ</div><div class="v">${docDate(doc, d.type)}</div></div>
+    <div class="meta-cell"><div class="k">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
+    <div class="meta-cell"><div class="k">${d.type === "quotation" ? "صلاحية" : "الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : (doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل")}</div></div>
+  </div>
+  <div class="parties">
+    <div class="party"><h4>إلى</h4>${customerBlock(customer)}</div>
+    <div class="party"><h4>من</h4>${companyBlock(company)}</div>
+  </div>
+  ${linesTable(lines, "", "")}
+  <div class="totals">
+    <div class="totals-card">
+      <div class="totals-row"><span>المجموع قبل الضريبة</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div class="totals-row"><span>ضريبة القيمة المضافة</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      <div class="totals-row grand"><span>الإجمالي الشامل</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+    </div>
+  </div>
+  ${doc.notes ? `<div style="margin-top:18px;padding:12px 14px;background:#f8fafc;border-right:3px solid #d4af37;font-size:11px;"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
+  <div class="footer">
+    <span>${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}</span>
+    <span>طُبع ${new Date().toLocaleDateString("ar-SA")}</span>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 9: ذهبي فاخر (Premium Gold) ────────────────────────────────────
+function template9(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#1c1917", "#f5d57a")}
+  <style>
+    body { background: #fafaf9; }
+    .frame { border: 1px solid #d4af37; padding: 18px; background: #fff; }
+    .header { background: linear-gradient(135deg,#1c1917 0%, #292524 50%, #1c1917 100%); color: #f5d57a; padding: 22px 26px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #d4af37; }
+    .h-left { display: flex; align-items: center; gap: 14px; }
+    .logo-box { background: rgba(212,175,55,.1); border: 1px solid rgba(212,175,55,.4); padding: 6px 8px; border-radius: 4px; }
+    .h-name { font-size: 22px; font-weight: 700; letter-spacing: 1px; color: #f5d57a; }
+    .h-sub { font-size: 11px; opacity: .7; margin-top: 4px; }
+    .h-right { text-align: left; }
+    .h-right .lbl { font-size: 11px; color: #d4af37; letter-spacing: 3px; text-transform: uppercase; }
+    .h-right .num { font-size: 24px; font-weight: 800; color: #fff; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .h-right .dt { font-size: 10px; color: rgba(245,213,122,.7); margin-top: 4px; }
+    .body { padding: 18px 22px; background: #fff; }
+    .strip { background: linear-gradient(90deg,#1c1917, #44403c); color: #f5d57a; padding: 10px 18px; font-size: 11px; display: flex; gap: 26px; margin-bottom: 16px; }
+    .strip b { color: #fff; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .panel { background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 4px; padding: 12px 16px; }
+    .panel h4 { font-size: 10px; color: #92400e; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #d4af37; }
+    table { font-size: 11px; }
+    thead tr { background: #1c1917; color: #f5d57a; }
+    thead th { padding: 9px 8px; font-weight: 600; border-right: 1px solid rgba(212,175,55,.2); }
+    tbody tr:nth-child(even) { background: #fefce8; }
+    tbody td { padding: 8px; border: 1px solid #e7e5e4; }
+    .totals-area { background: #1c1917; color: #f5d57a; padding: 14px 20px; margin-top: 16px; min-width: 280px; border: 1px solid #d4af37; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+    .t-row.grand { border-top: 1px solid #d4af37; padding-top: 8px; margin-top: 6px; font-size: 17px; font-weight: 800; color: #fff; }
+    .footer { background: #1c1917; color: #f5d57a; padding: 10px 22px; display: flex; justify-content: space-between; font-size: 10px; opacity: .9; margin-top: 14px; }
+  </style>
+  </head><body>
+  <div class="frame">
+    <div class="header">
+      <div class="h-left">
+        ${safeLogo ? `<div class="logo-box"><img src="${safeLogo}" alt="" style="max-height:48px;max-width:130px;object-fit:contain;display:block;"/></div>` : ""}
+        <div>
+          <div class="h-name">${company?.nameAr ?? "اسم الشركة"}</div>
+          <div class="h-sub">${company?.vatNumber ? `الرقم الضريبي ${company.vatNumber}` : ""}${company?.crNumber ? ` • س.ت ${company.crNumber}` : ""}</div>
+        </div>
+      </div>
+      <div class="h-right">
+        <div class="lbl">${docTitle(d.type)}</div>
+        <div class="num">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+        <div class="dt">${docDate(doc, d.type)}</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="strip">
+        <span>التاريخ: <b>${docDate(doc, d.type)}</b></span>
+        <span>العملة: <b>${doc.currencyCode ?? "SAR"}</b></span>
+        ${d.type !== "quotation" ? `<span>الدفع: <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى: <b>${doc.validUntil}</b></span>` : "")}
+      </div>
+      <div class="two">
+        <div class="panel"><h4>العميل</h4>${customerBlock(customer)}</div>
+        <div class="panel"><h4>المنشأة</h4>${companyBlock(company)}</div>
+      </div>
+      ${linesTable(lines, "", "")}
+      <div style="display:flex;justify-content:flex-start;">
+        <div class="totals-area">
+          <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)}</span></div>
+          <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)}</span></div>
+          <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+        </div>
+      </div>
+      ${doc.notes ? `<div class="panel" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+    </div>
+    <div class="footer">
+      <span>${company?.nameAr ?? ""} • ${company?.city ?? ""}</span>
+      <span>تم بنظام الفاتورة الإلكترونية ZATCA</span>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 10: بحري عميق (Deep Ocean) ─────────────────────────────────────
+function template10(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#0e7490")}
+  <style>
+    .wave-header { background: linear-gradient(135deg,#0c4a6e 0%, #0e7490 50%, #06b6d4 100%); color: #fff; padding: 26px 28px 38px; position: relative; overflow: hidden; }
+    .wave-header::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 22px; background: #fff; clip-path: polygon(0 100%, 100% 100%, 100% 30%, 80% 60%, 60% 30%, 40% 60%, 20% 30%, 0 60%); }
+    .wh-grid { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; position: relative; z-index: 2; }
+    .wh-brand { display: flex; align-items: center; gap: 14px; }
+    .wh-logo { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); padding: 6px 10px; border-radius: 8px; backdrop-filter: blur(4px); }
+    .wh-name { font-size: 21px; font-weight: 700; }
+    .wh-meta { font-size: 11px; opacity: .85; margin-top: 4px; }
+    .wh-badge { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4); border-radius: 12px; padding: 12px 18px; text-align: center; backdrop-filter: blur(4px); }
+    .wh-badge .lbl { font-size: 10px; opacity: .85; letter-spacing: 1.5px; text-transform: uppercase; }
+    .wh-badge .num { font-size: 20px; font-weight: 700; margin-top: 2px; }
+    .body { padding: 12px 24px 24px; }
+    .info-bar { background: #ecfeff; border: 1px solid #a5f3fc; border-radius: 8px; padding: 10px 16px; display: flex; justify-content: space-around; font-size: 11px; color: #155e75; margin-bottom: 16px; }
+    .info-bar b { color: #0c4a6e; font-size: 12px; display: block; margin-top: 2px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .card { background: #f0f9ff; border-right: 4px solid #0e7490; padding: 12px 16px; border-radius: 4px 0 0 4px; }
+    .card h4 { font-size: 10px; color: #0e7490; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: 700; }
+    table { border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    thead tr { background: linear-gradient(90deg,#0c4a6e,#0e7490); color: #fff; }
+    thead th { padding: 10px 8px; font-weight: 600; }
+    tbody tr:nth-child(even) { background: #f0f9ff; }
+    tbody td { padding: 8px; border-bottom: 1px solid #e0f2fe; }
+    .totals-area { background: linear-gradient(135deg,#0c4a6e,#0e7490); color: #fff; padding: 16px 22px; border-radius: 12px; min-width: 280px; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; opacity: .95; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.3); padding-top: 8px; margin-top: 6px; font-size: 17px; font-weight: 800; opacity: 1; }
+    .footer { margin-top: 22px; padding-top: 12px; border-top: 2px solid #06b6d4; display: flex; justify-content: space-between; font-size: 10px; color: #155e75; }
+  </style>
+  </head><body>
+  <div class="wave-header">
+    <div class="wh-grid">
+      <div class="wh-brand">
+        ${safeLogo ? `<div class="wh-logo"><img src="${safeLogo}" alt="" style="max-height:50px;max-width:140px;object-fit:contain;display:block;"/></div>` : ""}
+        <div>
+          <div class="wh-name">${company?.nameAr ?? "اسم الشركة"}</div>
+          <div class="wh-meta">${company?.vatNumber ? `الرقم الضريبي ${company.vatNumber}` : ""}${company?.city ? ` • ${company.city}` : ""}</div>
+        </div>
+      </div>
+      <div class="wh-badge">
+        <div class="lbl">${docTitle(d.type)}</div>
+        <div class="num">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+      </div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="info-bar">
+      <span>التاريخ <b>${docDate(doc, d.type)}</b></span>
+      <span>العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
+      ${d.type !== "quotation" ? `<span>الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span>صالح حتى <b>${doc.validUntil}</b></span>` : "")}
+    </div>
+    <div class="two">
+      <div class="card"><h4>العميل</h4>${customerBlock(customer)}</div>
+      <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
+    </div>
+    ${linesTable(lines, "", "")}
+    <div style="display:flex;justify-content:flex-start;margin-top:14px;">
+      <div class="totals-area">
+        <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
+        <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+        <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      </div>
+    </div>
+    ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+    <div class="footer">
+      <span>${company?.nameAr ?? ""}</span>
+      <span>ZATCA e-Invoicing • ${new Date().toLocaleDateString("ar-SA")}</span>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 11: حيوي (Vibrant) ─────────────────────────────────────────────
+function template11(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#7c3aed")}
+  <style>
+    .top-stripe { height: 8px; background: linear-gradient(90deg,#ec4899,#a855f7,#7c3aed,#3b82f6); }
+    .header { padding: 22px 26px 14px; display: flex; justify-content: space-between; align-items: flex-start; }
+    .brand-row { display: flex; align-items: center; gap: 14px; }
+    .brand-name { font-size: 22px; font-weight: 800; background: linear-gradient(90deg,#a855f7,#ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .brand-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .ribbon { background: linear-gradient(135deg,#a855f7,#ec4899); color: #fff; padding: 12px 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(168,85,247,.3); text-align: center; }
+    .ribbon .l { font-size: 10px; opacity: .9; letter-spacing: 2px; text-transform: uppercase; }
+    .ribbon .n { font-size: 22px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .body { padding: 4px 26px 22px; }
+    .pills { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .pill { background: #f5f3ff; border: 1px solid #ddd6fe; color: #6b21a8; border-radius: 999px; padding: 6px 14px; font-size: 11px; font-weight: 600; }
+    .pill b { color: #4c1d95; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .card { background: #faf5ff; border-radius: 12px; padding: 14px 16px; position: relative; overflow: hidden; }
+    .card::before { content: ""; position: absolute; top: 0; right: 0; width: 60px; height: 60px; background: radial-gradient(circle at top right, rgba(168,85,247,.15), transparent 70%); }
+    .card h4 { font-size: 10px; color: #7c3aed; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; font-weight: 700; }
+    table { border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    thead tr { background: linear-gradient(90deg,#7c3aed,#a855f7,#ec4899); color: #fff; }
+    thead th { padding: 10px 8px; font-weight: 600; }
+    tbody tr:nth-child(even) { background: #faf5ff; }
+    tbody td { padding: 8px; border-bottom: 1px solid #f3e8ff; }
+    .totals-area { background: linear-gradient(135deg,#a855f7,#ec4899); color: #fff; padding: 16px 22px; border-radius: 12px; min-width: 280px; box-shadow: 0 6px 14px rgba(168,85,247,.25); }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; opacity: .95; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.3); padding-top: 8px; margin-top: 6px; font-size: 18px; font-weight: 800; opacity: 1; }
+    .footer { margin-top: 22px; padding: 10px 26px; background: linear-gradient(90deg,#7c3aed,#ec4899); color: #fff; display: flex; justify-content: space-between; font-size: 10px; }
+  </style>
+  </head><body>
+  <div class="top-stripe"></div>
+  <div class="header">
+    <div class="brand-row">
+      ${safeLogo ? `<img src="${safeLogo}" alt="" style="max-height:54px;max-width:140px;object-fit:contain;display:block;"/>` : ""}
+      <div>
+        <div class="brand-name">${company?.nameAr ?? "اسم الشركة"}</div>
+        <div class="brand-sub">${company?.vatNumber ? `VAT ${company.vatNumber}` : ""}${company?.city ? ` • ${company.city}` : ""}</div>
+      </div>
+    </div>
+    <div class="ribbon">
+      <div class="l">${docTitle(d.type)}</div>
+      <div class="n">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="pills">
+      <span class="pill">التاريخ <b>${docDate(doc, d.type)}</b></span>
+      <span class="pill">العملة <b>${doc.currencyCode ?? "SAR"}</b></span>
+      ${d.type !== "quotation" ? `<span class="pill">الدفع <b>${doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل"}</b></span>` : (doc.validUntil ? `<span class="pill">صالح حتى <b>${doc.validUntil}</b></span>` : "")}
+    </div>
+    <div class="two">
+      <div class="card"><h4>العميل</h4>${customerBlock(customer)}</div>
+      <div class="card"><h4>المنشأة</h4>${companyBlock(company)}</div>
+    </div>
+    ${linesTable(lines, "", "")}
+    <div style="display:flex;justify-content:flex-start;margin-top:14px;">
+      <div class="totals-area">
+        <div class="t-row"><span>المجموع</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
+        <div class="t-row"><span>الضريبة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+        <div class="t-row grand"><span>الإجمالي</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+      </div>
+    </div>
+    ${doc.notes ? `<div class="card" style="margin-top:14px;"><h4>ملاحظات</h4>${doc.notes}</div>` : ""}
+  </div>
+  <div class="footer">
+    <span>${company?.nameAr ?? ""}</span>
+    <span>ZATCA Compliant • ${new Date().toLocaleDateString("ar-SA")}</span>
+  </div>
+  </body></html>`;
+}
+
+// ── Template 12: تنفيذي (Executive Side-Panel) ──────────────────────────────
+function template12(d: PrintData): string {
+  const { doc, lines, customer, company } = d;
+  const safeLogo = safeLogoSrc(company?.logo);
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${docTitle(d.type)}</title>
+  ${baseStyles("#334155")}
+  <style>
+    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 95vh; }
+    .side { background: linear-gradient(180deg,#0f172a 0%, #1e293b 50%, #334155 100%); color: #f1f5f9; padding: 22px 18px; }
+    .side .logo-wrap { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 10px; text-align: center; margin-bottom: 16px; }
+    .side .co-name { font-size: 16px; font-weight: 700; line-height: 1.4; }
+    .side .co-en { font-size: 10px; opacity: .7; margin-top: 2px; }
+    .side .divider { height: 1px; background: linear-gradient(90deg,transparent,#64748b,transparent); margin: 16px 0; }
+    .side .info-block { font-size: 10.5px; color: #cbd5e1; line-height: 1.8; }
+    .side .info-block b { color: #fff; display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 2px; opacity: .8; }
+    .side .info-block .grp { margin-bottom: 12px; }
+    .main { padding: 22px 26px; background: #fff; }
+    .main-head { border-bottom: 3px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
+    .main-head h1 { font-size: 26px; font-weight: 800; color: #0f172a; }
+    .main-head .sub { font-size: 11px; color: #64748b; margin-top: 4px; letter-spacing: 1px; }
+    .num-box { text-align: left; }
+    .num-box .lbl { font-size: 10px; color: #64748b; letter-spacing: 1.5px; }
+    .num-box .num { font-size: 22px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .num-box .dt { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .meta-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 16px; }
+    .mc { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; text-align: center; }
+    .mc .l { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+    .mc .v { font-size: 12px; color: #0f172a; font-weight: 700; margin-top: 2px; }
+    .cust-card { background: #f8fafc; border-right: 4px solid #0f172a; padding: 12px 16px; margin-bottom: 14px; border-radius: 4px 0 0 4px; }
+    .cust-card h4 { font-size: 9px; color: #0f172a; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
+    table { font-size: 11px; }
+    thead tr { background: #0f172a; color: #fff; }
+    thead th { padding: 9px 8px; font-weight: 600; }
+    tbody td { padding: 8px; border-bottom: 1px solid #e2e8f0; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    .totals-area { margin-top: 14px; display: flex; justify-content: flex-start; }
+    .totals-card { min-width: 280px; background: #0f172a; color: #fff; padding: 14px 18px; border-radius: 8px; }
+    .t-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
+    .t-row.grand { border-top: 1px solid rgba(255,255,255,.25); padding-top: 8px; margin-top: 6px; font-size: 16px; font-weight: 800; }
+    .notes-box { margin-top: 16px; padding: 12px 14px; background: #fef3c7; border-right: 3px solid #f59e0b; border-radius: 4px 0 0 4px; font-size: 11px; }
+    .footer { margin-top: 22px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 9px; color: #94a3b8; text-align: center; letter-spacing: 1px; }
+  </style>
+  </head><body>
+  <div class="layout">
+    <aside class="side">
+      ${safeLogo ? `<div class="logo-wrap"><img src="${safeLogo}" alt="" style="max-height:60px;max-width:160px;object-fit:contain;display:block;margin:auto;"/></div>` : ""}
+      <div class="co-name">${company?.nameAr ?? "اسم الشركة"}</div>
+      ${company?.nameEn ? `<div class="co-en">${company.nameEn}</div>` : ""}
+      <div class="divider"></div>
+      <div class="info-block">
+        ${company?.vatNumber ? `<div class="grp"><b>الرقم الضريبي</b>${company.vatNumber}</div>` : ""}
+        ${company?.crNumber  ? `<div class="grp"><b>السجل التجاري</b>${company.crNumber}</div>` : ""}
+        ${company?.city      ? `<div class="grp"><b>الموقع</b>${company.city}${company.country ? ` — ${company.country}` : ""}</div>` : ""}
+        ${(company as any)?.phone ? `<div class="grp"><b>الهاتف</b>${(company as any).phone}</div>` : ""}
+        ${(company as any)?.email ? `<div class="grp"><b>البريد</b>${(company as any).email}</div>` : ""}
+      </div>
+    </aside>
+    <main class="main">
+      <div class="main-head">
+        <div>
+          <h1>${docTitle(d.type)}</h1>
+          <div class="sub">${docTitle(d.type).toUpperCase()}</div>
+        </div>
+        <div class="num-box">
+          <div class="lbl">رقم الوثيقة</div>
+          <div class="num">${doc.docNumber ?? `${docPrefix(d.type)}-${doc.id}`}</div>
+          <div class="dt">${docDate(doc, d.type)}</div>
+        </div>
+      </div>
+      <div class="meta-cards">
+        <div class="mc"><div class="l">العملة</div><div class="v">${doc.currencyCode ?? "SAR"}</div></div>
+        <div class="mc"><div class="l">${d.type === "quotation" ? "صلاحية" : "نوع الدفع"}</div><div class="v">${d.type === "quotation" ? (doc.validUntil ?? "—") : (doc.paymentType === "cash" ? "نقدي" : doc.paymentType === "bank" ? "بنك" : "آجل")}</div></div>
+        <div class="mc"><div class="l">عدد البنود</div><div class="v">${lines.length}</div></div>
+      </div>
+      <div class="cust-card">
+        <h4>العميل</h4>
+        ${customerBlock(customer)}
+      </div>
+      ${linesTable(lines, "", "")}
+      <div class="totals-area">
+        <div class="totals-card">
+          <div class="t-row"><span>المجموع قبل الضريبة</span><span class="mono">${fmt(doc.subtotal)} ${doc.currencyCode ?? "SAR"}</span></div>
+          <div class="t-row"><span>ضريبة القيمة المضافة 15%</span><span class="mono">${fmt(doc.vatAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+          <div class="t-row grand"><span>الإجمالي الشامل</span><span class="mono">${fmt(doc.totalAmount)} ${doc.currencyCode ?? "SAR"}</span></div>
+        </div>
+      </div>
+      ${doc.notes ? `<div class="notes-box"><b>ملاحظات: </b>${doc.notes}</div>` : ""}
+      <div class="footer">
+        نظام الفاتورة الإلكترونية المتوافق مع ZATCA — طُبع ${new Date().toLocaleDateString("ar-SA")}
+      </div>
+    </main>
+  </div>
+  </body></html>`;
+}
+
 const TEMPLATES = [
-  { id: 1, name: "كلاسيكي",      desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1, thermal: false },
-  { id: 2, name: "حديث",         desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2, thermal: false },
-  { id: 3, name: "مؤسسي",        desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3, thermal: false },
-  { id: 4, name: "ملوّن",        desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4, thermal: false },
-  { id: 5, name: "ZATCA رسمي",   desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5, thermal: false },
-  { id: 6, name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",    color: "#111111", fn: template6, thermal: true  },
-  { id: 7, name: "حراري عصري",   desc: "إيصال 80mm ملوّن",          color: "#0f766e", fn: template7, thermal: true  },
+  { id: 1,  name: "كلاسيكي",       desc: "حدود وجداول تقليدية",      color: "#2563eb", fn: template1,  thermal: false },
+  { id: 2,  name: "حديث",          desc: "تصميم نظيف بهيدر أخضر",   color: "#059669", fn: template2,  thermal: false },
+  { id: 3,  name: "مؤسسي",         desc: "هيدر داكن احترافي",        color: "#1e3a5f", fn: template3,  thermal: false },
+  { id: 4,  name: "ملوّن",         desc: "ألوان دافئة مع تدرج",      color: "#d97706", fn: template4,  thermal: false },
+  { id: 5,  name: "ZATCA رسمي",    desc: "النموذج الحكومي مع QR",    color: "#1a6e3d", fn: template5,  thermal: false },
+  { id: 8,  name: "نقي أنيق",      desc: "أبيض وأسود مع لمسة ذهبية", color: "#0f172a", fn: template8,  thermal: false },
+  { id: 9,  name: "ذهبي فاخر",     desc: "خلفية داكنة ولمسات ذهبية", color: "#1c1917", fn: template9,  thermal: false },
+  { id: 10, name: "بحري عميق",     desc: "تدرج أزرق مع موجة سفلية",  color: "#0e7490", fn: template10, thermal: false },
+  { id: 11, name: "حيوي",          desc: "تدرجات بنفسجية ووردية",    color: "#a855f7", fn: template11, thermal: false },
+  { id: 12, name: "تنفيذي",        desc: "شريط جانبي ببيانات الشركة", color: "#0f172a", fn: template12, thermal: false },
+  { id: 6,  name: "حراري كلاسيكي", desc: "إيصال 80mm أبيض/أسود",    color: "#111111", fn: template6,  thermal: true  },
+  { id: 7,  name: "حراري عصري",    desc: "إيصال 80mm ملوّن",         color: "#0f766e", fn: template7,  thermal: true  },
 ];
 
 interface Props {
@@ -868,7 +1270,7 @@ export default function SalesPrintModal({ open, onClose, data, defaultTemplate, 
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-4 md:grid-cols-7 gap-3 my-4">
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-3 my-4 max-h-[55vh] overflow-y-auto pr-1">
           {TEMPLATES.map(t => (
             <button
               key={t.id}
