@@ -56,6 +56,7 @@ router.use(extractAuth);
 // listing endpoint would. Admins/superadmins still bypass.
 const MODULE_PERM_KEY: Record<string, string> = {
   sales_invoices:    "sales_invoices",
+  pos_sales:         "pos",              // POS-originated invoices (posSessionId IS NOT NULL)
   sales_returns:     "sales_returns",
   purchase_invoices: "purchase_invoices",
   purchase_returns:  "purchase_returns",
@@ -82,6 +83,7 @@ const LIST_LIMIT = 5000;
 
 const MODULES = [
   "sales_invoices",
+  "pos_sales",
   "sales_returns",
   "purchase_invoices",
   "purchase_returns",
@@ -99,6 +101,7 @@ type ModuleKey = typeof MODULES[number];
 
 const MODULE_LABELS_AR: Record<ModuleKey, string> = {
   sales_invoices:    "فواتير المبيعات",
+  pos_sales:         "فواتير نقاط البيع",
   sales_returns:     "مرتجعات المبيعات",
   purchase_invoices: "فواتير المشتريات",
   purchase_returns:  "مرتجعات المشتريات",
@@ -171,6 +174,7 @@ router.get("/list", gateByModule, async (req, res) => {
 
     switch (mod) {
       case "sales_invoices":    rows = await listSalesInvoices(cid, dateFrom, dateTo); break;
+      case "pos_sales":         rows = await listPosSales(cid, dateFrom, dateTo);      break;
       case "sales_returns":     rows = await listSalesReturns(cid, dateFrom, dateTo); break;
       case "purchase_invoices": rows = await listPurchaseInvoices(cid, dateFrom, dateTo); break;
       case "purchase_returns":  rows = await listPurchaseReturns(cid, dateFrom, dateTo); break;
@@ -276,6 +280,7 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
     let rows: PostingRow[] = [];
     switch (mod as ModuleKey) {
       case "sales_invoices":    rows = await listSalesInvoices(cid);    break;
+      case "pos_sales":         rows = await listPosSales(cid);         break;
       case "sales_returns":     rows = await listSalesReturns(cid);     break;
       case "purchase_invoices": rows = await listPurchaseInvoices(cid); break;
       case "purchase_returns":  rows = await listPurchaseReturns(cid);  break;
@@ -377,7 +382,14 @@ router.get("/ai-summary", gateByModule, async (req, res) => {
 async function listSalesInvoices(
   cid: number, dateFrom?: string, dateTo?: string,
 ): Promise<PostingRow[]> {
-  const conds = [eq(salesInvoicesTable.companyId, cid)];
+  // Manual sales invoices ONLY — POS-originated invoices (posSessionId IS NOT NULL)
+  // are surfaced under the dedicated "pos_sales" module so the accountant can
+  // batch-post them separately. Without this filter, busy POS tenants drown
+  // out manual sales invoices and the totals/anomaly detectors get confused.
+  const conds = [
+    eq(salesInvoicesTable.companyId, cid),
+    sql`${salesInvoicesTable.posSessionId} IS NULL`,
+  ];
   if (dateFrom) conds.push(gte(salesInvoicesTable.invoiceDate, dateFrom));
   if (dateTo)   conds.push(lte(salesInvoicesTable.invoiceDate, dateTo));
   const docs = await db.select().from(salesInvoicesTable)
@@ -391,6 +403,40 @@ async function listSalesInvoices(
     docNumber: d.docNumber,
     date: d.invoiceDate,
     type: MODULE_LABELS_AR.sales_invoices,
+    description: d.notes,
+    party: d.customerId ? (cusMap.get(d.customerId) ?? null) : null,
+    amount: parseFloat(d.totalAmount || "0"),
+    status: d.status,
+    posted: d.status === "posted",
+    journalEntryId: d.journalEntryId,
+    journalEntryDocNumber: null,
+  }));
+}
+
+// POS-originated sales invoices (posSessionId IS NOT NULL). Lives in the same
+// salesInvoicesTable as manual sales invoices and shares the exact same
+// /post endpoint server-side — we only split the *listing* so the accountant
+// can post POS shifts in bulk without mixing them with manual invoices.
+async function listPosSales(
+  cid: number, dateFrom?: string, dateTo?: string,
+): Promise<PostingRow[]> {
+  const conds = [
+    eq(salesInvoicesTable.companyId, cid),
+    sql`${salesInvoicesTable.posSessionId} IS NOT NULL`,
+  ];
+  if (dateFrom) conds.push(gte(salesInvoicesTable.invoiceDate, dateFrom));
+  if (dateTo)   conds.push(lte(salesInvoicesTable.invoiceDate, dateTo));
+  const docs = await db.select().from(salesInvoicesTable)
+    .where(and(...conds))
+    .orderBy(desc(salesInvoicesTable.invoiceDate));
+
+  const cusMap = await loadCustomerMap(cid, docs.map(d => d.customerId).filter((x): x is number => !!x));
+  return docs.map(d => ({
+    id: d.id,
+    module: "pos_sales",
+    docNumber: d.docNumber,
+    date: d.invoiceDate,
+    type: MODULE_LABELS_AR.pos_sales,
     description: d.notes,
     party: d.customerId ? (cusMap.get(d.customerId) ?? null) : null,
     amount: parseFloat(d.totalAmount || "0"),

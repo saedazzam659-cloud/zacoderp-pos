@@ -52,7 +52,7 @@ function authHeaders(): Record<string, string> {
 // REST path used to post / unpost a single document, and (3) the HTTP method
 // (sales/purchase use PATCH, vouchers use POST).
 type ModuleKey =
-  | "sales_invoices"   | "sales_returns"
+  | "sales_invoices"   | "pos_sales"          | "sales_returns"
   | "purchase_invoices" | "purchase_returns"
   | "receipt_vouchers"  | "payment_vouchers"
   | "journal_entries"
@@ -73,6 +73,11 @@ type ModuleDef = {
 const MODULES: ModuleDef[] = [
   // ── Sales ──
   { key: "sales_invoices",    label: "فواتير المبيعات",    endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
+  // POS-originated invoices live in the same salesInvoicesTable as manual
+  // sales invoices, so they share the same /post endpoint. We only split
+  // them in the listing so the accountant can batch-post POS shifts
+  // without drowning in manual invoices.
+  { key: "pos_sales",         label: "فواتير نقاط البيع",  endpoint: (id, a) => `/api/sales/sales-invoices/${id}/${a}`,       method: "PATCH", supportsUnpost: true },
   { key: "sales_returns",     label: "مرتجعات المبيعات",   endpoint: (id, a) => `/api/sales/sales-returns/${id}/${a}`,        method: "PATCH", supportsUnpost: true },
   // ── Purchasing ──
   { key: "purchase_invoices", label: "فواتير المشتريات",   endpoint: (id, a) => `/api/purchasing/purchase-invoices/${id}/${a}`, method: "PATCH", supportsUnpost: true },
