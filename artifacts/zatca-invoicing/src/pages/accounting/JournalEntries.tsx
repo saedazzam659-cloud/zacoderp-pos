@@ -15,8 +15,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Plus, Pencil, Trash2, BookOpen, ArrowUpDown, CheckCircle2, FileText, Printer, Copy,
-  FileSpreadsheet, FileDown, X, Calendar, Loader2,
+  FileSpreadsheet, FileDown, X, Calendar, Loader2, ChevronDown, Receipt, LayoutGrid, Award,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import {
@@ -193,6 +197,36 @@ export default function JournalEntries() {
     () => Array.from(layout.selected).map((x) => Number(x)).filter((n) => Number.isFinite(n)),
     [layout.selected],
   );
+
+  // Subset of selectedIds whose status is currently "draft" — only those rows
+  // can actually be posted. We compute it here so the bulk-post button shows
+  // the *real* count it will operate on (e.g. "ترحيل (3)" out of 5 selected).
+  const draftSelectedIds = useMemo(() => {
+    const idSet = new Set(selectedIds);
+    return (entries as any[])
+      .filter((e: any) => idSet.has(e.id) && e.status === "draft")
+      .map((e: any) => e.id as number);
+  }, [selectedIds, entries]);
+
+  /* ── Bulk post handler — flips every selected DRAFT entry to "posted".
+        Server enforces balance, auto-lock and period guards so failures
+        surface in the per-row failure summary. ──────────────────────── */
+  async function handleBulkPost() {
+    if (draftSelectedIds.length === 0) return;
+    if (!window.confirm(`سيتم ترحيل ${draftSelectedIds.length} قيد. متابعة؟`)) return;
+    const { ok, failures } = await bulkRun(
+      draftSelectedIds,
+      async (id) => { await journalEntriesApi.post(id); },
+    );
+    if (failures.length > 0) {
+      window.alert(
+        `ترحيل القيود: ${ok}/${draftSelectedIds.length}\n` +
+        `${failures.length} قيد فشل:\n• ${failures.slice(0, 5).join("\n• ")}`,
+      );
+    } else if (ok > 0) {
+      window.alert(`تم ترحيل ${ok} قيد بنجاح`);
+    }
+  }
 
   async function confirmBulkDelete() {
     setBulkDeleteOpen(false);
@@ -502,44 +536,318 @@ ${entrySections}
 <script>setTimeout(()=>window.print(),300);</script></body></html>`;
   };
 
+  /* ─── 5 print templates the user can pick from the bulk-bar dropdown.
+         Each template builds its own self-contained HTML document and the
+         dropdown decides which one to invoke based on `templateId`.
+         Templates 2/4/5 need full line details, templates 1/3 work from the
+         summary list rows alone (faster — no extra fetch).  ──────────── */
+  type PrintTemplateId = "summary" | "detailed" | "compact" | "thermal" | "professional";
+
+  const PRINT_TEMPLATES: { id: PrintTemplateId; label: string; desc: string; icon: any; needsLines: boolean }[] = [
+    { id: "summary",      label: "ملخص أفقي A4",        desc: "جدول بصف لكل قيد — مناسب للعرض السريع", icon: LayoutGrid, needsLines: false },
+    { id: "detailed",     label: "تفصيلي مع الأطراف",   desc: "صفحة لكل قيد بكامل أطرافه (مدين/دائن)", icon: FileText,   needsLines: true  },
+    { id: "compact",      label: "مدمج (خط صغير)",       desc: "جدول مضغوط — أكبر عدد قيود في صفحة",     icon: FileSpreadsheet, needsLines: false },
+    { id: "thermal",      label: "حراري 80mm",          desc: "إيصال طابعة حرارية — قيد لكل إيصال",     icon: Receipt,    needsLines: true  },
+    { id: "professional", label: "احترافي مع التوقيعات", desc: "تنسيق رسمي مع خانات للتوقيعات والاعتماد", icon: Award,      needsLines: true  },
+  ];
+
+  // Compact summary: same data as buildPrintHtml but smaller font + tighter
+  // rows so the user can fit ~50% more entries per A4 page.
+  const buildCompactPrintHtml = (source: any[]) => {
+    const rows = buildRows(source);
+    const totalDebit  = source.reduce((s: number, e: any) => s + Number(e.totalDebit  ?? 0), 0);
+    const totalCredit = source.reduce((s: number, e: any) => s + Number(e.totalCredit ?? 0), 0);
+    const cols = Object.keys(rows[0] ?? { [COL_DOC_L]: "", [COL_DATE_L]: "", [COL_TYPE_L]: "", [COL_DESC_L]: "", [COL_DEBIT_L]: "", [COL_CREDIT_L]: "", [COL_STATUS_L]: "" });
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const dir = isRtl ? "rtl" : "ltr";
+    const align = isRtl ? "right" : "left";
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    return `<!DOCTYPE html><html dir="${dir}"><head><meta charset="utf-8"><title>${escapeHtml(t("journalEntries.printSheetTitle"))}</title>
+<style>
+@page { size: A4 landscape; margin: 8mm; @bottom-center { content: counter(page) " / " counter(pages); font-size:8pt; color:#475569; } }
+body { font-family: "Segoe UI","Tahoma",sans-serif; color:#111; margin:0; font-size:9pt; }
+.h { display:flex; align-items:center; justify-content:space-between; padding:4px 6px 6px; border-bottom:2px solid #1e3a8a; margin-bottom:6px; }
+.h h1 { margin:0; font-size:13pt; color:#1e3a8a; }
+.h .meta { font-size:8.5pt; color:#475569; text-align:${isRtl ? "left" : "right"}; }
+.h img { max-height:38px; max-width:120px; object-fit:contain; }
+table { width:100%; border-collapse:collapse; }
+thead th { background:#1e3a8a; color:#fff; padding:3px 5px; border:1px solid #1e3a8a; text-align:${align}; font-weight:600; font-size:8.5pt; }
+tbody td { padding:2.5px 5px; border:1px solid #e5e7eb; text-align:${align}; }
+tbody tr:nth-child(even) td { background:#f8fafc; }
+tfoot td { padding:4px 5px; border:1px solid #cbd5e1; background:#1e3a8a; color:#fff; font-weight:600; }
+.num { font-family: "Consolas",monospace; }
+.print-btn { position:fixed; top:8px; ${isRtl ? "left" : "right"}:8px; padding:6px 12px; background:#1e3a8a; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:10pt; }
+@media print { .print-btn { display:none; } thead { display: table-header-group; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="h">
+  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : `<div></div>`}
+  <h1>${escapeHtml(t("journalEntries.printSheetTitle"))} — ${escapeHtml((user?.company as any)?.nameAr ?? "")}</h1>
+  <div class="meta">${escapeHtml(today)}<br/>${rows.length} قيد</div>
+</div>
+<table><thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+<tbody>${rows.map(r => `<tr>${cols.map(c => {
+  const isNum = c === COL_DEBIT_L || c === COL_CREDIT_L;
+  return `<td class="${isNum ? "num" : ""}">${escapeHtml((r as any)[c])}</td>`;
+}).join("")}</tr>`).join("")}</tbody>
+<tfoot><tr><td colspan="${cols.length - 3}" style="text-align:${align};">الإجمالي</td>
+<td class="num">${totalDebit.toFixed(2)}</td><td class="num">${totalCredit.toFixed(2)}</td><td></td></tr></tfoot>
+</table>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  // Thermal 80mm: narrow receipt-style printout, one "ticket" per entry. Uses
+  // a tight monospace-friendly layout so it renders cleanly on POS thermal
+  // printers (and still looks fine on a regular printer).
+  const buildThermalPrintHtml = (entriesWithLines: any[]) => {
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const dir = isRtl ? "rtl" : "ltr";
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const companyName = (user?.company as any)?.nameAr ?? "";
+    const sections = entriesWithLines.map((e: any) => {
+      const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
+      const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
+      const subDebit  = lines.reduce((s, ln) => s + Number(ln.debit  ?? 0), 0);
+      const subCredit = lines.reduce((s, ln) => s + Number(ln.credit ?? 0), 0);
+      const linesHtml = lines.length === 0
+        ? `<div class="empty">— لا توجد أطراف —</div>`
+        : lines.map((ln) => {
+            const acc = acctMap.get(Number(ln.accountId));
+            const accLabel = acc ? `${acc.code ?? ""} ${acc.nameAr ?? acc.nameEn ?? ""}`.trim() : `#${ln.accountId}`;
+            const amt = Number(ln.debit) > 0 ? `مدين ${Number(ln.debit).toFixed(2)}` : `دائن ${Number(ln.credit).toFixed(2)}`;
+            return `<div class="ln"><div class="acc">${escapeHtml(accLabel)}</div><div class="amt">${escapeHtml(amt)}</div>${ln.description ? `<div class="dsc">${escapeHtml(ln.description)}</div>` : ""}</div>`;
+          }).join("");
+      return `<section class="ticket">
+        ${safeLogo ? `<div class="logo"><img src="${safeLogo}" alt="" /></div>` : ""}
+        <div class="title">${escapeHtml(companyName)}</div>
+        <div class="sub">قيد محاسبي</div>
+        <div class="hr"></div>
+        <div class="row"><span>رقم القيد</span><b>${escapeHtml(docNo)}</b></div>
+        <div class="row"><span>التاريخ</span><b>${escapeHtml(e.entryDate ?? "")}</b></div>
+        <div class="row"><span>النوع</span><b>${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</b></div>
+        <div class="row"><span>الحالة</span><b>${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</b></div>
+        ${e.description ? `<div class="desc">${escapeHtml(e.description)}</div>` : ""}
+        <div class="hr"></div>
+        ${linesHtml}
+        <div class="hr"></div>
+        <div class="row"><span>إجمالي مدين</span><b>${subDebit.toFixed(2)}</b></div>
+        <div class="row"><span>إجمالي دائن</span><b>${subCredit.toFixed(2)}</b></div>
+        <div class="footer">طُبع: ${escapeHtml(today)}</div>
+      </section>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="${dir}"><head><meta charset="utf-8"><title>قيود حرارية</title>
+<style>
+@page { size: 80mm auto; margin: 4mm 3mm; }
+body { font-family: "Segoe UI","Tahoma",sans-serif; color:#000; margin:0; padding:0; font-size:10pt; width:74mm; }
+.ticket { padding:6px 2px 10px; border-bottom: 2px dashed #94a3b8; page-break-after: always; }
+.ticket:last-child { border-bottom:none; page-break-after: auto; }
+.logo { text-align:center; margin-bottom:4px; }
+.logo img { max-height:40px; max-width:60mm; }
+.title { font-size:12pt; font-weight:700; text-align:center; }
+.sub { font-size:9pt; text-align:center; color:#475569; margin-bottom:4px; }
+.hr { border-top:1px dashed #94a3b8; margin:5px 0; }
+.row { display:flex; justify-content:space-between; gap:6px; font-size:9.5pt; padding:1.5px 0; }
+.row span { color:#475569; }
+.row b { font-weight:600; }
+.desc { padding:3px 0; font-size:9pt; color:#1f2937; }
+.ln { padding:3px 0; border-top:1px dotted #d1d5db; }
+.ln:first-child { border-top:none; }
+.ln .acc { font-weight:600; font-size:9.5pt; }
+.ln .amt { font-family: "Consolas",monospace; font-size:9.5pt; color:#1e3a8a; }
+.ln .dsc { color:#475569; font-size:8.5pt; }
+.empty { text-align:center; color:#94a3b8; padding:6px 0; font-size:9pt; }
+.footer { text-align:center; color:#475569; font-size:8.5pt; margin-top:6px; }
+.print-btn { position:fixed; top:8px; ${isRtl ? "left" : "right"}:8px; padding:5px 10px; background:#1e3a8a; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:9pt; }
+@media print { .print-btn { display:none; } body { width: auto; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+${sections}
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
+  // Professional: formal letterhead-style A4 with shaded entry banner, line
+  // table, and a signature block per entry (preparer / reviewer / approver).
+  const buildProfessionalPrintHtml = (entriesWithLines: any[]) => {
+    const today = new Date().toLocaleDateString(isRtl ? "ar-SA" : "en-GB");
+    const dir = isRtl ? "rtl" : "ltr";
+    const align = isRtl ? "right" : "left";
+    const safeLogo = safeLogoSrc((user?.company as any)?.logo);
+    const company = user?.company as any;
+    const companyName = company?.nameAr ?? "";
+    const vat = company?.vatNumber ?? "";
+    const cr = company?.crNumber ?? "";
+    const sections = entriesWithLines.map((e: any) => {
+      const docNo  = e.docNumber ?? `QYD-${String(e.id).padStart(4, "0")}`;
+      const lines: any[] = Array.isArray(e.lines) ? e.lines : [];
+      const subDebit  = lines.reduce((s, ln) => s + Number(ln.debit  ?? 0), 0);
+      const subCredit = lines.reduce((s, ln) => s + Number(ln.credit ?? 0), 0);
+      const linesHtml = lines.length === 0
+        ? `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:12px;">لا توجد أطراف لهذا القيد</td></tr>`
+        : lines.map((ln, i) => {
+            const acc = acctMap.get(Number(ln.accountId));
+            const accLabel = acc ? `${escapeHtml(acc.code ?? "")} — ${escapeHtml(acc.nameAr ?? acc.nameEn ?? "")}` : `#${escapeHtml(ln.accountId)}`;
+            return `<tr>
+              <td class="num center">${i + 1}</td>
+              <td>${accLabel}</td>
+              <td>${escapeHtml(ln.description ?? "")}</td>
+              <td class="num end">${Number(ln.debit  ?? 0).toFixed(2)}</td>
+              <td class="num end">${Number(ln.credit ?? 0).toFixed(2)}</td>
+            </tr>`;
+          }).join("");
+      return `<section class="entry">
+        <div class="banner">
+          <div class="banner-l">
+            <div class="docno">قيد رقم: <b>${escapeHtml(docNo)}</b></div>
+            <div class="docmeta">التاريخ: ${escapeHtml(e.entryDate ?? "")} • النوع: ${escapeHtml(ENTRY_TYPES[e.entryType] ?? e.entryType ?? "")}</div>
+          </div>
+          <div class="banner-r">
+            <div class="status status-${escapeHtml(e.status)}">${escapeHtml((STATUS_MAP[e.status] ?? STATUS_MAP.posted).label)}</div>
+          </div>
+        </div>
+        ${e.description ? `<div class="desc"><b>البيان:</b> ${escapeHtml(e.description)}</div>` : ""}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:38px;">م</th>
+              <th>الحساب</th>
+              <th>الوصف</th>
+              <th style="width:100px;">مدين</th>
+              <th style="width:100px;">دائن</th>
+            </tr>
+          </thead>
+          <tbody>${linesHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" class="end"><b>الإجمالي</b></td>
+              <td class="num end"><b>${subDebit.toFixed(2)}</b></td>
+              <td class="num end"><b>${subCredit.toFixed(2)}</b></td>
+            </tr>
+          </tfoot>
+        </table>
+        <div class="signs">
+          <div class="sign"><div class="sign-line"></div><div class="sign-label">المحاسب / المُعدّ</div></div>
+          <div class="sign"><div class="sign-line"></div><div class="sign-label">المراجع</div></div>
+          <div class="sign"><div class="sign-line"></div><div class="sign-label">المدير المالي / الاعتماد</div></div>
+        </div>
+      </section>`;
+    }).join("");
+    return `<!DOCTYPE html><html dir="${dir}"><head><meta charset="utf-8"><title>قيود — تنسيق احترافي</title>
+<style>
+@page { size: A4 portrait; margin: 14mm 14mm 22mm 14mm; @bottom-center { content: "صفحة " counter(page) " من " counter(pages); font-family: "Segoe UI","Tahoma",sans-serif; font-size:9pt; color:#475569; } }
+body { font-family: "Segoe UI","Tahoma","Arial",sans-serif; color:#111; margin:0; }
+.letterhead { display:flex; align-items:center; gap:12px; padding-bottom:10px; border-bottom:3px double #1e3a8a; margin-bottom:14px; }
+.letterhead img { max-height:60px; max-width:140px; object-fit:contain; }
+.letterhead .co { flex:1; }
+.letterhead .co h1 { margin:0; font-size:16pt; color:#1e3a8a; }
+.letterhead .co .reg { font-size:9pt; color:#475569; margin-top:3px; }
+.letterhead .stamp { text-align:${isRtl ? "left" : "right"}; font-size:9pt; color:#475569; }
+.entry { page-break-inside: avoid; margin-bottom:18px; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; }
+.banner { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#eef2ff; border-radius:6px; margin-bottom:8px; border-left: 4px solid #1e3a8a; }
+.banner .docno { font-size:11pt; color:#1e3a8a; }
+.banner .docmeta { font-size:9.5pt; color:#475569; margin-top:2px; }
+.status { padding:3px 10px; border-radius:999px; font-size:9pt; font-weight:600; border:1px solid; }
+.status-posted    { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
+.status-draft     { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
+.status-cancelled { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+.status-voided    { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+.desc { font-size:10pt; color:#1f2937; margin:4px 0 8px; padding:6px 10px; background:#f8fafc; border-radius:4px; }
+table { width:100%; border-collapse:collapse; font-size:10pt; }
+thead th { background:#1e3a8a; color:#fff; padding:6px 8px; border:1px solid #1e3a8a; text-align:${align}; }
+tbody td { padding:5px 8px; border:1px solid #d1d5db; text-align:${align}; }
+tbody tr:nth-child(even) td { background:#f8fafc; }
+tfoot td { padding:6px 8px; border:1px solid #cbd5e1; background:#f1f5f9; }
+.num { font-family: "Consolas",monospace; }
+.end { text-align:${isRtl ? "left" : "right"}; }
+.center { text-align:center; }
+.signs { display:flex; justify-content:space-around; gap:14px; margin-top:22px; padding-top:6px; }
+.sign { flex:1; text-align:center; }
+.sign-line { border-top:1.5px solid #475569; margin-top:36px; }
+.sign-label { margin-top:4px; font-size:9pt; color:#475569; }
+.print-btn { position:fixed; top:10px; ${isRtl ? "left" : "right"}:10px; padding:8px 14px; background:#1e3a8a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:11pt; }
+@media print { .print-btn { display:none; } }
+</style></head><body>
+<button class="print-btn" onclick="window.print()">طباعة</button>
+<div class="letterhead">
+  ${safeLogo ? `<img src="${safeLogo}" alt="" />` : ""}
+  <div class="co">
+    <h1>${escapeHtml(companyName)}</h1>
+    <div class="reg">${cr ? `س.ت: ${escapeHtml(cr)}` : ""}${cr && vat ? " • " : ""}${vat ? `الرقم الضريبي: ${escapeHtml(vat)}` : ""}</div>
+  </div>
+  <div class="stamp">تاريخ الطباعة<br/><b>${escapeHtml(today)}</b><br/>${entriesWithLines.length} قيد</div>
+</div>
+${sections}
+<script>setTimeout(()=>window.print(),300);</script></body></html>`;
+  };
+
   // Print only the rows the user has selected via checkboxes — fetches each
   // selected entry's full details (with lines) so we can show every debit/credit
   // line per entry, not just the aggregate totals from the list response.
   const handleBulkPrint = async () => {
+    await handleBulkPrintWith("detailed");
+  };
+
+  // Unified entry point used by the dropdown — fetches full lines for templates
+  // that need them, then dispatches to the right HTML builder.
+  const handleBulkPrintWith = async (templateId: PrintTemplateId) => {
     const ids = Array.from(layout.selected).map((x) => Number(x)).filter(Number.isFinite);
     if (ids.length === 0) return;
     const idSet = new Set(ids);
-    // Preserve the on-screen order so the printout matches what the user sees.
     const selectedRows = (entries as any[]).filter((e: any) => idSet.has(e.id));
     if (selectedRows.length === 0) return;
 
+    const tpl = PRINT_TEMPLATES.find((p) => p.id === templateId)!;
     setBulkPrintBusy(true);
     try {
-      // Fetch in parallel — list size is small (the user just clicked checkboxes).
-      // Fallback to the row's aggregate values if a fetch fails so the printout
-      // still includes the entry header.
-      const detailed = await Promise.all(
-        selectedRows.map(async (row: any) => {
-          try {
-            const full = await journalEntriesApi.get(row.id, cid);
-            return {
-              ...row,
-              ...full,
-              // Defensive merge — `full` should already carry totals, but if the
-              // server omits them on detail responses fall back to the list row.
-              totalDebit:  full?.totalDebit  ?? row.totalDebit  ?? 0,
-              totalCredit: full?.totalCredit ?? row.totalCredit ?? 0,
-              lines: Array.isArray(full?.lines) ? full.lines : [],
-            };
-          } catch {
-            return { ...row, lines: [] };
-          }
-        }),
-      );
-      openPrintWindow(buildBulkPrintHtml(detailed));
+      const source = tpl.needsLines
+        ? await Promise.all(selectedRows.map(async (row: any) => {
+            try {
+              const full = await journalEntriesApi.get(row.id, cid);
+              return {
+                ...row, ...full,
+                totalDebit:  full?.totalDebit  ?? row.totalDebit  ?? 0,
+                totalCredit: full?.totalCredit ?? row.totalCredit ?? 0,
+                lines: Array.isArray(full?.lines) ? full.lines : [],
+              };
+            } catch { return { ...row, lines: [] }; }
+          }))
+        : selectedRows;
+
+      let html = "";
+      switch (templateId) {
+        case "summary":      html = buildPrintHtml(source); break;
+        case "detailed":     html = buildBulkPrintHtml(source); break;
+        case "compact":      html = buildCompactPrintHtml(source); break;
+        case "thermal":      html = buildThermalPrintHtml(source); break;
+        case "professional": html = buildProfessionalPrintHtml(source); break;
+      }
+      openPrintWindow(html);
     } finally {
       setBulkPrintBusy(false);
     }
+  };
+
+  /* ─── Selected-rows export to PDF (just opens the summary template — the
+        in-window print dialog lets the user "Save as PDF") and to Excel
+        (XLSX file restricted to the selected entries). ────────────────── */
+  const handleBulkExportPDF = () => {
+    if (selectedIds.length === 0) return;
+    const idSet = new Set(selectedIds);
+    const sel = (entries as any[]).filter((e: any) => idSet.has(e.id));
+    if (sel.length === 0) return;
+    openPrintWindow(buildPrintHtml(sel));
+  };
+
+  const handleBulkExportExcel = () => {
+    if (selectedIds.length === 0) return;
+    const idSet = new Set(selectedIds);
+    const sel = (entries as any[]).filter((e: any) => idSet.has(e.id));
+    if (sel.length === 0) return;
+    const rows = buildRows(sel);
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, t("journalEntries.title"));
+    XLSX.writeFile(wb, `journal-entries-selected-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   /* ── Quick CSV export (uses visible columns + filtered set) ── */
@@ -582,44 +890,6 @@ ${entrySections}
             <Plus className="h-4 w-4" />
             {t("journalEntries.newEntry")}
           </Button>
-          {/* Per-row actions promoted to the top toolbar — same h-9 pill so
-              they sit visually next to Print. They act on the *single*
-              selected row (the audit-grid checkbox), and are disabled when
-              0 or >1 rows are selected so the intent is unambiguous. */}
-          {(() => {
-            const onlyOne = selectedIds.length === 1;
-            const targetId = onlyOne ? selectedIds[0] : null;
-            const tip = selectedIds.length === 0
-              ? "حدّد قيداً واحداً أولاً"
-              : selectedIds.length > 1
-                ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
-                : undefined;
-            return (
-              <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
-                <Button
-                  type="button" variant="ghost" size="sm"
-                  disabled={!onlyOne}
-                  onClick={() => { if (targetId != null) navigate(`/accounting/journals/${targetId}`); }}
-                  title={tip ?? t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })}
-                  className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                  data-testid="header-edit-selected"
-                >
-                  <Pencil className="h-4 w-4" /> {t("journalEntries.edit", { defaultValue: "تعديل" })}
-                </Button>
-                <div className="w-px bg-slate-200" />
-                <Button
-                  type="button" variant="ghost" size="sm"
-                  disabled={!onlyOne}
-                  onClick={() => { if (targetId != null) navigate(`/accounting/journals/new?from=${targetId}`); }}
-                  title={tip ?? "نسخة مماثلة"}
-                  className="h-9 rounded-none gap-1.5 text-blue-700 hover:bg-blue-50 hover:text-blue-700 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
-                  data-testid="header-duplicate-selected"
-                >
-                  <Copy className="h-4 w-4" /> نسخة مماثلة
-                </Button>
-              </div>
-            );
-          })()}
           {/* Grouped export pill: PDF | Excel | Print */}
           <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
             <Button
@@ -746,15 +1016,139 @@ ${entrySections}
           onClear={layout.clearSelection}
           busy={bulkBusy}
         >
+          {/* Print — split button: clicking the body uses the default
+              "detailed" template; clicking the chevron opens a menu with all
+              5 templates. Each item shows a short description so the user
+              picks the right one without trial-and-error. */}
+          <DropdownMenu>
+            <div className="inline-flex items-stretch rounded-md overflow-hidden">
+              <Button
+                type="button" size="sm"
+                className="h-7 px-3 text-xs gap-1 rounded-none bg-blue-700 hover:bg-blue-600 text-white"
+                onClick={handleBulkPrint}
+                disabled={selectedIds.length === 0 || bulkPrintBusy}
+                title={`${t("accountingReports.print")} (${selectedIds.length}) — تفصيلي مع الأطراف`}
+                data-testid="bulk-print"
+              >
+                {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                {t("accountingReports.print")} ({selectedIds.length})
+              </Button>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button" size="sm"
+                  className="h-7 px-1.5 text-xs rounded-none bg-blue-800 hover:bg-blue-700 text-white border-r border-blue-900/30"
+                  disabled={selectedIds.length === 0 || bulkPrintBusy}
+                  title="اختر قالب الطباعة"
+                  aria-label="اختر قالب الطباعة"
+                  data-testid="bulk-print-template"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+            </div>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuLabel className="text-xs text-slate-500 font-normal">
+                قوالب الطباعة — للقيود المحددة ({selectedIds.length})
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {PRINT_TEMPLATES.map((tpl) => {
+                const Icon = tpl.icon;
+                return (
+                  <DropdownMenuItem
+                    key={tpl.id}
+                    onSelect={(e) => { e.preventDefault(); void handleBulkPrintWith(tpl.id); }}
+                    className="flex items-start gap-2 cursor-pointer py-2"
+                    data-testid={`print-template-${tpl.id}`}
+                  >
+                    <Icon className="h-4 w-4 mt-0.5 text-blue-700 shrink-0" />
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium text-slate-900">{tpl.label}</span>
+                      <span className="text-[11px] text-slate-500 leading-tight">{tpl.desc}</span>
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Selected-rows export — Excel + PDF act on the *selected* entries
+              only (the page header pill exports ALL filtered rows). */}
           <Button
             type="button" size="sm"
-            className="h-7 px-3 text-xs gap-1 bg-blue-700 hover:bg-blue-600 text-white"
-            onClick={handleBulkPrint}
-            disabled={selectedIds.length === 0 || bulkPrintBusy}
-            title={`${t("accountingReports.print")} (${selectedIds.length})`}
+            className="h-7 px-3 text-xs gap-1 bg-green-700 hover:bg-green-600 text-white"
+            onClick={handleBulkExportExcel}
+            disabled={selectedIds.length === 0}
+            title={`تصدير المحدد إلى Excel (${selectedIds.length})`}
+            data-testid="bulk-export-excel"
           >
-            {bulkPrintBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-            {t("accountingReports.print")} ({selectedIds.length})
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Excel ({selectedIds.length})
+          </Button>
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-red-700 hover:bg-red-600 text-white"
+            onClick={handleBulkExportPDF}
+            disabled={selectedIds.length === 0}
+            title={`تصدير المحدد إلى PDF (${selectedIds.length})`}
+            data-testid="bulk-export-pdf"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+            PDF ({selectedIds.length})
+          </Button>
+          {/* Post (ترحيل) — only enabled when at least one selected row is a
+              draft. Posted/cancelled rows are silently skipped server-side
+              guards already enforce balance + auto-lock + period rules. */}
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-emerald-600 hover:bg-emerald-500 text-white"
+            onClick={handleBulkPost}
+            disabled={bulkBusy || draftSelectedIds.length === 0}
+            title={
+              draftSelectedIds.length === 0
+                ? "لا توجد قيود مسودة في التحديد لترحيلها"
+                : `ترحيل (${draftSelectedIds.length})`
+            }
+            data-testid="bulk-post"
+          >
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            ترحيل ({draftSelectedIds.length})
+          </Button>
+          {/* Edit / Duplicate — single-row actions promoted from the row "_act"
+              column into the bulk bar. They route to the form page for the one
+              selected entry, and are disabled unless exactly one row is picked
+              so the intent stays unambiguous. */}
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-slate-700 hover:bg-slate-600 text-white"
+            onClick={() => { if (selectedIds.length === 1) navigate(`/accounting/journals/${selectedIds[0]}`); }}
+            disabled={selectedIds.length !== 1}
+            title={
+              selectedIds.length === 0
+                ? "حدّد قيداً واحداً أولاً"
+                : selectedIds.length > 1
+                  ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
+                  : t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })
+            }
+            data-testid="bulk-edit"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {t("journalEntries.edit", { defaultValue: "تعديل" })}
+          </Button>
+          <Button
+            type="button" size="sm"
+            className="h-7 px-3 text-xs gap-1 bg-sky-600 hover:bg-sky-500 text-white"
+            onClick={() => { if (selectedIds.length === 1) navigate(`/accounting/journals/new?from=${selectedIds[0]}`); }}
+            disabled={selectedIds.length !== 1}
+            title={
+              selectedIds.length === 0
+                ? "حدّد قيداً واحداً أولاً"
+                : selectedIds.length > 1
+                  ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
+                  : "نسخة مماثلة"
+            }
+            data-testid="bulk-duplicate"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            نسخة مماثلة
           </Button>
           <Button
             type="button" size="sm"

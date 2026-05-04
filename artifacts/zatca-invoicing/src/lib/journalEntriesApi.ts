@@ -51,6 +51,10 @@ export const journalEntriesApi = {
   create: (data: any) => post<any>("/journal-entries", data),
   update: (id: number, data: any) => put<any>(`/journal-entries/${id}`, data),
   remove: (id: number) => del(`/journal-entries/${id}`),
+  // Manual post: flips a draft entry to "posted". Server enforces balance,
+  // auto-lock and period guards — a non-2xx surfaces a friendly Arabic error.
+  post:   (id: number) => post<{ ok: true; alreadyPosted?: boolean }>(`/journal-entries/${id}/post`, {}),
+  unpost: (id: number) => post<{ ok: true; alreadyUnposted?: boolean }>(`/journal-entries/${id}/unpost`, {}),
   aiValidate: (data: { entry: any; lines: any[] }) =>
     post<JournalValidationResult>("/ai/validate-journal-entry", data),
   suggestVatAccount: (data: { direction: "input" | "output"; companyId?: number }) =>
