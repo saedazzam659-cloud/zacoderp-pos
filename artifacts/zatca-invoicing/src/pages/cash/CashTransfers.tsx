@@ -67,7 +67,13 @@ export default function CashTransfers() {
   // chain the /post call right after a successful save so the transfer's
   // journal entry is created without an extra click; when manual, leave
   // it as a draft for the user to post explicitly later.
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. See
+  // SalesDocumentForm for the full rationale on the legacy fallback.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostCashTransfer === undefined || _co?.autoPostCashTransfer === null
+    ? _gl
+    : _co.autoPostCashTransfer !== false;
   const saveMut = useMutation({
     mutationFn: async () => {
       const body = { ...form, companyId: cid, fromCashBoxId: form.fromCashBoxId ? parseInt(form.fromCashBoxId) : null, fromBankId: form.fromBankId ? parseInt(form.fromBankId) : null, toCashBoxId: form.toCashBoxId ? parseInt(form.toCashBoxId) : null, toBankId: form.toBankId ? parseInt(form.toBankId) : null, currencyId: form.currencyId ? parseInt(form.currencyId) : null };

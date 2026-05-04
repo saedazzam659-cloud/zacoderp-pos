@@ -935,7 +935,16 @@ export default function SalesDocumentForm({ mode }: SalesDocumentFormProps) {
   const discountAmt = Math.max(0, Math.min(grossTotal, Number(docDiscount) || 0));
   const totalAmount = grossTotal - discountAmt;
 
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. The new
+  // `autoPostSales` column was added later, so older companies (or new
+  // ones that haven't touched the per-type toggles) fall back to the
+  // legacy `autoPostingEnabled` master switch. Only an explicit `false`
+  // disables auto-posting for sales invoices.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostSales === undefined || _co?.autoPostSales === null
+    ? _gl
+    : _co.autoPostSales !== false;
 
   // Per-doc-type print preferences for sales invoices. We don't open
   // the popup directly here — the list page (SalesInvoices) owns the

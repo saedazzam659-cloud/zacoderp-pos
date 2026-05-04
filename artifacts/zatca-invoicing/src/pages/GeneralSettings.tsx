@@ -42,6 +42,27 @@ export default function GeneralSettings() {
   const [logoError, setLogoError] = useState("");
   const autoPostingEnabled = user?.company?.autoPostingEnabled !== false;
   const [postingSaving, setPostingSaving] = useState(false);
+  // Per-doc-type auto-posting flags. We treat `undefined` (legacy rows
+  // before the columns existed) and `true` the same — only an explicit
+  // `false` disables auto-posting for that document type. This mirrors
+  // how each form reads its own flag with a global-fallback.
+  const docTypeFlag = (key: string): boolean => {
+    const v = user?.company?.[key];
+    if (v === undefined || v === null) return autoPostingEnabled;
+    return v !== false;
+  };
+  // Doc-type catalog rendered as a list of toggles. The label/desc come
+  // from i18n with sensible Arabic fallbacks so this works even before
+  // the translations are added.
+  const POST_DOC_TYPES: { key: string; label: string; desc: string }[] = [
+    { key: "autoPostSales",        label: "فواتير المبيعات",          desc: "ترحيل قيد فاتورة المبيعات تلقائياً عند الحفظ" },
+    { key: "autoPostPurchase",     label: "فواتير المشتريات",         desc: "ترحيل قيد فاتورة الشراء تلقائياً عند الحفظ" },
+    { key: "autoPostReceipt",      label: "سندات القبض",              desc: "ترحيل قيد سند القبض تلقائياً عند الحفظ" },
+    { key: "autoPostPayment",      label: "سندات الصرف",              desc: "ترحيل قيد سند الصرف تلقائياً عند الحفظ" },
+    { key: "autoPostFinancial",    label: "العمليات المالية",         desc: "ترحيل قيد العملية المالية تلقائياً عند الحفظ" },
+    { key: "autoPostCashTransfer", label: "تحويلات الخزائن والبنوك",  desc: "ترحيل قيد تحويل النقدية تلقائياً عند الحفظ" },
+    { key: "autoPostPayroll",      label: "الرواتب",                  desc: "ترحيل قيد الراتب تلقائياً عند الاحتساب" },
+  ];
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -105,7 +126,11 @@ export default function GeneralSettings() {
   };
 
   // ─── Auto-posting toggle (saves immediately on toggle) ────────────────────
-  async function togglePostingMode(next: boolean) {
+  // Generic patcher: accepts ANY subset of the posting flags and PATCHes
+  // them to the server in one request. Used by both the master switch
+  // (autoPostingEnabled) and the per-doc-type toggles below so we keep a
+  // single network/error path.
+  async function togglePostingMode(payload: Record<string, boolean>) {
     const cid = user?.company?.id ?? user?.companyId;
     if (!cid || postingSaving) return;
     setPostingSaving(true);
@@ -113,12 +138,21 @@ export default function GeneralSettings() {
       const res = await fetch(`${API}/api/companies/${cid}/general-settings`, {
         method: "PATCH",
         headers,
-        body: JSON.stringify({ autoPostingEnabled: next }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t("pages.generalSettings.saveFailed"));
       if (setUser) {
-        setUser((u: any) => u ? { ...u, company: { ...u.company, autoPostingEnabled: data.autoPostingEnabled } } : u);
+        // Merge ONLY the fields the server actually echoed back, preserving
+        // any other company props (logo, decimals, …) on the local copy.
+        setUser((u: any) => {
+          if (!u) return u;
+          const merged: Record<string, any> = { ...u.company };
+          for (const k of Object.keys(payload)) {
+            if (data[k] !== undefined) merged[k] = data[k];
+          }
+          return { ...u, company: merged };
+        });
       }
       qc.invalidateQueries({ queryKey: ["auth-me"] });
       toast({ title: t("pages.generalSettings.postingModeSaved") });
@@ -460,72 +494,76 @@ export default function GeneralSettings() {
         )}
       </div>
 
-      {/* ─── Posting Mode Section (immediate-save toggle) ──────────────────── */}
+      {/* ─── Posting Mode Section (per-doc-type toggles) ──────────────────── */}
       <div className="rounded-xl border bg-card p-5 space-y-4">
         <h2 className="font-semibold text-base flex items-center gap-2">
           <Repeat className="h-4 w-4 text-muted-foreground" />
-          {t("pages.generalSettings.postingMode")}
+          {t("pages.generalSettings.postingMode", { defaultValue: "وضع الترحيل" })}
         </h2>
         <p className="text-xs text-muted-foreground">
-          {t("pages.generalSettings.postingModeDesc")}
+          اختر طريقة ترحيل القيود لكل نوع مستند على حدة. <span className="font-medium text-foreground">تلقائي</span> = ترحيل القيد فور الحفظ.
+          {" "}<span className="font-medium text-foreground">يدوي</span> = حفظ كمسودة فقط، يتم الترحيل لاحقاً من مركز الترحيل.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Auto */}
-          <button
-            type="button"
-            disabled={postingSaving}
-            onClick={() => togglePostingMode(true)}
-            className={cn(
-              "text-start rounded-xl border-2 p-4 transition-all flex items-start gap-3",
-              autoPostingEnabled
-                ? "border-primary bg-primary/5 shadow-sm"
-                : "border-muted hover:border-primary/50 hover:bg-muted/40",
-              postingSaving && "opacity-60 cursor-not-allowed"
-            )}
-          >
+        {/* ── Master switch (legacy global flag — still respected as fallback) ── */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
             <div className={cn(
-              "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+              "h-7 w-7 rounded-md flex items-center justify-center shrink-0",
               autoPostingEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
             )}>
-              <Zap className="h-4 w-4" />
+              {autoPostingEnabled ? <Zap className="h-3.5 w-3.5" /> : <Hand className="h-3.5 w-3.5" />}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm">{t("pages.generalSettings.autoPosting")}</span>
-                {autoPostingEnabled && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{t("pages.generalSettings.autoPostingDesc")}</p>
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">المفتاح العام للترحيل التلقائي</p>
+              <p className="text-[11px] text-muted-foreground truncate">يُستخدم كقيمة افتراضية للأنواع التي لم تُضبط بشكل مستقل</p>
             </div>
-          </button>
-
-          {/* Manual */}
-          <button
-            type="button"
+          </div>
+          <Switch
+            checked={autoPostingEnabled}
             disabled={postingSaving}
-            onClick={() => togglePostingMode(false)}
-            className={cn(
-              "text-start rounded-xl border-2 p-4 transition-all flex items-start gap-3",
-              !autoPostingEnabled
-                ? "border-primary bg-primary/5 shadow-sm"
-                : "border-muted hover:border-primary/50 hover:bg-muted/40",
-              postingSaving && "opacity-60 cursor-not-allowed"
-            )}
-          >
-            <div className={cn(
-              "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
-              !autoPostingEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-            )}>
-              <Hand className="h-4 w-4" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm">{t("pages.generalSettings.manualPosting")}</span>
-                {!autoPostingEnabled && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+            onCheckedChange={(v) => togglePostingMode({ autoPostingEnabled: !!v })}
+            data-testid="toggle-auto-posting-master"
+          />
+        </div>
+
+        {/* ── Per-document-type rows ─────────────────────────────────────── */}
+        <div className="rounded-lg border divide-y bg-card">
+          {POST_DOC_TYPES.map((dt) => {
+            const on = docTypeFlag(dt.key);
+            return (
+              <div key={dt.key} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className={cn(
+                    "h-7 w-7 rounded-md flex items-center justify-center shrink-0",
+                    on ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                  )}>
+                    {on ? <Zap className="h-3.5 w-3.5" /> : <Hand className="h-3.5 w-3.5" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{dt.label}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{dt.desc}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={cn(
+                    "text-[10.5px] font-semibold rounded px-1.5 py-0.5 border",
+                    on
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : "bg-amber-50 text-amber-700 border-amber-200"
+                  )}>
+                    {on ? "تلقائي" : "يدوي"}
+                  </span>
+                  <Switch
+                    checked={on}
+                    disabled={postingSaving}
+                    onCheckedChange={(v) => togglePostingMode({ [dt.key]: !!v })}
+                    data-testid={`toggle-${dt.key}`}
+                  />
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{t("pages.generalSettings.manualPostingDesc")}</p>
-            </div>
-          </button>
+            );
+          })}
         </div>
 
         {postingSaving && (

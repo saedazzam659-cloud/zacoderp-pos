@@ -571,7 +571,13 @@ export default function PurchaseInvoiceForm() {
   const totalExpLoaded = lines.reduce((s, l) => s + (Number(l.expenseShare) || 0), 0);
   const selectedLc     = lcs.find((lc: any) => String(lc.id) === lcId);
 
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. See
+  // SalesDocumentForm for the full rationale on the legacy fallback.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostPurchase === undefined || _co?.autoPostPurchase === null
+    ? _gl
+    : _co.autoPostPurchase !== false;
   const saveMut = useMutation({
     mutationFn: async (data: any) => {
       const url = editId ? `${API}/api/purchasing/purchase-invoices/${editId}` : `${API}/api/purchasing/purchase-invoices`;

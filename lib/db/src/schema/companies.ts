@@ -36,8 +36,23 @@ export const companiesTable = pgTable("companies", {
   decimalPlaces: integer("decimal_places").notNull().default(2),
   // Menu visibility permissions (JSON): { invoices, customers, suppliers, zatca }
   menuPermissions: text("menu_permissions").default('{"invoices":true,"customers":true,"suppliers":true,"zatca":true}'),
-  // System-wide posting mode: true = auto-post after save, false = manual posting only
+  // System-wide posting mode: true = auto-post after save, false = manual posting only.
+  // This is the master switch and the legacy fallback for the per-doc-type flags
+  // below. When a per-doc-type flag is NULL (legacy rows) the form falls back to
+  // this global value so existing tenants keep their current behavior.
   autoPostingEnabled: boolean("auto_posting_enabled").notNull().default(true),
+  // ─── Per-document-type auto-posting toggles ───────────────────────────
+  // Each flag controls whether saving a document of that type immediately
+  // posts the resulting journal entry (true) or leaves it as a draft for
+  // manual posting from the Posting Center (false). Default true so newly
+  // added columns don't silently change behavior on upgrade.
+  autoPostSales:        boolean("auto_post_sales").notNull().default(true),
+  autoPostPurchase:     boolean("auto_post_purchase").notNull().default(true),
+  autoPostReceipt:      boolean("auto_post_receipt").notNull().default(true),
+  autoPostPayment:      boolean("auto_post_payment").notNull().default(true),
+  autoPostFinancial:    boolean("auto_post_financial").notNull().default(true),
+  autoPostCashTransfer: boolean("auto_post_cash_transfer").notNull().default(true),
+  autoPostPayroll:      boolean("auto_post_payroll").notNull().default(true),
   // ─── HR / Payroll account mapping (resolved from COA on first use) ─────
   hrSalariesExpenseAccountId:    integer("hr_salaries_expense_account_id"),
   hrAllowancesExpenseAccountId:  integer("hr_allowances_expense_account_id"),

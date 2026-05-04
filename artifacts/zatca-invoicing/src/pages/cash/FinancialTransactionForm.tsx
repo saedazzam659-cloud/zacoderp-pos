@@ -266,7 +266,13 @@ export default function FinancialTransactionForm() {
   }
 
   // ── Save / save-and-post mutation ──────────────────────────────
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. See
+  // SalesDocumentForm for the full rationale on the legacy fallback.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostFinancial === undefined || _co?.autoPostFinancial === null
+    ? _gl
+    : _co.autoPostFinancial !== false;
   const isLocked = !isNew && existing?.status === "posted";
 
   const saveMut = useMutation({

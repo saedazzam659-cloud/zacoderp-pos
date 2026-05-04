@@ -114,6 +114,11 @@ router.patch("/:id/general-settings", async (req, res) => {
   const id = parseInt(req.params.id);
   const {
     logo, decimalPlaces, autoPostingEnabled,
+    // Per-doc-type auto-posting toggles. Each one independently decides
+    // whether saving that document immediately posts the resulting journal
+    // entry. Validated as plain booleans below.
+    autoPostSales, autoPostPurchase, autoPostReceipt, autoPostPayment,
+    autoPostFinancial, autoPostCashTransfer, autoPostPayroll,
     printFooterInvoice, printFooterReturn, printShowTimestamp, printShowZatcaBrand,
     // Per-doc-type print preferences (auto-print toggle + template name).
     // Each `printAutoAfterSave*` is a boolean; each `printTemplate*` is
@@ -125,6 +130,10 @@ router.patch("/:id/general-settings", async (req, res) => {
     printTemplatePayment, printTemplateJournal,
   } = req.body as {
     logo?: string; decimalPlaces?: number; autoPostingEnabled?: boolean;
+    autoPostSales?: boolean; autoPostPurchase?: boolean;
+    autoPostReceipt?: boolean; autoPostPayment?: boolean;
+    autoPostFinancial?: boolean; autoPostCashTransfer?: boolean;
+    autoPostPayroll?: boolean;
     printFooterInvoice?: string; printFooterReturn?: string;
     printShowTimestamp?: boolean; printShowZatcaBrand?: boolean;
     printAutoAfterSaveSales?: boolean; printAutoAfterSaveReceipt?: boolean;
@@ -144,6 +153,15 @@ router.patch("/:id/general-settings", async (req, res) => {
   if (autoPostingEnabled !== undefined) {
     updates.autoPostingEnabled = !!autoPostingEnabled;
   }
+  // Per-doc-type auto-posting toggles — coerce to boolean so we never persist
+  // a string "false" (which would be truthy in the form layer) by accident.
+  if (autoPostSales        !== undefined) updates.autoPostSales        = !!autoPostSales;
+  if (autoPostPurchase     !== undefined) updates.autoPostPurchase     = !!autoPostPurchase;
+  if (autoPostReceipt      !== undefined) updates.autoPostReceipt      = !!autoPostReceipt;
+  if (autoPostPayment      !== undefined) updates.autoPostPayment      = !!autoPostPayment;
+  if (autoPostFinancial    !== undefined) updates.autoPostFinancial    = !!autoPostFinancial;
+  if (autoPostCashTransfer !== undefined) updates.autoPostCashTransfer = !!autoPostCashTransfer;
+  if (autoPostPayroll      !== undefined) updates.autoPostPayroll      = !!autoPostPayroll;
   if (printFooterInvoice !== undefined) {
     const v = String(printFooterInvoice).trim();
     if (v.length > 200) {

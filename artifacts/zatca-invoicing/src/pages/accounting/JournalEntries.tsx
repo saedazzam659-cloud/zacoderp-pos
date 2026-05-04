@@ -582,6 +582,44 @@ ${entrySections}
             <Plus className="h-4 w-4" />
             {t("journalEntries.newEntry")}
           </Button>
+          {/* Per-row actions promoted to the top toolbar — same h-9 pill so
+              they sit visually next to Print. They act on the *single*
+              selected row (the audit-grid checkbox), and are disabled when
+              0 or >1 rows are selected so the intent is unambiguous. */}
+          {(() => {
+            const onlyOne = selectedIds.length === 1;
+            const targetId = onlyOne ? selectedIds[0] : null;
+            const tip = selectedIds.length === 0
+              ? "حدّد قيداً واحداً أولاً"
+              : selectedIds.length > 1
+                ? "هذا الإجراء يعمل على قيد واحد فقط — قلّل التحديد"
+                : undefined;
+            return (
+              <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
+                <Button
+                  type="button" variant="ghost" size="sm"
+                  disabled={!onlyOne}
+                  onClick={() => { if (targetId != null) navigate(`/accounting/journals/${targetId}`); }}
+                  title={tip ?? t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })}
+                  className="h-9 rounded-none gap-1.5 text-slate-700 hover:bg-slate-50 hover:text-slate-700 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                  data-testid="header-edit-selected"
+                >
+                  <Pencil className="h-4 w-4" /> {t("journalEntries.edit", { defaultValue: "تعديل" })}
+                </Button>
+                <div className="w-px bg-slate-200" />
+                <Button
+                  type="button" variant="ghost" size="sm"
+                  disabled={!onlyOne}
+                  onClick={() => { if (targetId != null) navigate(`/accounting/journals/new?from=${targetId}`); }}
+                  title={tip ?? "نسخة مماثلة"}
+                  className="h-9 rounded-none gap-1.5 text-blue-700 hover:bg-blue-50 hover:text-blue-700 px-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                  data-testid="header-duplicate-selected"
+                >
+                  <Copy className="h-4 w-4" /> نسخة مماثلة
+                </Button>
+              </div>
+            );
+          })()}
           {/* Grouped export pill: PDF | Excel | Print */}
           <div className="inline-flex items-stretch rounded-md border border-slate-300 bg-white shadow-sm overflow-hidden">
             <Button
@@ -879,29 +917,18 @@ ${entrySections}
                           </td>
                         );
                       case "_act":
+                        // Edit + Duplicate moved to the top toolbar (acts on
+                        // the single-selected row). The per-row Delete stays
+                        // here because it's the only fast destructive path
+                        // that doesn't require selection first.
                         return (
                           <td key={col.key} className="px-2 py-1 border border-slate-200 text-center">
                             <div className="flex items-center justify-center gap-0.5">
                               <Button
                                 variant="ghost" size="icon"
-                                className="h-6 w-6 text-muted-foreground hover:text-primary"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/${entry.id}`); }}
-                                title={t("journalEntries.actions", { defaultValue: "تعديل (خصائص)" })}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost" size="icon"
-                                className="h-6 w-6 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/accounting/journals/new?from=${entry.id}`); }}
-                                title="نسخة مماثلة"
-                              >
-                                <Copy className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost" size="icon"
                                 className="h-6 w-6 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
                                 onClick={(e) => { e.stopPropagation(); setDeleteId(entry.id); }}
+                                title={t("journalEntries.delete", { defaultValue: "حذف" })}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>

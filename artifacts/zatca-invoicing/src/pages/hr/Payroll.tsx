@@ -32,7 +32,13 @@ export default function Payroll() {
     tr("monthsSep"), tr("monthsOct"), tr("monthsNov"), tr("monthsDec"),
   ];
 
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. See
+  // SalesDocumentForm for the full rationale on the legacy fallback.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostPayroll === undefined || _co?.autoPostPayroll === null
+    ? _gl
+    : _co.autoPostPayroll !== false;
   const now = new Date();
   const [tab, setTab] = useState("runs");
   const [year, setYear] = useState(now.getFullYear());

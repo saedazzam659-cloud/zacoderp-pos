@@ -483,7 +483,13 @@ ${existing.description ? `<div class="desc"><div class="lbl">البيان</div>$
 
   const preview = jePreview();
   const docLabel = existing?.code ?? (isNew && seqPeek.number ? seqPeek.number : (seqPeek.loading ? "..." : t(`${NS}.autoCode`)));
-  const autoPostingEnabled = (user as any)?.company?.autoPostingEnabled !== false;
+  // Per-doc-type auto-posting flag with global fallback. See
+  // SalesDocumentForm for the full rationale on the legacy fallback.
+  const _co = (user as any)?.company;
+  const _gl = _co?.autoPostingEnabled !== false;
+  const autoPostingEnabled = _co?.autoPostReceipt === undefined || _co?.autoPostReceipt === null
+    ? _gl
+    : _co.autoPostReceipt !== false;
 
   // ── Render ─────────────────────────────────────────────────────
   return (
